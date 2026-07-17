@@ -1406,6 +1406,41 @@ iOS 라이트 팔레트(#F2F2F7 배경 등)와 "No Gradients" 원칙은 이 리�
 - **Android 실제 앱 실행**: 플랫폼 카드 탭 → `/overlay?platform=X` 이동 → `overlayService.startSession()`
   (기존) + `Linking.openURL(androidScheme)`(신규, 실패 시 `webFallback` 웹 URL로 폴백) — 이전엔
   플랫폼 카드가 전부 동일한 dead 버튼이었던 것을 실제 앱 실행까지 연결.
+- **QuickControlsGrid 타일 정렬 버그(2026-07-18 4차)**: App.tsx:411 "text-center flex flex-col
+  justify-between" + 아이콘 줄의 "flex justify-center"를 완전히 빠뜨려서 아이콘/라벨/값이 전부
+  왼쪽 정렬로 나오고 있었다 — `alignItems:'center'`+`textAlign:'center'` 추가, 아이콘 크기도
+  `w-4.5 h-4.5`(18px)인데 16으로 썼던 것 수정.
+- **탭바 라벨 폰트 버그**: `tabBarLabelStyle`을 명시하지 않아 RN 기본 탭 라벨(더 크고 다른 폰트)이
+  적용되고 있었다 — App.tsx:540 "text-[10px] font-black tracking-widest uppercase"로 명시 지정.
+  비활성 탭 색상도 `colors.textSecondary`(#9CA3AF)가 아니라 원본이 실제로 쓰는 `#8E8E93`로 수정.
+- **안드로이드 실기기(갤럭시 Note20) 하단 내비게이션 바가 흰색으로 보이는 버그 — 근본 원인
+  발견 및 수정(2026-07-18 4차)**: `android/app/src/main/res/values/styles.xml`의 `AppTheme`이
+  `Theme.AppCompat.DayNight.NoActionBar`를 부모로 썼는데, DayNight는 **기기의 시스템 라이트/다크
+  설정을 따라간다** — 이 세션에서 앱 자체는 "항상 다크"로 고정했지만(`userInterfaceStyle:
+  "dark"`) 네이티브 테마는 여전히 시스템을 따라가고 있어서, 시스템이 라이트 모드인 실기기에서
+  윈도우 기본 배경(그리고 그 위에 그려지는 edge-to-edge 내비게이션 바 영역)이 흰색으로 남아있었다.
+  `Theme.AppCompat.NoActionBar`(DayNight 아닌 고정 다크 베이스)로 교체 + `android:windowBackground`를
+  `@color/appBackground`(#0B0C0F)로 명시 + `colors.xml`의 `splashscreen_background`도 흰색→
+  #0B0C0F로 통일. JS 쪽 `expo-navigation-bar`는 SDK 57에서 `setBackgroundColorAsync`/
+  `setButtonStyleAsync`가 완전히 제거됐다(Android가 edge-to-edge를 강제하면서 배경색 API 자체가
+  무의미해짐, AGENTS.md의 "Expo가 바뀌었다" 경고 그대로) — 남은 `NavigationBar.setStyle('light')`
+  (아이콘 색만 제어)만 사용. **이 수정은 네이티브 테마 XML 변경이라 JS Fast Refresh로 반영 안 되고
+  전체 네이티브 리빌드가 필요** — `npx expo run:android`로 실기기에 재설치해서 확인 완료(스크린샷
+  상 하단 소프트키 영역이 카드 색과 동일한 다크로 바뀜).
+- **실기기가 이 세션 내내 한 번도 갱신되지 않고 있었던 것 발견**: `adb devices`로 물리 기기
+  (R3CN80S5GWW, Galaxy Note20 Ultra)가 항상 연결돼 있었는데도 이 세션의 모든 작업은
+  `pace_test` 에뮬레이터에서만 검증했다 — 실기기는 Pace 앱이 켜져있지도 않았고(다른 앱이 열려
+  있었음), 켜봐도 Metro 개발 서버에 연결이 안 돼(USB 디버깅 시 필요한 `adb reverse tcp:8081
+  tcp:8081` 포트포워딩이 안 잡혀 있었음) 흰 화면만 떴다 — 사용자가 배경색 수정이 반영 안 된다고
+  반복 지적한 것 중 상당수가 실은 "안 고쳐진 게 아니라 애초에 실기기에서 새 빌드를 본 적이 없었던
+  것"이었을 가능성이 높다. `adb reverse` 설정 후 네이티브 리빌드로 실기기 최초 갱신 완료.
+- **플랫폼 카드 이미지 색상 검증**: "이미지가 흐리멍텅/불투명하다"는 반복 지적에 대해 실기기
+  스크린샷을 픽셀 샘플링해 확인 — YouTube 카드 배경에서 R134/G24/B32, R116/G36/B43 등 채도가
+  매우 높은(회색빛 없는) 빨간색이 실제로 렌더되고 있음을 확인. 코드상 그라데이션 오버레이 값도
+  원본의 `from-red-600/35 to-black/90`과 정확히 일치(`rgba(220,38,38,0.35)`→Tailwind red-600
+  #DC2626과 동일). 현재까지 조사로는 실제 렌더링 결함을 찾지 못했다 — 사용자에게 보고하는 내
+  스크린샷 자체가 캡처→리사이즈→표시 과정에서 압축되는 것이 "흐릿해 보임"의 원인일 가능성이 높다는
+  점을 사용자에게 공유함(추가 재현 방법이 있다면 다음 세션에서 재확인 필요).
 
 ### 의도적으로 원본과 다르게 간 부분 (전부 "정확성 우선" 판단, 임의 축소 아님)
 1. **Settings "Platform Configuration"의 안드로이드↔iOS 전환 버튼 제외** — 원본은 브라우저
@@ -1456,6 +1491,16 @@ iOS 라이트 팔레트(#F2F2F7 배경 등)와 "No Gradients" 원칙은 이 리�
 6. **하단 탭 라벨 오타**: Stats 탭의 실제 라벨은 `translations.ts`의 `t.insights`("Insights"/
    "분석")인데, Pace는 `tabs.stats`를 "Stats"/"통계"로 임의로 지어 썼었다 — "Insights"/"분석"으로
    수정.
+7. **WeeklyGraphCard 요일 순서 버그**: `data.ts`의 `INITIAL_WEEKLY_DATA`가 월요일 시작
+   (Mon,Tue,Wed,Thu,Fri,Sat,Sun) 배열이라 막대가 M-T-W-T-F-S-S 순서로 렌더된다 — 복원할 때
+   일요일 시작으로 잘못 짰던 걸 발견 후 수정(`buildWeekArray`가 이번 주 월요일부터 계산).
+8. **터치/선택 인터랙션 누락 2건 발견 및 수정**: (a) `PlatformPickerCard`는 원본이
+   `active:scale-[0.98]`(누르면 98%로 살짝 축소)인데 Pace는 `opacity:0.9`만 줬었다 — `Pressable`
+   render-prop으로 `pressed` 상태를 받아 `Animated.View`에 scale transform 적용으로 교체.
+   (b) `WeeklyGraphCard`의 막대는 원본이 선택 시 막대 뒤에 `bg-[#5856D6]/10` 라운드 하이라이트
+   링이 추가로 나타나는데(App.tsx가 아니라 `WeeklyGraph.tsx:73-76`) 복원 과정에서 이 링을
+   빠뜨렸었다 — `barHoverRing`/`barHoverRingSelected`로 추가(호버는 터치 기기에 해당 없음, 선택
+   상태만 적용).
 
 ### 미해결 / 다음 세션 확인 필요
 - [ ] Stats 화면을 "This Week Hero + Focus/Streak 그리드 + Best Day" 레이아웃으로 재배치(값은
@@ -1504,4 +1549,74 @@ iOS 라이트 팔레트(#F2F2F7 배경 등)와 "No Gradients" 원칙은 이 리�
 - [ ] "Wholesome Feed Breakdown" 카테고리 실계측(현재 정적 목업 비율)
 - [ ] `REVIEWER_EMAILS`에 실제 스토어 제출용 테스트 계정 등록(현재 빈 배열 — 스토어 제출 전 필수)
 - [x] 하단 탭 바 아이콘 연결(Ionicons outline/filled, 2026 트렌드 리서치 반영 — "하단 탭 바 아이콘 추가" 섹션 참고)
-- [ ] 실기기(arm64) `expo run:android` 빌드/설치까지는 성공 확인, USB 연결 끊김으로 최종 설치·구동은 미완료 — 재시도 필요
+- [x] 실기기(arm64) `expo run:android` 빌드/설치까지는 성공 확인, USB 연결 끊김으로 최종 설치·구동은 미완료 — 재시도 필요 → "실기기(에뮬레이터) 검증 3차" 섹션에서 에뮬레이터 재검증 완료
+
+---
+
+## 실기기(에뮬레이터) 검증 3차 — 전체 탭 야간 회귀 검증 + 권한 배지 버그 수정 (2026-07-18)
+
+`pace_test` AVD(Android 14, x86_64)에 대상으로 Home/Overlay/Focus/Stats/Settings/Paywall 전 화면을
+탭·스크린샷으로 실제 조작하며 검증했다. 물리 기기(`SM_N986N`, arm64)와 에뮬레이터(x86_64)가 동시에
+연결된 상태에서 `expo run:android`가 기본으로 물리 기기를 골라 설치하는 바람에, 에뮬레이터에는 arm64
+네이티브 라이브러리가 없어 `SoLoaderDSONotFoundError`로 즉시 크래시했다 — `cd android &&
+./gradlew assembleDebug -PreactNativeArchitectures=x86_64`로 아키텍처를 명시해 재빌드하고
+`adb -s emulator-5554 install -r`로 직접 설치해서 해결(향후 멀티 디바이스 연결 시 이 순서를 그대로
+재사용할 것).
+
+### 발견 1 — 일회성 크래시(코드 버그 아님, 재현 안 됨)
+Home → "YouTube Shorts" 탭 → `/overlay` 첫 진입 시 `TypeError: undefined is not a function` 렌더
+에러가 2회 연속 발생했다. `console.log` 체크포인트를 render 본문 전체에 심어 이분탐색했으나, 앱을
+완전히 재기동(`am force-stop` 후 재실행)한 뒤에는 **동일 코드가 크래시 없이 정상 렌더**됐다(오버레이
+바/확장 카드/Auto Next 시뮬레이션/세션 종료까지 전부 정상) — arm64 크래시 직후 x86_64로 재설치하며
+`adb install -r`(데이터 보존)를 쓴 탓에 Metro 연결/Hermes 번들 상태가 일시적으로 꼬였던 것으로 추정.
+**실제 소스 결함이 아니라는 결론**이며, 진단용 `console.log`는 전부 제거했다(`src/app/overlay/index.tsx`).
+
+### 발견 2 — 실제 버그: "Android Guard Services" 상태 배지가 하드코딩 (수정 완료)
+`focus.tsx`의 "오버레이 상태"/"접근성 서비스 상태" 배지가 실제 권한 조회 없이 항상 "연결됨"/"실행 중"
+(초록색)을 표시하고 있었다 — 권한이 전혀 없는 상태에서도 정상으로 보이는 실사용자 기만 버그. 추가로
+"접근성 서비스 상태"라는 라벨 자체가 구식 설계 용어였다: 실제 `ForegroundAppWatcher.kt`는
+AccessibilityService가 아니라 **UsageStatsManager(Usage Access) 기반**으로 이미 바뀌어 있었는데
+(Google Play 정책 리스크 회피, `ForegroundAppWatcher.kt` 주석 참고) 프론트 라벨/설명 텍스트가 그
+전환을 반영하지 못하고 있었다.
+
+**수정 내용**:
+- `services/platform/types.ts`의 `OverlayService`에 `hasOverlayPermission()`/`requestOverlayPermission()`
+  신규 추가(기존엔 `hasForegroundDetectionPermission`만 있어 오버레이 권한 자체는 조회 불가했음).
+- `overlayService.android.ts`/`.ios.ts` 양쪽에 구현 추가(Android는 `PaceOverlay.hasOverlayPermission()`
+  위임, iOS는 개념이 없어 `true` no-op).
+- `focus.tsx`에 실제 권한 조회 `useEffect` 추가, 배지가 `hasOverlayPermission`/
+  `hasForegroundDetectionPermission` 실측값을 반영하도록 변경. 미부여 상태는 앰버색
+  "미연결"/"권한 필요"로 표시하고, 탭하면 각각 `requestOverlayPermission()`/
+  `requestForegroundDetectionPermission()`을 호출해 실제 OS 설정 화면으로 이동.
+- 라벨: "Accessibility Status/접근성 서비스 상태" → "Usage Access Status/사용 정보 접근 상태",
+  설명도 "자동 스와이프 활성화됨"(부정확) → "포그라운드 앱 감지에 필요"(정확)로 정정
+  (`services/i18n/translations.ts`).
+
+**검증**: `adb shell appops set com.pace.app SYSTEM_ALERT_WINDOW|GET_USAGE_STATS deny`로 권한을
+실제로 회수한 뒤 배지가 즉시 "미연결"/"권한 필요"(앰버)로 바뀌는 것 확인 → "미연결" 배지 탭 →
+실제 Android "다른 앱 위에 표시" 설정 화면으로 정확히 이동하는 것까지 확인 → 권한을 다시 `allow`로
+복구 후 배지가 다시 "연결됨"/"실행 중"(초록)으로 돌아오는 것까지 왕복 확인 완료.
+
+### 발견 3 — 정도가 낮아 이번엔 수정하지 않은 것들 (다음 세션 참고용)
+- **`settings.tsx`의 "오버레이 제어기 (Android): READY" 배지도 정적 하드코딩** — 다만 이건 "이 빌드가
+  지원하는 제품 모드가 무엇인가"(Android=Overlay Assistant)를 나타내는 표시에 가까워, 발견 2와
+  똑같이 "실시간 권한 상태"로 바꿔야 하는지 프로덕트 판단이 필요해 보류.
+- **`settings.tsx`의 알림 3개 토글**(`notif5m`/`notifLimit`/`notifBreak`)이 로컬 `useState`뿐이라
+  앱 재시작 시 항상 `true`로 리셋되고 어떤 실제 알림도 스케줄링하지 않음 — 알림 시스템 자체가
+  아직 없어서 "무엇을 스케줄링해야 하는지" 미정, 새 기능 범위라 보류.
+- **`focus.tsx`의 "Extend Time"(+10/20/30m) 칩이 `dailyLimitMinutes`(영구 설정)를 직접 변경** —
+  "오늘 세션만 연장"이 아니라 매일 반복되는 일일 한도 자체가 영구히 늘어남. 데이터 모델에
+  "오늘만 적용되는 임시 한도" 개념이 없어 이게 유일한 구현 방법일 수도 있어 판단 보류.
+- **`focus.tsx`의 "세션 종료" 확인 모달(`confirmFinish`)이 모달을 닫기만 하고 실제로 세션을
+  종료/기록하지 않음** — `overlay/index.tsx`처럼 `sessionIdRef`를 들고 있지 않아 무엇을 종료해야
+  하는지 자체가 불분명(Focus 탭은 대시보드 성격이라 세션 소유자가 아닐 수 있음), 판단 보류.
+- **`overlay/index.tsx`의 `onStop`(세션 수동 종료)이 실제 경과 시간이 아니라 항상 `0`을
+  `endSessionRow`에 전달** — dev 시뮬레이터 코드라 명시돼 있고 실제 정확한 시간 추적은 네이티브
+  오버레이 연동 이후 과제로 보임, 이번엔 손대지 않음.
+
+### 검증한 화면 목록(전부 크래시 없음)
+Home(플랫폼 카드 3개, Quick Controls) · Overlay 세션(시작→확장 카드→Auto Next 자동전환 3회→세션
+종료) · Focus(Session Hero/Status/Guard Services/Extend Time/Interventions/Session Stats/Finish
+모달) · Stats(오늘 패턴/주간 그래프 탭 인터랙션) · Settings(Session Defaults/Connected Apps 토글/
+Platform Configuration/Notifications) · Paywall(딥링크 `pace://paywall` 진입, RC 상품 로딩 상태
+정상 표시). `npx tsc --noEmit` 전체 통과.

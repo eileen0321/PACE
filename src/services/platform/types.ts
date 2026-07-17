@@ -26,6 +26,9 @@ export interface OverlayService {
   startSession(params: { dailyLimitMinutes: number; remainingMinutes: number; autoNext: boolean }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;
+  /** Android: "다른 앱 위에 표시"(SYSTEM_ALERT_WINDOW) 권한 실제 부여 상태. iOS: 항상 true(no-op, 개념 자체가 없음). */
+  hasOverlayPermission(): Promise<boolean>;
+  requestOverlayPermission(): Promise<void>;
   /** Android: UsageStatsManager 기반 포그라운드 앱 감지 권한(오버레이 자동 표시/숨김에 필요). iOS: 항상 true(no-op). */
   hasForegroundDetectionPermission(): Promise<boolean>;
   requestForegroundDetectionPermission(): Promise<void>;

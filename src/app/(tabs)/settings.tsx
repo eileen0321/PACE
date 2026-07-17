@@ -235,7 +235,7 @@ function NotifRow({ title, desc, value, onChange, bordered }: { title: string; d
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.rowSubtitle}>{desc}</Text>
       </View>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primary, false: '#262626' }} />
+      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primary, false: '#262626' }} thumbColor="#FFFFFF" ios_backgroundColor="#262626" />
     </View>
   );
 }

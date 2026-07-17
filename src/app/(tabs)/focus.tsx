@@ -7,6 +7,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useTranslation } from '../../services/i18n';
+import { overlayService } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 
@@ -26,10 +27,31 @@ export default function FocusScreen() {
   const { todayUsageMinutes, todayVideosWatched, todayAverageDurationSeconds, refresh } = useStatsStore();
   const [showPromptDemo, setShowPromptDemo] = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [hasOverlayPermission, setHasOverlayPermission] = useState(false);
+  const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
   }, [user?.id, refresh]);
+
+  // 실제 권한 부여 상태를 조회 — 이전엔 "연결됨"/"실행 중"이 하드코딩돼 있어 권한이 없어도 항상
+  // 정상으로 표시되는 실버그였다(2026-07-18 실기기 검증 중 발견). 화면 포커스마다 재조회해서
+  // 사용자가 설정에서 권한을 켜고 돌아왔을 때도 반영되게 한다.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const [overlay, usageAccess] = await Promise.all([
+        overlayService.hasOverlayPermission(),
+        overlayService.hasForegroundDetectionPermission(),
+      ]);
+      if (!cancelled) {
+        setHasOverlayPermission(overlay);
+        setHasUsageAccessPermission(usageAccess);
+      }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, []);
 
   const remainingMinutes = Math.max(0, settings.dailyLimitMinutes - todayUsageMinutes);
   const progressPct = Math.min(100, (todayUsageMinutes / Math.max(1, settings.dailyLimitMinutes)) * 100);
@@ -93,26 +115,33 @@ export default function FocusScreen() {
           <View>
             <Text style={styles.sectionLabel}>{t('focus.androidGuardServices')}</Text>
             <View style={styles.card}>
-              <View style={styles.guardRow}>
+              <Pressable style={styles.guardRow} onPress={() => !hasOverlayPermission && overlayService.requestOverlayPermission()}>
                 <View style={styles.guardLeft}>
                   <Text style={styles.statusTitleSm}>{t('focus.overlayStatus')}</Text>
                   <Text style={styles.guardDesc}>{t('focus.overlayStatusDesc')}</Text>
                 </View>
-                <View style={styles.pulsePill}>
-                  <View style={styles.pulseDot} />
-                  <Text style={styles.pulsePillText}>{t('focus.connected')}</Text>
+                <View style={[styles.pulsePill, !hasOverlayPermission && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasOverlayPermission && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasOverlayPermission && styles.pulsePillTextWarning]}>
+                    {hasOverlayPermission ? t('focus.connected') : t('focus.notConnected')}
+                  </Text>
                 </View>
-              </View>
-              <View style={[styles.guardRow, styles.guardRowBordered]}>
+              </Pressable>
+              <Pressable
+                style={[styles.guardRow, styles.guardRowBordered]}
+                onPress={() => !hasUsageAccessPermission && overlayService.requestForegroundDetectionPermission()}
+              >
                 <View style={styles.guardLeft}>
                   <Text style={styles.statusTitleSm}>{t('focus.accessibilityStatus')}</Text>
                   <Text style={styles.guardDesc}>{t('focus.accessibilityStatusDesc')}</Text>
                 </View>
-                <View style={styles.pulsePill}>
-                  <View style={styles.pulseDot} />
-                  <Text style={styles.pulsePillText}>{t('focus.running')}</Text>
+                <View style={[styles.pulsePill, !hasUsageAccessPermission && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasUsageAccessPermission && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasUsageAccessPermission && styles.pulsePillTextWarning]}>
+                    {hasUsageAccessPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                  </Text>
                 </View>
-              </View>
+              </Pressable>
             </View>
           </View>
         )}
@@ -160,6 +189,8 @@ export default function FocusScreen() {
               value={settings.breakIntervalMinutes > 0}
               onValueChange={(v) => update({ breakIntervalMinutes: v ? 15 : 0 })}
               trackColor={{ true: colors.primary, false: '#262626' }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="#262626"
             />
           </View>
           <View style={[styles.interventionRow, styles.interventionRowBordered]}>
@@ -270,6 +301,10 @@ const styles = StyleSheet.create({
   pulsePill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 4 },
   pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.successLight },
   pulsePillText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.5, textTransform: 'uppercase' },
+  // 권한 미부여 상태 — 예전엔 이 상태 자체가 없어(하드코딩) 표현할 필요가 없었다. 탭하면 설정으로 이동.
+  pulsePillWarning: { backgroundColor: 'rgba(245,158,11,0.1)', borderColor: 'rgba(245,158,11,0.2)' },
+  pulseDotWarning: { backgroundColor: colors.warning },
+  pulsePillTextWarning: { color: colors.warning },
   statusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6 },
   statusRowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle },
   statusRowLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },

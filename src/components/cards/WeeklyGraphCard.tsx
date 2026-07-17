@@ -4,7 +4,8 @@ import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { DailyStats } from '../../types/models';
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SUNDAY_FIRST = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONDAY_FIRST = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // healthy-shorts-assistant(2) components/WeeklyGraph.tsx를 토씨 하나 안 틀리고 그대로 이식 — App.tsx의
 // Stats 탭(activeTab==="stats")이 StatsTab 뒤에 이 컴포넌트를 별도 카드로 덧붙인다(App.tsx:498-508,
@@ -16,11 +17,14 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { day: string; minutes: number }[] {
   const byDate = new Map(weeklyStats.map((d) => [d.date, d.totalMinutes]));
   const today = new Date(todayStr + 'T00:00:00');
-  const sunday = new Date(today);
-  sunday.setDate(today.getDate() - today.getDay());
-  return DAY_NAMES.map((name, i) => {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
+  // data.ts의 INITIAL_WEEKLY_DATA가 월요일부터 시작(Mon..Sun)이라 막대도 그 순서로 렌더된다 —
+  // 일요일 시작으로 잘못 이식했던 걸 수정.
+  const monday = new Date(today);
+  const isoDow = (today.getDay() + 6) % 7; // 0=Mon..6=Sun
+  monday.setDate(today.getDate() - isoDow);
+  return MONDAY_FIRST.map((name, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
     const key = d.toISOString().slice(0, 10);
     return { day: name, minutes: byDate.get(key) ?? 0 };
   });
@@ -30,7 +34,7 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
   const [selectedDay, setSelectedDay] = useState<{ day: string; minutes: number } | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const currentDayIndex = new Date(todayStr + 'T00:00:00').getDay();
-  const todayName = DAY_NAMES[currentDayIndex];
+  const todayName = SUNDAY_FIRST[currentDayIndex];
   const weeklyData = buildWeekArray(weeklyStats, todayStr);
   const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), 60);
   const weeklyAvg = Math.round(weeklyData.reduce((acc, d) => acc + d.minutes, 0) / 7);
@@ -76,6 +80,7 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
               return (
                 <Pressable key={d.day} style={styles.barCol} onPress={() => setSelectedDay(d)}>
                   <View style={styles.barTrack}>
+                    <View style={[styles.barHoverRing, isSelected && styles.barHoverRingSelected]} />
                     <View
                       style={[
                         styles.bar,
@@ -122,7 +127,9 @@ const styles = StyleSheet.create({
   tapHint: { fontSize: 11, color: '#8E8E93', fontFamily: typography.bodyFontFamilySemibold },
   chartRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 112, paddingTop: spacing.md, gap: 10 },
   barCol: { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' },
-  barTrack: { width: '100%', height: 80, justifyContent: 'flex-end', alignItems: 'center' },
+  barTrack: { width: '100%', height: 80, justifyContent: 'flex-end', alignItems: 'center', position: 'relative' },
+  barHoverRing: { position: 'absolute', left: -2, right: -2, top: -8, bottom: -8, borderRadius: 12, backgroundColor: 'transparent' },
+  barHoverRingSelected: { backgroundColor: `${colors.primary}1A` },
   bar: { width: '100%', borderRadius: radius.chip, minHeight: 4 },
   barToday: { backgroundColor: colors.primary },
   barSelected: { backgroundColor: '#818CF8' },

@@ -2,7 +2,7 @@ import { Platform, StyleSheet } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { colors } from '../../constants/theme';
+import { colors, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
 
 // healthy-shorts-assistant(2) App.tsx 하단 내비게이션 아이콘을 토씨 하나 안 틀리고 그대로 이식
@@ -30,7 +30,12 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textSecondary,
+        tabBarInactiveTintColor: '#8E8E93',
+        // App.tsx:540 "text-[10px] font-black tracking-widest uppercase mt-1.5" — 라벨을 명시
+        // 지정 안 하면 RN 기본 탭 라벨(더 크고 굵기가 다른 시스템 폰트)이 적용돼 원본보다 커
+        // 보였다.
+        tabBarLabelStyle: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 6 },
+        tabBarItemStyle: { paddingVertical: 4 },
         // iOS: iOS 26 "Liquid Glass" 탭바 컨벤션 — 반투명 블러 위로 콘텐츠가 비쳐 보이는 떠 있는
         // 형태가 현재 시스템 기본값이라 네이티브 룩에 맞춰 따라간다(카드/오버레이는 기존 원칙대로
         // 플랫 유지 — 시스템 크롬에만 적용되는 예외). Android: Material 3는 블러 대신 불투명

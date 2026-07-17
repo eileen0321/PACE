@@ -47,6 +47,14 @@ export const overlayService: OverlayService = {
     await PaceOverlay?.stop();
   },
 
+  async hasOverlayPermission() {
+    return PaceOverlay?.hasOverlayPermission() ?? false;
+  },
+
+  async requestOverlayPermission() {
+    PaceOverlay?.requestOverlayPermission();
+  },
+
   async hasForegroundDetectionPermission() {
     return PaceOverlay?.hasUsageAccessPermission() ?? false;
   },

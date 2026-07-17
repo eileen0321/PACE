@@ -29,21 +29,25 @@ export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onP
   }, [pulse]);
 
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [styles.card, pressed && styles.pressed, disabled && styles.disabled]}>
-      <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
-        <LinearGradient colors={[gradientFrom, 'rgba(0,0,0,0.9)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.overlay}>
-          <View style={styles.textCol}>
-            <Text style={styles.title} numberOfLines={1}>{title}</Text>
-            <View style={styles.statusRow}>
-              <Animated.View style={[styles.statusDot, { opacity: pulse }]} />
-              <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
-            </View>
-          </View>
-          <View style={styles.playButton}>
-            <Ionicons name="play" size={14} color="#FFFFFF" style={styles.playIcon} />
-          </View>
-        </LinearGradient>
-      </ImageBackground>
+    <Pressable onPress={onPress} disabled={disabled}>
+      {({ pressed }) => (
+        <Animated.View style={[styles.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }, disabled && styles.disabled]}>
+          <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
+            <LinearGradient colors={[gradientFrom, 'rgba(0,0,0,0.9)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.overlay}>
+              <View style={styles.textCol}>
+                <Text style={styles.title} numberOfLines={1}>{title}</Text>
+                <View style={styles.statusRow}>
+                  <Animated.View style={[styles.statusDot, { opacity: pulse }]} />
+                  <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
+                </View>
+              </View>
+              <View style={styles.playButton}>
+                <Ionicons name="play" size={14} color="#FFFFFF" style={styles.playIcon} />
+              </View>
+            </LinearGradient>
+          </ImageBackground>
+        </Animated.View>
+      )}
     </Pressable>
   );
 }
@@ -61,7 +65,6 @@ const styles = StyleSheet.create({
     shadowRadius: 15,
     elevation: 6,
   },
-  pressed: { opacity: 0.9 },
   disabled: { opacity: 0.4 },
   cover: { flex: 1 },
   coverImage: { resizeMode: 'cover' },

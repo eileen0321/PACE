@@ -1,7 +1,8 @@
 import { useEffect, useCallback } from 'react';
-import { Text } from 'react-native';
+import { Platform, Text } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as NavigationBar from 'expo-navigation-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
@@ -51,6 +52,19 @@ export default function RootLayout() {
     loadSettings();
     initSubscription();
   }, [initUser, loadSettings, initSubscription]);
+
+  // 실기기(Galaxy Note20, 시스템 라이트 모드)에서 하단 내비게이션 바 영역이 흰색으로 보였던 진짜
+  // 원인은 android/styles.xml의 Theme.AppCompat.DayNight가 시스템 라이트/다크를 따라가던 것 —
+  // NoActionBar(항상 다크)로 교체하고 windowBackground/navigationBarColor(transparent)를
+  // 네이티브 테마에서 직접 고정했다(android/app/src/main/res/values/styles.xml 참고). SDK 57부터
+  // Android가 edge-to-edge를 강제해서 expo-navigation-bar의 setBackgroundColorAsync/
+  // setButtonStyleAsync가 아예 제거됐다(AGENTS.md 경고대로 API가 바뀜) — 남은 건 아이콘 색만
+  // 제어하는 setStyle뿐이라 그것만 사용.
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setStyle('light');
+    }
+  }, []);
 
   const onLayoutRootView = useCallback(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});

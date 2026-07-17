@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing } from '../../../constants/theme';
 import { capabilities } from '../../../services/platform';
+import { useTranslation } from '../../../services/i18n';
 import type { OverlayExpandedInfo } from './OverlayBar.types';
 
 // healthy-shorts-assistant의 ShortsPlayer.tsx "EXPANDED STATE" 카드를 포팅. Android/iOS 공통 —
@@ -19,6 +20,7 @@ export function OverlayExpandedCard({
   onTogglePlaying,
   onStop,
 }: OverlayExpandedInfo) {
+  const { t } = useTranslation();
   const progressPct = Math.min(100, Math.round((todayUsedMinutes / Math.max(1, dailyLimitMinutes)) * 100));
 
   return (
@@ -26,19 +28,19 @@ export function OverlayExpandedCard({
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Feather name="sliders" size={14} color={colors.primary} />
-          <Text style={styles.headerTitle}>Pace Controls</Text>
+          <Text style={styles.headerTitle}>{t('overlay.controlsTitle')}</Text>
         </View>
       </View>
 
       <View style={styles.grid}>
         <View style={styles.gridCell}>
-          <Text style={styles.gridLabel}>TODAY USAGE</Text>
+          <Text style={styles.gridLabel}>{t('overlay.todayUsage')}</Text>
           <Text style={styles.gridValue}>
             {todayUsedMinutes}m <Text style={styles.gridValueMuted}>/ {dailyLimitMinutes}m</Text>
           </Text>
         </View>
         <View style={styles.gridCell}>
-          <Text style={styles.gridLabel}>REMAINING</Text>
+          <Text style={styles.gridLabel}>{t('overlay.remaining')}</Text>
           <Text style={[styles.gridValue, { color: colors.primary }]}>{remainingMinutes}m</Text>
         </View>
       </View>
@@ -47,14 +49,14 @@ export function OverlayExpandedCard({
         <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
       </View>
       <View style={styles.progressLabels}>
-        <Text style={styles.progressLabel}>{progressPct}% watched</Text>
-        <Text style={styles.progressLabel}>{100 - progressPct}% left</Text>
+        <Text style={styles.progressLabel}>{t('overlay.watched', { n: progressPct })}</Text>
+        <Text style={styles.progressLabel}>{t('overlay.left', { n: 100 - progressPct })}</Text>
       </View>
 
       {capabilities.supportsAutoNext && (
         <Row
-          title="Auto Next"
-          description="Accessibility automatic swipe intervention"
+          title={t('focus.autoNext')}
+          description={t('overlay.autoNextDesc')}
           right={
             <Pressable onPress={onToggleAutoNext} style={[styles.pill, autoNextEnabled && styles.pillActive]}>
               <Text style={[styles.pillText, autoNextEnabled && styles.pillTextActive]}>{autoNextEnabled ? 'ON' : 'OFF'}</Text>
@@ -63,8 +65,8 @@ export function OverlayExpandedCard({
         />
       )}
       <Row
-        title="Sleep Timer"
-        description="Auto-lock on inactive watching"
+        title={t('focus.sleepTimer')}
+        description={t('overlay.sleepTimerDesc')}
         right={
           <Pressable onPress={onCycleSleepTimer} style={styles.pill}>
             <Text style={styles.pillText}>{sleepTimerMinutes ? `${sleepTimerMinutes}m` : 'OFF'}</Text>
@@ -75,11 +77,11 @@ export function OverlayExpandedCard({
       <View style={styles.actions}>
         <Pressable style={styles.actionBtn} onPress={onTogglePlaying}>
           <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.textPrimary} />
-          <Text style={styles.actionText}>{isPlaying ? 'Pause Session' : 'Resume'}</Text>
+          <Text style={styles.actionText}>{isPlaying ? t('overlay.pauseSession') : t('overlay.resume')}</Text>
         </Pressable>
         <Pressable style={[styles.actionBtn, styles.stopBtn]} onPress={onStop}>
           <Feather name="log-out" size={14} color={colors.danger} />
-          <Text style={[styles.actionText, styles.stopText]}>End Session</Text>
+          <Text style={[styles.actionText, styles.stopText]}>{t('overlay.endSession')}</Text>
         </Pressable>
       </View>
     </View>

@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 import type { UserSettings } from '../../types/models';
 
 // healthy-shorts-assistant의 StatsGrid.tsx 포팅 — 2열 통계 + Focus 탭으로 이동하는 설정 요약 배너.
@@ -10,20 +11,21 @@ export function StatsGridCard({ videosWatched, averageDurationSec, settings, onP
   settings: UserSettings;
   onPressSettings: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.wrap}>
       <View style={styles.card}>
         <View style={styles.grid}>
           <View style={styles.cell}>
             <Text style={styles.cellValue}>{videosWatched}</Text>
-            <Text style={styles.cellLabel}>Videos Watched Today</Text>
+            <Text style={styles.cellLabel}>{t('home.videosWatchedToday')}</Text>
           </View>
           <View style={[styles.cell, styles.cellBorder]}>
             <View style={styles.durationRow}>
               <Text style={styles.cellValue}>{averageDurationSec}</Text>
-              <Text style={styles.durationUnit}>sec</Text>
+              <Text style={styles.durationUnit}>{t('home.sec')}</Text>
             </View>
-            <Text style={styles.cellLabel}>Average Duration</Text>
+            <Text style={styles.cellLabel}>{t('home.averageDuration')}</Text>
           </View>
         </View>
 
@@ -31,9 +33,9 @@ export function StatsGridCard({ videosWatched, averageDurationSec, settings, onP
           <View style={styles.bannerLeft}>
             <Feather name="sliders" size={14} color={colors.primary} />
             <Text style={styles.bannerText} numberOfLines={1}>
-              Auto Next: <Text style={styles.bannerStrong}>{settings.autoNext ? 'ON' : 'OFF'}</Text>
-              {'  •  '}Sleep: <Text style={styles.bannerStrongMuted}>{settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : 'OFF'}</Text>
-              {'  •  '}Limit: <Text style={styles.bannerStrongMuted}>{settings.dailyLimitMinutes}m</Text>
+              {t('home.bannerAutoNext')}: <Text style={styles.bannerStrong}>{settings.autoNext ? 'ON' : 'OFF'}</Text>
+              {'  •  '}{t('home.bannerSleep')}: <Text style={styles.bannerStrongMuted}>{settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : 'OFF'}</Text>
+              {'  •  '}{t('home.bannerLimit')}: <Text style={styles.bannerStrongMuted}>{settings.dailyLimitMinutes}m</Text>
             </Text>
           </View>
           <Feather name="chevron-right" size={16} color={colors.textSecondary} />

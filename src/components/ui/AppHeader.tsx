@@ -1,19 +1,14 @@
-import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 
 // healthy-shorts-assistant의 Header.tsx 포팅. iOS 상태바(시간/배터리 등)는 실기기가 이미 그려주므로
 // 제외하고, "Good Evening" 인사 + 이니셜 아바타만 이식.
 export function AppHeader({ userEmail }: { userEmail: string }) {
-  const [greeting, setGreeting] = useState('Hello');
-
-  useEffect(() => {
-    const hour = new Date().getHours();
-    if (hour < 12) setGreeting('Good Morning');
-    else if (hour < 18) setGreeting('Good Afternoon');
-    else setGreeting('Good Evening');
-  }, []);
+  const { t } = useTranslation();
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? t('home.greetingMorning') : hour < 18 ? t('home.greetingAfternoon') : t('home.greetingEvening');
 
   const name = userEmail.split('@')[0] || 'guest';
   const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1);
@@ -26,7 +21,7 @@ export function AppHeader({ userEmail }: { userEmail: string }) {
           <Text style={styles.title}>{greeting}</Text>
           <Feather name="moon" size={20} color={colors.primary} />
         </View>
-        <Text style={styles.subtitle}>Stay mindful of your time.</Text>
+        <Text style={styles.subtitle}>{t('home.subtitle')}</Text>
       </View>
       <View style={styles.avatarWrap}>
         <View style={styles.avatar}>

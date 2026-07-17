@@ -7,12 +7,13 @@ import type { UserSettings } from '../../types/models';
 export async function saveSettingsMirror(userId: string, settings: UserSettings): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `INSERT INTO user_settings (user_id, auto_next, sleep_timer_min, daily_limit_min, break_interval_min, pre_session_breathing, app_shields_json, per_app_json, theme, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, auto_next, sleep_timer_min, daily_limit_min, break_interval_min, pre_session_breathing, app_shields_json, per_app_json, theme, language, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        auto_next=excluded.auto_next, sleep_timer_min=excluded.sleep_timer_min, daily_limit_min=excluded.daily_limit_min,
        break_interval_min=excluded.break_interval_min, pre_session_breathing=excluded.pre_session_breathing,
-       app_shields_json=excluded.app_shields_json, per_app_json=excluded.per_app_json, theme=excluded.theme, updated_at=excluded.updated_at`,
+       app_shields_json=excluded.app_shields_json, per_app_json=excluded.per_app_json, theme=excluded.theme,
+       language=excluded.language, updated_at=excluded.updated_at`,
     [
       userId,
       settings.autoNext ? 1 : 0,
@@ -23,6 +24,7 @@ export async function saveSettingsMirror(userId: string, settings: UserSettings)
       JSON.stringify(settings.appShields),
       JSON.stringify(settings.perApp),
       settings.theme,
+      settings.language,
       new Date().toISOString(),
     ]
   );
@@ -45,5 +47,6 @@ export async function loadSettingsMirror(userId: string): Promise<UserSettings |
       tiktok: { autoNext: null, dailyLimitMinutes: null },
     },
     theme: row.theme,
+    language: row.language ?? 'system',
   };
 }

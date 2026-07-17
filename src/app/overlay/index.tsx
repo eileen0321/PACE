@@ -11,8 +11,10 @@ import { useUserStore } from '../../store/useUserStore';
 import { useAutoNextStore } from '../../store/useAutoNextStore';
 import { overlayService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
+import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 import type { SessionEndStatus } from '../../types/models';
 
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
@@ -23,6 +25,7 @@ const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 // 네이티브 오버레이/Live Activity 모듈이 붙기 전까지 개발/테스트에서 오버레이-위-콘텐츠 상호작용을
 // 눈으로 확인하기 위한 시뮬레이터일 뿐이다(healthy-shorts-assistant ShortsPlayer.tsx의 데모 콘텐츠 이식).
 export default function OverlaySessionScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
@@ -40,9 +43,11 @@ export default function OverlaySessionScreen() {
     (async () => {
       const id = await startSession(user.id, null);
       sessionIdRef.current = id;
+      const todayUsedMinutes = await getTodayUsageMinutes(user.id);
+      const remainingMinutes = Math.max(0, settings.dailyLimitMinutes - todayUsedMinutes);
       timer.startSession({
         sessionId: id,
-        remainingMinutes: Math.max(0, settings.dailyLimitMinutes),
+        remainingMinutes,
         sleepTimerMinutes: settings.sleepTimerMinutes,
         breakIntervalMinutes: settings.breakIntervalMinutes,
       });
@@ -50,7 +55,7 @@ export default function OverlaySessionScreen() {
       // Android 실기기에서 native 모듈이 링크돼 있으면 시스템 오버레이도 함께 띄운다(미링크 시 no-op).
       overlayService.startSession({
         dailyLimitMinutes: settings.dailyLimitMinutes,
-        remainingMinutes: settings.dailyLimitMinutes,
+        remainingMinutes,
         autoNext: settings.autoNext,
       }).catch(() => {});
     })();
@@ -137,7 +142,7 @@ export default function OverlaySessionScreen() {
       </View>
 
       <View style={styles.devBadge}>
-        <Text style={styles.devBadgeText}>DEV SIMULATOR — 실기기 오버레이 미연결</Text>
+        <Text style={styles.devBadgeText}>{t('overlay.devSimulator')}</Text>
       </View>
     </View>
   );

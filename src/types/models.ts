@@ -39,6 +39,8 @@ export type UserSettings = {
   /** 앱별 Auto Next/Daily Limit override. 값이 null인 필드는 위 전역 설정을 그대로 따른다. */
   perApp: Record<AppShieldTarget, AppSettingsOverride>;
   theme: 'light' | 'dark' | 'system';
+  /** 'system'이면 기기 로케일을 따름(en/ko만 지원, 그 외 언어는 en으로 폴백). */
+  language: 'system' | 'en' | 'ko';
 };
 
 /** 특정 앱에 적용될 유효 설정 — override가 없으면 전역값으로 폴백. */

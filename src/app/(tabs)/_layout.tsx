@@ -1,7 +1,9 @@
 import { Tabs } from 'expo-router';
 import { colors } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 
 export default function TabsLayout() {
+  const { t } = useTranslation();
   return (
     <Tabs
       screenOptions={{
@@ -10,10 +12,10 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.textSecondary,
       }}
     >
-      <Tabs.Screen name="home" options={{ title: 'Home' }} />
-      <Tabs.Screen name="stats" options={{ title: 'Stats' }} />
-      <Tabs.Screen name="focus" options={{ title: 'Focus' }} />
-      <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+      <Tabs.Screen name="home" options={{ title: t('tabs.home') }} />
+      <Tabs.Screen name="stats" options={{ title: t('tabs.stats') }} />
+      <Tabs.Screen name="focus" options={{ title: t('tabs.focus') }} />
+      <Tabs.Screen name="settings" options={{ title: t('tabs.settings') }} />
     </Tabs>
   );
 }

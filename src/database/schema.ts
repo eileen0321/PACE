@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   app_shields_json TEXT,
   per_app_json TEXT,
   theme TEXT NOT NULL DEFAULT 'system',
+  language TEXT NOT NULL DEFAULT 'system',
   updated_at TEXT NOT NULL
 );
 

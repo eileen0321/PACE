@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing } from '../../constants/theme';
 import { formatRemaining } from './shared/formatRemaining';
 import { OVERLAY_BAR_HEIGHT, type OverlayBarProps } from './shared/OverlayBar.types';
+import { useTranslation } from '../../services/i18n';
 
 // iOS = 사각 "프레임" 배너. Android의 떠 있는 알약과 의도적으로 다른 형태를 쓴다 — iOS는 다른 앱
 // 위에 진짜 시스템 오버레이를 띄울 수 없고(실기기에서는 ActivityKit Live Activity/Dynamic Island가
@@ -10,6 +11,7 @@ import { OVERLAY_BAR_HEIGHT, type OverlayBarProps } from './shared/OverlayBar.ty
 // 형태(여백 없는 사각 프레임 vs 여백 있는 알약)로 "이건 시스템 오버레이가 아니라 앱 내부 프레임"이라는
 // 차이를 시각적으로도 드러낸다. Auto Next 토글은 없음(supportsAutoNext=false, capability 플래그).
 export function OverlayBar({ remainingMinutes, onToggleExpanded }: OverlayBarProps) {
+  const { t } = useTranslation();
   return (
     <Pressable style={styles.frame} onPress={onToggleExpanded} accessibilityRole="button" accessibilityLabel="Pace status">
       <View style={styles.accent} />
@@ -18,7 +20,7 @@ export function OverlayBar({ remainingMinutes, onToggleExpanded }: OverlayBarPro
           <Text style={styles.title}>Pace</Text>
           <Text style={styles.remaining}>⏱ {formatRemaining(remainingMinutes)}</Text>
         </View>
-        <Text style={styles.hint}>Tap for details</Text>
+        <Text style={styles.hint}>{t('overlay.tapForDetails')}</Text>
       </View>
     </Pressable>
   );

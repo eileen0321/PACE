@@ -692,6 +692,57 @@ Android AccessibilityService(Auto Next 감지), iOS ActivityKit(Live Activity), 
 
 ---
 
+## i18n / 리뷰어 화이트리스트 / 결제 로그인 가드 (2026-07-17) — jlpt-master 공용 자산 이식
+
+"jlpt-master에서 공용으로 가져올 건 다 가져와라"는 지시에 따라, 언어 설정·심사관 우회·결제 전
+로그인 가드를 jlpt-master의 실전 검증된 패턴 그대로 이식했다(단, 시각적 요소는 Pace 자체 플랫
+디자인 원칙과 충돌하지 않는 범위로 제한 — 아래 "포팅하지 않은 것" 참고).
+
+### 언어 설정 (jlpt-master `src/i18n/index.ts` + `LangContext.tsx` 패턴)
+- **`services/i18n/translations.ts`**: `{ en: {...}, ko: {...} }` 딕셔너리. jlpt-master는 화면 구분
+  없이 완전 플랫 구조를 쓰지만(문자열이 72KB, JLPT 콘텐츠가 훨씬 많아서), Pace는 문자열 수가
+  훨씬 적어 화면별로 중첩(`home.*`, `focus.*` 등)해 가독성을 높였다 — 접근 방식(`t(key)`,
+  파라미터 보간)은 동일하게 유지.
+- **번역 원칙(사용자 지시 반영)**: 문장/설명은 자연스러운 한국어로 의역하되, 이미 굳어진 짧은
+  기능명(`Auto Next`, `Sleep Timer`, `Daily Limit`, `ON`/`OFF`, `PRO MEMBER` 등)은 한국어 UI에서도
+  영문 그대로 유지 — "무조건 전부 한글화" 금지. 오버레이 압축 표기(`23m Left`)는
+  `formatRemaining.ts`에 명시했듯 로케일 무관으로 고정(화면이 좁아 압축 표기가 필수).
+- **`services/i18n/index.ts`**: `useTranslation()` 훅이 `useSettingsStore.settings.language`를
+  구독해 언어 변경 시 자동 리렌더 — jlpt-master의 `LangContext`(React Context)와 달리 Pace는
+  기존 "확정 결정"(Zustand 우선)을 그대로 따라 Context 없이 구현했다. `language: 'system'`이면
+  `expo-localization`의 기기 로케일을 따르고(ko가 아니면 en으로 폴백), `'en'`/`'ko'`로 직접 고정도
+  가능 — Settings 탭에 System/English/한국어 3단 선택 칩 추가.
+- `types/models.ts`의 `UserSettings.language` + `database/schema.ts`의 `user_settings.language`
+  컬럼(SQLite 미러)까지 일관되게 추가.
+
+### 스토어 심사관 화이트리스트 (jlpt-master `src/config/reviewers.ts` + `PremiumContext.tsx` 이식)
+- **`constants/reviewers.ts`**: `REVIEWER_EMAILS` 배열 + `isReviewerEmail()`. 이 이메일로 소셜
+  로그인하면 RC(RevenueCat) 응답과 무관하게 로컬에서 즉시 프리미엄을 부여한다 — 애플/구글 심사관이
+  프리미엄 기능을 결제 없이 검증할 수 있어야 앱 심사를 통과할 수 있다(히든 리뷰어 링크 없이 이메일
+  화이트리스트만으로 판정하는 방식이 일반 유저의 프리미엄 우회를 막으면서도 심사관 접근은 보장).
+- **`useSubscriptionStore.identify()`**: `userId`(=이메일, jlpt-master 계약)가 화이트리스트에 있으면
+  `isReviewer: true` + `isPremium: true`로 즉시 확정하고, 이후 `applyCustomerInfo()`(RC 콜백)는
+  `isReviewer`가 true인 동안 절대 덮어쓰지 않는다 — jlpt-master가 실제로 겪은 버그("리뷰어인데
+  RC entitlement가 나중에 도착해 무료로 되돌아감")를 처음부터 방지.
+- Settings 화면 플랜 배지가 심사관 세션에서는 "REVIEWER"로 별도 표시(일반 PRO MEMBER와 구분).
+
+### 결제 전 로그인 가드 (jlpt-master `PremiumPaywallModal.tsx`의 `blockIfNotSignedIn` 로직만 이식)
+- `app/paywall/index.tsx`에 게스트/비로그인 상태에서 결제를 막는 가드 추가 — 로그인 없이 결제하면
+  RC가 익명 ID로 구매를 잡아 이후 실제 계정 이메일과 영영 매칭이 안 되는 사고가 날 수 있다
+  (jlpt-master가 2026-07-17 실결제 사고로 직접 확인한 리스크). 비로그인 상태로 구매/복원을 누르면
+  로그인 화면으로 안내하는 Alert를 띄우고 결제 자체는 진행하지 않는다.
+
+### 포팅하지 않은 것 (의도적 제외)
+`PremiumPaywallModal.tsx`의 시각 요소(골드 그라디언트 왕관 배지, `GlassBlurLayer`, 컨페티,
+PanResponder 드래그-닫기, 다크모드 테마 시스템)는 이식하지 않았다 — Pace 기획서의 디자인 원칙
+("No Gradients, No Glassmorphism, No 3D")과 정면으로 배치되고, 이걸 온전히 가져오려면
+`GlassBlurLayer`/`AppAlertSheet`/`useReduceMotion`/`useSheetNavBarColor`/`DarkModeContext`/
+`prodLogger` 등 jlpt-master 전용 인프라를 통째로 이식해야 해서 비용 대비 가치가 낮다고 판단.
+**로직(가드·플랜 선택·구매/복원 흐름)만 골라 이식하고 화면은 Pace 자체 플랫 디자인을 유지**하는
+쪽이 "가져올 건 다 가져오되 Pace 정체성은 지킨다"는 절충으로 적절하다고 판단했다.
+
+---
+
 ## 진행 상황
 
 - [x] Expo TypeScript 프로젝트 생성 (`create-expo-app` blank-typescript)
@@ -707,11 +758,17 @@ Android AccessibilityService(Auto Next 감지), iOS ActivityKit(Live Activity), 
 - [x] AppCapabilities 통합 서비스, 앱별 Auto Next override, 앱별 사용량 쿼리, Auto Next 스토어 리스크 feature-flag (외부 리뷰 2차 반영)
 - [x] Repository 계층 분리(sessions/stats), jlpt-master RevenueCat 웹훅 계약 문서화, RC identify/reset 로그인 연동 (외부 리뷰 3차 반영)
 - [x] useSessionStore/useCapabilityStore, settingsRepository/subscriptionRepository(SQLite 미러), Google/Apple 소셜 로그인 SDK 코드 연동, Android Overlay 네이티브 POC(`modules/pace-overlay`) (외부 리뷰 4차 반영)
+- [x] 실기기(pace_test AVD) 빌드/설치/전체 탭 네비게이션 검증 + 발견된 버그 7종 수정(게스트 폴백, SQLite 레이스, 순환참조, Unmatched Route 등) — "실기기 검증 1차" 섹션
+- [x] Android Overlay 네이티브 모듈 컴파일 성공 + `hasOverlayPermission`/`requestOverlayPermission`이 실제 Android 설정 화면을 여는 것까지 확인(실제 `WindowManager` 오버레이 렌더는 아직 육안 미확인)
+- [x] i18n 시스템(jlpt-master `i18n`/`LangContext` 패턴 이식, `services/i18n`) + Settings 언어 선택 UI
+- [x] 스토어 심사관 화이트리스트(jlpt-master `reviewers.ts`/`PremiumContext` 패턴 이식, `constants/reviewers.ts` + `useSubscriptionStore.isReviewer`)
+- [x] 결제 전 로그인 가드(jlpt-master `PremiumPaywallModal.blockIfNotSignedIn` 로직 이식, 시각 요소는 Pace 플랫 디자인 유지)
 - [ ] RevenueCat 연동 실키 발급 및 실기기 검증 (현재는 `EXPO_PUBLIC_RC_*` 미설정 시 로컬 캐시 폴백만 동작)
 - [ ] Google/Apple 로그인 실기기 검증 (실키 + `npx expo prebuild` + EAS Dev Client 빌드 필요, 코드 자체는 완료)
-- [ ] Android Overlay 네이티브 POC 컴파일/실기기 검증 (`modules/pace-overlay` — 코드 작성 완료, prebuild+빌드 전)
+- [ ] Android Overlay `WindowManager` 실제 렌더 재확인 (권한 허용 상태 유지한 채 깨끗하게 재테스트 필요 — "실기기 검증 1차" 미해결 항목 참고)
 - [ ] 커스텀 백엔드 서버 자체 구현(현재 `API_BASE_URL`은 자리표시자, 실제 서버 없음)
 - [ ] Android AccessibilityService(Auto Next 감지), Bubbles(17+) 네이티브 모듈
 - [ ] iOS 네이티브 모듈(ActivityKit, FamilyControls) — EAS Dev Client 빌드 전제, 별도 작업
 - [ ] 폰트 파일 추가(Inter/Plus Jakarta Sans/JetBrains Mono) 후 `typography.displayFontFamily`/`monoFontFamily` 연결
 - [ ] "Wholesome Feed Breakdown" 카테고리 실계측(현재 정적 목업 비율)
+- [ ] `REVIEWER_EMAILS`에 실제 스토어 제출용 테스트 계정 등록(현재 빈 배열 — 스토어 제출 전 필수)

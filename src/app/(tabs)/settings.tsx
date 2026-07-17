@@ -5,32 +5,45 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
+import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing } from '../../constants/theme';
+import type { UserSettings } from '../../types/models';
+
+const LANGUAGE_OPTIONS: { value: UserSettings['language']; labelKey: 'settings.languageSystem' | 'settings.languageEnglish' | 'settings.languageKorean' }[] = [
+  { value: 'system', labelKey: 'settings.languageSystem' },
+  { value: 'en', labelKey: 'settings.languageEnglish' },
+  { value: 'ko', labelKey: 'settings.languageKorean' },
+];
 
 // healthy-shorts-assistant의 SettingsTab.tsx 포팅: 프로필 카드 / 구독 플랜 선택 / 앱 환경설정+개발자
-// 도구 / 지원. "Reset All App Data"는 원본이 로컬스토리지 리셋이었던 것을 실제 로그아웃+SQLite 초기화로
-// 대체(services/storage/keys.ts의 USER_SCOPED_KEYS 사용, PACE_ARCHITECTURE.md DB 스키마 섹션 참고).
+// 도구 / 지원 + 언어 설정(jlpt-master LangProvider 패턴 이식, PACE_ARCHITECTURE.md i18n 섹션 참고).
+// "Reset All App Data"는 원본이 로컬스토리지 리셋이었던 것을 실제 로그아웃+SQLite 초기화로 대체
+// (services/storage/keys.ts의 USER_SCOPED_KEYS 사용, PACE_ARCHITECTURE.md DB 스키마 섹션 참고).
 export default function SettingsScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const logout = useUserStore((s) => s.logout);
   const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const isReviewer = useSubscriptionStore((s) => s.isReviewer);
+  const { settings, update } = useSettingsStore();
   const [pushReminders, setPushReminders] = useState(true);
 
-  const name = (user?.name ?? user?.email?.split('@')[0] ?? 'Guest').trim();
+  const name = (user?.name ?? user?.email?.split('@')[0] ?? t('settings.guestLabel')).trim();
   const initials = name.slice(0, 2).toUpperCase();
 
   const onReset = () => {
-    Alert.alert('Reset All App Data', 'Clear local storage and reset usage logs?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: () => logout() },
+    Alert.alert(t('settings.resetConfirmTitle'), t('settings.resetConfirmMessage'), [
+      { text: t('settings.cancel'), style: 'cancel' },
+      { text: t('settings.reset'), style: 'destructive', onPress: () => logout() },
     ]);
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.screenTitle}>Settings</Text>
+        <Text style={styles.screenTitle}>{t('settings.screenTitle')}</Text>
 
         <View style={[styles.card, styles.profileCard]}>
           <View style={styles.profileLeft}>
@@ -39,57 +52,76 @@ export default function SettingsScreen() {
             </View>
             <View>
               <Text style={styles.profileName}>{name}</Text>
-              <Text style={styles.profileEmail}>{user?.isGuest ? '게스트 계정' : user?.email ?? '-'}</Text>
+              <Text style={styles.profileEmail}>{user?.isGuest ? t('settings.guestLabel') : user?.email ?? '-'}</Text>
             </View>
           </View>
           <View style={styles.planBadge}>
-            <Text style={styles.planBadgeText}>{isPremium ? 'PRO MEMBER' : 'FREE'}</Text>
+            <Text style={styles.planBadgeText}>{isPremium ? (isReviewer ? 'REVIEWER' : t('settings.proMember')) : t('settings.free')}</Text>
           </View>
         </View>
 
-        <Section title="Premium Plan Membership">
+        <Section title={t('settings.planSection')}>
           <Pressable style={styles.card} onPress={() => router.push('/paywall')}>
             <View style={styles.planRow}>
               <Feather name={isPremium ? 'check-circle' : 'circle'} size={20} color={isPremium ? colors.primary : colors.border} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>Pace Premium Plus</Text>
-                <Text style={styles.rowSubtitle}>All advanced blockers, shields & unlimited respiration triggers</Text>
+                <Text style={styles.rowTitle}>{t('settings.planTitle')}</Text>
+                <Text style={styles.rowSubtitle}>{t('settings.planDesc')}</Text>
               </View>
             </View>
           </Pressable>
         </Section>
 
-        <Section title="App Preferences & Developer Tools">
+        <Section title={t('settings.languageSection')}>
+          <View style={styles.card}>
+            <View style={styles.languageRow}>
+              {LANGUAGE_OPTIONS.map((opt) => {
+                const active = settings.language === opt.value;
+                return (
+                  <Pressable
+                    key={opt.value}
+                    onPress={() => update({ language: opt.value })}
+                    style={[styles.languageChip, active && styles.languageChipActive]}
+                  >
+                    <Text style={[styles.languageChipText, active && styles.languageChipTextActive]}>{t(opt.labelKey)}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </Section>
+
+        <Section title={t('settings.prefsSection')}>
           <View style={styles.card}>
             <View style={styles.row}>
               <View>
-                <Text style={styles.rowTitle}>Push Rest Reminders</Text>
-                <Text style={styles.rowSubtitle}>Send break prompts during active browsing</Text>
+                <Text style={styles.rowTitle}>{t('settings.pushReminders')}</Text>
+                <Text style={styles.rowSubtitle}>{t('settings.pushRemindersDesc')}</Text>
               </View>
               <Switch value={pushReminders} onValueChange={setPushReminders} trackColor={{ true: colors.primary, false: colors.border }} />
             </View>
             <Pressable onPress={onReset} style={styles.rowLast}>
               <View>
-                <Text style={[styles.rowTitle, { color: colors.danger }]}>Reset All App Data</Text>
-                <Text style={styles.rowSubtitle}>Clear local storage and reset usage logs</Text>
+                <Text style={[styles.rowTitle, { color: colors.danger }]}>{t('settings.resetData')}</Text>
+                <Text style={styles.rowSubtitle}>{t('settings.resetDataDesc')}</Text>
               </View>
               <Feather name="refresh-cw" size={16} color={colors.danger} />
             </Pressable>
           </View>
         </Section>
 
-        <Section title="Support & Info">
+        <Section title={t('settings.supportSection')}>
           <View style={styles.card}>
             <View style={styles.row}>
-              <Text style={styles.rowTitle}>How our algorithms prevent doom-scrolling</Text>
+              <Text style={styles.rowTitle}>{t('settings.supportAlgorithm')}</Text>
               <Feather name="chevron-right" size={16} color={colors.textSecondary} />
             </View>
             <View style={styles.row}>
-              <Text style={styles.rowTitle}>Submit feedback & request content</Text>
+              <Text style={styles.rowTitle}>{t('settings.supportFeedback')}</Text>
               <Feather name="chevron-right" size={16} color={colors.textSecondary} />
             </View>
             <View style={styles.rowLast}>
-              <Text style={styles.rowSubtitle}>Version</Text>
+              <Text style={styles.rowSubtitle}>{t('settings.version')}</Text>
               <Text style={styles.rowSubtitle}>v1.0.0</Text>
             </View>
           </View>
@@ -124,6 +156,11 @@ const styles = StyleSheet.create({
   planBadge: { backgroundColor: colors.primaryTint, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   planBadgeText: { fontSize: 10, fontWeight: '700', color: colors.primary },
   planRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  languageRow: { flexDirection: 'row', gap: spacing.sm },
+  languageChip: { flex: 1, paddingVertical: spacing.sm, borderRadius: radius.chip, backgroundColor: colors.background, alignItems: 'center' },
+  languageChipActive: { backgroundColor: colors.primary },
+  languageChipText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+  languageChipTextActive: { color: '#FFFFFF' },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.background },
   rowLast: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
   rowTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },

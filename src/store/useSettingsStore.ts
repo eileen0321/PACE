@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     tiktok: { autoNext: null, dailyLimitMinutes: null },
   },
   theme: 'system',
+  language: 'system',
 };
 
 type SettingsState = {

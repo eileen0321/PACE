@@ -1,9 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 
 // healthy-shorts-assistant의 StartShortsButton.tsx 포팅.
 export function StartShortsButton({ onPress, isLimitReached }: { onPress: () => void; isLimitReached: boolean }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.wrap}>
       <Pressable
@@ -12,11 +14,11 @@ export function StartShortsButton({ onPress, isLimitReached }: { onPress: () => 
         style={[styles.button, isLimitReached ? styles.buttonDisabled : styles.buttonActive]}
       >
         <Feather name="play" size={18} color={isLimitReached ? colors.textSecondary : '#FFFFFF'} />
-        <Text style={[styles.buttonText, isLimitReached && { color: colors.textSecondary }]}>Start Shorts</Text>
+        <Text style={[styles.buttonText, isLimitReached && { color: colors.textSecondary }]}>{t('home.startShorts')}</Text>
         <Feather name="zap" size={16} color={isLimitReached ? colors.textSecondary : 'rgba(255,255,255,0.8)'} />
       </Pressable>
       <Text style={styles.hint}>
-        {isLimitReached ? 'You have reached your daily healthy viewing limit.' : 'Tap to begin your Pace-managed session'}
+        {isLimitReached ? t('home.startHintLimitReached') : t('home.startHintActive')}
       </Text>
     </View>
   );

@@ -4,16 +4,17 @@ import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing } from '../../constants/theme';
 
 // healthy-shorts-assistant의 StatsTab.tsx 포팅. "Wholesome Feed Breakdown" 카테고리 비중은
 // 원본이 정적 목업 값이었다 — 실제 시청 카테고리 트래킹(뮤직/브레스/스트레치 등 분류)은
 // 아직 계측하지 않으므로 TODO로 남기고 레이아웃만 이식.
 const CATEGORIES = [
-  { name: 'Respiration & Breath', percentage: 45, icon: 'wind' as const, color: '#F59E0B', bg: '#FEF3E2' },
-  { name: 'Nature & Ambience', percentage: 30, icon: 'compass' as const, color: colors.primary, bg: colors.primaryTint },
-  { name: 'Micro-Learning & Philosophy', percentage: 15, icon: 'book-open' as const, color: '#10B981', bg: '#E6F7F1' },
-  { name: 'Yoga & Physical Stretches', percentage: 10, icon: 'heart' as const, color: '#F43F5E', bg: '#FEE7EA' },
+  { key: 'categoryBreath' as const, percentage: 45, icon: 'wind' as const, color: '#F59E0B', bg: '#FEF3E2' },
+  { key: 'categoryNature' as const, percentage: 30, icon: 'compass' as const, color: colors.primary, bg: colors.primaryTint },
+  { key: 'categoryLearning' as const, percentage: 15, icon: 'book-open' as const, color: '#10B981', bg: '#E6F7F1' },
+  { key: 'categoryYoga' as const, percentage: 10, icon: 'heart' as const, color: '#F43F5E', bg: '#FEE7EA' },
 ];
 
 function computeStreak(weeklyStats: { date: string; totalMinutes: number }[]): number {
@@ -31,6 +32,7 @@ function computeStreak(weeklyStats: { date: string; totalMinutes: number }[]): n
 }
 
 export default function StatsScreen() {
+  const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
   const { weeklyStats, refresh } = useStatsStore();
 
@@ -45,55 +47,55 @@ export default function StatsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.screenTitle}>Insights</Text>
+        <Text style={styles.screenTitle}>{t('stats.screenTitle')}</Text>
 
-        <Section title="Daily Streak & Achievements">
+        <Section title={t('stats.streakSection')}>
           <View style={[styles.card, styles.streakCard]}>
             <View style={styles.streakLeft}>
               <View style={styles.streakIcon}>
                 <Feather name="zap" size={26} color="#F97316" />
               </View>
               <View>
-                <Text style={styles.streakValue}>{streak} Day Streak</Text>
-                <Text style={styles.streakDesc}>Keep your healthy rest cycle going</Text>
+                <Text style={styles.streakValue}>{t('stats.dayStreak', { n: streak })}</Text>
+                <Text style={styles.streakDesc}>{t('stats.streakDesc')}</Text>
               </View>
             </View>
             <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>ACTIVE</Text>
+              <Text style={styles.activeBadgeText}>{t('stats.active')}</Text>
             </View>
           </View>
         </Section>
 
-        <Section title="Wellness Summary">
+        <Section title={t('stats.wellnessSection')}>
           <View style={styles.card}>
-            <Row title="Weekly Total Duration" subtitle="Aggregate mindful screen-time" value={`${totalMinutesThisWeek} min`} />
+            <Row title={t('stats.weeklyTotal')} subtitle={t('stats.weeklyTotalDesc')} value={`${totalMinutesThisWeek} ${t('home.minUnit')}`} />
             <Row
-              title="Peak Day Duration"
-              subtitle="Highest single day this week"
-              value={highestDay ? `${highestDay.date.slice(5)} (${highestDay.totalMinutes}m)` : '-'}
+              title={t('stats.peakDay')}
+              subtitle={t('stats.peakDayDesc')}
+              value={highestDay ? `${highestDay.date.slice(5)} (${highestDay.totalMinutes}${t('home.minUnit')})` : '-'}
             />
             <View style={styles.rowLast}>
               <View>
-                <Text style={styles.rowTitle}>Mindful Pacing Index</Text>
-                <Text style={styles.rowSubtitle}>Rate of healthy auto-pauses</Text>
+                <Text style={styles.rowTitle}>{t('stats.pacingIndex')}</Text>
+                <Text style={styles.rowSubtitle}>{t('stats.pacingIndexDesc')}</Text>
               </View>
               <View style={styles.excellentBadge}>
-                <Text style={styles.excellentText}>EXCELLENT</Text>
+                <Text style={styles.excellentText}>{t('stats.excellent')}</Text>
               </View>
             </View>
           </View>
         </Section>
 
-        <Section title="Wholesome Feed Breakdown">
+        <Section title={t('stats.feedBreakdownSection')}>
           <View style={[styles.card, { gap: spacing.md }]}>
             {CATEGORIES.map((cat) => (
-              <View key={cat.name} style={{ gap: 6 }}>
+              <View key={cat.key} style={{ gap: 6 }}>
                 <View style={styles.catRow}>
                   <View style={styles.catLeft}>
                     <View style={[styles.catIcon, { backgroundColor: cat.bg }]}>
                       <Feather name={cat.icon} size={13} color={cat.color} />
                     </View>
-                    <Text style={styles.catName}>{cat.name}</Text>
+                    <Text style={styles.catName}>{t(`stats.${cat.key}`)}</Text>
                   </View>
                   <Text style={styles.catPct}>{cat.percentage}%</Text>
                 </View>

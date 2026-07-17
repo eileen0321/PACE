@@ -1,8 +1,10 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 
 // healthy-shorts-assistant의 UsageHero.tsx 포팅. 테스터용 +/-분 조절 버튼은 프로토타입 전용이라 제외.
 export function UsageHeroCard({ minutesWatched, limitMinutes }: { minutesWatched: number; limitMinutes: number }) {
+  const { t } = useTranslation();
   const percentage = Math.min(100, (minutesWatched / Math.max(1, limitMinutes)) * 100);
   const remainingTime = Math.max(0, limitMinutes - minutesWatched);
   const remainingPercentage = Math.round(100 - percentage);
@@ -10,10 +12,10 @@ export function UsageHeroCard({ minutesWatched, limitMinutes }: { minutesWatched
   return (
     <View style={styles.wrap}>
       <View style={styles.card}>
-        <Text style={styles.label}>TODAY'S USAGE</Text>
+        <Text style={styles.label}>{t('home.usageTitle')}</Text>
         <View style={styles.valueRow}>
           <Text style={styles.value}>{minutesWatched}</Text>
-          <Text style={styles.valueUnit}> / {limitMinutes} min</Text>
+          <Text style={styles.valueUnit}> / {limitMinutes} {t('home.minUnit')}</Text>
         </View>
 
         <View style={styles.track}>
@@ -22,15 +24,15 @@ export function UsageHeroCard({ minutesWatched, limitMinutes }: { minutesWatched
 
         <View style={styles.footer}>
           <View>
-            <Text style={styles.footerLabel}>REMAINING</Text>
+            <Text style={styles.footerLabel}>{t('home.remainingLabel')}</Text>
             {remainingTime > 0 ? (
-              <Text style={styles.footerValue}>{remainingTime} min left today</Text>
+              <Text style={styles.footerValue}>{t('home.remainingSuffix', { n: remainingTime })}</Text>
             ) : (
-              <Text style={[styles.footerValue, { color: colors.danger }]}>Daily Limit Reached</Text>
+              <Text style={[styles.footerValue, { color: colors.danger }]}>{t('home.limitReached')}</Text>
             )}
           </View>
           <View style={styles.pctBadge}>
-            <Text style={styles.pctText}>{remainingPercentage}% Left</Text>
+            <Text style={styles.pctText}>{t('home.percentLeft', { n: remainingPercentage })}</Text>
           </View>
         </View>
       </View>

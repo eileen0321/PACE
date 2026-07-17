@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 import type { DailyStats } from '../../types/models';
 
 function dayLetter(dateStr: string): string {
@@ -12,6 +13,7 @@ function dayLetter(dateStr: string): string {
 // healthy-shorts-assistant의 WeeklyGraph.tsx 포팅. 데이터 소스는 웹 프로토타입의 목업 배열 대신
 // useStatsStore().weeklyStats(SQLite 집계)를 사용 — 요일 라벨/오늘 판정 로직만 그대로 이식.
 export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<DailyStats | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const maxMinutes = Math.max(60, ...weeklyStats.map((d) => d.totalMinutes));
@@ -24,14 +26,14 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
           <View>
             <View style={styles.titleRow}>
               <Feather name="calendar" size={13} color={colors.primary} />
-              <Text style={styles.title}>이번 주 평균</Text>
+              <Text style={styles.title}>{t('home.weeklyAvgTitle')}</Text>
             </View>
             <View style={styles.avgRow}>
               <Text style={styles.avgValue}>{avg}</Text>
-              <Text style={styles.avgUnit}>분</Text>
+              <Text style={styles.avgUnit}>{t('home.minUnit')}</Text>
               <View style={styles.healthyBadge}>
                 <Feather name="trending-up" size={11} color={colors.success} />
-                <Text style={styles.healthyText}>Healthy</Text>
+                <Text style={styles.healthyText}>{t('home.healthy')}</Text>
               </View>
             </View>
           </View>
@@ -39,11 +41,11 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
             {selected ? (
               <View style={styles.tooltip}>
                 <Text style={styles.tooltipText}>
-                  {selected.date.slice(5)}: <Text style={styles.tooltipStrong}>{selected.totalMinutes} min</Text>
+                  {selected.date.slice(5)}: <Text style={styles.tooltipStrong}>{selected.totalMinutes} {t('home.minUnit')}</Text>
                 </Text>
               </View>
             ) : (
-              <Text style={styles.tapHint}>Tap a bar for details</Text>
+              <Text style={styles.tapHint}>{t('home.tapBarHint')}</Text>
             )}
           </View>
         </View>
@@ -68,15 +70,15 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
               </Pressable>
             );
           })}
-          {weeklyStats.length === 0 && <Text style={styles.empty}>기록 없음</Text>}
+          {weeklyStats.length === 0 && <Text style={styles.empty}>{t('home.noRecords')}</Text>}
         </View>
 
         <View style={styles.footer}>
           <View style={styles.footerLeft}>
             <View style={styles.dot} />
-            <Text style={styles.footerText}>Today</Text>
+            <Text style={styles.footerText}>{t('home.today')}</Text>
           </View>
-          <Text style={styles.footerText}>Goal: Under 60 min</Text>
+          <Text style={styles.footerText}>{t('home.goalUnder', { n: 60 })}</Text>
         </View>
       </View>
     </View>

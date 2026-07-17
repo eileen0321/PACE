@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- 이 모듈의 매니페스트는 Gradle 매니페스트 병합으로 앱 최종 AndroidManifest.xml에 자동 합쳐진다
+       (Expo Modules API 로컬 모듈 컨벤션) — 별도 config plugin으로 권한을 추가할 필요 없음. -->
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+  <application>
+    <service
+      android:name="expo.modules.paceoverlay.PaceOverlayService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Pace digital-wellbeing session overlay" />
+    </service>
+  </application>
+</manifest>

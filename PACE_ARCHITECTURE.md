@@ -630,6 +630,68 @@ Android AccessibilityService(Auto Next 감지), iOS ActivityKit(Live Activity), 
 
 ---
 
+## 실기기(에뮬레이터) 검증 1차 (2026-07-17) — pace_test AVD
+
+기존에 다른 프로젝트(jlpt_test, jlpt_test2 AVD) 검증용으로 쓰던 에뮬레이터와 별도로 Pace 전용
+**`pace_test`** AVD(Android 14, google_apis, x86_64, Pixel 6 프로필)를 새로 만들어 `npx expo prebuild`
++ `npx expo run:android`로 실제 네이티브 빌드·설치·구동까지 검증했다. 코드를
+[github.com/eileen0321/PACE](https://github.com/eileen0321/PACE)에 최초 push.
+
+### 빌드 단계에서 발견·수정한 버그 (전부 이번에 처음 실제 컴파일해봐서 드러남)
+1. **`modules/pace-overlay/android/build.gradle`이 이 프로젝트의 Expo/AGP 버전과 안 맞는 옛날 API**
+   (`ExpoModulesCorePlugin.gradle` + `getDefaultConfigProperty()`) 사용 — 실제 설치된 다른 Expo 모듈
+   (`node_modules/expo-blur/android/build.gradle`)을 참고해 현재 표준인
+   `plugins { id 'expo-module-gradle-plugin' }` 패턴으로 교체.
+2. **`react-native-worklets` 누락** — Reanimated 4.x가 별도 peer dependency로 분리했는데 설치 안 돼
+   있어서 Gradle이 즉시 실패. `npx expo install react-native-worklets`로 해결.
+3. **`PaceOverlayModule.kt` Kotlin 컴파일 에러**: 0-인자 `Function`/`AsyncFunction` 블록에서 값 없는
+   `return@Function`(암묵적 `Unit`)을 쓰면 Expo Modules DSL이 기대하는 `Any?`와 타입이 안 맞는다 —
+   `appContext.reactContext?.let { }` 패턴으로 이른 return을 제거해 해결.
+
+### 런타임에서 발견·수정한 버그 (빌드 성공 후 실제 탭/화면 조작으로 발견)
+4. **Expo Router `Unmatched Route`** — `/(tabs)/home.tsx`는 있는데 루트 `/`에 매칭되는 라우트가 없어서
+   콜드 스타트마다 404 화면이 떴다. `src/app/index.tsx`(→`/(tabs)/home` 리다이렉트) 신설로 해결.
+5. **`useUserStore` ↔ `useSubscriptionStore` 순환참조** — Metro가 띄우는 지속형 LogBox 경고 배너가
+   화면 하단 탭바 터치 영역을 실질적으로 가로막았다(시각적으로는 안 겹쳐 보여도 터치가 안 먹힘).
+   `useSubscriptionStore`에 자체 `currentUserId` 상태를 둬서 `useUserStore`를 import하지 않도록
+   순환을 끊어 해결 — 배너도 사라지고 탭 네비게이션도 정상화됨.
+6. **게스트 로그인 폴백 부재(가장 심각)**: 백엔드가 아직 없어(`API_BASE_URL` 자리표시자) `loginAsGuest()`의
+   네트워크 호출이 항상 실패하는데, 예전 코드는 실패 시 그냥 포기해 `user`가 영원히 `null`로 남았다.
+   Home 화면 등은 `user?.email ?? 'guest@pace.app'` 같은 폴백 문구 때문에 겉보기엔 "Guest"로 정상
+   렌더돼 문제를 못 알아챘지만, `user.id`를 요구하는 모든 SQLite 흐름(`app/overlay`의 세션 시작 등)이
+   조용히 broken 상태였다 — Overlay 진입 시 "0m Left"만 계속 뜨는 증상으로 발견. `deviceId` 기반
+   로컬 전용 유저(`local-${deviceId}`)로 폴백하도록 수정.
+7. **`database/db.ts` 싱글톤 레이스**: `dbInstance`(값)만 캐싱해서, `openDatabaseAsync()`가 resolve되기
+   전에 동시에 여러 곳에서 `getDb()`를 부르면(세션을 빠르게 여러 번 시작하는 등) 각자 별도 커넥션을
+   열고 동시에 `execAsync(SCHEMA_SQL)`을 실행 — 네이티브 브릿지에서
+   `NativeDatabase.prepareAsync` NullPointerException을 유발했다. `dbInstance` 대신 in-flight
+   **Promise 자체**를 캐싱하도록 수정.
+
+### 성공적으로 검증된 것
+- `expo-modules-autolinking resolve --platform android` 결과에 `pace-overlay` 모듈이 정확히
+  잡히고, 실제 Gradle 빌드에도 `Using expo modules: ... pace-overlay (0.1.0)`으로 포함됨.
+- 앱 설치·구동, 4개 탭(Home/Stats/Focus/Settings) 전체 네비게이션 정상.
+- `capabilities.supportsAutoNext`가 `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 미설정 시 정확히 `false`로 평가돼
+  Focus 탭에서 Auto Next 토글이 자동으로 숨겨짐 — capability 게이팅이 실기기에서도 의도대로 동작.
+- Start Shorts → `/overlay` 진입 → SQLite 세션 기록 → `OverlayBar`(Android 플로팅 pill)에
+  "Pace ⏱ 60m Left / AUTO ON" 정상 표시, DEV SIMULATOR 콘텐츠(healthy-shorts-assistant curated
+  video 이식분)도 정상.
+- **`PaceOverlay.hasOverlayPermission()`/`requestOverlayPermission()`이 실제로 Android
+  "다른 앱 위에 표시" 시스템 설정 화면을 열고, 권한 허용/거부 상태를 JS가 정확히 읽어온다** —
+  JS→Kotlin 네이티브 브릿지가 실기기에서 end-to-end로 동작함을 확인한 것이 이번 검증의 핵심 성과.
+
+### 미해결 (다음 라운드)
+- **`PaceOverlayService`의 실제 `WindowManager` 오버레이 렌더링은 육안으로 아직 확인 못 함** — 권한을
+  허용한 뒤 재시도했으나, `pm clear`로 앱 데이터를 반복 초기화하며 테스트하는 과정에서 권한이 같이
+  초기화되거나 좌표 실수로 토글을 놓치는 등 수동 테스트 자체의 재현성이 흔들려 결론을 못 냈다.
+  다음엔 (1) 권한을 한 번 허용한 뒤 앱 데이터를 건드리지 않고 (2) 홈으로 나가서 (3) 오버레이 뷰가
+  실제로 그려지는지만 깨끗하게 재확인할 것.
+- 좌표 기반 UI 자동화 시 `adb shell input tap`은 **스크린샷의 displayed 픽셀이 아니라 항상 실제
+  기기 해상도 좌표**를 써야 하고(이번에 여러 번 실수함), `uiautomator dump`로 정확한 `bounds`를
+  구해서 중심좌표를 계산하는 편이 훨씬 안전하다 — 다음 실기기 테스트 세션을 위한 메모.
+
+---
+
 ## 진행 상황
 
 - [x] Expo TypeScript 프로젝트 생성 (`create-expo-app` blank-typescript)

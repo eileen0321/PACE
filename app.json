@@ -35,7 +35,8 @@
       "expo-status-bar",
       "expo-splash-screen",
       "@react-native-google-signin/google-signin",
-      "expo-localization"
+      "expo-localization",
+      "expo-font"
     ]
   }
 }

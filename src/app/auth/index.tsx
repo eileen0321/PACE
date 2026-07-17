@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { googleAuth } from '../../services/auth/google';
 import { useTranslation } from '../../services/i18n';
-import { colors, radius, spacing } from '../../constants/theme';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // Google/Apple 실제 SDK 연동 완료(services/auth/google.ts, apple.ts) — 다만 실기기 검증은
 // EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID 등 실제 키 + EAS Dev Client 빌드가 있어야 가능(Expo Go 불가).
@@ -75,9 +75,9 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
   content: { flex: 1, justifyContent: 'center', gap: spacing.md },
-  title: { fontSize: 28, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.md },
+  title: { fontSize: 28, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary, marginBottom: spacing.md },
   button: { backgroundColor: colors.card, borderRadius: radius.button, paddingVertical: spacing.md, alignItems: 'center' },
-  buttonText: { fontWeight: '700', color: colors.textPrimary },
+  buttonText: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   guestButton: { paddingVertical: spacing.md, alignItems: 'center' },
-  guestText: { color: colors.textSecondary, fontWeight: '600' },
+  guestText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold },
 });

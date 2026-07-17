@@ -14,4 +14,10 @@ export const overlayService: OverlayService = {
   async endSession() {
     // NativeModules.PaceLiveActivity.end() 연결 예정
   },
+  async hasForegroundDetectionPermission() {
+    return true; // iOS는 포그라운드 앱 감지 개념 자체가 없음(오버레이 대신 Live Activity/Pace Player) — no-op
+  },
+  async requestForegroundDetectionPermission() {
+    // no-op
+  },
 };

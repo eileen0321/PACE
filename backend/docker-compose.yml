@@ -1,0 +1,22 @@
+# 로컬 개발/검증 전용 — Railway 실배포는 별도 승인 필요(PACE_ARCHITECTURE.md "스코프 밖" 참고).
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: pace
+      MYSQL_USER: pace
+      MYSQL_PASSWORD: pace
+      MYSQL_ROOT_PASSWORD: pace-root
+    ports:
+      - "3306:3306"
+    volumes:
+      - pace-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "pace", "-ppace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pace-mysql-data:

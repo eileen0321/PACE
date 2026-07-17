@@ -6,6 +6,8 @@ import type { OverlayService } from './types';
 let PaceOverlay: {
   hasOverlayPermission(): boolean;
   requestOverlayPermission(): void;
+  hasUsageAccessPermission(): boolean;
+  requestUsageAccessPermission(): void;
   start(remainingMinutes: number, autoNextEnabled: boolean): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
@@ -28,6 +30,12 @@ export const overlayService: OverlayService = {
       PaceOverlay.requestOverlayPermission();
       return; // 사용자가 설정에서 권한을 켜고 돌아오면 상위 화면이 재시도해야 함
     }
+    // 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager)용 별도 권한 — 없으면 오버레이가
+    // 지원 앱(YouTube/Instagram) 여부와 무관하게 항상 표시되는 구버전 동작으로 자동 폴백된다
+    // (PaceOverlayService.kt의 startForegroundAppPolling 참고), 세션 자체는 막지 않는다.
+    if (!PaceOverlay.hasUsageAccessPermission()) {
+      PaceOverlay.requestUsageAccessPermission();
+    }
     await PaceOverlay.start(remainingMinutes, autoNext);
   },
 
@@ -37,5 +45,13 @@ export const overlayService: OverlayService = {
 
   async endSession() {
     await PaceOverlay?.stop();
+  },
+
+  async hasForegroundDetectionPermission() {
+    return PaceOverlay?.hasUsageAccessPermission() ?? false;
+  },
+
+  async requestForegroundDetectionPermission() {
+    PaceOverlay?.requestUsageAccessPermission();
   },
 };

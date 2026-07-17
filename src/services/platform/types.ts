@@ -26,6 +26,9 @@ export interface OverlayService {
   startSession(params: { dailyLimitMinutes: number; remainingMinutes: number; autoNext: boolean }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;
+  /** Android: UsageStatsManager 기반 포그라운드 앱 감지 권한(오버레이 자동 표시/숨김에 필요). iOS: 항상 true(no-op). */
+  hasForegroundDetectionPermission(): Promise<boolean>;
+  requestForegroundDetectionPermission(): Promise<void>;
 }
 
 export interface FocusService {

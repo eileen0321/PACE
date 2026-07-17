@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
@@ -13,9 +13,26 @@ import { overlayService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
-import { colors, radius, spacing } from '../../constants/theme';
+import { SUPPORTED_APPS } from '../../constants/supportedApps';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
-import type { SessionEndStatus } from '../../types/models';
+import type { AppShieldTarget, SessionEndStatus } from '../../types/models';
+
+// Android: 선택한 플랫폼 앱을 실제로 연다(공식 딥링크 스킴 → 실패 시 웹 폴백) — "제품 전략 피벗"의
+// "Start → App Picker → 선택 앱 실행" 흐름 중 앱 실행 부분. iOS는 Pace Player 방향이 POC 검증 전이라
+// (PACE_ARCHITECTURE.md "iOS Pace Player 성립 가능성 검증" 참고) 아직 아무 것도 하지 않는다 —
+// 여기서 실제 앱을 열지 않고 이 dev 시뮬레이터 화면을 그대로 보여주는 것이 검증 전 상태에 대한
+// 정직한 표현이다(가짜 Player UI를 미리 만들지 않음).
+async function launchPlatformApp(platform: AppShieldTarget | undefined) {
+  if (Platform.OS !== 'android' || !platform) return;
+  const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
+  if (!app) return;
+  try {
+    await Linking.openURL(app.androidScheme);
+  } catch {
+    await Linking.openURL(app.webFallback).catch(() => {});
+  }
+}
 
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 
@@ -27,6 +44,7 @@ const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 export default function OverlaySessionScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { platform } = useLocalSearchParams<{ platform?: AppShieldTarget }>();
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.update);
@@ -41,7 +59,7 @@ export default function OverlaySessionScreen() {
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
-      const id = await startSession(user.id, null);
+      const id = await startSession(user.id, platform ?? null);
       sessionIdRef.current = id;
       const todayUsedMinutes = await getTodayUsageMinutes(user.id);
       const remainingMinutes = Math.max(0, settings.dailyLimitMinutes - todayUsedMinutes);
@@ -58,6 +76,7 @@ export default function OverlaySessionScreen() {
         remainingMinutes,
         autoNext: settings.autoNext,
       }).catch(() => {});
+      launchPlatformApp(platform).catch(() => {});
     })();
 
     return () => {
@@ -109,6 +128,14 @@ export default function OverlaySessionScreen() {
           expanded={expanded}
           onToggleExpanded={() => setExpanded((v) => !v)}
         />
+        {!expanded && (timer.remainingMinutes === 5 || timer.remainingMinutes === 1) && (
+          <View style={styles.lowTimeToast}>
+            <Feather name="clock" size={14} color="#000000" />
+            <Text style={styles.lowTimeToastText}>
+              {timer.remainingMinutes === 1 ? t('overlay.lowTimeWarningSingular', { n: 1 }) : t('overlay.lowTimeWarningPlural', { n: timer.remainingMinutes })}
+            </Text>
+          </View>
+        )}
         {expanded && (
           <View style={styles.expandedWrap}>
             <OverlayExpandedCard
@@ -152,12 +179,29 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F0F' },
   overlayLayer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
   expandedWrap: { marginHorizontal: spacing.md, marginTop: spacing.sm },
+  // healthy-shorts-assistant(1)에 새로 추가된 "5분/1분 남음" 저시간 경고 토스트 이식 — 오버레이의
+  // 상시 상태(하지 말 것 원칙)가 아니라 일회성 넛지라 "하단 플레이어 컨트롤 금지" 원칙과 무관.
+  lowTimeToast: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    backgroundColor: 'rgba(245,158,11,0.9)', // colors.warning(#F59E0B) @ 90%
+    borderWidth: 1,
+    borderColor: 'rgba(251,191,36,0.3)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  lowTimeToastText: { color: '#000000', fontFamily: typography.bodyFontFamilyBold, fontSize: 12, flexShrink: 1 },
   simContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.sm },
-  simCategory: { color: '#30D158', fontSize: 10, fontWeight: '800', letterSpacing: 1, backgroundColor: 'rgba(48,209,88,0.1)', borderWidth: 1, borderColor: 'rgba(48,209,88,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  simTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', textAlign: 'center' },
+  simCategory: { color: '#30D158', fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, backgroundColor: 'rgba(48,209,88,0.1)', borderWidth: 1, borderColor: 'rgba(48,209,88,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
+  simTitle: { color: '#FFFFFF', fontSize: 22, fontFamily: typography.bodyFontFamilyExtrabold, textAlign: 'center' },
   simDesc: { color: '#9CA3AF', fontSize: 12, textAlign: 'center', lineHeight: 18 },
-  simCreator: { color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginTop: spacing.sm },
+  simCreator: { color: colors.textSecondary, fontSize: 11, fontFamily: typography.bodyFontFamilyBold, marginTop: spacing.sm },
   simDots: { marginTop: spacing.md },
   devBadge: { position: 'absolute', bottom: spacing.lg, alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  devBadgeText: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  devBadgeText: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 0.5 },
 });

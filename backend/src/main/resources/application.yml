@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: pace-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  jpa:
+    hibernate:
+      # jlpt-master는 ddl-auto=update(임시방편)였지만 Pace는 Flyway가 스키마를 관리하므로
+      # validate로 고정 — 애플리케이션이 기대하는 엔티티와 실제 DB 스키마가 어긋나면 기동 시점에 즉시 실패.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${PORT:8080}
+
+pace:
+  jwt:
+    secret: ${JWT_SECRET:}
+    expiration-ms: ${JWT_EXPIRATION_MS:2592000000} # 30일
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+  apple:
+    bundle-id: ${APPLE_BUNDLE_ID:com.pace.app}
+  revenuecat:
+    webhook-auth-header: ${REVENUECAT_WEBHOOK_AUTH_HEADER:}
+    api-key: ${REVENUECAT_API_KEY:}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:*}
+
+springdoc:
+  swagger-ui:
+    path: /docs
+  api-docs:
+    path: /api-docs

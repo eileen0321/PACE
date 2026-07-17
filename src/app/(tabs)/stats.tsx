@@ -2,25 +2,200 @@ import { useEffect } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTranslation } from '../../services/i18n';
-import { colors, radius, spacing } from '../../constants/theme';
+import { AppHeader } from '../../components/ui/AppHeader';
+import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
+import { colors, gradients, layout, radius, sourceColors, spacing, typography } from '../../constants/theme';
+import type { DailyStats } from '../../types/models';
 
-// healthy-shorts-assistant의 StatsTab.tsx 포팅. "Wholesome Feed Breakdown" 카테고리 비중은
-// 원본이 정적 목업 값이었다 — 실제 시청 카테고리 트래킹(뮤직/브레스/스트레치 등 분류)은
-// 아직 계측하지 않으므로 TODO로 남기고 레이아웃만 이식.
-const CATEGORIES = [
-  { key: 'categoryBreath' as const, percentage: 45, icon: 'wind' as const, color: '#F59E0B', bg: '#FEF3E2' },
-  { key: 'categoryNature' as const, percentage: 30, icon: 'compass' as const, color: colors.primary, bg: colors.primaryTint },
-  { key: 'categoryLearning' as const, percentage: 15, icon: 'book-open' as const, color: '#10B981', bg: '#E6F7F1' },
-  { key: 'categoryYoga' as const, percentage: 10, icon: 'heart' as const, color: '#F43F5E', bg: '#FEE7EA' },
-];
+// healthy-shorts-assistant(2) StatsTab.tsx(components/StatsTab.tsx)를 토씨 하나 안 틀리고 그대로
+// 이식 — 이전 버전은 완전히 다른 자체 구조("Insights" 대형 타이틀 + 연속기록/웰니스 요약/Platform
+// 비중/WeeklyGraphCard(구프로토타입 컴포넌트)/Wholesome Feed Breakdown)였는데, 실제 소스엔 그런
+// 섹션이 없다 — This Week Hero → Focus Score+Healthy Streak 2단 그리드 → Platform Breakdown(얇은
+// 가로 바) → Today's Behavior(3행) → Weekly Activity(요일별 바 리스트+목표선) → Best Day 카드 순.
+// 원본은 4h 26m/82점/18%/31개 자동넘김/Mon-Sun 요일별 분/Best Day="Friday" 전부 하드코딩 데모
+// 숫자다(videosWatched/averageDuration만 실제 prop이었고 그마저 0이면 `|| 42`/`|| 31`로 가짜값
+// 대체). "가짜 데이터로 채우지 말라"는 지시에 따라:
+//  - This Week 합계: 실제 weeklyStats 합산으로 대체. 지난주 대비 증감(%)은 지난주 데이터 쿼리가
+//    없어 표시 안 함(gap, PACE_ARCHITECTURE.md 기록).
+//  - Focus Score(82점): 채점 알고리즘 자체가 미정의라 그 라벨/숫자를 포팅하지 않고, 같은 그리드
+//    슬롯에 실제 "이번 주 일평균" 데이터를 넣었다(완전히 다른 지표라 라벨도 다르게 표시).
+//  - Healthy Streak: 실제 계산(computeStreak) 그대로 사용.
+//  - Platform Breakdown: getTodayUsageByApp() 실제 데이터, sourceColors 실제 플랫폼 강조색.
+//  - Today's Behavior: videosWatched/averageDuration 실제값. Longest Session도
+//    getWeeklyStats()가 이미 longestSessionSeconds를 리턴해서(과거엔 안 쓰던 필드) 오늘자 값을
+//    실제로 뽑아 쓴다.
+//  - Auto Next Impact 섹션: "자동 넘김된 영상 수" 카운터가 스키마에 없어 통째로 미포함(gap).
+//  - Weekly Activity: 실제 weeklyStats + 실제 dailyLimitMinutes를 목표선으로 사용(요일별 60m
+//    하드코딩 대신).
+//  - Best Day: 실제 데이터에서 "목표 이내로 가장 알차게 쓴 날"(0보다 크고 한도 이하인 날 중 최댓값)
+//    계산 — 없으면 빈 상태 문구.
+export default function StatsScreen() {
+  const { t } = useTranslation();
+  const user = useUserStore((s) => s.user);
+  const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, refresh } = useStatsStore();
+  const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
 
-function computeStreak(weeklyStats: { date: string; totalMinutes: number }[]): number {
+  useEffect(() => {
+    if (user?.id) refresh(user.id);
+  }, [user?.id, refresh]);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const totalMinutesThisWeek = weeklyStats.reduce((acc, d) => acc + d.totalMinutes, 0);
+  const weeklyAvgMinutes = weeklyStats.length ? Math.round(totalMinutesThisWeek / weeklyStats.length) : 0;
+  const streak = computeStreak(weeklyStats, todayStr);
+  const platformTotal = platformBreakdown.reduce((acc, p) => acc + p.minutes, 0);
+  const todayEntry = weeklyStats.find((d) => d.date === todayStr);
+  const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
+  const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* 1. THIS WEEK HERO */}
+        <LinearGradient colors={gradients.heroCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroCard}>
+          <View style={styles.heroGlow} pointerEvents="none" />
+          <Text style={styles.heroLabel}>{t('stats.thisWeek')}</Text>
+          <Text style={styles.heroValue}>{formatHours(totalMinutesThisWeek)}</Text>
+        </LinearGradient>
+
+        {/* 2. WEEKLY AVERAGE & HEALTHY STREAK GRID */}
+        <View style={styles.grid2}>
+          <View style={styles.gridCard}>
+            <Text style={styles.gridLabel}>{t('stats.dailyAverage')}</Text>
+            <View style={styles.gridValueRow}>
+              <Text style={styles.gridValueBig}>{weeklyAvgMinutes}</Text>
+              <Text style={styles.gridValueUnit}>{t('home.minUnit')}</Text>
+            </View>
+          </View>
+          <View style={styles.gridCard}>
+            <Text style={styles.gridLabel}>{t('stats.healthyStreak')}</Text>
+            <View style={styles.streakValueCol}>
+              <Text style={styles.streakValue}>{t('stats.dayStreak', { n: streak })}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* 3. PLATFORM BREAKDOWN */}
+        {platformBreakdown.length > 0 && (
+          <View>
+            <Text style={styles.sectionTitle}>{t('stats.platformBreakdown')}</Text>
+            <View style={styles.card}>
+              {platformBreakdown.map((p) => {
+                const pct = platformTotal > 0 ? Math.round((p.minutes / platformTotal) * 100) : 0;
+                const accent = p.app in sourceColors ? sourceColors[p.app as keyof typeof sourceColors].accent : colors.textSecondary;
+                return (
+                  <View key={p.app} style={styles.barRow}>
+                    <View style={styles.barHeaderRow}>
+                      <Text style={styles.barLabel}>{PLATFORM_LABELS[p.app] ?? p.app}</Text>
+                      <Text style={styles.barPct}>{pct}%</Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: accent }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* 4. TODAY'S BEHAVIOR */}
+        <View>
+          <Text style={styles.sectionTitle}>{t('stats.todaysBehavior')}</Text>
+          <View style={styles.divideCard}>
+            <BehaviorRow title={t('stats.videosWatchedToday')} subtitle={t('stats.totalShortsPlayed')} value={`${todayEntry?.totalVideos ?? 0} Videos`} />
+            <BehaviorRow title={t('stats.averageDuration')} subtitle={t('stats.timeSpentPerVideo')} value={`${todayAverageDurationSeconds}s / video`} />
+            <BehaviorRow title={t('stats.longestSession')} subtitle={t('stats.maxUninterrupted')} value={`${longestSessionMinutes}m`} valueColor={colors.primary} last />
+          </View>
+        </View>
+
+        {/* 5. WEEKLY ACTIVITY GRAPH WITH GOAL LINE */}
+        <View>
+          <Text style={styles.sectionTitle}>{t('stats.weeklyActivity')}</Text>
+          <View style={[styles.card, { gap: spacing.md }]}>
+            <View style={styles.goalLegendRow}>
+              <Text style={styles.goalLegendLeft}>{t('stats.dailyLimitsAnalyser')}</Text>
+              <View style={styles.goalLegendRight}>
+                <View style={styles.goalLegendSwatch} />
+                <Text style={styles.goalLegendText}>{t('stats.goal')} ({dailyLimitMinutes}{t('home.minUnit')})</Text>
+              </View>
+            </View>
+            {weeklyStats.length === 0 ? (
+              <Text style={styles.empty}>{t('stats.noRecordsYet')}</Text>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {weeklyStats.map((d) => {
+                  // 목표선(goalMarker)이 트랙의 left:60%에 고정돼 있으므로, 그 지점이 실제
+                  // dailyLimitMinutes를 가리키도록 트랙 전체 스케일을 한도/0.6으로 역산 — 원본은
+                  // 바 스케일(/60)과 목표선(60%)이 우연히 같은 데모값이라 이 계산이 필요 없었다.
+                  const trackMax = dailyLimitMinutes / 0.6;
+                  const isOver = d.totalMinutes > dailyLimitMinutes;
+                  const pct = Math.min(100, (d.totalMinutes / Math.max(1, trackMax)) * 100);
+                  return (
+                    <View key={d.date} style={styles.dayRow}>
+                      <View style={styles.dayRowLeft}>
+                        <Text style={styles.dayLabel}>{dayLetter(d.date)}</Text>
+                        <View style={styles.dayTrack}>
+                          <View style={[styles.dayFill, { width: `${pct}%` }, isOver && styles.dayFillOver]} />
+                          <View style={styles.goalMarker} />
+                        </View>
+                      </View>
+                      <View style={styles.dayRowRight}>
+                        <Text style={styles.dayMinutes}>{d.totalMinutes}{t('home.minUnit')}</Text>
+                        <Feather name={isOver ? 'alert-circle' : 'check'} size={13} color={isOver ? colors.warning : colors.successLight} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* 6. BEST DAY CARD */}
+        {bestDay && (
+          <LinearGradient colors={['rgba(16,185,129,0.1)', 'rgba(88,86,214,0.05)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.bestDayCard}>
+            <View>
+              <Text style={styles.bestDayLabel}>{t('stats.bestDay')}</Text>
+              <Text style={styles.bestDayTitle}>{bestDay.dayName}</Text>
+              <Text style={styles.bestDaySub}>{bestDay.minutes}{t('home.minUnit')}</Text>
+            </View>
+            <View style={styles.bestDayIconWrap}>
+              <Feather name="heart" size={24} color={colors.successLight} />
+            </View>
+          </LinearGradient>
+        )}
+
+        {/* 7. WEEKLY USAGE GRAPH (App.tsx가 StatsTab 뒤에 별도로 덧붙이는 카드, WeeklyGraph.tsx) */}
+        <WeeklyGraphCard weeklyStats={weeklyStats} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube Shorts', instagram: 'Instagram Reels', tiktok: 'TikTok', other: 'Other' };
+
+function formatHours(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function dayLetter(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+}
+
+function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {
   const byDate = new Map(weeklyStats.map((d) => [d.date, d.totalMinutes]));
   let streak = 0;
-  const cursor = new Date();
+  const cursor = new Date(todayStr + 'T00:00:00');
   for (let i = 0; i < 7; i++) {
     const key = cursor.toISOString().slice(0, 10);
     if ((byDate.get(key) ?? 0) > 0) {
@@ -31,133 +206,79 @@ function computeStreak(weeklyStats: { date: string; totalMinutes: number }[]): n
   return streak;
 }
 
-export default function StatsScreen() {
-  const { t } = useTranslation();
-  const user = useUserStore((s) => s.user);
-  const { weeklyStats, refresh } = useStatsStore();
-
-  useEffect(() => {
-    if (user?.id) refresh(user.id);
-  }, [user?.id, refresh]);
-
-  const totalMinutesThisWeek = weeklyStats.reduce((acc, d) => acc + d.totalMinutes, 0);
-  const highestDay = [...weeklyStats].sort((a, b) => b.totalMinutes - a.totalMinutes)[0];
-  const streak = computeStreak(weeklyStats);
-
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.screenTitle}>{t('stats.screenTitle')}</Text>
-
-        <Section title={t('stats.streakSection')}>
-          <View style={[styles.card, styles.streakCard]}>
-            <View style={styles.streakLeft}>
-              <View style={styles.streakIcon}>
-                <Feather name="zap" size={26} color="#F97316" />
-              </View>
-              <View>
-                <Text style={styles.streakValue}>{t('stats.dayStreak', { n: streak })}</Text>
-                <Text style={styles.streakDesc}>{t('stats.streakDesc')}</Text>
-              </View>
-            </View>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>{t('stats.active')}</Text>
-            </View>
-          </View>
-        </Section>
-
-        <Section title={t('stats.wellnessSection')}>
-          <View style={styles.card}>
-            <Row title={t('stats.weeklyTotal')} subtitle={t('stats.weeklyTotalDesc')} value={`${totalMinutesThisWeek} ${t('home.minUnit')}`} />
-            <Row
-              title={t('stats.peakDay')}
-              subtitle={t('stats.peakDayDesc')}
-              value={highestDay ? `${highestDay.date.slice(5)} (${highestDay.totalMinutes}${t('home.minUnit')})` : '-'}
-            />
-            <View style={styles.rowLast}>
-              <View>
-                <Text style={styles.rowTitle}>{t('stats.pacingIndex')}</Text>
-                <Text style={styles.rowSubtitle}>{t('stats.pacingIndexDesc')}</Text>
-              </View>
-              <View style={styles.excellentBadge}>
-                <Text style={styles.excellentText}>{t('stats.excellent')}</Text>
-              </View>
-            </View>
-          </View>
-        </Section>
-
-        <Section title={t('stats.feedBreakdownSection')}>
-          <View style={[styles.card, { gap: spacing.md }]}>
-            {CATEGORIES.map((cat) => (
-              <View key={cat.key} style={{ gap: 6 }}>
-                <View style={styles.catRow}>
-                  <View style={styles.catLeft}>
-                    <View style={[styles.catIcon, { backgroundColor: cat.bg }]}>
-                      <Feather name={cat.icon} size={13} color={cat.color} />
-                    </View>
-                    <Text style={styles.catName}>{t(`stats.${cat.key}`)}</Text>
-                  </View>
-                  <Text style={styles.catPct}>{cat.percentage}%</Text>
-                </View>
-                <View style={styles.catTrack}>
-                  <View style={[styles.catFill, { width: `${cat.percentage}%` }]} />
-                </View>
-              </View>
-            ))}
-          </View>
-        </Section>
-      </ScrollView>
-    </SafeAreaView>
-  );
+function pickBestDay(weeklyStats: DailyStats[], limitMinutes: number): { dayName: string; minutes: number } | null {
+  const candidates = weeklyStats.filter((d) => d.totalMinutes > 0 && d.totalMinutes <= limitMinutes);
+  if (candidates.length === 0) return null;
+  const best = candidates.reduce((a, b) => (b.totalMinutes > a.totalMinutes ? b : a));
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return { dayName: dayNames[new Date(best.date + 'T00:00:00').getDay()], minutes: best.totalMinutes };
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function BehaviorRow({ title, subtitle, value, valueColor, last }: { title: string; subtitle: string; value: string; valueColor?: string; last?: boolean }) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Row({ title, subtitle, value }: { title: string; subtitle: string; value: string }) {
-  return (
-    <View style={styles.row}>
+    <View style={[styles.behaviorRow, !last && styles.behaviorRowBordered]}>
       <View>
-        <Text style={styles.rowTitle}>{title}</Text>
-        <Text style={styles.rowSubtitle}>{subtitle}</Text>
+        <Text style={styles.behaviorTitle}>{title}</Text>
+        <Text style={styles.behaviorSubtitle}>{subtitle}</Text>
       </View>
-      <Text style={styles.rowValue}>{value}</Text>
+      <Text style={[styles.behaviorValue, valueColor ? { color: valueColor } : undefined]}>{value}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.md, gap: spacing.lg, paddingBottom: 32 },
-  screenTitle: { fontSize: 24, fontWeight: '800', color: colors.textPrimary },
-  section: { gap: spacing.sm },
-  sectionTitle: { fontSize: 11, fontWeight: '700', color: colors.textSecondary, letterSpacing: 1, paddingHorizontal: spacing.xs },
-  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.card, padding: spacing.md },
-  streakCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  streakLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  streakIcon: { width: 48, height: 48, borderRadius: radius.chip, backgroundColor: '#FFF3E8', alignItems: 'center', justifyContent: 'center' },
-  streakValue: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
-  streakDesc: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-  activeBadge: { backgroundColor: '#FFF3E8', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  activeBadgeText: { fontSize: 10, fontWeight: '700', color: '#F97316' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.background },
-  rowLast: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
-  rowTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  rowSubtitle: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
-  rowValue: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
-  excellentBadge: { backgroundColor: colors.successBg, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  excellentText: { fontSize: 10, fontWeight: '700', color: colors.success },
-  catRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  catLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  catIcon: { width: 24, height: 24, borderRadius: radius.chip / 2, alignItems: 'center', justifyContent: 'center' },
-  catName: { fontSize: 12, fontWeight: '600', color: colors.textPrimary },
-  catPct: { fontSize: 12, fontWeight: '700', color: colors.textPrimary },
-  catTrack: { height: 8, borderRadius: radius.pill, backgroundColor: colors.background, overflow: 'hidden' },
-  catFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
+  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg, paddingBottom: layout.tabBarContentClearance },
+
+  heroCard: { borderRadius: 24, padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSubtle, gap: 8 },
+  heroGlow: { position: 'absolute', top: -60, right: -30, width: 192, height: 192, borderRadius: 96, backgroundColor: `${colors.primary}0D` },
+  heroLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#8E8E93', letterSpacing: 2.5, textTransform: 'uppercase' },
+  heroValue: { fontSize: 36, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
+
+  grid2: { flexDirection: 'row', gap: spacing.sm },
+  gridCard: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 16, justifyContent: 'space-between', gap: 16 },
+  gridLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase' },
+  gridValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  gridValueBig: { fontSize: 30, fontFamily: typography.displayFontFamily, color: colors.textPrimary, lineHeight: 30 },
+  gridValueUnit: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.successLight, textTransform: 'uppercase', letterSpacing: 0.5 },
+  streakValueCol: { alignItems: 'flex-start' },
+  streakValue: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.primary, lineHeight: 22 },
+
+  sectionTitle: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 20 },
+  barRow: { gap: 6, marginBottom: spacing.md },
+  barHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  barLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB' },
+  barPct: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  barTrack: { height: 6, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.pill, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)' },
+  barFill: { height: '100%', borderRadius: radius.pill },
+
+  divideCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, paddingHorizontal: 20 },
+  behaviorRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 18 },
+  behaviorRowBordered: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  behaviorTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  behaviorSubtitle: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+  behaviorValue: { fontSize: 14, fontFamily: typography.monoFontFamilyBold, color: colors.textPrimary },
+
+  goalLegendRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  goalLegendLeft: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  goalLegendRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  goalLegendSwatch: { width: 10, height: 2, backgroundColor: 'rgba(239,68,68,0.6)' },
+  goalLegendText: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  dayRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.chip },
+  dayRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  dayLabel: { fontSize: 11, fontFamily: typography.monoFontFamilyBold, color: colors.textSecondary, width: 30 },
+  dayTrack: { flex: 1, maxWidth: 96, backgroundColor: 'rgba(255,255,255,0.05)', height: 6, borderRadius: radius.pill, overflow: 'hidden', position: 'relative' },
+  dayFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
+  dayFillOver: { backgroundColor: colors.warning },
+  goalMarker: { position: 'absolute', top: 0, bottom: 0, left: '60%', width: 1.5, backgroundColor: 'rgba(239,68,68,0.5)' },
+  dayRowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dayMinutes: { fontSize: 12, fontFamily: typography.monoFontFamilyBold, color: colors.textPrimary },
+  empty: { color: colors.textSecondary, fontSize: 12, textAlign: 'center', paddingVertical: spacing.md },
+
+  bestDayCard: { borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  bestDayLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 2, textTransform: 'uppercase' },
+  bestDayTitle: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.textPrimary, marginTop: 2 },
+  bestDaySub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  bestDayIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(16,185,129,0.2)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)', alignItems: 'center', justifyContent: 'center' },
 });

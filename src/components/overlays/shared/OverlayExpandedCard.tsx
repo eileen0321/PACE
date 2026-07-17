@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { colors, radius, spacing } from '../../../constants/theme';
+import { colors, floatingShadow, radius, spacing, typography } from '../../../constants/theme';
 import { capabilities } from '../../../services/platform';
 import { useTranslation } from '../../../services/i18n';
 import type { OverlayExpandedInfo } from './OverlayBar.types';
@@ -101,30 +101,30 @@ function Row({ title, description, right }: { title: string; description: string
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.card, borderRadius: radius.cardLarge, padding: spacing.md, gap: spacing.sm },
+  card: { backgroundColor: colors.card, borderRadius: radius.cardLarge, padding: spacing.md, gap: spacing.sm, ...floatingShadow },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerTitle: { fontSize: 11, fontWeight: '800', color: colors.textSecondary, letterSpacing: 1 },
+  headerTitle: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1 },
   grid: { flexDirection: 'row', gap: spacing.sm },
   gridCell: { flex: 1, backgroundColor: colors.background, borderRadius: radius.chip, padding: spacing.sm },
-  gridLabel: { fontSize: 9, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.5 },
-  gridValue: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, marginTop: 2 },
+  gridLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary, letterSpacing: 0.5 },
+  gridValue: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, marginTop: 2 },
   gridValueMuted: { fontSize: 11, fontWeight: '400', color: colors.textSecondary },
   progressTrack: { height: 8, borderRadius: radius.pill, backgroundColor: colors.background, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.primary },
   progressLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  progressLabel: { fontSize: 10, fontWeight: '700', color: colors.textSecondary },
+  progressLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowText: { flex: 1, paddingRight: spacing.sm },
-  rowTitle: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+  rowTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   rowDesc: { fontSize: 10, color: colors.textSecondary, marginTop: 1 },
   pill: { paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.background },
   pillActive: { backgroundColor: colors.primary },
-  pillText: { fontSize: 10, fontWeight: '800', color: colors.textSecondary, letterSpacing: 0.5 },
+  pillText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 0.5 },
   pillTextActive: { color: '#FFFFFF' },
   actions: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: spacing.sm + 2, borderRadius: radius.chip, backgroundColor: colors.background },
   stopBtn: { backgroundColor: colors.dangerBg },
-  actionText: { fontSize: 12, fontWeight: '700', color: colors.textPrimary },
+  actionText: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   stopText: { color: colors.danger },
 });

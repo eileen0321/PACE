@@ -39,6 +39,21 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager 기반)에 필요한 별도 권한 —
+    // "다른 앱 위에 표시"와는 다른 특수 권한이라 별도 승인 플로우가 필요하다.
+    Function("hasUsageAccessPermission") {
+      appContext.reactContext?.let { context -> ForegroundAppWatcher.hasUsageAccessPermission(context) } ?: false
+    }
+
+    Function("requestUsageAccessPermission") {
+      appContext.reactContext?.let { context ->
+        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+      }
+    }
+
     AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean ->
       appContext.reactContext?.let { context ->
         PaceOverlayService.start(context, remainingMinutes, autoNextEnabled)

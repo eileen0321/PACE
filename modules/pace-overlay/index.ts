@@ -6,6 +6,8 @@ import { requireNativeModule } from 'expo-modules-core';
 type PaceOverlayNativeModule = {
   hasOverlayPermission(): boolean;
   requestOverlayPermission(): void;
+  hasUsageAccessPermission(): boolean;
+  requestUsageAccessPermission(): void;
   start(remainingMinutes: number, autoNextEnabled: boolean): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;

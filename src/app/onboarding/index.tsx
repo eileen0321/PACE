@@ -2,7 +2,7 @@ import { StyleSheet, Text, View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from '../../services/i18n';
-import { colors, radius, spacing } from '../../constants/theme';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 
 export default function OnboardingScreen() {
   const { t } = useTranslation();
@@ -23,8 +23,8 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg, justifyContent: 'space-between' },
   content: { flex: 1, justifyContent: 'center', gap: spacing.md },
-  title: { fontSize: 40, fontWeight: '700', color: colors.textPrimary },
+  title: { fontSize: 40, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   subtitle: { fontSize: 16, color: colors.textSecondary, lineHeight: 24 },
   cta: { backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.md, alignItems: 'center' },
-  ctaText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  ctaText: { color: '#FFFFFF', fontFamily: typography.bodyFontFamilyBold, fontSize: 16 },
 });

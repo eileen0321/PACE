@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useTranslation } from '../../services/i18n';
-import { colors, radius, spacing } from '../../constants/theme';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // jlpt-master PremiumPaywallModal.tsx의 로직(로그인 필수 가드, 구매/복원 흐름)만 이식하고 비주얼
 // 처리는 이식하지 않는다 — 그라디언트/블러/컨페티는 기획서 "디자인 원칙"(No Gradients/No
@@ -68,12 +68,12 @@ export default function PaywallScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.md },
-  title: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  title: { fontSize: 22, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   close: { color: colors.textSecondary },
   package: { backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.md },
-  packageTitle: { fontWeight: '700', color: colors.textPrimary },
+  packageTitle: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   packagePrice: { color: colors.textSecondary, marginTop: 4 },
   empty: { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.lg },
   restoreBtn: { paddingVertical: spacing.md, alignItems: 'center' },
-  restoreText: { color: colors.textSecondary, fontWeight: '600', fontSize: 13 },
+  restoreText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
 });

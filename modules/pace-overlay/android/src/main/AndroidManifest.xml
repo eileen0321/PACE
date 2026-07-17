@@ -1,9 +1,12 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <!-- 이 모듈의 매니페스트는 Gradle 매니페스트 병합으로 앱 최종 AndroidManifest.xml에 자동 합쳐진다
        (Expo Modules API 로컬 모듈 컨벤션) — 별도 config plugin으로 권한을 추가할 필요 없음. -->
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager)용 — 런타임 권한이 아니라
+       설정 > 특별 앱 액세스 > 사용정보 접근에서 사용자가 직접 승인해야 하는 특수 권한 -->
+  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
   <application>
     <service

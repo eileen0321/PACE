@@ -6,8 +6,11 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -26,7 +29,23 @@ class PaceOverlayService : Service() {
   private var overlayView: LinearLayout? = null
   private var remainingLabel: TextView? = null
 
+  // 포그라운드 앱 감지 폴링 — SupportedApps.PACKAGES(YouTube/Instagram)에 있을 때만 오버레이를
+  // 보이게 하고, 그 외(카카오톡/런처/Pace 자신 등)에서는 숨긴다(ForegroundAppWatcher.kt 참고,
+  // UsageStatsManager 기반). 뷰를 매번 add/removeView하지 않고 visibility만 토글해 WindowManager
+  // churn을 피한다.
+  private val foregroundPollHandler = Handler(Looper.getMainLooper())
+  private var isPolling = false
+  private val foregroundPollRunnable = object : Runnable {
+    override fun run() {
+      val foregroundPackage = ForegroundAppWatcher.getForegroundPackage(applicationContext)
+      val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
+      overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+      foregroundPollHandler.postDelayed(this, POLL_INTERVAL_MS)
+    }
+  }
+
   companion object {
+    private const val POLL_INTERVAL_MS = 1000L
     private const val CHANNEL_ID = "pace_overlay_channel"
     private const val NOTIFICATION_ID = 4201
     private const val ACTION_START = "expo.modules.paceoverlay.START"
@@ -64,9 +83,11 @@ class PaceOverlayService : Service() {
       ACTION_START -> {
         startForeground(NOTIFICATION_ID, buildNotification())
         showOverlay(intent.getIntExtra(EXTRA_REMAINING, 0))
+        startForegroundAppPolling()
       }
       ACTION_UPDATE -> setRemainingText(intent.getIntExtra(EXTRA_REMAINING, 0))
       ACTION_STOP -> {
+        stopForegroundAppPolling()
         removeOverlay()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -136,7 +157,28 @@ class PaceOverlayService : Service() {
     remainingLabel = null
   }
 
+  // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽
+  // (overlayService.android.ts)이 세션 시작 전에 권한을 이미 확인/요청하지만, 네이티브 쪽도
+  // 방어적으로 한 번 더 확인한다.
+  private fun startForegroundAppPolling() {
+    if (isPolling) return
+    if (!ForegroundAppWatcher.hasUsageAccessPermission(applicationContext)) {
+      overlayView?.visibility = View.VISIBLE
+      return
+    }
+    isPolling = true
+    overlayView?.visibility = View.GONE // 첫 폴링 결과가 나올 때까지는 숨김(안전한 기본값)
+    foregroundPollHandler.post(foregroundPollRunnable)
+  }
+
+  private fun stopForegroundAppPolling() {
+    if (!isPolling) return
+    isPolling = false
+    foregroundPollHandler.removeCallbacks(foregroundPollRunnable)
+  }
+
   override fun onDestroy() {
+    stopForegroundAppPolling()
     removeOverlay()
     super.onDestroy()
   }

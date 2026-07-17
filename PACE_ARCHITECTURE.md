@@ -15,6 +15,194 @@
 | 플랫폼 분리 컨벤션 | zen-master 방식 그대로: **폴더 최상위 `platform/android`, `platform/ios` 분리가 아니라, 같은 폴더 안에서 RN 파일 확장자(`.android.tsx`/`.ios.tsx`/`.web.tsx`) + `.shared.ts`(공통 타입/로직) 컨벤션** | Metro가 번들 시점에 자동으로 플랫폼별 파일을 선택 |
 | 로컬 DB | expo-sqlite | 세션/통계 로컬 우선 기록 후 서버 동기화(zen-master의 syncService 패턴) |
 | 구독 | RevenueCat (`react-native-purchases`) | zen-master의 PremiumContext 로직(entitlement 기반 isPremium, 로컬 만료 캐시, 리뷰어/유료테스터 화이트리스트)을 그대로 참고 |
+| 제품 전략(2026-07-17 피벗) | **Android="Overlay Assistant", iOS="Pace Player"** | 아래 "제품 전략 피벗" 섹션 참고. iOS는 더 이상 Live Activity 컴패니언이 아니라 자체 영상 재생+오토넥스트 — 단, iOS 콘텐츠 출처는 미확정 블로커 |
+| MVP 지원 앱 | **YouTube Shorts + Instagram Reels만** (설정 UI 없이 하드코딩, 자동 감지) | 5개 앱 전체 지원은 추후 확장 |
+
+---
+
+## 제품 전략 피벗 — Android "Overlay Assistant" vs iOS "Pace Player" (2026-07-17 확정)
+
+기존 설계(아래 "iOS Live Activity 상세 설계", "iOS: Live Activity + 앱 차단 구조", "플랫폼 Feature
+Matrix"의 "제품 포지셔닝 결론")는 **iOS를 "실제 YouTube/Instagram을 쓰는 동안 Live Activity로
+시간만 보여주는 컴패니언"으로 설계**했었다. 이번에 "Auto Next(자동 넘김)가 Pace의 핵심 가치"라는
+재정의에 따라 방향이 바뀌었다 — iOS는 Live Activity 컴패니언 대신 **"Pace Player"**, 즉 앱 내부에서
+자체 영상 피드를 재생하고 자동 넘김까지 직접 처리하는 독립 플레이어로 간다. 아래 iOS Live
+Activity/FamilyControls 섹션들은 **폐기가 아니라 "미래 보조 기능(잠금화면 상태 표시 등)"으로
+강등** — 핵심 경로는 더 이상 그쪽이 아니다.
+
+> ⚠️ **미해결 블로커 (구현 착수 전 필수 확인)**: Pace Player가 재생할 **영상 콘텐츠의 실제 출처가
+> 아직 정해지지 않았다.** 실제 YouTube Shorts/Instagram Reels 콘텐츠를 라이선스 없이 자동재생
+> 제어권까지 가진 서드파티 플레이어에 가져오는 건 일반적으로 각 플랫폼 이용약관상 허용되지 않는다.
+> 이 문제를 풀지 않고 "Select Source: YouTube Shorts / Instagram Reels" 같은 라벨을 붙이면 사용자를
+> 오도하는 UI가 된다. 두 가지 현실적 경로 중 하나를 확정해야 실제 구현에 들어갈 수 있다:
+> 1. **콘텐츠를 무드/웰니스 큐레이션(호흡·마인드풀니스·짧은 학습 등, 지금 dev 시뮬레이터의
+>    `CURATED_VIDEOS` 목업과 유사한 성격)로 명확히 재정의**하고 UI 라벨도 "YouTube Shorts"가 아니라
+>    "Pace Feed" 같은 자체 브랜드로 정직하게 표기.
+> 2. 실제 플랫폼 API/제휴를 통한 합법적 임베드 경로를 조사(대부분의 경우 자동 재생·자동 다음 넘김
+>    같은 제어권까지는 안 줌 — 사업적으로 난이도 높음).
+>
+> 이 문서는 사용자가 "Pace Player로 전환"을 확정한 방향을 기록하지만, 콘텐츠 출처는 별도로 결정
+> 필요 — 확정되기 전까지 아래 UI 플로우의 "Select Source" 화면은 실제 구현이 아니라 설계 초안으로만
+> 취급할 것.
+
+### MVP 지원 앱 축소
+기존 5개 앱(YouTube/Instagram/TikTok/Facebook/Naver Clip) 전체 지원 대신,
+**YouTube Shorts + Instagram Reels 2개만** MVP 범위로 축소 확정. 사용자가 앱을 켜고 끄는 설정
+화면도 만들지 않는다 — `SUPPORTED_APPS` 상수에 하드코딩하고, Android는 AccessibilityService가
+현재 포그라운드 앱의 packageName을 감지해 지원 앱일 때만 오버레이를 자동으로 표시/숨김한다
+(아래 "필요한 것" 참고 — 이 감지 로직 자체는 아직 미구현).
+
+```ts
+// 향후 constants/supportedApps.ts
+export const SUPPORTED_APPS = {
+  youtube: 'com.google.android.youtube',
+  instagram: 'com.instagram.android',
+} as const;
+```
+
+### Start 버튼 플로우 — 플랫폼별 분기 (Home 화면은 공통 유지)
+
+**Android — "Overlay Assistant"**
+```
+Home → Start
+  ↓
+App Picker 바텀시트 (YouTube Shorts / Instagram Reels)
+  ↓ 사용자 선택
+overlayService.startSession() → 선택 앱 실행(딥링크/인텐트) → 시스템 오버레이 표시
+  ↓
+AccessibilityService가 포그라운드 앱 계속 감시
+  → 지원 앱이면 오버레이 유지, 아니면(카톡 등 전환 시) 자동 숨김 → 복귀 시 자동 재표시
+  ↓
+Auto Next는 Accessibility+제스처로 실제 YouTube/Instagram 위에서 동작(기존 설계 그대로 유지)
+```
+
+**iOS — "Pace Player" (신규 방향, 콘텐츠 출처 미확정 상태로 설계만 기록)**
+```
+Home → Start
+  ↓
+최초 1회만: 온보딩 시트("Auto Next is provided through Pace Player — videos play inside Pace")
+  ↓
+Source 선택 시트 (라벨은 콘텐츠 출처 결정 후 확정 — 위 블로커 참고)
+  ↓ 사용자 선택
+Pace Player 화면 진입(앱 내부, 새 탭/스택) → 영상 피드 자동 재생 + 자동 다음 넘김
+  ↓
+오버레이 없음(iOS는애초에 시스템 오버레이 불가 — 기존 제약 그대로) — Player 자체가 상태 표시 겸함
+```
+
+### 필요한 것 (구현 착수 전 정리)
+1. **[블로커] iOS Pace Player 콘텐츠 출처 확정** — 위 경고 박스 참고. 이게 안 풀리면 iOS Player
+   자체를 실제로 만들 수 없음(무엇을 재생할지가 없으므로).
+2. **Android AccessibilityService 신규 모듈** — 현재 `modules/pace-overlay`는 오버레이 렌더만
+   구현돼 있고, "포그라운드 앱이 뭔지 감지"하는 AccessibilityService는 아직 없음(진행 상황
+   체크리스트에 이미 "아직 시작 안 함"으로 기록돼 있던 항목 — 이번 피벗으로 우선순위 상승).
+3. **Android App Picker 바텀시트 UI** — Start 탭 시 YouTube/Instagram 선택 화면(신규 컴포넌트).
+4. **iOS 온보딩 시트 + Source 선택 시트 UI** — 신규 화면 2개(콘텐츠 출처 확정 후 착수).
+5. **iOS Pace Player 화면 + Player 엔진** — 신규 탭/스택 화면, 영상 재생 컴포넌트, 자동 다음 넘김
+   로직(콘텐츠 출처 확정 후 착수). 기존 `overlay/index.tsx`의 dev 시뮬레이터 콘텐츠(`CURATED_VIDEOS`)
+   재사용 가능성 있음(콘텐츠 출처를 "무드 큐레이션"으로 갈 경우).
+6. **DB 스키마 확장(iOS Player용)** — `videos`(플랫폼/영상ID/제목/썸네일/길이) +
+   `playlist_sessions`(재생 세션 기록) 테이블 신규 필요.
+7. **`usePlayerStore`(Zustand) 신규** — currentVideo/currentIndex/isPlaying/autoNextEnabled +
+   loadVideo/nextVideo/previousVideo 액션.
+8. `services/platform`의 세션 시작 로직을 Android(오버레이)/iOS(Player)로 완전히 갈라야 함 —
+   기존 `overlayService` capability 패턴을 확장하되, iOS 쪽은 더 이상 "오버레이 대체용
+   Live Activity 시작"이 아니라 "Player 화면으로 네비게이션"이 됨(라우팅 로직 변경 필요).
+
+### iOS Pace Player 성립 가능성 검증 — POC 체크리스트 (2026-07-18)
+
+위 "[블로커] iOS Pace Player 콘텐츠 출처 확정" 항목에 대한 구체적 검증 계획. 현재 가설은
+**"`WKWebView`로 `m.youtube.com/shorts`를 로드하면 실제 YouTube Shorts 피드 + 로그인 + Auto Next가
+가능한가?"** — 이게 성립하면 콘텐츠 출처 블로커가 실질적으로 풀린다. **이 검증은 Xcode/iOS
+시뮬레이터가 필요해 이 저장소(Windows 환경)에서는 실행 불가 — Mac 개발자 또는 Mac 환경의 Claude
+Code/Gemini CLI/Cursor에게 아래 내용을 그대로 전달해서 진행할 것.**
+
+**콘텐츠 출처 정리(중요, 이전 초안 대비 수정)**: 이 방식이 성립하면 Pace가 영상을 직접 호스팅하거나
+큐레이션할 필요가 **전혀** 없다 — 첫 영상도, 다음 영상도 100% YouTube 자체 웹서버가 공급한다.
+- **첫 영상**: 앱 실행 시 WKWebView가 `m.youtube.com/shorts`를 로드 — 로그인돼 있으면 구글 서버가
+  유저의 시청 기록 기반 개인화 추천을, 비로그인이면 일반적인 인기 Shorts를 띄운다.
+  Pace는 그저 이 웹페이지를 커스텀 UI로 감싸는 역할만 한다.
+- **다음 영상**: YouTube Shorts 특유의 "무한 스크롤 피드" 메커니즘을 그대로 활용 — 재생 중 다음
+  영상 3~4개가 이미 프리페치돼 있고, Pace는 `video.ended` 신호를 받으면 JS로 스크롤/터치 이벤트를
+  주입해 그 다음 영상으로 "넘겨주기"만 한다. 서버 비용도 거의 안 든다.
+- 즉 "이전 초안"에서 언급했던 "YouTube Data API로 Pace가 직접 큐레이션한 영상 큐"보다 **이 방식이
+  훨씬 낫다** — 사용자의 실제 개인화 Shorts 피드를 그대로 보여주므로 "진짜 Shorts 관리 도구"라는
+  제품 취지에도 더 부합. 단, 아래 검증이 실패하면 이 경로 자체가 무효가 되고 Data API 큐레이션
+  경로(또는 콘텐츠 재정의)로 후퇴해야 한다.
+
+**⚠️ 과도한 낙관 경계**: 위 가설은 이론상 그럴듯하지만, YouTube 모바일 웹의 Shorts 피드는
+**React + Shadow DOM + Virtualized Feed**(화면에 보이는 부분만 렌더링하는 가상 스크롤) 구조일
+가능성이 높다 — 그러면 단순 `window.scrollBy()` 한 줄로는 다음 영상이 안 넘어갈 확률이 높다.
+아래 POC #5가 이 검증의 핵심이자 전체 가설의 성패를 가르는 지점.
+
+**성공 조건**: 아래 10개 POC 중 8개 이상 PASS.
+
+| # | 검증 항목 | 방법 | PASS 기준 |
+|---|---|---|---|
+| 1 | Shorts 로드 | `WKWebView`로 `https://m.youtube.com/shorts` 로드 | 첫 화면이 일반 YouTube Home이 아니라 Shorts 세로 풀스크린 피드, 로그인 없이도 재생됨, 자동재생됨, 주소창/하단바 숨김 가능 |
+| 2 | Google 로그인 유지 | 로그인 후 앱 재실행 | 쿠키/세션 유지, 추천 피드가 계정 기반으로 개인화됨, 구독 피드/프리미엄 피드 접근 가능 |
+| 3 | Shorts DOM 구조 확인 | Safari Web Inspector로 WKWebView 연결, `document.querySelector("video")` / `querySelectorAll("video")` | video 태그 발견됨 |
+| 4 | 영상 종료 감지 | Injected JS: `video.addEventListener("ended", () => console.log("ENDED"))` | 영상이 끝날 때 이벤트 발생 확인 — 안 되면 Auto Next 자체가 성립 안 할 가능성 높음 |
+| 5 | 다음 영상 이동 (**가장 중요, 아래 스크립트로 검증**) | 컨테이너 스크롤 → DOM 형제 요소 탐색 → 가상 터치 이벤트, 3단계 폴백 체인(아래 스니펫) | Short #1 → #2 → #3로 실제로 자동 이어지는가 — 세 가지 결과 해석은 아래 참고 |
+| 6 | 연속 시청 안정성 | 10개/20개/30개 영상, 30분 이상 연속 재생 | 멈춤/광고/렌더링 깨짐/메모리 증가 여부 기록 |
+| 7 | 광고 처리 (**매우 중요**) | 연속 시청 중 광고 발생 여부 관찰 | 광고 있음/없음, 광고 나올 때 Auto Next 동작 여부, 광고에서 멈추는지, 댓글창 팝업 등 예외 레이아웃에서 스크롤 로직이 꼬이지 않는지 |
+| 8 | App Store 정책 리스크 | WebView 기반 YouTube Shorts 플레이어 + 주소창 숨김 + 커스텀 UI + 자동 스크롤 조합의 반려 가능성 검토 | LOW / MEDIUM / HIGH 중 하나로 결론 |
+| 9 | 성능 측정 | iPhone 13/14/15 중 최소 1대, 30분 연속 재생 중 CPU/메모리/배터리 측정 | 수치 기록 |
+| 10 | 최종 통합 검증 (**가장 중요**) | Shorts 카드 클릭 → 즉시 재생 → 영상 종료 → 다음 영상 자동 진행 → 10개 이상 연속 시청 | YES면 iOS Pace Player 진행, NO면 iOS 전략 재설계 필요 |
+
+**POC #5용 검증 스크립트 (WKWebView에 주입, 3단계 폴백 체인)**:
+```javascript
+(function() {
+  const currentVideo = document.querySelector('video');
+  if (!currentVideo) {
+    console.log('Pace PoC: 현재 화면에서 비디오를 찾을 수 없습니다.');
+    return;
+  }
+  currentVideo.addEventListener('ended', function() {
+    console.log('Pace PoC: 영상 종료 감지 성공! 다음 영상 이동 시도...');
+    // 방법 A: Shorts 전용 스크롤 컨테이너(있으면 이게 정석 — 모바일 웹 Shorts는 window가 아니라
+    // 내부 특정 div가 스크롤을 담당하는 경우가 많음)
+    const shortsContainer = document.querySelector('#shorts-container') || document.querySelector('ytd-shorts');
+    if (shortsContainer) {
+      shortsContainer.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+      return;
+    }
+    // 방법 B: 현재 Shorts 엘리먼트의 DOM 트리 상 다음 형제 요소로 강제 포커싱
+    const currentEl = currentVideo.closest('ytd-reel-video-renderer') || currentVideo.closest('.shorts-video-container');
+    const nextEl = currentEl ? currentEl.nextElementSibling : null;
+    if (nextEl) {
+      nextEl.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    // 방법 C: 최후 수단 — window 스크롤(Virtualized Feed면 안 먹힐 가능성 높음)
+    window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+  });
+  console.log('Pace PoC: 유튜브 쇼츠 감지 및 JS 주입 완료.');
+})();
+```
+**세 가지 결과 해석**:
+- ✅ **성공** — 영상이 끝나자마자 화면이 넘어가며 다음 Shorts가 정상 재생됨 → iOS Pace Player
+  방향 확정. 다음 단계 진행.
+- 🟡 **절반의 성공** — 스크롤은 되는데 다음 영상이 로딩되지 않고 검게 나옴 → Virtualized List가
+  실제 뷰포트 진입을 인식 못 한 상태. 단순 스크롤이 아니라 **가상 터치 이벤트(TouchEvent) 시뮬레이션**
+  으로 다음 단계 추가 검증 필요(스크롤이 아니라 실제 스와이프 제스처를 흉내내야 할 가능성).
+- ❌ **실패** — 아무 반응 없거나 에러 → YouTube 모바일 웹 구조가 완전히 막혀 있는 상태, iOS 전략
+  전면 재설계 필요(콘텐츠 출처 블로커의 경로 1: Pace 자체 큐레이션 콘텐츠로 재정의).
+
+**개발자에게 그대로 전달할 한 줄 지시문**:
+> Build a native iOS WKWebView POC using m.youtube.com/shorts and verify: 1) Shorts feed loads
+> correctly, 2) Google login persists, 3) video ended events can be captured, 4) JavaScript can
+> advance to the next Short, 5) Auto-next can run for at least 20 consecutive videos, 6) no
+> critical App Store review blocker exists. Provide screen recordings, console logs, and PASS/FAIL
+> results for every item.
+
+**외주/계약 시 팁**: 전체 앱을 한 번에 계약하지 말고, 위 5대 핵심 항목(POC #1·2·4·5·7)만 검증하는
+미니 PoC를 먼저 별도로 계약하고, "1~5번이 모두 성공해 다음 영상 자동 전환이 증명됐을 때"만 본 계약
+(전체 앱 개발)으로 전환하는 조건을 거는 게 리스크 관리 측면에서 안전하다.
+
+**이 검증이 나오기 전까지는** iOS Pace Player의 실제 화면 구현(Player 화면, `usePlayerStore`, DB
+스키마 등, 위 "필요한 것" 5~7번)에 깊게 투자하지 않는 게 합리적 — UI보다 "WKWebView + YouTube
+Shorts + Auto Next가 실제로 되는가"가 선행 조건. 결과가 NO로 나오면 iOS는 Pace-큐레이션 콘텐츠
+방향(위 블로커의 경로 1)으로 재설계해야 한다.
 
 ---
 
@@ -168,6 +356,10 @@ Break Reminder   ON
 
 ## iOS Live Activity 상세 설계
 
+> ⚠️ **2026-07-17 피벗으로 핵심 경로 아님** — "제품 전략 피벗" 섹션 참고. iOS는 이제 Live Activity
+> 컴패니언이 아니라 "Pace Player"(자체 재생)로 간다. 이 섹션은 향후 Player 화면이 백그라운드에
+> 있을 때 잠금화면 상태 표시 등 **보조 기능**으로 재활용될 수 있어 삭제하지 않고 남겨둔다.
+
 **ActivityAttributes (Swift, 네이티브 모듈 쪽에서 정의)**
 ```swift
 struct PaceAttributes: ActivityAttributes {
@@ -293,6 +485,10 @@ dispatchGesture()로 Swipe Up 실행 (3초 카운트 후)
 
 ## iOS: Live Activity + 앱 차단 구조
 
+> ⚠️ **2026-07-17 피벗으로 "Live Activity(오버레이 대체)" 부분은 핵심 경로 아님** — "제품 전략
+> 피벗" 섹션 참고. 아래 "Focus / App Blocking" 부분(FamilyControls/DeviceActivity/ManagedSettings)은
+> Player 모델과 무관하게 계속 유효(콘텐츠 재생과 별개로 앱 차단은 여전히 필요한 기능).
+
 **Live Activity (오버레이 대체)**
 ```
 Start Session (JS) → ActivityKit.Activity.request(attributes, content) → Live Activity 시작
@@ -315,18 +511,22 @@ DeviceActivityMonitor 콜백 → ManagedSettingsStore.shield.applications 적용
 
 ## 플랫폼 Feature Matrix
 
+> ⚠️ **2026-07-17 피벗으로 아래 표의 Auto Next/오버레이/Live Activity 행과 "제품 포지셔닝 결론"은
+> 구버전** — "제품 전략 피벗" 섹션이 최신. 표는 피벗 이전 스냅샷으로 남겨둔다(비교용).
+
 | 기능 | Android | iOS | 구현 방식 |
 |---|---|---|---|
 | Home / Stats / Settings / Auth / RevenueCat | ✅ | ✅ | 완전 공통 |
 | Sleep Timer / Daily Limit / Usage Tracking / Break Reminder | ✅ | ✅ | 공통 로직 + 로컬 알림 |
-| **Auto Next** | ✅ | ❌ | Android: AccessibilityService+MediaSession. iOS: 원천 불가, capability flag로 UI 숨김 |
-| **시스템 오버레이 바(플로팅)** | ✅ | ❌ | Android: Foreground Service + Overlay Window |
-| **Live Activity / Dynamic Island** | ❌ | ✅ | iOS 오버레이의 대체 수단 |
-| App Blocking / Focus Mode | ✅ (Accessibility 기반 차단화면) | ✅ (FamilyControls/ManagedSettings) | 플랫폼별 완전히 다른 API, 상위 `FocusService` 인터페이스로 추상화 |
+| **Auto Next** | ✅ | ❌ (구버전) → ✅ Pace Player 자체 구현으로 변경 | Android: AccessibilityService+MediaSession(실제 앱 위). iOS: Player 내부 재생 엔진이 직접 처리 |
+| **시스템 오버레이 바(플로팅)** | ✅ | ❌ | Android: Foreground Service + Overlay Window (변경 없음) |
+| **Live Activity / Dynamic Island** | ❌ | (구버전 핵심) → 보조 기능으로 강등 | 피벗 후에는 Player 백그라운드 상태 표시 등 부가 용도로만 검토 |
+| App Blocking / Focus Mode | ✅ (Accessibility 기반 차단화면) | ✅ (FamilyControls/ManagedSettings) | 변경 없음 — Player 모델과 무관하게 유효 |
 
-**제품 포지셔닝 결론**: Android는 "Shorts Assistant"(자동재생+오버레이 포함 풀 기능),
-iOS는 "Digital Wellbeing Assistant"(Live Activity+Screen Time 계열 제한 기능)로 기능 차이를
-기획 단계에서부터 명시한다. UI/비즈니스 로직은 80~85% 공유, 네이티브 기능만 완전 분리.
+**제품 포지셔닝 결론(구버전, 참고용)**: ~~Android는 "Shorts Assistant", iOS는 "Digital Wellbeing
+Assistant"~~ → **신버전**: Android = "Overlay Assistant"(실제 앱 위 오버레이+오토넥스트),
+iOS = "Pace Player"(자체 재생 피드+오토넥스트) — 두 플랫폼 모두 "Start 누르면 자동 넘김되는 쇼츠
+경험"이라는 동일한 사용자 가치를 다른 구현으로 제공. 상세는 "제품 전략 피벗" 섹션 참고.
 
 ---
 
@@ -373,6 +573,248 @@ overlay_events (id, user_id, session_id, event_type, detail, created_at)
 동기화 원칙(zen-master `syncService.syncWithRetry()` 패턴): 오프라인 기록 → 로그인/포그라운드 복귀 시
 서버로 flush → 실패 시 큐 유지 후 재시도. 로그아웃/탈퇴 시 삭제해야 할 로컬 스코프 키는
 zen-master `AuthContext.tsx`의 `USER_SCOPED_KEYS` 방식(정적 목록 + 동적 프리픽스 목록)을 그대로 따른다.
+
+### 서버 저장 데이터 명세 — Privacy First (2026-07-18 확정)
+
+> ⚠️ **현재 상황**: 이 저장소에는 `backend/` 디렉토리 자체가 없다(jlpt-master는 있음). `services/api/client.ts`는
+> 클라이언트 코드만 완성돼 있고 `API_BASE_URL`은 자리표시자(`localhost:8080` 또는 빈 문자열) — 실제
+> 서버는 미착수. 아래는 서버를 만들 때 따를 데이터 명세이며, **로컬 SQLite 스키마(`database/schema.ts`)와
+> 1:1은 아니다** — 서버는 로컬보다 더 적게 가져간다(Privacy First 원칙 때문에 로컬에만 남고 서버로
+> 안 올라가는 컬럼이 있음, 아래 표에 컬럼 단위로 명시).
+
+**원칙**: Pace는 "영상을 관리해주는 도구"이지 "영상을 지켜보는 도구"가 아니다. 서버는 시청 **메타데이터**
+(시간·횟수·플랫폼·설정·구독 상태)만 저장하고, 콘텐츠 자체나 콘텐츠를 특정할 수 있는 정보는 절대
+저장하지 않는다.
+
+| 저장 금지 항목 | 이유 |
+|---|---|
+| ❌ 이메일을 세션/통계 테이블에 재저장 | `users` 테이블에만 존재, 다른 테이블은 `user_id`(UUID)로만 참조 |
+| ❌ 실제 영상 제목 | 콘텐츠 식별 정보 — 애초에 수집하지 않음 |
+| ❌ 영상 URL/영상 ID | 위와 동일 |
+| ❌ 좋아요/구독/댓글 등 플랫폼 활동 데이터 | Pace의 관심사가 아님, 수집 시 각 플랫폼 ToS 위반 소지 |
+| ❌ 실제 시청 콘텐츠(썸네일/스크린샷 등) | 위와 동일 |
+
+서버가 아는 것은 예를 들면 `platform_app: "youtube"`, `videos_watched: 42`, `duration_seconds: 2220`
+같은 **집계 숫자뿐** — "무엇을 봤는지"가 아니라 "얼마나/몇 개 봤는지"만.
+
+**MVP 5개 테이블** (Pace 로컬 스키마와 이름 그대로 대응, 서버는 이 중 사용자 식별 가능한 컬럼만 최소로):
+
+| 서버 테이블 | 컬럼(로컬 `database/schema.ts` 대비 서버 전송분만) | 로컬에만 남고 서버 미전송 |
+|---|---|---|
+| `users` | `id, email, name, provider, created_at` | `avatar_url`(로컬 캐시 성격, 서버 왕복 불필요 — 소셜 로그인 응답을 그때그때 반영) |
+| `subscriptions` | `id, user_id, plan, status, renewal_date, updated_at` | 없음 — RC entitlement는 웹훅으로 서버가 갱신, 전량 필요("외부 리뷰 반영 3차 · RevenueCat 백엔드 웹훅 계약" 참고) |
+| `user_settings` | `user_id, auto_next, sleep_timer_min, daily_limit_min, break_interval_min, pre_session_breathing, theme, language, updated_at` | `app_shields_json, per_app_json`은 **로컬 전용으로 보류** — 특정 앱을 얼마나 차단했는지는 기기별로 달라도 되는 로컬 설정, 서버 동기화 필요성 낮음(다기기 사용 시나리오 나오면 재검토) |
+| `viewing_sessions` | `id, user_id, platform_app, started_at, ended_at, duration_seconds, videos_watched, status` | `synced`(로컬 동기화 플래그 자체가 서버에 갈 이유 없음) |
+| `daily_stats` | `user_id, date, total_minutes, total_videos, longest_session_seconds` | 없음 — 로컬 `daily_stats`가 현재 "미사용"(주석 참고)이라 서버도 아직 채울 데이터 없음, MVP에서는 서버가 `viewing_sessions`로부터 직접 GROUP BY해서 응답하는 편이 테이블 두 개를 항상 일치시키는 것보다 단순 |
+
+**Phase 2 이후 (MVP에는 없음, 스키마 확장 필요)**:
+
+| 테이블 | 목적 | 비고 |
+|---|---|---|
+| `user_streaks`(`user_id, current_streak, best_streak, last_active_date`) | 연속 사용일 표시 | 현재는 `stats.tsx`가 `weeklyStats`로 **클라이언트에서 그때그때 계산**(UI 포팅 섹션 참고) — 다기기 로그인 시 스트릭이 기기마다 따로 계산되는 문제가 생기기 전까지는 서버 테이블 불필요 |
+| `platform_usage`(`user_id, platform, minutes, videos, date`) | 플랫폼별 일별 집계 | **이미 로컬에서 별도 테이블 없이 해결 중** — `statsRepository.getTodayUsageByApp()`가 `viewing_sessions.platform_app`을 쿼리 시점 `GROUP BY`("외부 리뷰 반영 2차" 3번 참고). 서버도 같은 방식으로 별도 테이블 없이 `viewing_sessions` 집계 쿼리로 충분, 트래픽이 실제로 무거워질 때만 캐시 테이블로 승격 |
+| `user_metrics`(`user_id, date, focus_score, longest_session, average_watch_seconds, auto_next_ratio, daily_limit_hit`) | AI Insights 고도화용 | `auto_next_ratio` 계산을 하려면 `viewing_sessions`에 현재 없는 **`auto_next_used` 컬럼(BOOLEAN) 추가가 선행 조건** — 로컬 스키마에도 아직 없음(`videos_watched`만 있고 이 중 몇 개가 자동 넘김이었는지는 미기록). `focus_score` 산출 공식 자체도 미정 — MVP 이후 별도 설계 필요 |
+
+**용량 추정**: 사용자 1명당 하루 세션 10개 ≈ 2~3KB. 10만 사용자 기준으로도 PostgreSQL 저장 비용은
+무시할 수준 — MVP 5개 테이블만으로 충분하고 조기 최적화(파티셔닝 등) 불필요.
+
+**결론**: 서버 스키마는 로컬 스키마의 부분집합이며, 컬럼을 늘리기 전에 항상 "이게 콘텐츠 식별 정보인가?"
+"다기기 동기화가 실제로 필요한가?"를 먼저 물을 것. `avatar_url`/`app_shields_json`/`per_app_json`처럼
+로컬에만 있어도 충분한 컬럼을 서버까지 무분별하게 복제하지 않는다.
+
+---
+
+## 백엔드 스택 확정 (2026-07-18) — jlpt-master 다이어트 이식
+
+### 결정 배경
+처음엔 "2026 웹 트렌드"를 근거로 Node.js/TypeScript(Fastify+Drizzle+Postgres) 신규 스택을 검토했으나,
+사용자가 방향을 정정했다: **jlpt-master(`c:\MyData\Project\jlpt-master\backend`)는 2년치 학습앱 운영
+노하우가 실전 검증된 자산이고, 특히 JWT `tokenVersion` 구조·RevenueCat grant/revoke 상태 머신(실사고
+이력 반영)·webhook 상수시간 인증은 그대로 가져올 가치가 크다.** 반면 Study/Ranking/Galaxy/Wallet 같은
+JLPT 전용 도메인은 Pace와 무관하므로, **스택은 그대로 재사용하고 도메인만 잘라내는 "다이어트" 이식**으로
+확정했다. 이번 결정은 "매번 최신 트렌드를 조사해 신규 스택을 고른다"는 원칙보다, **실전에서 사고를 겪고
+고친 코드(RevenueCat 웹훅 로직 등)는 새로 짜지 말고 재사용하는 게 낫다**는 원칙이 우선한 사례로 기록한다
+— 트렌드 조사는 "새로 만들 때 무엇으로 만들까"에는 유효하지만, "이미 검증된 자산이 있을 때"는 그 자산의
+재사용 여부를 먼저 물어야 한다.
+
+### jlpt-master 조사 요약
+- **스택**: Java 17 + Spring Boot 3.2.5 + Maven, Spring Data JPA + MySQL(운영)/H2(개발), Spring Security.
+- **약점**(Pace가 반드시 개선): Flyway/Liquibase 등 마이그레이션 도구 미사용(`ddl-auto=update`로 임시
+  운영, 저자도 "운영 안정화 후 전환 권장"이라 인지하고 있었음), 전역 예외처리 없음(컨트롤러마다 ad-hoc
+  `Map.of("error", ...)` 응답 반복), Bean Validation 저활용(2곳뿐), 아직 Railway 실배포 전(계획 문서
+  단계).
+- **JWT**: `tokenVersion` claim을 JWT에 심고 DB `UserAccount.tokenVersion`과 대조 — 새 로그인마다
+  버전 증가시켜 기존 토큰을 전부 무효화(단일기기 로그인 강제 겸 토큰 일괄 폐기 수단).
+- **RevenueCat 웹훅**: `Authorization` 헤더를 `MessageDigest.isEqual`로 상수시간 비교(fail-closed).
+  `CANCELLATION`은 즉시 박탈하지 않고 만료일까지 유지(`CUSTOMER_SUPPORT`/환불 사유만 즉시 박탈) —
+  과거 "해지 즉시 이용정지"로 처리했다가 Apple/Google 정책 위반·환불 분쟁을 겪고 고친 이력이 주석에
+  남아 있음. `EXPIRATION`은 실제 만료 처리(단 그 사이 재구독됐으면 무시). `/auth/refresh` 시점에
+  RevenueCat REST API(`GET /v1/subscribers/{id}`)로 재조회해 웹훅 누락을 보정.
+- **컨트롤러 14개 중 Pace에 유의미한 건 Auth/Webhook뿐** — Study/Progress/Content/Audio/
+  PremiumDownload/Ranking/Galaxy/Wallet/Widget/Log/AppVersion은 단어학습·소셜·게이미피케이션 전용이라
+  전부 제외.
+
+### 도메인 다이어트
+
+| jlpt-master (14 컨트롤러) | Pace | 판단 |
+|---|---|---|
+| Auth | **Auth** | 유지(Kakao/Naver/reviewer-login/bind는 제외 — 아래 "스코프 밖" 참고) |
+| Study, Progress, Content, Audio, PremiumDownload | ❌ 전부 삭제 | 단어학습 전용, Pace 도메인과 무관 |
+| Ranking, Galaxy, Wallet | ❌ 전부 삭제 | 소셜/게이미피케이션, Pace MVP 불필요 |
+| Widget, Log, AppVersion | ❌ 전부 삭제 | |
+| (jlpt엔 없음) | **Session**(신설) | Pace 핵심 — 시청 세션 기록/조회 |
+| (jlpt엔 DailyUsage가 쿼터용으로만 존재) | **Stats**(신설) | Pace 핵심 — 일별/주별 집계, 인사이트 |
+| (jlpt엔 UserSettings 없음) | **Settings**(신설) | auto_next/sleep_timer/daily_limit 등 |
+| Webhook | **Webhook** | 유지, 로직 거의 100% 이식 |
+
+**Pace 최종 컨트롤러 5개**: `AuthController`, `SessionController`, `StatsController`,
+`SettingsController`, `WebhookController` — jlpt-master 14개 대비 도메인 규모 20~30% 수준.
+
+### 최종 스택
+
+| 항목 | 선택 | 비고 |
+|---|---|---|
+| 언어/프레임워크 | Java 17 + Spring Boot 3.2.x | jlpt-master와 동일, 검증된 조합 |
+| 인증 | Spring Security + 커스텀 JWT 필터 | jlpt-master `JwtProvider`/`JwtAuthenticationFilter` 이식 |
+| ORM | Spring Data JPA | jlpt-master와 동일 |
+| DB | MySQL | jlpt-master와 동일(Railway MySQL 플러그인) |
+| 빌드 | Maven | jlpt-master와 동일 |
+| 마이그레이션 | **Flyway**(신규 도입) | `ddl-auto=validate`로 스키마 드리프트 방지 — jlpt-master엔 없던 것 |
+| 결제 | RevenueCat(webhook + REST reconcile) | jlpt-master `PaymentService`+`RevenueCatClient` 로직 이식 |
+| API 문서 | **springdoc-openapi(Swagger UI)**(신규 도입) | jlpt-master엔 없던 것 — 프론트 개발 시 API 계약 확인용 |
+| 배포 타겟 | Railway(Dockerfile) | jlpt-master `RAILWAY_DEPLOY.md`를 그대로 참고 가능 |
+
+**중요 — 파일을 그대로 복붙하지 않는다**: jlpt-master는 별도 git 저장소이자 다른 프로젝트다. 코드를
+그대로 복사하지 않고, 읽어서 로직/구조만 참고해 Pace 전용 패키지(`com.pace.backend`)로 새로 작성한다.
+
+### DB 스키마 (MySQL, Flyway `V1__init.sql`)
+
+`user_account` / `user_settings` / `viewing_session` / `daily_stats` / `subscription` 5개
+테이블 — 위 "서버 저장 데이터 명세 — Privacy First" 섹션의 5개 테이블 설계(컬럼명·Privacy First 원칙)를
+그대로 계승하되, 이번에 두 컬럼을 신규 확정했다:
+- `viewing_session.auto_next_used`(BOOLEAN) — 앞선 대화에서 확인한 gap, 그린필드로 짓는 지금이
+  마이그레이션 없이 추가할 수 있는 유일한 시점이라 포함.
+- `daily_stats.session_count`(INT) — Copilot 제안 스키마에는 있었지만 로컬 스키마엔 없던 컬럼, 서버
+  전용으로 신규 확정.
+
+> ⚠️ **2026-07-18 정정** — 아래 스키마는 최초 설계본이었으나, 실제 프론트(다른 세션이 병행 구현 중이던
+> `useSettingsStore`/`useStatsStore`/SQLite `schema.ts`)와 대조한 결과 필드명·컬럼이 여러 곳에서 어긋나
+> 있었다. 바로 다음 섹션 "프론트-백엔드 데이터 정합화"에서 확정한 **최신 스키마로 이미 코드에 반영
+> 완료** — 아래 블록은 결정 이력 보존용으로 남겨두고, 실제 구현 기준은 다음 섹션을 볼 것.
+
+```sql
+user_account(id BIGINT PK AUTO_INCREMENT, email VARCHAR UNIQUE, name VARCHAR, provider VARCHAR,
+             premium BOOLEAN DEFAULT FALSE, premium_expires_at DATETIME NULL,
+             token_version INT DEFAULT 0, device_id VARCHAR NULL,  -- 게스트 upsert 키
+             created_at DATETIME, updated_at DATETIME)
+
+user_settings(user_id BIGINT PK/FK, auto_next_enabled BOOLEAN DEFAULT TRUE,
+              sleep_timer_minutes INT NULL, daily_limit_minutes INT DEFAULT 60,
+              break_reminder_minutes INT DEFAULT 20, pre_session_breathing BOOLEAN DEFAULT TRUE,
+              theme VARCHAR DEFAULT 'system', language VARCHAR DEFAULT 'system', updated_at DATETIME)
+
+viewing_session(id VARCHAR(36) PK,  -- 클라이언트가 이미 UUID로 생성(sessionsRepository) → 그대로 PK로 씀
+                user_id BIGINT FK, platform VARCHAR, started_at DATETIME, ended_at DATETIME NULL,
+                duration_seconds INT DEFAULT 0, videos_watched INT DEFAULT 0,
+                auto_next_used BOOLEAN DEFAULT FALSE,
+                status VARCHAR NULL,  -- 'completed'|'daily_limit_reached'|'sleep_timer_expired'|'manual_stop'
+                                      -- ⚠️ 로컬 SQLite(database/schema.ts)가 이미 이 소문자 snake_case 값을
+                                      -- 그대로 만들어 보내므로, 서버는 대문자 enum으로 바꾸지 않고 동일 문자열
+                                      -- 그대로 저장 — 클라이언트-서버 간 변환 계층을 두지 않기 위함
+                created_at DATETIME, INDEX(user_id, started_at))
+
+daily_stats(id BIGINT PK AUTO_INCREMENT, user_id BIGINT FK, date DATE,
+            total_minutes INT DEFAULT 0, total_videos INT DEFAULT 0, session_count INT DEFAULT 0,
+            focus_score INT NULL,  -- 산출 공식 미정 — MVP는 NULL 허용, 추후 공식 확정 시 배치/트리거로 채움
+            UNIQUE(user_id, date))
+
+subscription(user_id BIGINT PK/FK, plan VARCHAR, is_active BOOLEAN, expires_at DATETIME NULL,
+              updated_at DATETIME)  -- RC 상세 이력/감사용 엔티티명은 Subscription. 실제 인증서버 판정
+                                     -- (JWT의 isPremium, AuthenticationFilter의 ROLE_PREMIUM)은
+                                     -- UserAccount.premium을 씀
+```
+
+### 프론트-백엔드 데이터 정합화 (2026-07-18) — 최신 스키마/API 기준
+
+다른 세션이 병행 구현 중이던 프론트(`useSettingsStore`/`useStatsStore`/`useSessionStore`/`database/schema.ts`)의
+**실제 필드명을 전수 대조**한 결과, 위 최초 스키마와 여러 곳이 어긋나 있었다. 원칙: **프론트가 이미 실제
+UI+SQLite로 동작 중인 진실원천이고 백엔드는 이제 막 만든 쪽이라, 백엔드를 프론트에 맞춘다.**
+
+| 항목 | 최초(위 블록) | 정정 후(현재 코드) | 사유 |
+|---|---|---|---|
+| 자동 넘김 필드 | `auto_next_enabled` | **`auto_next`** | `useSettingsStore`가 이미 `autoNext`로 씀 |
+| 휴식 알림 필드 | `break_reminder_minutes` | **`break_interval_minutes`** | `models.ts`의 `breakIntervalMinutes`와 일치 |
+| 앱별 설정 | (없음) | **`app_shields_json`, `per_app_json` 추가**(TEXT, opaque JSON 미러) | settings.tsx가 이미 `appShields`/`perApp`로 앱별 토글 UI를 그리고 있어 다기기 동기화 필요 — 처음엔 "로컬 전용으로 보류"했던 판단을 뒤집음 |
+| daily_stats | `session_count`, `focus_score` | **`session_count`, `longest_session_seconds`**(focus_score 삭제) | `focus_score`는 로컬 스토어/UI/계산식이 전혀 없는 "서버가 먼저 만든 허상 개념"이라 제거. `longest_session_seconds`는 로컬 `daily_stats`에 이미 있던 컬럼이라 채택 |
+| platformBreakdown | (없음) | **`GET /stats/insights` 응답에 `platformBreakdown: [{app, minutes}]` 추가** | 로컬 `statsRepository.getTodayUsageByApp()`과 동일 개념. 별도 테이블 없이 `viewing_session`에서 응답 시점 계산(저장 안 함) |
+| 세션 종료 사유 | (없음) | **`GET /stats/session-end-reasons` 신규**(`{completed, dailyLimitReached, sleepTimerExpired, manualStop}`) | 로컬 `statsRepository.getSessionEndReasons()`와 동일 개념, 저장 없이 응답 시점 계산 |
+
+**결론적으로 API 계약은 유지, 스키마/필드명만 프론트 기준으로 정정**: `AuthResult`(`token/userId/email/name/isPremium`)와 `viewing_session.status` 값(`completed`/`daily_limit_reached`/`sleep_timer_expired`/`manual_stop`)은 이미 프론트와 일치해 변경 없음 — 확인 결과 실제로 어긋났던 건 설정 필드명 2개, daily_stats 컬럼 구성, 그리고 아직 서버에 없던 두 통계 개념뿐이었다.
+
+### API 명세 (5 컨트롤러)
+
+**AuthController** — 기존 `client.ts` 계약과 100% 호환(클라이언트 코드 변경 불필요) + `GET /status` 신규:
+- `POST /auth/google {idToken}` → Google idToken 검증 → email upsert → `AuthResult{token,userId,email,name,isPremium}`
+- `POST /auth/apple {identityToken,name?,authorizationCode?}` → Apple JWKS 검증 → email upsert
+  (name은 최초 로그인에만 옴 — jlpt와 동일 이슈, 최초값만 저장하고 이후 null이면 덮어쓰지 않음)
+- `POST /auth/guest {deviceId}` → **deviceId로 upsert**(존재하면 기존 유저 반환) — `useUserStore.
+  loginAsGuest`가 재호출해도 항상 같은 서버 유저가 나오게 해서, 로컬id→서버id 마이그레이션 문제를
+  애초에 피함
+- `POST /auth/refresh`(Bearer) → tokenVersion 대조 → **RC REST reconcile**(jlpt와 동일: RC
+  `/v1/subscribers/{id}` 조회 후 premium 동기화) → 재발급 `{token}`
+- `GET /auth/status`(Bearer) → 현재 유저 정보+isPremium(신규, 가벼운 헬스체크/디버그용)
+- `DELETE /auth/account`(Bearer) → 연관 데이터 cascade 삭제 → 204
+
+**SessionController**(신규) — 클라이언트가 이미 만든 세션 UUID를 그대로 서버 PK로 재사용해 upsert하므로,
+"세션 시작 시 즉시 push" 경로와 "오프라인 기록 후 나중에 일괄 sync" 경로가 같은 테이블에 충돌 없이
+합류한다:
+- `POST /sessions/start {id,platform,startedAt}`(Bearer), `POST /sessions/end {id,endedAt,
+  durationSeconds,videosWatched,autoNextUsed,status}`(Bearer), `GET /sessions/today`, `GET /sessions/recent`
+
+**StatsController**(신규):
+- `POST /stats/sync {sessions: ViewingSession[]}`(Bearer) → `{synced:number}` — 오프라인 배치 동기화
+  본선. 기존 `statsApi.pushSessions`(`/stats/sessions`)를 대체하는 이름 — 현재 미배선 상태라 프론트
+  변경 리스크 없음.
+- `GET /stats/daily?date=` / `GET /stats/weekly` — `daily_stats`(`total_minutes/total_videos/
+  session_count/longest_session_seconds`) 조회.
+- `GET /stats/insights` — `totalSessions/longestSessionSeconds/autoNextRatio` + **`platformBreakdown`**
+  (앱별 사용 분(分), 로컬 `getTodayUsageByApp`과 동일 개념)까지 `viewing_session`에서 즉석 계산해 반환
+  (별도 저장 테이블 없음).
+- `GET /stats/session-end-reasons` — `{completed, dailyLimitReached, sleepTimerExpired, manualStop}`,
+  로컬 `getSessionEndReasons`와 동일 개념, 즉석 계산.
+
+**SettingsController**: `GET/PUT /settings`(Bearer) — `client.ts` 계약 유지 + `appShields`/`perApp`
+(프론트 shape 그대로, 서버는 내용을 해석하지 않고 JSON 텍스트로 미러링) 추가.
+
+**WebhookController** — jlpt `PaymentService`/`WebhookController` 로직 이식(가장 이식 가치가 큰 부분):
+상수시간 인증(fail-closed) → 이벤트별 grant/revoke(CANCELLATION은 만료일까지 유지, EXPIRATION만 실제
+박탈, 역전 이벤트 스킵, 익명ID는 aliases로 폴백) → `UserAccount.premium/premiumExpiresAt` 갱신 +
+`subscription` upsert. 상세 정책은 위 "RevenueCat 백엔드 웹훅 계약" 섹션과 동일.
+
+### jlpt-master 대비 개선 3가지
+1. **Flyway** — `ddl-auto=validate` + `V1__init.sql`로 시작, 스키마 변경은 항상 새 마이그레이션 파일로.
+2. **GlobalExceptionHandler**(`@RestControllerAdvice`) — 에러 응답을 `{success:false, message, code}`로
+   통일. ⚠️ 성공 응답은 래핑하지 않음 — `client.ts`의 `request<T>()`가 `res.json()`을 그대로 `T`로
+   캐스팅하므로 `AuthResult` 등은 top-level 필드 그대로 반환해야 기존 클라이언트가 안 깨진다.
+3. **Bean Validation 적극 사용** — 모든 요청 DTO에 `@NotBlank`/`@Email`/`@Min`/`@Max` 등, jlpt는 2곳뿐.
+
+### 구현 중 실제로 발견한 이슈 (2026-07-18 로컬 검증)
+1. **springdoc-openapi 버전 호환성** — 처음 넣은 `2.8.17`은 Spring Framework 6.2+(Spring Boot 3.4+)를
+   요구해 `LiteWebJarsResourceResolver` `ClassNotFoundException`으로 기동 자체가 실패했다. Spring Boot
+   `3.2.5`(Spring Framework 6.1.6)와 맞는 `2.5.0`으로 낮춰서 해결 — OpenAPI 등 서브 의존성은 Boot 버전을
+   먼저 고정한 뒤 그에 맞는 호환 버전을 찾아야 한다는 교훈.
+2. **인증 실패 시 403이 아니라 401을 반환하도록 `RestAuthenticationEntryPoint` 추가** — Spring Security
+   기본값은 토큰이 아예 없거나 유효하지 않을 때도 403을 준다. `client.ts:53-56`의 `unauthorizedHandler`는
+   정확히 `res.status === 401`일 때만 자동 로그아웃을 트리거하므로, 403을 그대로 뒀다면 클라이언트가 만료된
+   세션을 인지하지 못하는 실버그가 됐을 것 — curl 검증 중 직접 발견해 `SecurityConfig`에
+   `exceptionHandling(...authenticationEntryPoint(...))`로 수정.
+
+### 스코프 밖 (이번 구현엔 포함 안 함)
+- Kakao/Naver 로그인, `/auth/bind/google`(게스트→소셜 전환), `/auth/reviewer-login` — 현재 프론트가
+  google/apple/guest만 지원하고 리뷰어 화이트리스트는 이미 클라이언트 로직만으로 동작 중.
+- `focus_score` 산출 공식 확정 — 컬럼만 만들고 NULL 허용.
+- 프론트에서 `statsApi.pushSessions`/`settingsApi.*`/신규 SessionController를 실제로 호출하도록 배선.
+- Railway 실배포/도메인/시크릿 발급(계정·과금 소요) — 로컬 `docker compose up`(MySQL 컨테이너)까지만.
 
 ---
 
@@ -538,7 +980,8 @@ webhook 서버 검증 불가"라고 명시했던 반면, jlpt-master(`backend/SU
 | Store | `store/useSessionStore.ts` | ✅ 완료(런타임 상태만, 네이티브 미연결) | 세션 주체(id/app/status) |
 | Store | `store/useCapabilityStore.ts` | ✅ 완료 | capabilities.ts 훅 래퍼 |
 | Store | `store/useSubscriptionStore.ts` | 🟡 부분 | RC 클라이언트 로직 + identify/reset + SQLite 미러 완료, 백엔드 웹훅 서버는 미착수 |
-| Service | `services/api/client.ts` | 🟡 부분 | 클라이언트 완료, 실제 서버 없음(API_BASE_URL 자리표시자) |
+| Service | `services/api/client.ts` | 🟡 부분 | 클라이언트 완료, 백엔드 스펙 확정(Java/Spring, 위 "백엔드 스택 확정" 섹션) — 서버 구현 진행 중, API_BASE_URL은 로컬 개발 서버 연결 전까지 자리표시자 |
+| Backend | `backend/`(신설, Java/Spring Boot) | ✅ 로컬 검증 완료 | AuthController/SessionController/StatsController/SettingsController/WebhookController 5종 + Flyway V1 + GlobalExceptionHandler + RevenueCatServiceTest(8종, 전부 통과) 구현 완료. 이 개발 환경에 Docker/MySQL이 없어 **H2(MySQL 호환 모드)로 대체 기동**해 전 엔드포인트 curl 검증 — 실제 MySQL 대상 검증과 Railway 실배포는 아직 안 함(별도 승인 필요) |
 | Service | `services/auth/google.ts`, `apple.ts` | ✅ 완료(코드), 🔴 실기기 미검증 | 실키+Dev Client 빌드 필요 |
 | Service | `services/platform/usageService.*`, `autoNextService.*`, `focusService.*` | 🔴 인터페이스만 | 네이티브 모듈 없음 |
 | Service | `services/platform/overlayService.android.ts` | 🟡 POC 연결됨 | `modules/pace-overlay` 방어적 require, 컴파일 미검증 |
@@ -743,6 +1186,289 @@ PanResponder 드래그-닫기, 다크모드 테마 시스템)는 이식하지 �
 
 ---
 
+## 실기기 검증 2차 — i18n 크래시 및 Metro 불안정 디버깅 (2026-07-17)
+
+`services/i18n` 도입 직후 `pace_test` 에뮬레이터에서 `TypeError: Cannot read property
+'useTranslation' of undefined`가 `(tabs)/_layout.tsx:6`에서 반복적으로 발생. 근본 원인은 서로
+다른 두 개였고 둘 다 고쳐야 실제로 해결됐다 — 둘 중 하나만 고치면 증상이 형태만 바꿔서 재발한다.
+
+### 원인 1 — `expo-localization` 네이티브 모듈이 APK에 링크되지 않음
+- 실제 RedBox 에러는 `Cannot find native module 'ExpoLocalization'`. `services/i18n/index.ts`가
+  최상단에서 `import * as Localization from 'expo-localization'`를 하는데, 이 모듈은 순수 JS가
+  아니라 네이티브 코드를 포함한다 — `package.json`/`app.json`의 `plugins`에 이미 등록돼 있어도,
+  **그 등록 이후에 네이티브 프로젝트를 다시 빌드하지 않으면 이미 설치된 dev-client APK에는
+  포함되지 않는다.** JS만 Fast Refresh로 갱신되고 네이티브 바이너리는 그대로였던 것.
+- 해결: `npx expo run:android -d <device>`로 재빌드 → autolinking(`expo-autolinking-settings`,
+  Gradle configure 시점에 `node_modules`를 다시 스캔)이 새로 `expo-localization`을 포함시킴.
+- **교훈**: 네이티브 코드가 있는 패키지(`expo-*`, RN 네이티브 모듈)를 새로 추가한 뒤에는 JS
+  리로드만으로 부족하고 반드시 `expo run:android`/`run:ios` 재빌드가 필요하다 — 특히 이 프로젝트는
+  `modules/pace-overlay` 커스텀 네이티브 모듈 때문에 Expo Go가 아니라 커스텀 dev-client를 쓰고
+  있어서 이 문제가 더 자주 발생할 수 있다는 점을 항상 염두에 둘 것.
+
+### 원인 2 — 장시간 떠있던 Metro 프로세스의 상태 손상 (멀티파트 번들 응답 손상)
+- 원인 1을 고친 뒤에도 앱이 "Loading from 10.0.2.2:8081..."에서 무한정 멈췄다. `adb logcat
+  --pid=<pid>`로 확인한 실제 예외:
+  `okhttp3...ProtocolException: Expected leading [0-9a-fA-F] character but was 0x2d`
+  (`BundleDownloader.processMultipartResponse` → `MultipartStreamReader.readAllParts`).
+  RN dev-client는 번들 진행률 표시를 위해 Metro에 `Accept: multipart/mixed`로 요청하고 청크
+  전송 인코딩 멀티파트 응답을 받는데, 그 청크 프레이밍이 깨져서 파싱에 실패한 것.
+- `10.0.2.2`(에뮬레이터 가상 NAT)와 `adb reverse tcp:8081`(호스트로의 직접 ADB 터널) 양쪽 다
+  동일하게 실패 — 즉 네트워크 경로 문제가 아니었다. 반면 host에서 `curl -H "Accept:
+  multipart/mixed" localhost:8081/index.bundle...`은 완전히 정상 응답(29.5MB 전체 정상 파싱)을
+  받았다 — Metro 서버 자체도, 요청 프로토콜 자체도 문제가 아니었다는 뜻.
+- 최종 원인: **몇 시간째 떠 있던 그 Metro 프로세스 자체의 내부 상태 손상**(다수의 오래된
+  `ESTABLISHED` 커넥션이 `netstat`에 누적돼 있었음 — 정확한 내부 버그는 특정하지 못했지만, 그
+  프로세스를 `taskkill /F /PID`로 죽이고 `npx expo start --port 8081`로 완전히 새로 띄우자 같은
+  기기·같은 `adb reverse` 설정에서 즉시 정상적으로 "Bundling 99%..." → 앱 정상 기동까지 이어졌다.
+- **교훈**: 정체불명의 번들 다운로드/청크 인코딩 오류를 만나면 네트워크 경로(10.0.2.2 vs
+  localhost/adb reverse)를 바꿔보기 전에, 먼저 **Metro 프로세스 자체를 완전히 재시작**해볼 것 —
+  특히 하루 종일 켜둔 세션에서는 이게 훨씬 빠르고 확실한 1차 시도다.
+
+### 실기기(USB) 연결 관련 참고
+- 재검증 도중 실기기(`R3CN80S5GWW`, arm64-v8a)가 `adb devices`에서 갑자기 사라진 적이 있었다.
+  Windows `Get-PnpDevice`로는 `SAMSUNG Android ADB Interface`가 `Status: OK`로 정상 인식되고
+  있었고, 충돌하는 `adb.exe` 프로세스도 없었다 — 즉 드라이버/PC 쪽 문제가 아니라 **폰 쪽의 ADB
+  데몬이 핸드셰이크를 완료하지 못한 상태**(화면 잠금, "USB 디버깅 허용" 팝업 대기, 케이블이
+  충전 전용 모드 등)였을 가능성이 높다. `adb kill-server && adb start-server`로도 해결 안 되면
+  폰 화면을 깨워 팝업을 직접 확인해야 한다 — PC/드라이버 쪽에서 더 팔 수 있는 부분이 없다.
+
+### 검증 완료 항목 (i18n)
+- `pace_test` 에뮬레이터에서 Home 탭 정상 렌더(게스트 세션, "60 min left" 등 영문 표기 확인).
+- Settings → Language 칩에서 System/English/한국어 전환 정상 동작 확인. 한국어 전환 시 "Pace
+  Premium Plus", "FREE", "Shield" 등은 영문 유지, 문장형 설명(`모든 고급 차단·Shield 기능과
+  무제한 호흡 트리거를 이용해요` 등)과 탭 라벨(홈/통계/집중/설정)은 자연스러운 한국어로 전환됨
+  — "짧은 기능명은 영문 유지, 문장은 자연스러운 한국어" 원칙이 실기기에서 의도대로 동작함을 확인.
+
+### 하단 탭 바 아이콘 추가 (2026-07-17, 후속 수정)
+- 위에서 발견한 "빈 사각형" 이슈 원인은 `(tabs)/_layout.tsx`에 `tabBarIcon`이 애초에 정의돼
+  있지 않았던 것(회귀 아님, 처음부터 미구현). 웹 리서치로 2026년 모바일 탭바 아이콘 트렌드를
+  확인한 뒤 반영: **아웃라인(비활성) → 채움(활성) + 색상 전환**이 현재 표준 패턴(Threads/
+  Instagram/X 등에서도 쓰는 방식) — 별도 아이콘 폰트 추가 없이 이미 링크된
+  `@expo/vector-icons`의 `Ionicons` outline/filled 쌍(`home`/`home-outline`,
+  `stats-chart`/`stats-chart-outline`, `shield-checkmark`/`shield-checkmark-outline`,
+  `settings`/`settings-outline`)으로 구현. `pace_test`에서 실기기 확인 완료(활성 탭만 채워진
+  파란 아이콘으로 표시).
+
+### i18n 번역 오류 수정 (2026-07-17, 후속 수정)
+- `translations.ts`의 `settings.guestLabel`이 한국어에서 `'게스트'`로 번역돼 있었던 것을
+  `'Guest'`로 수정 — "Guest"는 `Auto Next`/`Sleep Timer`처럼 굳어진 짧은 라벨이라 한국어 UI에서도
+  영문 유지 원칙에 따라야 함(사용자가 실기기에서 직접 확인 후 지적). `auth.continueAsGuest`도
+  같은 원칙으로 `'게스트로 계속하기'` → `'Guest로 계속하기'`로 수정(이미 확립된 `Shield` 같은
+  영문-한글 혼용 문장 패턴과 동일). Settings/Home 양쪽 실기기 재확인 완료.
+- 참고로 Home 탭 자체는 애초에 정상적으로 번역되고 있었다(모든 카드가 `useTranslation()` 사용
+  중) — 최초 보고 당시 Home 탭을 재확인하지 않고 보고한 것이 혼선의 원인이었을 뿐, 실제 코드
+  버그는 아니었음.
+
+### 타이포그래피 실제 로드 + OS별 탭바 처리 (2026-07-17, 후속 수정)
+사용자 요청: "박스 폰트가 최신 트렌드 맞는지, OS별 상하단 패딩·글래스모피즘을 웹에서 찾아 최적
+적용하고 zen-master/jlpt-master 처리도 검토하라". 웹 리서치 + 두 자매 프로젝트 코드 조사 후 반영.
+
+- **폰트 실제 로드**: `typography.displayFontFamily`/`monoFontFamily`가 그동안 `undefined`
+  placeholder였던 것을 `@expo-google-fonts/plus-jakarta-sans` + `@expo-google-fonts/jetbrains-mono`
+  로 실제 로드(`app/_layout.tsx`의 `useFonts` + `expo-splash-screen`으로 로드 전 스플래시 유지).
+  2026 트렌드 리서치 결과 웰니스/미니멀 앱은 "Bouba grotesk"(둥근 그로테스크, Hanken Grotesk/
+  General Sans 계열) 본문 + 모노스페이스 숫자 페어링이 주류 — Plus Jakarta Sans가 같은 계열이라
+  원래 기획을 그대로 실사용, JetBrains Mono는 정확히 이 "grotesk+mono 페어링" 트렌드에 부합해
+  타이머/통계 숫자 전용으로 채택. 큰 헤드라인(AppHeader 인사말)과 숫자 값(UsageHeroCard/
+  StatsGridCard/WeeklyGraphCard)에만 적용 — 본문/라벨은 의도적으로 시스템 폰트 유지(가독성·
+  성능, "커스텀 폰트는 히어로 모먼트에만" 컨벤션).
+  - zen-master/jlpt-master는 커스텀 본문 폰트가 아예 없다(시스템 폰트 의존, CJK 렌더링
+    보정용 `JP_FONT` 상수와 `iosW()` 플랫폼별 font-weight 헬퍼만 존재) — Pace는 애초
+    기획서에 폰트 스택이 명시돼 있었으므로 두 프로젝트 패턴을 그대로 가져오지 않고 실제 로드로
+    완성했다. `iosW()` 같은 플랫폼별 weight 분기는 현재 Pace 규모에서 불필요 판단, 도입 안 함.
+
+- **iOS 탭바 = Liquid Glass 블러, Android = 기존 solid Material 유지**: `(tabs)/_layout.tsx`에
+  `tabBarBackground`(iOS만 `BlurView tint="systemChromeMaterialLight"`) + `tabBarStyle:
+  Platform.select(...)`(iOS는 `position:'absolute'`로 콘텐츠 위에 뜨는 형태, Android는 기존처럼
+  일반 문서 흐름 + `elevation: 8`) 추가. 근거: (1) iOS 26부터 반투명 블러 캡슐형 탭바(Liquid
+  Glass)가 시스템 기본값이라 네이티브 룩 일치가 목적, (2) zen-master/jlpt-master의
+  `GlassSurface`/`GlassBlurLayer`도 정확히 이 패턴(iOS만 실제 `BlurView`, Android는 안드로이드
+  블러가 텍스트까지 흐리게 만드는 문제로 flat 컬러 대체)이었고 그대로 승계, (3) 다만 두
+  프로젝트는 이 블러를 카드/시트에만 썼고 탭바엔 안 썼다 — Pace가 탭바에 적용한 것은 네이티브
+  OS 탭바 자체가 iOS 26에서 이미 이렇게 생겼기 때문(시스템 크롬 예외, "No Glassmorphism" 원칙은
+  카드/콘텐츠에 대한 것이라 충돌 아님 — `theme.ts` 주석에도 명시).
+  - iOS 탭바가 `position:'absolute'`가 되면서 화면 콘텐츠가 탭바 밑에 깔리는 문제가 생겨
+    `constants/theme.ts`에 `layout.tabBarContentClearance`(iOS 96 / Android 24, `Platform.select`)
+    를 추가해 4개 탭 화면의 `ScrollView contentContainerStyle paddingBottom`에 반영.
+    jlpt-master가 화면마다 `Math.max(insets.bottom + N, floor)`를 개별 계산하던 방식 대신, Pace는
+    탭 화면이 전부 동일한 여백이면 충분해 상수 하나로 단순화(과설계 방지).
+  - **미검증**: 이 세션은 Windows 환경이라 iOS 시뮬레이터/실기기가 없어 블러 탭바를 실제로 본 적
+    없음 — Android(`pace_test`)에서는 기존 solid 탭바가 회귀 없이 정상 렌더되는 것만 확인.
+    iOS 빌드 시 반드시 육안 재확인 필요.
+
+- **인사말 카피("오늘도 시간을 다정하게 써봐요") 트렌드 검토**: 웹 리서치 결과 2026년 웰니스 앱
+  UX 라이팅 트렌드는 "맥락별 톤"(온보딩/인사 같은 감성적 접점은 따뜻하고 개인적인 문구,
+  버튼/확인 같은 반복 상호작용은 간결하게) — 현재 홈 인사말이 정확히 이 패턴(따뜻한 인사 +
+  "Start Shorts"/"60m Left" 같은 짧고 건조한 데이터 표기 공존)이라 트렌드에 부합, 수정 안 함.
+
+### Android 네이티브 `WindowManager` 오버레이 실제 렌더 확인 (2026-07-17, 우연히 발견)
+저시간 경고 토스트를 검증하려고 `/overlay` 화면 스크린샷을 여러 번 찍는 과정에서, 매번 동일한
+위치에 작은 회색 알약("Pace ⏱ 60m Left", dot·AUTO 토글 없는 축약형)이 RN 오버레이 바 아래에
+겹쳐 찍히는 게 반복적으로 보였다. 처음엔 `adb screencap`의 캡처 아티팩트(에뮬레이터 소프트웨어
+렌더링 특유의 프레임 티어링)로 의심했으나, `uiautomator dump`로 접근성 트리를 직접 까보니
+"Pace" 텍스트 노드가 **하나만** 존재 — RN 뷰 트리에는 없는 요소라는 뜻. `adb shell dumpsys
+activity services com.pace.app`로 확인한 결과 **`expo.modules.paceoverlay.PaceOverlayService`가
+`isForeground=true`로 실제 실행 중**이었다. 즉 이건 버그가 아니라 **실제 네이티브
+`TYPE_APPLICATION_OVERLAY` 시스템 오버레이가 진짜로 화면에 렌더되고 있는 것**이었다 —
+"실기기 검증 1차"에서 "권한 허용까지는 확인했지만 실제 렌더는 육안 미확인"으로 남겨뒀던 항목이
+이번에 우연히, 하지만 확실하게 검증됨.
+- 화면에 두 개의 "Pace" 알약이 동시에 보이는 건 정상 — 하나는 `/overlay` 화면 자체가 그리는
+  RN 인앱 프리뷰(dev 시뮬레이터, 실기기 프로덕션에서는 존재 안 함), 다른 하나는 진짜 네이티브
+  오버레이(프로덕션에서 실제로 남는 것). dev 화면에서 육안 검증 목적으로 의도적으로 겹쳐 보이는
+  구조라 서로 간섭하지 않음.
+- **후속 조치 필요**: 이 서비스가 여러 차례의 `force-stop`/재실행을 거치는 동안에도 계속 살아있던
+  것으로 보아, `overlayService.endSession()`(→ `PaceOverlay.stop()`) 호출 없이 앱 프로세스가
+  강제 종료되면 Foreground Service가 고아 상태로 남을 수 있다는 뜻 — 실제 세션 종료 경로(Stop
+  버튼, 일일 한도 도달 등)에서는 `endSession()`이 정상 호출되므로 문제 없지만, 개발 중 강제
+  종료로 남은 고아 서비스는 `adb shell am stopservice` 또는 실기기에서 알림 지우기로 수동
+  정리해야 한다는 점을 향후 세션 디버깅 시 참고.
+
+- **OS별 상하단 패딩(세이프에어리어) 일반 원칙**: zen-master/jlpt-master 조사 결과 두 프로젝트
+  모두 `useSafeAreaInsets()`를 화면마다 raw로 읽어 `Math.max(insets.top/bottom + offset, floor)`
+  가드를 직접 계산(공유 상수 모듈 없음), Android는 `expo-navigation-bar`로 제스처바 배경색까지
+  별도 관리. Pace는 현재 각 탭 화면이 `SafeAreaView edges={['top']}`만 쓰고 하단은 탭 네비게이터가
+  자체적으로 처리해 왔는데, 이번에 탭바 클리어런스 상수(`layout.tabBarContentClearance`)를 추가한
+  것이 사실상 그 역할 — 화면마다 개별 계산이 필요할 만큼 화면 구조가 다양해지면 그때 jlpt-master
+  식 `Math.max` 가드 패턴을 화면 단위로 도입 검토(현재는 상수 하나로 충분).
+
+---
+
+## 비주얼 아이덴티티 전면 개편 — healthy-shorts-assistant(2) 다크 리스킨 (2026-07-18)
+
+사용자 명시적 지시("그대로 가져와, 니맘대로 바꿔서 퀄리티 떨어트리지 말고", "토씨 하나 틀리지
+말고")에 따라 앱 전체를 healthy-shorts-assistant(2) 프로토타입의 다크 테마로 전면 교체. 기존
+iOS 라이트 팔레트(#F2F2F7 배경 등)와 "No Gradients" 원칙은 이 리스킨 범위 내에서 **명시적으로
+오버라이드**됐다 — `constants/theme.ts`의 `gradients` export가 그 승인된 그라데이션 목록.
+
+### 완료된 것
+- **`constants/theme.ts`**: 다크 팔레트(배경 #0B0C0F, 카드 #171A21, cardMuted #09090B, primary
+  #5856D6 유지), 그라데이션 토큰, `sourceColors`(플랫폼별 강조색), `bottomSheetPadding()` 헬퍼
+  (jlpt-master 패턴). **2026-07-18 2차 수정**: `background`가 처음엔 `#060709`로 잘못 이식됐었다 —
+  이건 App.tsx:253의 "폰 목업을 감싸는 웹페이지 배경"(`<div className="min-h-screen bg-[#060709]">`)
+  이고, 실제 앱 화면(폰 프레임) 배경은 App.tsx:261의 `bg-[#0B0C0F]`다. 픽셀 샘플링으로 렌더된
+  배경이 정확히 `#0B0C0F`(R11 G12 B15)임을 검증 완료.
+- **Home 화면**: `SessionHeroCard`(그라데이션 히어로, 펄스 애니메이션, 퍼센트 완료 배지),
+  `PlatformPickerCard`(커버 이미지 + 좌→우 그라데이션 오버레이 + 펄스 상태줄, **세로 풀와이드
+  스택** — 가로 그리드 아님), `QuickControlsGrid`(3타일 + 바텀시트), 3개 플랫폼 카드(YouTube/
+  Instagram/TikTok, 전부 실제 `useSettingsStore`/`useStatsStore` 연결). "TAP TO START" 배지 포함.
+- **AppHeader**: "PACE" 워드마크 + 인디고 점(animate-pulse) + 인사말이 **한 줄**로 나란히
+  (`space-x-2`), 그 아래 "Active Session Guard" 서브타이틀. 헤더 전체는 `items-end` 정렬(우측
+  아바타 블록이 좌측 텍스트 블록 하단에 맞춰짐), `px-6 pt-5 pb-3`(24/20/12px). **2026-07-18
+  2차 수정**: 이전 버전은 점을 "PACE" 앞에 붙이고 인사말을 별도 줄로 내려서(`flex-start` 정렬)
+  원본과 완전히 다른 레이아웃이었다 — Header.tsx:59-73 재확인 후 구조 전면 수정.
+- **Home 탭 + Header는 번역을 아예 안 쓴다(하드코딩 영어 고정)**: App.tsx의 Home 탭 JSX
+  (280-456줄)와 Header.tsx를 다시 정독해서 확인 — `t.xxx`/`translations` 참조가 단 한 번도 없다.
+  "Today Session"/"Complete"/"Auto Next Ready"/"Choose Platform"/"Quick Controls"/플랫폼 상태
+  문구/"Good Morning" 인사말/"Active Session Guard" 전부 locale 무관하게 항상 영어. 반대로
+  Focus/Stats/Settings 탭은 실제로 `translations` 딕셔너리를 쓴다(SettingsSection.tsx/
+  StatsTab.tsx/SettingsTab.tsx가 각각 import). 이전 버전은 Home 탭 전체를 한국어 UI에서 억지로
+  번역했는데, 이러면 (a) 원본과 다르고 (b) 한국어 문자열이 영어보다 길어서 고정폭 카드/그리드를
+  실제로 오버플로우시켰다(실기기 스크린샷으로 확인) — `SessionHeroCard`/`PlatformPickerCard`/
+  `QuickControlsGrid`/`home.tsx`/`AppHeader`에서 `useTranslation` 제거하고 원본처럼 하드코딩
+  영어로 고정. `translations.ts`의 `home.*`에서 이제 죽은 키(greeting*/headerSubtitle/
+  todaySession/complete/autoNextReady 등) 전부 삭제 — `youtubeShorts`/`instagramReels`/
+  `tiktokVideoLoop`/`minUnit`만 남음(Stats/Settings 탭이 실제로 재사용하는 브랜드명·단위 키).
+- **Home 화면 여백/사이즈 전면 재보정**: 처음엔 카드들이 화면 좌우로 16px(`spacing.md`) 여백만
+  있었는데, 원본은 최상위 wrapper가 `px-6`(24px) — 히어로 카드/플랫폼 스택/퀵 컨트롤 전부 24px로
+  수정(섹션 헤더는 그 안에 `px-1` 추가 중첩이라 28px). `SessionHeroCard`의 큰 숫자(`0`)에
+  `lineHeight`가 없어서 커스텀 디스플레이 폰트의 기본 줄간격이 원본의 `leading-none`보다 훨씬
+  크게 렌더돼 카드 전체가 원본보다 눈에 띄게 컸다 — `lineHeight: fontSize`로 고정. 우상단 앰비언트
+  글로우(`blur-2xl` 근사용 반투명 원)가 RN에는 진짜 블러가 없어 딱딱한 원으로 보이며 "0%
+  COMPLETE" 배지와 겹쳐 부서져 보였다 — 크기/불투명도 축소(`0D` 알파)+카드 밖으로 오프셋. 사용자가
+  실기기 스크린샷 비교 후 명시적으로 추가 축소 지시: 플랫폼 카드 100px→84px, Quick Control 타일
+  패딩 14→12px, 히어로 카드 패딩 24→20px.
+- **하단 탭 순서 버그**: App.tsx:539-576 재확인 결과 원본 탭 순서는 Home→Focus→Stats(Insights)→
+  Settings인데, `(tabs)/_layout.tsx`는 Home→Stats→Focus→Settings로 등록돼 있었다(Tabs.Screen
+  선언 순서가 실제 표시 순서 = 실버그, 단순 주석 오기 아님) — 등록 순서 수정.
+- **Focus 화면**: Session Control Hero(그라데이션+Live Engine 배지) → Session Status →
+  Android Guard Services(`Platform.OS==='android'` 조건부) → Pause/End 컨트롤 → Extend Time 칩
+  → Interventions(Break Reminder/Healthy Pause 토글 + Demo 모달) → Session Stats 3그리드 →
+  Finish Session 확인 모달. **실제 데이터 연결**: watched/remaining/sleepTimer는
+  `useSettingsStore`+`useStatsStore`, Session Stats(videos/elapsed/avg)는 원본의 하드코딩
+  18/37m/22s 대신 `todayVideosWatched`/`todayUsageMinutes`/`todayAverageDurationSeconds` 실사용.
+- **Settings 화면**: Account/Session Defaults/Connected Apps/Platform Configuration/
+  Notifications/Language(Pace 전용)/Support/Advanced(Reset) 구조. Session Defaults는 원본이
+  세션과 무관한 로컬 데모 state였던 것을 실제 `useSettingsStore`에 직결(더 정확함 — 죽은 데모
+  state 안 만듦). Connected Apps는 실제 `settings.appShields` 반영.
+- **탭바**: lucide Home/Sliders/BarChart2/Settings ≈ Feather home/sliders/bar-chart-2/settings로
+  1:1 매칭(이전엔 Ionicons outline/filled 스왑을 잘못 썼었음 — 원본은 필드 스왑이 아니라 색상
+  변화만 줌).
+- **오버레이 바**: Android 알약/iOS 프레임 다크 글래스 리스킨 + `GlassSurface` 컴포넌트(iOS 실제
+  BlurView, Android는 zen-master/jlpt-master 전례대로 flat 반투명 폴백 — 텍스트 위 실블러로 인한
+  가독성 저하 회피).
+- **WeeklyGraphCard**: 다크 톤 자동 적용(theme 토큰 기반이라 재작성 불필요, 디바이더 컬러만 수정)
+  + Home에서 Stats 탭으로 이동. **Platform Breakdown 신규**: `overlay/index.tsx`가 세션 시작 시
+  `platform_app`을 실제로 기록하도록 고쳐서(이전엔 항상 `null`) 기존에 있었지만 죽어있던
+  `getTodayUsageByApp()` 쿼리가 처음으로 실제 데이터를 반환하게 됨.
+- **지원 앱**: TikTok을 Home 플랫폼 선택에 복원(사용자 지시로 앞서의 "MVP 2개 앱" 축소 결정을
+  이 화면에 한해 오버라이드) — `constants/supportedApps.ts` + `ForegroundAppWatcher.kt`
+  `SupportedApps.PACKAGES` 양쪽에 `com.zhiliaoapp.musically` 추가.
+- **Android 실제 앱 실행**: 플랫폼 카드 탭 → `/overlay?platform=X` 이동 → `overlayService.startSession()`
+  (기존) + `Linking.openURL(androidScheme)`(신규, 실패 시 `webFallback` 웹 URL로 폴백) — 이전엔
+  플랫폼 카드가 전부 동일한 dead 버튼이었던 것을 실제 앱 실행까지 연결.
+
+### 의도적으로 원본과 다르게 간 부분 (전부 "정확성 우선" 판단, 임의 축소 아님)
+1. **Settings "Platform Configuration"의 안드로이드↔iOS 전환 버튼 제외** — 원본은 브라우저
+   프리뷰에서 두 플랫폼을 다 보여주기 위한 데모 토글이었다. 실제 앱은 `Platform.OS`가 빌드 시점에
+   고정되고 런타임에 전환할 대상이 없어(안드로이드 빌드에 iOS 시뮬레이션 화면을 넣는 건 무의미)
+   토글 UI 없이 실제 OS에 맞는 정보만 표시.
+2. **Focus "Session Active" 배지를 동적으로 변경** — 원본은 `t.autoNextStatus`("자동 넘김 ON")를
+   `settings.autoNext` 값과 무관하게 항상 표시하는 것으로 보임(정적 데모 값). Pace는
+   `settings.autoNext ? ON : OFF`로 실제 상태를 반영하도록 고쳤다.
+3. **Stats 화면 전면 재구축(2026-07-18 2차) — 이전 버전은 원본과 완전히 다른 자체 구조였다.**
+   `StatsTab.tsx` 원본을 처음부터 다시 정독해서(이전엔 요약/추측으로 지어냈던 것으로 추정) 실제
+   섹션 순서(This Week Hero → Focus Score+Healthy Streak 2단 그리드 → Platform Breakdown(얇은
+   가로 바) → Today's Behavior(3행 리스트) → Weekly Activity(요일별 바+목표선) → Best Day 카드)로
+   전면 재작성. "Insights" 대형 타이틀, "웰니스 요약"/"연속 기록 & 성과" 섹션, "Wholesome Feed
+   Breakdown" 카테고리 목록은 실제 소스에 존재하지 않는 이전 세션의 오구현이라 전부 삭제.
+   구프로토타입(healthy-shorts-assistant 1세대)에서 가져온 `WeeklyGraphCard.tsx`(세로 막대그래프
+   스타일)도 현재 소스의 실제 "Weekly Activity" 디자인(가로 바+목표선 리스트)과 달라 삭제하고
+   `stats.tsx`에 원본 구조 그대로 인라인 구현.
+   - **실제 데이터로 채운 것**: This Week 합계(`weeklyStats` 합산), Healthy Streak(기존
+     `computeStreak` 로직), Platform Breakdown(`getTodayUsageByApp`, `sourceColors` 강조색),
+     Today's Behavior의 Videos Watched/Average Duration(`todayVideosWatched`/
+     `todayAverageDurationSeconds`) 및 **Longest Session**(`getWeeklyStats()`가 이미
+     `longestSessionSeconds`를 리턴하고 있었는데 여태 UI에서 안 쓰고 있었음 — 오늘자 엔트리에서
+     추출), Weekly Activity 요일별 바(실제 `weeklyStats` + 실제 `dailyLimitMinutes`를 목표선
+     기준으로 사용, 목표선이 트랙의 60% 고정 위치를 가리키도록 `trackMax = dailyLimitMinutes/0.6`
+     로 스케일 역산), Best Day(0보다 크고 한도 이하인 날 중 최댓값 실계산 — 없으면 카드 자체를
+     숨김).
+   - **"Focus Score"(82점) — 그대로 두지 않고 대체**: 채점 알고리즘이 정의돼 있지 않아 그 라벨/
+     숫자를 포팅하지 않되, 2단 그리드 레이아웃 자체(원본의 핵심 시각 구조)는 사용자가 명시적으로
+     요구해서 유지 — 같은 슬롯에 실제 "일일 평균"(`weeklyAvgMinutes`, 실계측) 데이터를 다른
+     라벨로 표시.
+   - **여전히 갭인 것(가짜 숫자로 채우지 않고 보류)**:
+     - This Week Hero의 "18% 지난주 대비 감소" 트렌드 칩 — `getWeeklyStats()`는 최근 7일
+       슬라이딩 윈도우만 반환하고 "그 이전 7일" 비교 쿼리가 없다. `getPreviousWeekStats()` 같은
+       신규 리포지토리 함수 필요.
+     - "Auto Next Impact"(31개 비디오 자동 넘김) 섹션 — 통째로 미포함. Auto Next로 자동
+       스킵된 영상 수를 세는 카운터가 스키마에 없다(`viewing_sessions.videos_watched`는 전체
+       시청 수일 뿐 auto-next로 넘어간 것과 수동 스와이프를 구분 못 함).
+4. (해결됨 — 위 3번 참고) Stats "This Week Hero"/"Today's Behavior"/"Best Day" 재배치는 완료.
+5. **`WeeklyGraphCard.tsx`를 실수로 삭제했다가 복원(2026-07-18 3차)** — StatsTab.tsx만 읽고
+   "Stats 탭 = StatsTab.tsx 전체"라고 착각해서, 기존에 있던 `WeeklyGraphCard.tsx`를 "예전
+   프로토타입에서 온 컴포넌트"로 오판, 삭제했다. 실제로는 App.tsx:32/498-508이 Stats 탭에서
+   `<StatsTab>` **뒤에 별도로** `<WeeklyGraph>`(`components/WeeklyGraph.tsx`)를 "Weekly Usage
+   Graph" 제목의 카드로 덧붙이고 있었다 — 진짜 실사용 컴포넌트였다. 사용자가 원본 스크린샷으로
+   지적해서 발견, `WeeklyGraph.tsx` 원본 재확인 후 동일 구조로 복원(주간 평균 큰 숫자+Healthy
+   배지, 일~토 막대그래프, 탭하면 툴팁, 하단 "Today (요일)"/"Goal: Under 60 min" 푸터) —
+   데이터는 실제 `weeklyStats`를 일~토 7칸으로 0-채움해서 사용.
+6. **하단 탭 라벨 오타**: Stats 탭의 실제 라벨은 `translations.ts`의 `t.insights`("Insights"/
+   "분석")인데, Pace는 `tabs.stats`를 "Stats"/"통계"로 임의로 지어 썼었다 — "Insights"/"분석"으로
+   수정.
+
+### 미해결 / 다음 세션 확인 필요
+- [ ] Stats 화면을 "This Week Hero + Focus/Streak 그리드 + Best Day" 레이아웃으로 재배치(값은
+  기존 실계측 데이터 재사용, Focus Score 등 미정의 지표는 제외).
+- [ ] iOS 실기기/시뮬레이터에서 전체 다크 리스킨 육안 확인(이 세션은 Windows라 불가) — 특히
+  `GlassSurface`의 iOS `BlurView` 경로, `OverlayBar.ios.tsx`.
+- [ ] `PlatformPickerCard`/`SessionHeroCard`의 pulse 애니메이션이 실기기에서 버벅이지 않는지
+  확인(현재 `Animated.loop` 사용, 저사양 기기 성능 미검증).
+- [ ] Focus/Settings 화면에 새로 추가된 알림 토글(5분 전 경고/한도 도달/휴식 알림)은 아직 로컬
+  state일 뿐 실제 로컬 알림(expo-notifications) 발송과 연결 안 됨 — UI만 존재.
+
+---
+
 ## 진행 상황
 
 - [x] Expo TypeScript 프로젝트 생성 (`create-expo-app` blank-typescript)
@@ -759,16 +1485,23 @@ PanResponder 드래그-닫기, 다크모드 테마 시스템)는 이식하지 �
 - [x] Repository 계층 분리(sessions/stats), jlpt-master RevenueCat 웹훅 계약 문서화, RC identify/reset 로그인 연동 (외부 리뷰 3차 반영)
 - [x] useSessionStore/useCapabilityStore, settingsRepository/subscriptionRepository(SQLite 미러), Google/Apple 소셜 로그인 SDK 코드 연동, Android Overlay 네이티브 POC(`modules/pace-overlay`) (외부 리뷰 4차 반영)
 - [x] 실기기(pace_test AVD) 빌드/설치/전체 탭 네비게이션 검증 + 발견된 버그 7종 수정(게스트 폴백, SQLite 레이스, 순환참조, Unmatched Route 등) — "실기기 검증 1차" 섹션
-- [x] Android Overlay 네이티브 모듈 컴파일 성공 + `hasOverlayPermission`/`requestOverlayPermission`이 실제 Android 설정 화면을 여는 것까지 확인(실제 `WindowManager` 오버레이 렌더는 아직 육안 미확인)
-- [x] i18n 시스템(jlpt-master `i18n`/`LangContext` 패턴 이식, `services/i18n`) + Settings 언어 선택 UI
+- [x] Android Overlay 네이티브 모듈 컴파일 성공 + `hasOverlayPermission`/`requestOverlayPermission`이 실제 Android 설정 화면을 여는 것까지 확인 + **`WindowManager` 실제 렌더 육안 확인 완료(2026-07-17)** — 아래 섹션 참고
+- [x] i18n 시스템(jlpt-master `i18n`/`LangContext` 패턴 이식, `services/i18n`) + Settings 언어 선택 UI — `pace_test` 에뮬레이터 실기기 검증 완료(System/English/한국어 전환, 혼용 원칙 확인). "실기기 검증 2차" 섹션 참고
 - [x] 스토어 심사관 화이트리스트(jlpt-master `reviewers.ts`/`PremiumContext` 패턴 이식, `constants/reviewers.ts` + `useSubscriptionStore.isReviewer`)
 - [x] 결제 전 로그인 가드(jlpt-master `PremiumPaywallModal.blockIfNotSignedIn` 로직 이식, 시각 요소는 Pace 플랫 디자인 유지)
 - [ ] RevenueCat 연동 실키 발급 및 실기기 검증 (현재는 `EXPO_PUBLIC_RC_*` 미설정 시 로컬 캐시 폴백만 동작)
 - [ ] Google/Apple 로그인 실기기 검증 (실키 + `npx expo prebuild` + EAS Dev Client 빌드 필요, 코드 자체는 완료)
-- [ ] Android Overlay `WindowManager` 실제 렌더 재확인 (권한 허용 상태 유지한 채 깨끗하게 재테스트 필요 — "실기기 검증 1차" 미해결 항목 참고)
 - [ ] 커스텀 백엔드 서버 자체 구현(현재 `API_BASE_URL`은 자리표시자, 실제 서버 없음)
-- [ ] Android AccessibilityService(Auto Next 감지), Bubbles(17+) 네이티브 모듈
-- [ ] iOS 네이티브 모듈(ActivityKit, FamilyControls) — EAS Dev Client 빌드 전제, 별도 작업
-- [ ] 폰트 파일 추가(Inter/Plus Jakarta Sans/JetBrains Mono) 후 `typography.displayFontFamily`/`monoFontFamily` 연결
+- [ ] Android AccessibilityService(포그라운드 앱 감지 + Auto Next 감지), Bubbles(17+) 네이티브 모듈 — "제품 전략 피벗" 섹션 피벗으로 우선순위 상승
+- [ ] iOS 네이티브 모듈(ActivityKit, FamilyControls) — 피벗 후 핵심 경로 아님, App Blocking 등 보조 기능용으로만 유효. EAS Dev Client 빌드 전제
+- [ ] **[블로커] iOS Pace Player 콘텐츠 출처 확정** — "제품 전략 피벗" 섹션 참고. 결정 전까지 아래 iOS Player 관련 항목 전부 착수 불가
+- [ ] Android App Picker 바텀시트 UI(Start 탭 시 YouTube/Instagram 선택) — 신규
+- [ ] iOS 온보딩 시트 + Source 선택 시트 UI — 신규, 콘텐츠 출처 확정 후 착수
+- [ ] iOS Pace Player 화면 + 재생 엔진 + `usePlayerStore` + `videos`/`playlist_sessions` DB 테이블 — 신규, 콘텐츠 출처 확정 후 착수
+- [ ] MVP 지원 앱 축소 반영: `SUPPORTED_APPS` 상수(YouTube+Instagram만) 코드에 실제 적용 — 현재 미반영
+- [x] 폰트 실제 로드(Plus Jakarta Sans/JetBrains Mono, `@expo-google-fonts` + `useFonts`) — "타이포그래피 실제 로드 + OS별 탭바 처리" 섹션 참고, Android 실기기 확인 완료
+- [ ] iOS 탭바 Liquid Glass 블러(`BlurView`) 육안 확인 — Windows 개발 환경이라 iOS 시뮬레이터/실기기 없어 이번 세션엔 미검증, 코드는 완료
 - [ ] "Wholesome Feed Breakdown" 카테고리 실계측(현재 정적 목업 비율)
 - [ ] `REVIEWER_EMAILS`에 실제 스토어 제출용 테스트 계정 등록(현재 빈 배열 — 스토어 제출 전 필수)
+- [x] 하단 탭 바 아이콘 연결(Ionicons outline/filled, 2026 트렌드 리서치 반영 — "하단 탭 바 아이콘 추가" 섹션 참고)
+- [ ] 실기기(arm64) `expo run:android` 빌드/설치까지는 성공 확인, USB 연결 끊김으로 최종 설치·구동은 미완료 — 재시도 필요

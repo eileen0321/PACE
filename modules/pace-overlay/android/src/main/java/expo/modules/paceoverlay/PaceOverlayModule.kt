@@ -26,28 +26,35 @@ class PaceOverlayModule : Module() {
     }
 
     // 설정 > "다른 앱 위에 표시" 화면으로 이동. 결과는 hasOverlayPermission()을 포그라운드 복귀 시 재확인해서 판단.
+    // ⚠️ Kotlin/DSL 컴파일 노트: 0-인자 Function/AsyncFunction 블록에서 `return@Function`(값 없음, Unit)을
+    // 쓰면 DSL이 기대하는 'Any?'와 타입이 안 맞아 컴파일 에러가 난다(실기기 빌드로 처음 발견) — 이른 return
+    // 대신 `?.let { }`으로 감싸 전체 블록이 Unit 하나로만 추론되게 통일한다.
     Function("requestOverlayPermission") {
-      val context = appContext.reactContext ?: return@Function
-      val intent = Intent(
-        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-        Uri.parse("package:${context.packageName}")
-      ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-      context.startActivity(intent)
+      appContext.reactContext?.let { context ->
+        val intent = Intent(
+          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+          Uri.parse("package:${context.packageName}")
+        ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        context.startActivity(intent)
+      }
     }
 
     AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean ->
-      val context = appContext.reactContext ?: return@AsyncFunction
-      PaceOverlayService.start(context, remainingMinutes, autoNextEnabled)
+      appContext.reactContext?.let { context ->
+        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled)
+      }
     }
 
     AsyncFunction("updateRemaining") { remainingMinutes: Int ->
-      val context = appContext.reactContext ?: return@AsyncFunction
-      PaceOverlayService.updateRemaining(context, remainingMinutes)
+      appContext.reactContext?.let { context ->
+        PaceOverlayService.updateRemaining(context, remainingMinutes)
+      }
     }
 
     AsyncFunction("stop") {
-      val context = appContext.reactContext ?: return@AsyncFunction
-      PaceOverlayService.stop(context)
+      appContext.reactContext?.let { context ->
+        PaceOverlayService.stop(context)
+      }
     }
   }
 }

@@ -106,15 +106,30 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   loginAsGuest: async () => {
+    const deviceId = await getOrCreateDeviceId();
     try {
-      const deviceId = await getOrCreateDeviceId();
       const result = await authApi.loginAsGuest(deviceId);
       await setToken(result.token);
       const user = toUser(result, true);
       await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
       set({ user, isLoggedIn: true, isGuest: true });
     } catch {
-      // 오프라인이면 게스트 세션 없이도 로컬 SQLite만으로 앱은 동작 가능
+      // ⚠️ 실기기 테스트로 발견한 버그: 백엔드가 아직 없어서(API_BASE_URL 자리표시자) 이 catch가
+      // 항상 실행되는데, 예전엔 여기서 그냥 포기해 user가 영원히 null로 남았다 — 그 결과 SQLite
+      // 세션 기록(startSession)이 user.id를 요구하는 모든 화면(app/overlay 등)이 조용히 broken 상태였음.
+      // deviceId 기반 로컬 전용 유저로 폴백해 오프라인에서도 SQLite/설정 등 나머지 기능이 정상 동작하게 한다.
+      // 실 백엔드가 붙으면 이 id로 만든 로컬 데이터를 서버 발급 id로 마이그레이션하는 로직이 필요하다.
+      const user: User = {
+        id: `local-${deviceId}`,
+        email: null,
+        name: null,
+        avatarUrl: null,
+        provider: 'guest',
+        isGuest: true,
+        createdAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
+      set({ user, isLoggedIn: true, isGuest: true });
     }
   },
 

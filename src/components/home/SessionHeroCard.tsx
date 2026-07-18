@@ -55,7 +55,7 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled 
             <Animated.View style={[styles.dotPing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]} />
             <View style={styles.dot} />
           </View>
-          <Text style={styles.statusText}>{autoNextEnabled ? 'Auto Next Ready' : 'Auto Next Suspended'}</Text>
+          <Text style={styles.statusText}>{autoNextEnabled ? 'Session Ready' : 'Standby'}</Text>
         </View>
         <Text style={styles.remainingText}>{remainingMinutes}m Remaining</Text>
       </View>

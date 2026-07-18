@@ -8,16 +8,25 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // (App.tsx:342-397, 사용자 명시적 지시) — h-[100px] 풀와이드 세로 스택(가로 2분할 아님!), 커버
 // 이미지 + 좌→우 그라데이션 오버레이, 제목+펄스점 상태줄, 우측 원형 재생 버튼, shadow-lg.
 // 이전 버전은 가로 2열 그리드로 잘못 배치하고 상태줄/배지/그림자를 빠뜨렸었다.
-export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onPress, disabled }: {
+// 2026-07-18: 사용자 지시로 상태 점 동작 변경 — 이전엔 3장 카드 전부 항상 같은 인디고색으로
+// 깜빡였는데, 그러면 "지금 실제로 세션이 진행 중인 플랫폼이 어디인지"가 안 보인다. isActive(실제
+// useSessionStore의 활성 세션 platformApp과 일치하는 카드만 true)일 때만 초록색으로 펄스,
+// 나머지는 펄스 없는 정적 회색 점 — 시선이 실제 활성 세션에만 쏠리게.
+export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onPress, disabled, isActive }: {
   title: string;
   statusText: string;
   cover: ImageSourcePropType;
   gradientFrom: string;
   onPress: () => void;
   disabled?: boolean;
+  isActive?: boolean;
 }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
+    if (!isActive) {
+      pulse.setValue(1);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
@@ -26,7 +35,7 @@ export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onP
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse]);
+  }, [pulse, isActive]);
 
   return (
     <Pressable onPress={onPress} disabled={disabled}>
@@ -37,7 +46,7 @@ export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onP
               <View style={styles.textCol}>
                 <Text style={styles.title} numberOfLines={1}>{title}</Text>
                 <View style={styles.statusRow}>
-                  <Animated.View style={[styles.statusDot, { opacity: pulse }]} />
+                  <Animated.View style={[styles.statusDot, isActive ? styles.statusDotActive : styles.statusDotIdle, { opacity: pulse }]} />
                   <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
                 </View>
               </View>
@@ -72,7 +81,9 @@ const styles = StyleSheet.create({
   textCol: { gap: 3, flexShrink: 1 },
   title: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF', letterSpacing: -0.2 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#818CF8' },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusDotActive: { backgroundColor: colors.successLight },
+  statusDotIdle: { backgroundColor: 'rgba(255,255,255,0.3)' },
   statusText: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: '#D1D5DB' },
   playButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   playIcon: { marginLeft: 2 }, // 원본 ml-0.5(2px) — 삼각형 아이콘의 시각적 무게중심 보정

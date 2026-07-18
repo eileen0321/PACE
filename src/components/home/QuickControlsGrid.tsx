@@ -7,28 +7,32 @@ import { QuickControlSheet } from './QuickControlSheet';
 
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 const DAILY_LIMIT_OPTIONS = [15, 30, 45, 60, 90, 120];
+const BREAK_OPTIONS = [0, 10, 15, 20, 30];
 
-type SheetKind = 'sleepTimer' | 'dailyLimit' | 'autoNext' | null;
+type SheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder' | null;
 
 // healthy-shorts-assistant(2) App.tsx "Quick Controls" 3단 그리드 포팅(App.tsx:401-456). focus.tsx
 // 에도 같은 설정을 순환-탭(cycle) 방식으로 편집하는 UI가 이미 있는데, 여기서는 원본 디자인대로
 // 바텀시트 선택 방식을 쓴다 — 값 소스는 동일한 useSettingsStore라 두 화면 중 어디서 바꾸든 항상
 // 일치한다(중복 상태 없음). App.tsx Home 탭은 translations를 안 쓰므로(주석 참고, home.tsx) 라벨/
 // OFF/ON 전부 원본처럼 하드코딩 영어 고정 — 번역하면 타일 폭을 넘친다.
+// 2026-07-18: 원본 3번째 타일은 "Auto Next"였는데, 사용자 지시(외부 프로덕트 조언 반영)로 Home
+// 전면에서 AUTO 브랜딩을 빼기로 해서 Break Reminder로 교체 — Auto Next 토글 자체는 기능적으로
+// 사라진 게 아니라 Focus 탭의 Session Status/Interventions에서 여전히 켜고 끌 수 있다.
 export function QuickControlsGrid() {
   const { settings, update } = useSettingsStore();
   const [openSheet, setOpenSheet] = useState<SheetKind>(null);
 
   const sleepLabel = settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : 'OFF';
   const limitLabel = `${settings.dailyLimitMinutes}m`;
-  const autoNextLabel = settings.autoNext ? 'ON' : 'OFF';
+  const breakLabel = settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : 'OFF';
 
   return (
     <View style={styles.wrap}>
       <View style={styles.grid}>
         <Tile icon="moon" label="Sleep Timer" value={sleepLabel} onPress={() => setOpenSheet('sleepTimer')} />
         <Tile icon="clock" label="Daily Limit" value={limitLabel} onPress={() => setOpenSheet('dailyLimit')} />
-        <Tile icon="zap" label="Auto Next" value={autoNextLabel} onPress={() => setOpenSheet('autoNext')} />
+        <Tile icon="coffee" label="Break Reminder" value={breakLabel} onPress={() => setOpenSheet('breakReminder')} />
       </View>
 
       <QuickControlSheet
@@ -48,11 +52,11 @@ export function QuickControlsGrid() {
         onClose={() => setOpenSheet(null)}
       />
       <QuickControlSheet
-        visible={openSheet === 'autoNext'}
-        title="Auto Next"
-        options={[{ label: 'ON', value: true }, { label: 'OFF', value: false }]}
-        selectedValue={settings.autoNext}
-        onSelect={(v) => update({ autoNext: v })}
+        visible={openSheet === 'breakReminder'}
+        title="Break Reminder"
+        options={BREAK_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m }))}
+        selectedValue={settings.breakIntervalMinutes}
+        onSelect={(v) => update({ breakIntervalMinutes: v })}
         onClose={() => setOpenSheet(null)}
       />
     </View>

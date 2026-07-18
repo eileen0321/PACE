@@ -7,6 +7,7 @@ import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTranslation } from '../../services/i18n';
+import { requestNotificationPermission } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
@@ -42,10 +43,15 @@ export default function SettingsScreen() {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const { settings, update } = useSettingsStore();
-  const [notif5m, setNotif5m] = useState(true);
-  const [notifLimit, setNotifLimit] = useState(true);
-  const [notifBreak, setNotifBreak] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // 2026-07-18: 알림 토글은 이전엔 화면 로컬 state라 탭을 벗어나면 항상 기본값으로 리셋되고 실제
+  // 알림 발송 여부(services/notifications)에도 전혀 반영되지 않았다 — useSettingsStore에 직결해
+  // ON을 켜면 requestNotificationPermission()도 즉시 트리거(권한이 없으면 알림이 안 갈 걸 미리 확인).
+  const onToggleNotif = (key: 'notifyRemaining' | 'notifyLimit' | 'notifyBreak') => (value: boolean) => {
+    update({ [key]: value });
+    if (value) requestNotificationPermission().catch(() => {});
+  };
 
   const name = (user?.name ?? user?.email?.split('@')[0] ?? t('settings.guestLabel')).trim();
   const initials = name.slice(0, 2).toUpperCase();
@@ -129,9 +135,9 @@ export default function SettingsScreen() {
         <View>
           <Text style={styles.sectionLabel}>{t('settings.notifications')}</Text>
           <View style={styles.card}>
-            <NotifRow title={t('settings.remainingAlert')} desc={t('settings.remainingAlertDesc')} value={notif5m} onChange={setNotif5m} />
-            <NotifRow title={t('settings.limitAlert')} desc={t('settings.limitAlertDesc')} value={notifLimit} onChange={setNotifLimit} bordered />
-            <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={notifBreak} onChange={setNotifBreak} bordered />
+            <NotifRow title={t('settings.remainingAlert')} desc={t('settings.remainingAlertDesc')} value={settings.notifyRemaining} onChange={onToggleNotif('notifyRemaining')} />
+            <NotifRow title={t('settings.limitAlert')} desc={t('settings.limitAlertDesc')} value={settings.notifyLimit} onChange={onToggleNotif('notifyLimit')} bordered />
+            <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={settings.notifyBreak} onChange={onToggleNotif('notifyBreak')} bordered />
           </View>
         </View>
 

@@ -38,6 +38,7 @@
       "expo-localization",
       "expo-font",
       "expo-video",
+      "expo-notifications",
       [
         "expo-build-properties",
         {

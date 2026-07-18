@@ -5,6 +5,7 @@ export const STORAGE_KEYS = {
   authUser: 'pace_auth_user',
   deviceId: 'pace_device_id',
   settings: 'pace_user_settings',
+  dailyBonus: 'pace_daily_bonus',
   premiumIsPremium: 'pace_premium_is_premium',
   premiumExpiresAt: 'pace_premium_expires_at',
 } as const;

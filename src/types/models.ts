@@ -41,6 +41,11 @@ export type UserSettings = {
   theme: 'light' | 'dark' | 'system';
   /** 'system'이면 기기 로케일을 따름(en/ko만 지원, 그 외 언어는 en으로 폴백). */
   language: 'system' | 'en' | 'ko';
+  /** 2026-07-18: Settings 탭 Notifications 섹션의 토글 3개 — 이전엔 컴포넌트 로컬 useState라
+   *  화면을 벗어나면 항상 기본값(true)으로 리셋되고 실제 알림 발송 여부에 전혀 반영되지 않았다. */
+  notifyRemaining: boolean;
+  notifyLimit: boolean;
+  notifyBreak: boolean;
 };
 
 /** 특정 앱에 적용될 유효 설정 — override가 없으면 전역값으로 폴백. */

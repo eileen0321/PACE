@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
+import { useDailyBonusStore } from '../store/useDailyBonusStore';
 
 const queryClient = new QueryClient();
 
@@ -32,7 +33,9 @@ Text.defaultProps.style = [{ fontFamily: 'Inter_400Regular' }];
 export default function RootLayout() {
   const initUser = useUserStore((s) => s.init);
   const loadSettings = useSettingsStore((s) => s.load);
+  const syncSettingsFromServer = useSettingsStore((s) => s.syncFromServer);
   const initSubscription = useSubscriptionStore((s) => s.init);
+  const loadDailyBonus = useDailyBonusStore((s) => s.load);
 
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_600SemiBold,
@@ -48,10 +51,17 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    initUser();
-    loadSettings();
+    // initUser()가 끝나야 토큰 유무(로그인 성공 vs 로컬 전용 게스트 폴백)가 확정되므로, 그 이후에
+    // syncFromServer를 불러야 불필요한 401(→자동로그아웃)을 피할 수 있다(services/sync/backendSync
+    // 참고 — 토큰 없으면 그 안에서 스스로 스킵하지만, 순서를 지켜 의도를 명확히 한다).
+    (async () => {
+      await initUser();
+      await loadSettings();
+      syncSettingsFromServer().catch(() => {});
+    })();
     initSubscription();
-  }, [initUser, loadSettings, initSubscription]);
+    loadDailyBonus();
+  }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
 
   // 실기기(Galaxy Note20, 시스템 라이트 모드)에서 하단 내비게이션 바 영역이 흰색으로 보였던 진짜
   // 원인은 android/styles.xml의 Theme.AppCompat.DayNight가 시스템 라이트/다크를 따라가던 것 —

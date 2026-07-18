@@ -6,8 +6,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { useTranslation } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
 import { colors, gradients, layout, radius, sourceColors, spacing, typography } from '../../constants/theme';
 import type { DailyStats } from '../../types/models';
@@ -20,10 +22,12 @@ import type { DailyStats } from '../../types/models';
 // 원본은 4h 26m/82점/18%/31개 자동넘김/Mon-Sun 요일별 분/Best Day="Friday" 전부 하드코딩 데모
 // 숫자다(videosWatched/averageDuration만 실제 prop이었고 그마저 0이면 `|| 42`/`|| 31`로 가짜값
 // 대체). "가짜 데이터로 채우지 말라"는 지시에 따라:
-//  - This Week 합계: 실제 weeklyStats 합산으로 대체. 지난주 대비 증감(%)은 지난주 데이터 쿼리가
-//    없어 표시 안 함(gap, PACE_ARCHITECTURE.md 기록).
-//  - Focus Score(82점): 채점 알고리즘 자체가 미정의라 그 라벨/숫자를 포팅하지 않고, 같은 그리드
-//    슬롯에 실제 "이번 주 일평균" 데이터를 넣었다(완전히 다른 지표라 라벨도 다르게 표시).
+//  - This Week 합계: 실제 weeklyStats 합산으로 대체. 지난주 대비 증감(%)은 2026-07-18에
+//    getPreviousWeekStats() 추가로 gap 해소 — 지난주 기록이 없으면 "지난주 기록이 아직 없어요"로 표시.
+//  - Focus Score: 2026-07-18에 정직한 로컬 정의를 붙였다(useStatsStore.computeFocusScore 참고) —
+//    "이번 주 사용 기록이 있는 날 중 일일 한도 이내로 마친 날의 비율"(0~100). 서버가 산출하는 개념이
+//    아니라 로컬 데이터만으로 계산해 매번 새로 구한다(별도 저장 없음). 사용 기록이 없으면 "아직 기록
+//    없음"으로 표시. "이번 주 일평균"은 그대로 별도 카드로 유지(다른 지표라 병존).
 //  - Healthy Streak: 실제 계산(computeStreak) 그대로 사용.
 //  - Platform Breakdown: getTodayUsageByApp() 실제 데이터, sourceColors 실제 플랫폼 강조색.
 //  - Today's Behavior: videosWatched/averageDuration 실제값. Longest Session도
@@ -37,11 +41,14 @@ import type { DailyStats } from '../../types/models';
 export default function StatsScreen() {
   const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
-  const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, refresh } = useStatsStore();
+  const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
 
   useEffect(() => {
-    if (user?.id) refresh(user.id);
+    if (!user?.id) return;
+    refresh(user.id);
+    // 이전 세션 종료 시점에 오프라인이었거나 실패해 못 보낸 백로그가 있으면 여기서 한 번 더 시도.
+    pushUnsyncedSessions(user.id).catch(() => {});
   }, [user?.id, refresh]);
 
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -52,6 +59,9 @@ export default function StatsScreen() {
   const todayEntry = weeklyStats.find((d) => d.date === todayStr);
   const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
   const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
+  const weekTrendPct = previousWeekTotalMinutes && previousWeekTotalMinutes > 0
+    ? Math.round(((totalMinutesThisWeek - previousWeekTotalMinutes) / previousWeekTotalMinutes) * 100)
+    : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -62,30 +72,50 @@ export default function StatsScreen() {
           <View style={styles.heroGlow} pointerEvents="none" />
           <Text style={styles.heroLabel}>{t('stats.thisWeek')}</Text>
           <Text style={styles.heroValue}>{formatHours(totalMinutesThisWeek)}</Text>
+          {/* 2026-07-18: "지난주 대비" 트렌드 — 이전엔 지난주 쿼리가 없어 표시할 근거 자체가 없던 gap.
+              getPreviousWeekStats() 추가로 실제 비교가 가능해졌다. */}
+          <Text style={styles.heroTrend}>
+            {weekTrendPct === null
+              ? t('stats.noPreviousWeekData')
+              : weekTrendPct <= 0
+                ? `↓ ${Math.abs(weekTrendPct)}% ${t('stats.lessThanLastWeek')}`
+                : `↑ ${weekTrendPct}% ${t('stats.moreThanLastWeek')}`}
+          </Text>
         </LinearGradient>
 
-        {/* 2. WEEKLY AVERAGE & HEALTHY STREAK GRID */}
+        {/* 2. FOCUS SCORE / WEEKLY AVERAGE / HEALTHY STREAK GRID */}
         <View style={styles.grid2}>
-          <View style={styles.gridCard}>
+          <GlassSurface style={styles.gridCard}>
+            <Text style={styles.gridLabel}>{t('stats.focusScore')}</Text>
+            {focusScore === null ? (
+              <Text style={styles.gridValueEmpty}>{t('stats.focusScoreNoData')}</Text>
+            ) : (
+              <View style={styles.gridValueRow}>
+                <Text style={styles.gridValueBig}>{focusScore}</Text>
+                <Text style={styles.gridValueUnit}>/ 100</Text>
+              </View>
+            )}
+          </GlassSurface>
+          <GlassSurface style={styles.gridCard}>
             <Text style={styles.gridLabel}>{t('stats.dailyAverage')}</Text>
             <View style={styles.gridValueRow}>
               <Text style={styles.gridValueBig}>{weeklyAvgMinutes}</Text>
               <Text style={styles.gridValueUnit}>{t('home.minUnit')}</Text>
             </View>
-          </View>
-          <View style={styles.gridCard}>
+          </GlassSurface>
+          <GlassSurface style={styles.gridCard}>
             <Text style={styles.gridLabel}>{t('stats.healthyStreak')}</Text>
             <View style={styles.streakValueCol}>
               <Text style={styles.streakValue}>{t('stats.dayStreak', { n: streak })}</Text>
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 3. PLATFORM BREAKDOWN */}
         {platformBreakdown.length > 0 && (
           <View>
             <Text style={styles.sectionTitle}>{t('stats.platformBreakdown')}</Text>
-            <View style={styles.card}>
+            <GlassSurface style={styles.card}>
               {platformBreakdown.map((p) => {
                 const pct = platformTotal > 0 ? Math.round((p.minutes / platformTotal) * 100) : 0;
                 const accent = p.app in sourceColors ? sourceColors[p.app as keyof typeof sourceColors].accent : colors.textSecondary;
@@ -101,18 +131,18 @@ export default function StatsScreen() {
                   </View>
                 );
               })}
-            </View>
+            </GlassSurface>
           </View>
         )}
 
         {/* 4. TODAY'S BEHAVIOR */}
         <View>
           <Text style={styles.sectionTitle}>{t('stats.todaysBehavior')}</Text>
-          <View style={styles.divideCard}>
+          <GlassSurface style={styles.divideCard}>
             <BehaviorRow title={t('stats.videosWatchedToday')} subtitle={t('stats.totalShortsPlayed')} value={`${todayEntry?.totalVideos ?? 0} Videos`} />
             <BehaviorRow title={t('stats.averageDuration')} subtitle={t('stats.timeSpentPerVideo')} value={`${todayAverageDurationSeconds}s / video`} />
             <BehaviorRow title={t('stats.longestSession')} subtitle={t('stats.maxUninterrupted')} value={`${longestSessionMinutes}m`} valueColor={colors.primary} last />
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 5. WEEKLY ACTIVITY GRAPH WITH GOAL LINE */}
@@ -234,6 +264,7 @@ const styles = StyleSheet.create({
   heroGlow: { position: 'absolute', top: -60, right: -30, width: 192, height: 192, borderRadius: 96, backgroundColor: `${colors.primary}0D` },
   heroLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#8E8E93', letterSpacing: 2.5, textTransform: 'uppercase' },
   heroValue: { fontSize: 36, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
+  heroTrend: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary, marginTop: 4 },
 
   grid2: { flexDirection: 'row', gap: spacing.sm },
   gridCard: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 16, justifyContent: 'space-between', gap: 16 },
@@ -241,6 +272,7 @@ const styles = StyleSheet.create({
   gridValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   gridValueBig: { fontSize: 30, fontFamily: typography.displayFontFamily, color: colors.textPrimary, lineHeight: 30 },
   gridValueUnit: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.successLight, textTransform: 'uppercase', letterSpacing: 0.5 },
+  gridValueEmpty: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
   streakValueCol: { alignItems: 'flex-start' },
   streakValue: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.primary, lineHeight: 22 },
 

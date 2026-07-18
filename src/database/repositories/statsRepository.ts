@@ -58,6 +58,29 @@ export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
   }));
 }
 
+// 2026-07-18: "지난주 대비 X%" 트렌드 표시를 위한 지난주(오늘로부터 -13일 ~ -7일) 집계 —
+// getWeeklyStats()는 이번 주(-6일~오늘)만 봐서 비교 기준이 없었다(gap으로 남아있던 항목).
+export async function getPreviousWeekStats(userId: string): Promise<DailyStats[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
+    `SELECT date(started_at) as date,
+            SUM(duration_seconds) / 60 as total_minutes,
+            SUM(videos_watched) as total_videos,
+            MAX(duration_seconds) as longest
+     FROM viewing_sessions
+     WHERE user_id = ? AND started_at >= date('now', '-13 days', 'localtime') AND started_at < date('now', '-6 days', 'localtime')
+     GROUP BY date(started_at)
+     ORDER BY date ASC`,
+    [userId]
+  );
+  return rows.map((r) => ({
+    date: r.date,
+    totalMinutes: r.total_minutes ?? 0,
+    totalVideos: r.total_videos ?? 0,
+    longestSessionSeconds: r.longest ?? 0,
+  }));
+}
+
 // 외부 리뷰 반영: viewing_sessions.status 기반 — 세션이 왜 끝났는지 분포(정상종료/한도도달/수면타이머/수동중지).
 export async function getSessionEndReasons(userId: string): Promise<Record<string, number>> {
   const db = await getDb();

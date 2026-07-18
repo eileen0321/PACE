@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../services/storage/keys';
 import { saveSettingsMirror } from '../database/repositories/settingsRepository';
+import { pullSettings, pushSettings } from '../services/sync/backendSync';
 import { useUserStore } from './useUserStore';
 import type { AppShieldTarget, AppSettingsOverride, UserSettings } from '../types/models';
 
@@ -19,6 +20,9 @@ const DEFAULT_SETTINGS: UserSettings = {
   },
   theme: 'system',
   language: 'system',
+  notifyRemaining: true,
+  notifyLimit: true,
+  notifyBreak: true,
 };
 
 type SettingsState = {
@@ -28,6 +32,8 @@ type SettingsState = {
   update: (patch: Partial<UserSettings>) => Promise<void>;
   /** 앱별 override 병합 갱신 — perApp 전체를 다시 넘길 필요 없이 한 앱의 필드만 patch. */
   updateAppOverride: (target: AppShieldTarget, patch: Partial<AppSettingsOverride>) => Promise<void>;
+  /** 로그인 직후 서버 설정을 당겨와 로컬과 병합(서버에 저장된 값이 있으면 우선) — 새 기기/재설치 복구용. */
+  syncFromServer: () => Promise<void>;
 };
 
 // AsyncStorage에 쓴 다음, 로그인된 유저가 있으면 SQLite user_settings 미러도 write-through로 갱신한다
@@ -59,6 +65,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ settings: next });
     await AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(next));
     mirrorToSqlite(next);
+    pushSettings(next).catch(() => {}); // 오프라인/미배포 백엔드에서도 로컬 설정 자체는 영향 없음
   },
 
   updateAppOverride: async (target, patch) => {
@@ -70,5 +77,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ settings: next });
     await AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(next));
     mirrorToSqlite(next);
+    pushSettings(next).catch(() => {});
+  },
+
+  syncFromServer: async () => {
+    const remote = await pullSettings();
+    if (!remote) return;
+    const current = get().settings;
+    const next: UserSettings = {
+      ...current,
+      ...remote,
+      perApp: { ...current.perApp, ...(remote.perApp ?? {}) },
+      appShields: { ...current.appShields, ...(remote.appShields ?? {}) },
+    };
+    set({ settings: next });
+    await AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(next));
   },
 }));

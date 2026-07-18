@@ -48,5 +48,12 @@ export async function loadSettingsMirror(userId: string): Promise<UserSettings |
     },
     theme: row.theme,
     language: row.language ?? 'system',
+    // 2026-07-18: notifyRemaining/notifyLimit/notifyBreak가 UserSettings에 새로 추가됐는데 이
+    // 미러 테이블엔 아직 컬럼이 없다(이 repository는 주석대로 현재 활성 read 경로가 아니라
+    // AsyncStorage 진실원천을 그대로 따라가지 못함) — 스키마 마이그레이션 전까지는 기본 활성값으로
+    // 채워 타입만 맞춘다. 실제 알림 on/off는 useSettingsStore(AsyncStorage)가 진실원천.
+    notifyRemaining: true,
+    notifyLimit: true,
+    notifyBreak: true,
   };
 }

@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useSessionStore } from '../../store/useSessionStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
@@ -31,6 +32,7 @@ export default function HomeScreen() {
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
+  const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -42,10 +44,14 @@ export default function HomeScreen() {
     router.push({ pathname: '/overlay', params: { platform } });
   }, [router]);
 
-  const PLATFORM_CARDS: { id: AppShieldTarget; title: string; cover: ImageSourcePropType; gradientFrom: string; statusAutoNext: string; statusShield: string }[] = [
-    { id: 'youtube', title: 'YouTube Shorts', cover: YOUTUBE_COVER, gradientFrom: 'rgba(220,38,38,0.35)', statusAutoNext: 'Auto Next Ready', statusShield: 'Continuous Watch Shield Active' },
-    { id: 'instagram', title: 'Instagram Reels', cover: INSTAGRAM_COVER, gradientFrom: 'rgba(219,39,119,0.35)', statusAutoNext: 'Auto Next Ready', statusShield: 'Breathe Friction Guard Active' },
-    { id: 'tiktok', title: 'TikTok Video Loop', cover: TIKTOK_COVER, gradientFrom: 'rgba(13,148,136,0.35)', statusAutoNext: 'Auto Next Ready', statusShield: 'Anti-Scroll Intervention Ready' },
+  // 2026-07-18: 사용자 지시(외부 프로덕트 조언 반영) — "AUTO NEXT READY" 등 AUTO 브랜딩을 카드
+  // 상태줄에서 전면에 노출하지 않는다(스토어 심사 리스크 + 타겟 연령대엔 "자동 조작 앱"보다 "프리미엄
+  // 집중 관리 앱" 인상이 낫다는 판단). 플랫폼별 상태문구 대신 실제 세션 상태 기반 Active/Available
+  // 2단만 사용 — 원본 App.tsx의 statusAutoNext/statusShield 문구는 더 이상 이식하지 않음.
+  const PLATFORM_CARDS: { id: AppShieldTarget; title: string; cover: ImageSourcePropType; gradientFrom: string }[] = [
+    { id: 'youtube', title: 'YouTube Shorts', cover: YOUTUBE_COVER, gradientFrom: 'rgba(220,38,38,0.35)' },
+    { id: 'instagram', title: 'Instagram Reels', cover: INSTAGRAM_COVER, gradientFrom: 'rgba(219,39,119,0.35)' },
+    { id: 'tiktok', title: 'TikTok Video Loop', cover: TIKTOK_COVER, gradientFrom: 'rgba(13,148,136,0.35)' },
   ];
 
   return (
@@ -65,11 +71,12 @@ export default function HomeScreen() {
             <PlatformPickerCard
               key={p.id}
               title={p.title}
-              statusText={settings.autoNext ? p.statusAutoNext : p.statusShield}
+              statusText={activeSessionPlatform === p.id ? 'Active' : 'Available'}
               cover={p.cover}
               gradientFrom={p.gradientFrom}
               onPress={() => onSelectPlatform(p.id)}
               disabled={isLimitReached}
+              isActive={activeSessionPlatform === p.id}
             />
           ))}
         </View>

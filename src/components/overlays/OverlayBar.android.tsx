@@ -25,7 +25,7 @@ export function OverlayBar({ remainingMinutes, autoNextEnabled, onToggleAutoNext
         style={[styles.autoPill, autoNextEnabled ? styles.autoOn : styles.autoOff]}
         hitSlop={8}
       >
-        <Text style={[styles.autoText, !autoNextEnabled && styles.autoTextOff]}>{autoNextEnabled ? 'AUTO ON' : 'AUTO OFF'}</Text>
+        <Text style={[styles.autoText, !autoNextEnabled && styles.autoTextOff]}>{autoNextEnabled ? 'NEXT ON' : 'NEXT OFF'}</Text>
       </Pressable>
     </Pressable>
   );

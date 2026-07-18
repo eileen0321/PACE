@@ -9,9 +9,13 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTimerStore } from '../../store/useTimerStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useAutoNextStore } from '../../store/useAutoNextStore';
+import { useSessionStore } from '../../store/useSessionStore';
+import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { overlayService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
+import { notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
+import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { SUPPORTED_APPS } from '../../constants/supportedApps';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -50,25 +54,39 @@ export default function OverlaySessionScreen() {
   const updateSettings = useSettingsStore((s) => s.update);
   const timer = useTimerStore();
   const autoNextRuntime = useAutoNextStore();
+  const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes);
+  const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const [expanded, setExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [videoIndex, setVideoIndex] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const endReasonRef = useRef<SessionEndStatus>('manual_stop');
+  const sessionStartedAtMsRef = useRef<number | null>(null);
+  const hasAutoEndedRef = useRef(false);
+  // remainingMinutes/isSessionActive 둘 다 스토어 초기값이 0/false라, 아래 useEffect가 "세션이 실제로
+  // 시작됐는지"를 isSessionActive만으로 구분할 수 없다(0 도달로 자동종료된 순간에도 동일값이 됨).
+  // 이 ref로 "startSession()이 실제로 호출됐는지"를 별도로 추적한다.
+  const hasSessionStartedRef = useRef(false);
 
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
       const id = await startSession(user.id, platform ?? null);
       sessionIdRef.current = id;
+      sessionStartedAtMsRef.current = Date.now();
+      // 2026-07-18: useSessionStore가 정의만 되고 어디서도 안 쓰이던 죽은 상태였다 — Home의
+      // "지금 실제로 어떤 플랫폼이 활성 세션인지" 표시(플랫폼 카드 상태 점 초록 펄스)가 이 스토어를
+      // 진실원천으로 쓰도록 여기서 실제로 채운다.
+      useSessionStore.getState().start({ sessionId: id, platformApp: platform ?? null });
       const todayUsedMinutes = await getTodayUsageMinutes(user.id);
-      const remainingMinutes = Math.max(0, settings.dailyLimitMinutes - todayUsedMinutes);
+      const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + useDailyBonusStore.getState().extraMinutes - todayUsedMinutes);
       timer.startSession({
         sessionId: id,
         remainingMinutes,
         sleepTimerMinutes: settings.sleepTimerMinutes,
         breakIntervalMinutes: settings.breakIntervalMinutes,
       });
+      hasSessionStartedRef.current = true;
       if (settings.autoNext) autoNextRuntime.start(null);
       // Android 실기기에서 native 모듈이 링크돼 있으면 시스템 오버레이도 함께 띄운다(미링크 시 no-op).
       overlayService.startSession({
@@ -79,14 +97,29 @@ export default function OverlaySessionScreen() {
       launchPlatformApp(platform).catch(() => {});
     })();
 
+    // 2026-07-18 실기기 검증 중 발견: useTimerStore.tickMinute()을 호출하는 곳이 코드 전체에
+    // 어디에도 없었다 — 남은시간/수면타이머/휴식리마인더 카운트다운이 세션 시작 값에서 실제로는
+    // 한 번도 줄어들지 않는 치명적 버그. 여기서 1분마다 직접 틱을 돌린다(네이티브 포그라운드
+    // 서비스가 아직 JS로 틱 이벤트를 보내지 않으므로 JS 인터벌이 유일한 소스).
+    const tickInterval = setInterval(() => {
+      useTimerStore.getState().tickMinute();
+    }, 60_000);
+
     return () => {
+      clearInterval(tickInterval);
       if (sessionIdRef.current && user.id) {
-        endSessionRow(sessionIdRef.current, 0, videoIndex + 1, endReasonRef.current).catch(() => {});
+        const durationSeconds = sessionStartedAtMsRef.current
+          ? Math.max(0, Math.round((Date.now() - sessionStartedAtMsRef.current) / 1000))
+          : 0;
+        endSessionRow(sessionIdRef.current, durationSeconds, videoIndex + 1, endReasonRef.current)
+          .then(() => pushUnsyncedSessions(user.id))
+          .catch(() => {});
         logOverlayEvent(user.id, sessionIdRef.current, 'SESSION_STOP', endReasonRef.current).catch(() => {});
       }
       timer.endSession();
       autoNextRuntime.stop();
       overlayService.endSession().catch(() => {});
+      useSessionStore.getState().finish();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -97,6 +130,38 @@ export default function OverlaySessionScreen() {
     else if (timer.sleepTimerRemainingMinutes === 0) endReasonRef.current = 'sleep_timer_expired';
     overlayService.updateRemaining(timer.remainingMinutes).catch(() => {});
   }, [timer.remainingMinutes, timer.sleepTimerRemainingMinutes]);
+
+  // 남은시간 또는 수면타이머가 0에 도달하면(바로 위 useEffect가 endReasonRef를 먼저 세팅한 다음
+  // 프레임에) 실제로 세션을 종료해 오버레이를 닫는다 — 틱이 안 돌던 예전엔 이 상태 자체가 도달
+  // 불가능했다. ⚠️ useTimerStore.tickMinute()이 0 도달 시 내부적으로 자기 own endSession()을 먼저
+  // 호출해 같은 렌더에서 isSessionActive가 이미 false가 되므로, 그 플래그로 게이팅하면 안 되고
+  // ref로 "이미 처리했는지"만 본다.
+  useEffect(() => {
+    if (!hasSessionStartedRef.current || hasAutoEndedRef.current) return;
+    if (timer.remainingMinutes <= 0 || timer.sleepTimerRemainingMinutes === 0) {
+      hasAutoEndedRef.current = true;
+      router.back();
+    }
+  }, [timer.remainingMinutes, timer.sleepTimerRemainingMinutes, router]);
+
+  // Break Reminder: 카운트다운이 0에 도달하면 알림을 띄우고 다음 주기로 리셋(설정이 꺼져있으면 스킵).
+  useEffect(() => {
+    if (timer.nextBreakInMinutes === 0 && settings.breakIntervalMinutes > 0) {
+      notifyBreakReminder().catch(() => {});
+      if (user?.id) logOverlayEvent(user.id, sessionIdRef.current, 'BREAK_REMINDER').catch(() => {});
+      useTimerStore.setState({ nextBreakInMinutes: settings.breakIntervalMinutes });
+    }
+  }, [timer.nextBreakInMinutes, settings.breakIntervalMinutes, user?.id]);
+
+  // 저시간 경고(5분/1분)와 한도 도달 시 로컬 알림 — 오버레이가 화면에 안 보이는 상태(백그라운드 앱
+  // 전환 중)에도 사용자에게 도달하는 유일한 채널.
+  useEffect(() => {
+    if (timer.remainingMinutes === 5 || timer.remainingMinutes === 1) {
+      notifyLowTime(timer.remainingMinutes).catch(() => {});
+    } else if (timer.remainingMinutes === 0 && endReasonRef.current === 'daily_limit_reached') {
+      notifyLimitReached().catch(() => {});
+    }
+  }, [timer.remainingMinutes]);
 
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —
   // 여기서는 dev 시뮬레이터에서 데모 영상이 끝나면 다음 영상으로 넘어가는 흉내만 낸다.
@@ -139,8 +204,8 @@ export default function OverlaySessionScreen() {
         {expanded && (
           <View style={styles.expandedWrap}>
             <OverlayExpandedCard
-              todayUsedMinutes={settings.dailyLimitMinutes - timer.remainingMinutes}
-              dailyLimitMinutes={settings.dailyLimitMinutes}
+              todayUsedMinutes={effectiveDailyLimitMinutes - timer.remainingMinutes}
+              dailyLimitMinutes={effectiveDailyLimitMinutes}
               remainingMinutes={timer.remainingMinutes}
               autoNextEnabled={settings.autoNext}
               onToggleAutoNext={() => updateSettings({ autoNext: !settings.autoNext })}

@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
+import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
 import { overlayService } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -27,6 +28,7 @@ export default function FocusScreen() {
   const user = useUserStore((s) => s.user);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, todayVideosWatched, todayAverageDurationSeconds, refresh } = useStatsStore();
+  const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes, resetToday: resetBonusToday } = useDailyBonusStore();
   const [showPromptDemo, setShowPromptDemo] = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [hasOverlayPermission, setHasOverlayPermission] = useState(false);
@@ -55,11 +57,15 @@ export default function FocusScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  const remainingMinutes = Math.max(0, settings.dailyLimitMinutes - todayUsageMinutes);
-  const progressPct = Math.min(100, (todayUsageMinutes / Math.max(1, settings.dailyLimitMinutes)) * 100);
+  // 2026-07-18 버그 수정: Extend Time(+10/20/30m)이 예전엔 settings.dailyLimitMinutes를 직접 올려버려서
+  // "오늘만" 늘려주려던 의도와 달리 다음날 이후에도 영구히 늘어난 한도가 유지됐다. 이제 오늘 하루치
+  // 보너스(useDailyBonusStore, 날짜 바뀌면 자동 리셋)를 더해서만 계산 — 영속 설정 자체는 안 건드린다.
+  const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
+  const remainingMinutes = Math.max(0, effectiveDailyLimitMinutes - todayUsageMinutes);
+  const progressPct = Math.min(100, (todayUsageMinutes / Math.max(1, effectiveDailyLimitMinutes)) * 100);
 
-  const extendSession = (amount: number) => update({ dailyLimitMinutes: settings.dailyLimitMinutes + amount });
-  const confirmFinish = () => { setShowFinishConfirm(false); };
+  const extendSession = (amount: number) => addBonusMinutes(amount);
+  const confirmFinish = () => { setShowFinishConfirm(false); resetBonusToday(); };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>

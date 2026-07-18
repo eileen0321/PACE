@@ -81,11 +81,36 @@ export const authApi = {
   deleteAccount: () => request<void>('/auth/account', { method: 'DELETE' }),
 };
 
+export type SessionSyncItem = {
+  id: string;
+  platformApp: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number;
+  videosWatched: number;
+  autoNextUsed: boolean;
+  status: string | null;
+};
+
 export const statsApi = {
-  pushSessions: (sessions: unknown[]) => request<{ synced: number }>('/stats/sessions', { method: 'POST', body: { sessions } }),
+  // ⚠️ 백엔드 StatsController는 /stats/sync에 있다(계획 단계에서 jlpt식 /stats/sessions을
+  // /stats/sync로 개명했는데 클라이언트가 갱신되지 않아 어긋나 있었다 — 2026-07-18 정합화).
+  pushSessions: (sessions: SessionSyncItem[]) => request<{ synced: number }>('/stats/sync', { method: 'POST', body: { sessions } }),
+};
+
+export type SettingsPayload = {
+  autoNext: boolean;
+  sleepTimerMinutes: number | null;
+  dailyLimitMinutes: number;
+  breakIntervalMinutes: number;
+  preSessionBreathing: boolean;
+  appShields: Record<string, unknown>;
+  perApp: Record<string, unknown>;
+  theme: string;
+  language: string;
 };
 
 export const settingsApi = {
-  getSettings: () => request<unknown>('/settings'),
-  updateSettings: (patch: unknown) => request<unknown>('/settings', { method: 'PUT', body: patch }),
+  getSettings: () => request<SettingsPayload>('/settings'),
+  updateSettings: (patch: Partial<SettingsPayload>) => request<SettingsPayload>('/settings', { method: 'PUT', body: patch }),
 };

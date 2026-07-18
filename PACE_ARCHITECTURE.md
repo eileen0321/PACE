@@ -1608,10 +1608,19 @@ AccessibilityService가 아니라 **UsageStatsManager(Usage Access) 기반**으�
   설명도 "자동 스와이프 활성화됨"(부정확) → "포그라운드 앱 감지에 필요"(정확)로 정정
   (`services/i18n/translations.ts`).
 
-**검증**: `adb shell appops set com.pace.app SYSTEM_ALERT_WINDOW|GET_USAGE_STATS deny`로 권한을
-실제로 회수한 뒤 배지가 즉시 "미연결"/"권한 필요"(앰버)로 바뀌는 것 확인 → "미연결" 배지 탭 →
+**검증(에뮬레이터)**: `adb shell appops set com.pace.app SYSTEM_ALERT_WINDOW|GET_USAGE_STATS deny`로
+권한을 실제로 회수한 뒤 배지가 즉시 "미연결"/"권한 필요"(앰버)로 바뀌는 것 확인 → "미연결" 배지 탭 →
 실제 Android "다른 앱 위에 표시" 설정 화면으로 정확히 이동하는 것까지 확인 → 권한을 다시 `allow`로
 복구 후 배지가 다시 "연결됨"/"실행 중"(초록)으로 돌아오는 것까지 왕복 확인 완료.
+
+**검증(실기기, 갤럭시 Note20)**: 에뮬레이터와 달리 이쪽은 `appops`로 조작한 적이 없는 **완전히
+자연스러운 최초 상태**였다 — 실제로 두 배지 모두 처음부터 "미연결"/"권한 필요"(앰버)로 정확히
+표시됐다(이전 하드코딩 버전이었다면 여기서도 거짓으로 "연결됨"을 보여줬을 것). "미연결" 배지 탭 →
+삼성 "다른 앱 위에 표시" 설정에서 Pace가 실제로 꺼져있는 목록 항목까지 확인 → `appops allow`로
+권한을 부여하고 재기동하니 배지가 초록으로 정확히 전환되는 것까지 실기기에서 왕복 확인 완료(이
+과정에서 실기기가 `adb devices` 목록에서 두 차례 offline으로 빠졌다 — `adb kill-server` →
+`adb start-server` → `adb reverse tcp:8081 tcp:8081` 재설정으로 복구, 기존에 문서화된 "실기기
+연결 불안정" 이슈와 동일 패턴이라 재발 시 이 절차를 그대로 쓸 것).
 
 ### 발견 3 — 정도가 낮아 이번엔 수정하지 않은 것들 (다음 세션 참고용)
 - **`settings.tsx`의 "오버레이 제어기 (Android): READY" 배지도 정적 하드코딩** — 다만 이건 "이 빌드가

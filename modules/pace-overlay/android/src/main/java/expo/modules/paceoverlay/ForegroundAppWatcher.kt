@@ -15,6 +15,11 @@ object SupportedApps {
     "com.google.android.youtube",
     "com.instagram.android",
     "com.zhiliaoapp.musically",
+    // TikTok 한국 리전 설치본의 실제 패키지명 — 실기기(한국 리전) 검증 중 발견: 위
+    // com.zhiliaoapp.musically(글로벌 패키지명)만 등록돼 있으면 이 기기에서 앱 실행 자체는
+    // 정상이지만 ForegroundAppWatcher가 포그라운드 패키지를 못 알아봐 오버레이가 전혀 안 뜬다
+    // (2026-07-18, src/constants/supportedApps.ts와 동기화).
+    "com.ss.android.ugc.trill",
   )
 }
 

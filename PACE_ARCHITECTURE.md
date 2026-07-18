@@ -2112,3 +2112,44 @@ instagram` 결과 없음) App Link가 브라우저로 정상 폴백된 것. YouT
 `remainingMinutes` 필드를 그대로 덮어쓰기만 하고 틱 스케줄은 안 건드리므로 Extend Time과의 상호작용은
 설계상 안전하지만, **실제 Extend Time 버튼을 누른 채로 백그라운드 만료까지 가는 시나리오는 이번
 라운드에서 별도로 실기기 검증하지 못했다** — 다음 세션에서 확인 필요.
+
+### 추가 발견 및 수정 (같은 검증 라운드 연속) — Choose Platform 카드 오해석 버그 + TikTok 한국 리전 패키지명 버그
+
+**1) Choose Platform 카드가 한도 도달 시 불투명+터치불가 처리되던 것 — 사용자 지시 없이 임의로 추가된
+동작이라 제거.** 사용자가 실기기에서 직접 확인하고 강하게 지적("불투명도 다 걷어내고 ... 누가 터치도
+안되고 불투명하게 만들래") — `home.tsx`가 `isLimitReached = todayUsageMinutes >= dailyLimitMinutes`를
+계산해 `PlatformPickerCard`에 `disabled` prop으로 넘기고 있었고, 컴포넌트는 이를 `Pressable
+disabled`(터치 불가) + `opacity: 0.4`(반투명) 둘 다에 썼다. **사용자가 실제로 요청한 것은 "현재
+활성 세션인 카드만 상태점을 초록색으로"(이미 `isActive` prop으로 구현돼 있던 것)뿐**이고, 한도 도달
+시 카드 자체를 막는 동작은 별도로 요청받은 적이 없다 — 이번 라운드에서 Daily Limit을 여러 번 임시로
+올려가며 테스트하다 보니 이 기존 동작이 실제로 화면에 노출됐고, 사용자가 이를 원치 않는 동작으로
+바로잡았다. `home.tsx`의 `isLimitReached` 계산과 `disabled` prop 전달을 제거하고,
+`PlatformPickerCard.tsx`에서도 `disabled` prop 자체와 `styles.disabled`(opacity 0.4)를 완전히
+삭제했다. 실기기에서 오늘 사용량 61/60분(102%) 상태로 재확인 — 카드 3장 전부 완전 불투명 + 정상
+터치 가능 확인.
+
+**2) TikTok 실제 앱 실행은 되는데 오버레이가 전혀 안 뜨는 버그 — 한국 리전 패키지명 미등록.**
+사용자가 기기에 Instagram/TikTok을 실제로 설치·로그인해준 뒤 재검증: Instagram은 정상(실앱 실행 +
+오버레이 표시, 다만 Reels 탭으로 바로 딥링크는 안 되고 홈 피드로 열림 — 이건 Instagram 자체 App
+Links 한계이지 우리 코드 버그 아님, YouTube의 `/shorts` 경로처럼 세부 탭 딥링크를 지원 안 함).
+TikTok은 처음엔 완전히 실패한 것처럼 보였다(탭해도 Pace 자체 dev 시뮬레이터 화면만 남아있음) —
+재현 과정에서 실제로는 **TikTok 콜드스타트가 느려서(3초 대기로는 부족, 8초는 충분) 그냥 로딩
+중이었을 뿐 실행 자체는 됐던 것**으로 밝혀졌다(`adb shell dumpsys activity activities |
+grep topResumedActivity`로 직접 확인). 하지만 로딩이 끝나고 실제 TikTok 화면이 뜬 뒤에도 **Pace
+오버레이 알약이 전혀 안 보이는 진짜 버그**가 있었다 — 원인: `adb shell pm list packages`로 확인한
+결과 이 기기(한국 리전)에 설치된 TikTok의 실제 패키지명이 `com.ss.android.ugc.trill`이었다.
+`src/constants/supportedApps.ts`/`ForegroundAppWatcher.kt`엔 글로벌 패키지명
+`com.zhiliaoapp.musically`만 하드코딩돼 있어서 `ForegroundAppWatcher`가 포그라운드 앱을 "지원 앱
+아님"으로 판단 → 오버레이 숨김. **딥링크(`webFallback`/`androidScheme`)는 패키지명과 무관하게
+Android가 알아서 해석하므로 앱 실행 자체엔 전혀 문제가 없었다는 점이 이 버그를 헷갈리게 한 지점** —
+"앱이 안 열린다"가 아니라 "앱은 열리는데 우리 쪽 포그라운드 감지만 그 앱을 못 알아본다"는 훨씬
+좁은 범위의 버그였다.
+
+수정: `packageName: string` → `packageNames: string[]`로 타입 변경(TikTok처럼 리전별로 다른 패키지명을
+쓰는 경우를 정식으로 지원), `tiktok.packageNames`에 `com.zhiliaoapp.musically`(글로벌) +
+`com.ss.android.ugc.trill`(한국 리전) 둘 다 등록. `ForegroundAppWatcher.kt`의 `SupportedApps.PACKAGES`
+Set에도 동일하게 두 번째 패키지명 추가(Kotlin이 JS 상수를 못 읽어 기존 컨벤션대로 양쪽 각각
+하드코딩). 네이티브 재빌드(`assembleDebug -PreactNativeArchitectures=arm64-v8a`) + 재설치 후
+실기기에서 TikTok 열어 "Pace ⏱ 0m Left" 오버레이가 실제 TikTok 피드 위에 정상 표시되는 것 확인.
+**다른 리전(일본 등)에서 또 다른 TikTok 패키지명을 쓸 가능성은 배제 못 함** — 이번엔 실제로 마주친
+한국 리전 패키지명만 추가했다.

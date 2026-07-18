@@ -44,8 +44,6 @@ export default function HomeScreen() {
     }, [user?.id, refresh])
   );
 
-  const isLimitReached = todayUsageMinutes >= settings.dailyLimitMinutes;
-
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     router.push({ pathname: '/overlay', params: { platform } });
   }, [router]);
@@ -81,7 +79,6 @@ export default function HomeScreen() {
               cover={p.cover}
               gradientFrom={p.gradientFrom}
               onPress={() => onSelectPlatform(p.id)}
-              disabled={isLimitReached}
               isActive={activeSessionPlatform === p.id}
             />
           ))}

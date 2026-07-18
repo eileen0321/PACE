@@ -12,13 +12,12 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 깜빡였는데, 그러면 "지금 실제로 세션이 진행 중인 플랫폼이 어디인지"가 안 보인다. isActive(실제
 // useSessionStore의 활성 세션 platformApp과 일치하는 카드만 true)일 때만 초록색으로 펄스,
 // 나머지는 펄스 없는 정적 회색 점 — 시선이 실제 활성 세션에만 쏠리게.
-export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onPress, disabled, isActive }: {
+export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onPress, isActive }: {
   title: string;
   statusText: string;
   cover: ImageSourcePropType;
   gradientFrom: string;
   onPress: () => void;
-  disabled?: boolean;
   isActive?: boolean;
 }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -38,9 +37,9 @@ export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onP
   }, [pulse, isActive]);
 
   return (
-    <Pressable onPress={onPress} disabled={disabled}>
+    <Pressable onPress={onPress}>
       {({ pressed }) => (
-        <Animated.View style={[styles.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }, disabled && styles.disabled]}>
+        <Animated.View style={[styles.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
           <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
             <LinearGradient colors={[gradientFrom, 'rgba(0,0,0,0.9)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.overlay}>
               <View style={styles.textCol}>
@@ -74,7 +73,6 @@ const styles = StyleSheet.create({
     shadowRadius: 15,
     elevation: 6,
   },
-  disabled: { opacity: 0.4 },
   cover: { flex: 1 },
   coverImage: { resizeMode: 'cover' },
   overlay: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14 },

@@ -2427,3 +2427,100 @@ android`)해도 이 라이브러리는 안 잡힌다(의도된 동작). 혹시 i
 호스팅, 새 DB, 새 배포 파이프라인, 새 크리덴셜)라 앱 코드 세션에 슬쩍 끼워넣기엔 부적절하다고
 판단해 사용자에게 명시적으로 이유를 설명하고 보류했다. 현재 YouTube Data API 직접 연동은 이미
 실제 데이터로 동작 중이라(Mock 아님) 이 보류로 인한 기능 공백은 없다.
+
+---
+
+## healthy-shorts-assistant(3) UI 이식 라운드 (2026-07-19)
+
+사용자 지시("healthy-shorts-assistant (3)의 ui 전부 픽셀단위로 확인해서 코드랑 연결하면서 가져오고
+동작 검증까지")에 따라 세 번째 참조 프로토타입(`C:\Users\eileen\Downloads\healthy-shorts-assistant (3)`)
+의 UI를 코드와 대조하며 이식. `(2)`에서 이미 대부분 이식된 다크 리스킨 위에, `(3)`이 실제로 추가/변경한
+부분만 골라 반영 — 전체 재이식이 아니라 diff 기반 작업.
+
+### 완료하고 실기기(R3CN80S5GWW) 검증까지 끝낸 것
+
+1. **Home 히어로 카드 라벨 갱신 + Hands-Free Controller 행** (`SessionHeroCard.tsx`, 383eae5) —
+   "Today Session"→"SESSION STATUS", "Complete"→"CONSUMED", 신규 하단 행에 실제
+   `useBluetoothStore.isConnected`/`deviceName` 상태 표시. `(3)`이 하단 상태줄 문구를 "Auto Mode
+   ON"/"Shield Suspended"로 바꿨지만 그건 이식 안 함 — 이전 세션에 이미 사용자가 "AUTO" 브랜딩을
+   전면에서 빼기로 결정한 것과 충돌.
+2. **플랫폼 카드 배지** (`PlatformPickerCard.tsx`, 383eae5) — 제목 옆 SHORTS/REELS/LOOPS 작은 배지,
+   순수 장식.
+3. **PlatformStartModal.tsx는 이식 안 함** — 조사 결과 `(3)`의 `App.tsx`가 이 컴포넌트를 아예
+   import하지 않는다(죽은 코드). 실제 플랫폼 카드 탭은 `triggerConnectingSequence(plat.id)`를
+   직접 호출(App.tsx:408) — Pace의 기존 `onSelectPlatform`→`startSession` 흐름과 이미 구조적으로
+   동일해서 새로 만들 게 없었다.
+4. **ConnectingOverlay 신규 컴포넌트** (`ConnectingOverlay.tsx`, 383eae5) — 플랫폼 카드 탭과 실제
+   `/overlay` 세션 시작 사이에 체크리스트 애니메이션(450ms 간격 스텝 증가, 완료 후 300ms 대기).
+   Android 3단계(Starting Session.../Overlay ON/Opening {App}), iOS 2단계(Starting Pace Player/
+   Loading Feed...). 원본은 Android 3번째 스텝 문구가 플랫폼 무관하게 항상 "Opening YouTube
+   Shorts"로 하드코딩된 명백한 버그(웹 시뮬레이터가 플랫폼 토글만 있고 실제 3개 소스 지원 안 해서
+   생긴 것으로 추정) — Pace는 실제 3개 플랫폼을 지원하므로 `platformFullTitle`로 교정.
+5. **Focus 탭 Hands-Free Control 상태 배지** (`focus.tsx`, 964d5bc) — 카드 헤더에 Connected/Not
+   Connected 뱃지 필 스타일만 이식. `(3)`의 device-selector 드롭다운(가짜 기기 목록), 하드코딩
+   배터리%, "Connect Device" 버튼(앱에서 실제로 블루투스 페어링을 못 시키므로 눌러도 아무 일도 안
+   일어나는 가짜 버튼), 키보드 단축키 시뮬레이션 가이드(웹 전용 개념)는 전부 이식 안 함 — 이미
+   실제로 동작하는 Previous/Next/Auto Mode 3버튼(2026-07-19 Bluetooth Hands-Free 작업에서 구축)이
+   있어서 대체할 필요가 없었다.
+6. **네이티브 Android 오버레이 알약 시각 리디자인** (`PaceOverlayService.kt`, 5d12814) — 이번
+   라운드에서 가장 리스크가 컸던 변경. 실제 `TYPE_APPLICATION_OVERLAY` 시스템 오버레이(순수 Kotlin
+   View, RN 아님 — 상단 주석에 이미 "두 번째 ReactRootView 필요" 이유로 POC 단계 명시)가 이전엔
+   밝은 회색 배경에 "Pace ⏱ Xm Left" 텍스트만 있었는데, `(3)` ShortsPlayer.tsx의 Android 컴팩트
+   알약 스타일(dark glass `#0C0D12`/90, 펄싱 초록 점, AUTO ON/OFF 배지)로 순수 네이티브 코드로
+   다시 그렸다. 두 가지 실제 동작 추가(가짜 버튼 아님):
+   - AUTO 배지 탭 → 기존 `setAutoMode()` companion 함수 재사용(Bluetooth Play/Pause 하드웨어
+     버튼과 완전히 같은 코드 경로) — 진짜 Auto Mode 토글.
+   - 알약 본문 탭 → `packageManager.getLaunchIntentForPackage()`로 Pace 앱을 포그라운드로 열어
+     기존 Focus 탭 전체 컨트롤에 접근하게 안내.
+   `(3)`의 펼침형 어시스턴트 패널(오늘 사용량 그리드, 진행바, Sleep Timer/Daily Limit 사이클,
+   Pause/End Session 버튼)은 이식하지 않음 — 파일 상단 주석이 이미 명시한 대로 별도 윈도우에 RN
+   트리를 브릿지해야 가능한 범위라, 탭-투-오픈-앱으로 같은 목적(원격 제어 접근)을 가짜 패널 없이
+   달성. `:pace-overlay:compileDebugKotlin` + `:app:assembleDebug` 그린 확인 후 실기기 재설치,
+   배지 토글/알약 탭/YouTube 위 실제 렌더까지 전부 육안 검증.
+   - **부수 발견**: 실기기 검증 중 예전에 "NEXT ON" 배지가 보였던 스크린샷의 정체를 이번에 확실히
+     규명 — 그건 네이티브 알약이 아니라 `/overlay` 화면 자체가 그리는 RN 인앱 미리보기
+     (`OverlayBar.android.tsx`, dev 시뮬레이터 목적)였다. 두 알약이 겹쳐 보이는 건 1차 검증
+     라운드(2026-07-17)에서 이미 "정상"으로 문서화된 현상 — 실기기 크롭 스크린샷으로 재확인만
+     했을 뿐 새로운 버그는 아니었다.
+7. **일일 한도 도달 잠금 오버레이 신규 포팅** (`LimitReachedOverlay.tsx`, 755574d) — 진짜 기능
+   공백이었다. 기존엔 Daily Limit 도달 시 네이티브 타이머가 세션을 정확히 차단하고 시스템 알림을
+   보내지만, Home으로 돌아왔을 때 "왜 끝났는지/뭘 할 수 있는지" 설명하는 인앱 화면이 전혀 없었다.
+   `(3)` App.tsx의 "APPLE SCREEN TIME LOCKOUT OVERLAY"(shield 아이콘, "Time Limit" 헤드라인, 본문,
+   버튼들)를 이식하되 버튼 2개는 의도적으로 제외 — 원본 코드 자체에 "Temporarily set limit
+   extremely high for active testing bypass"라고 적힌 "Ignore Limit for Today"(하루 한도를 사실상
+   무제한으로 풀어버리는 테스트 치트키)와, 실제 시청 기록을 사용자가 마음대로 깎을 수 있는
+   "Decline: Reduce Watched Time" — 둘 다 이 앱의 핵심 가치(정직한 사용량 추적/자기 통제 보조)와
+   정면으로 배치되는 개발용 테스트 기능이라 프로덕션에 넣지 않았다. 실제 프로덕션 기능인 "Request
+   15 More Minutes"만 포팅했고, `useDailyBonusStore.addMinutes(15)`(Focus 탭 Extend Time과 완전히
+   같은 메커니즘)에 연결. "Ignore"/"Decline" 자리엔 정직한 "Not Now" 닫기 버튼.
+   - **이 작업 중 발견한 부수 버그**: `SessionHeroCard`가 `settings.dailyLimitMinutes`를 직접
+     읽고 있어서, Extend Time이나 이번에 추가한 "Request 15 More Minutes"로 한도를 늘려도 히어로
+     카드는 여전히 "108% CONSUMED / 0m REMAINING"처럼 예전 한도 기준으로 표시되는 모순이 있었다
+     (실기기 테스트 중 직접 발견). `effectiveDailyLimitMinutes`(dailyLimitMinutes + 오늘 보너스)를
+     넘기도록 수정.
+   - **검증 방법**: 실기기에 진짜로 60분을 채우는 건 비현실적이라, `adb`로 앱의 SQLite
+     `files/SQLite/pace.db`를 pull → `viewing_sessions`에 65분짜리 테스트 세션 행을 직접 INSERT →
+     push해서 되돌린 뒤 앱 재시작. 오버레이 노출/닫기/연장 전부 육안 확인 후 테스트 행을 다시
+     DELETE해서 원상복구.
+
+### 의도적으로 이식하지 않은 것 (조사 후 판단)
+
+- **`ShortsPlayer.tsx`의 "HIGH-FIDELITY THIRD-PARTY MOCK" 섹션**(가짜 카테고리/제목/설명이 있는
+  `CURATED_VIDEOS` 목업 영상 카드, iOS용 가짜 YouTube iframe 박스) — 웹 프로토타입은 실제 기기/앱
+  접근이 없어서 가짜 콘텐츠로 시뮬레이션한 것. Pace는 다르다: Android는 오버레이가 진짜 YouTube/
+  Instagram/TikTok 위에 뜨므로 가짜 콘텐츠 목업이 필요 없고(진짜 앱이 그대로 보임), iOS는 이미
+  실제 YouTube Data API 기반 Pace Feed(`/feed`)가 진짜 프로덕션 경로다. `/overlay` 화면의 "DEV
+  SIMULATOR" 폴백(실기기 오버레이 미연결 시에만 보이는 개발용 대체 화면)은 이미 자체 웰니스 팁
+  placeholder가 있어 목적이 겹친다.
+- **저시간(5분/1분) 인앱 토스트 알림** — `(3)`은 화면 상단에 뜨는 앰버색 플로팅 알약("⏰ Only X
+  minutes left today!")을 씀. Pace는 이미 네이티브 시스템 알림(`notifyLowTime`, Android는
+  `PaceOverlayService.tickRunnable`이 자기완결적으로 발송)으로 같은 순간에 같은 정보를 전달한다 —
+  이게 인앱 토스트보다 낫다(앱이 백그라운드여도 도달, 화면이 다른 탭이어도 도달). 중복 UI를 추가로
+  안 만듦.
+
+### 다음 세션으로 넘길 것
+- Bluetooth 실제 하드웨어 이어폰 버튼 라우팅 미검증 상태 유지(이전 라운드에서 이미 플래그).
+- iOS 쪽 전부(Pace Feed 상태 머신 배지 표시, `react-native-track-player` 런타임) — Mac/Xcode 필요.
+- `(3)`의 Sleep Timer/Break Reminder 하단 시트(App.tsx `activeBottomSheet` 영역) 시각 스타일은
+  이번 라운드에서 대조 안 함 — QuickControlsGrid의 기존 바텀시트가 이미 실기기 검증된 실제 기능이라
+  우선순위에서 밀렸다. 다음 라운드에서 픽셀 대조 필요하면 진행.

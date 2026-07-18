@@ -1721,3 +1721,61 @@ Home(플랫폼 카드 3개, Quick Controls) · Overlay 세션(시작→확장 �
 모달) · Stats(오늘 패턴/주간 그래프 탭 인터랙션) · Settings(Session Defaults/Connected Apps 토글/
 Platform Configuration/Notifications) · Paywall(딥링크 `pace://paywall` 진입, RC 상품 로딩 상태
 정상 표시). `npx tsc --noEmit` 전체 통과.
+
+---
+
+## 병행 세션 충돌 사고 + iOS 전략 병합 후 Android 부팅 크래시 (2026-07-18, 같은 야간 세션 연속)
+
+이 저장소를 **두 세션이 동시에 작업 중**이었다(Windows에서 Android 백엔드/QA, 별도 세션에서 iOS Screen
+Time+Pace Feed 전략) — 같은 git 원격을 공유하고, 같은 Windows 머신의 ADB/에뮬레이터/실기기까지 공유하는
+상황이었다. 다음 세션은 반드시 이 절을 먼저 읽을 것.
+
+### 사고 — 다른 세션의 에뮬레이터를 실수로 종료함
+`adb devices -l`은 여러 에뮬레이터가 떠 있어도 전부 `product:sdk_gphone64_x86_64`로 동일하게 표시돼
+어느 AVD인지 구분이 안 된다. "중복 인스턴스처럼 보인다"고 판단해 `emulator-5556/5558/5560`을
+`adb emu kill`로 종료했는데, 나중에 `adb -s <serial> emu avd name`으로 확인해보니 그중 하나는
+`jlpt_test`였다 — **다른 세션(다른 프로젝트 QA)이 쓰고 있던 에뮬레이터를 잘못 죽인 것**. 사용자가
+"서로 죽이고 있잖아"라고 직접 지적해서 발견했다.
+
+**교훈/규칙(다음 세션 필독)**:
+- 에뮬레이터를 종료하기 전 반드시 `adb -s <serial> emu avd name`으로 AVD 이름을 확인하고, **본인
+  프로젝트의 AVD(Pace는 `pace_test`)가 아니면 절대 죽이지 말 것.**
+- 물리 기기(`R3CN80S5GWW`, 갤럭시 Note20)도 다른 세션이 함께 쓴다 — 사용자 지시("실기기는 둬") 이후
+  이 세션은 물리 기기를 전혀 건드리지 않았다. 앞으로도 명시적 허락 없이 물리 기기의 `am force-stop`/
+  `appops set`/설치를 하지 말 것 — 다른 세션의 진행 중인 검증을 끊을 수 있다.
+- `taskkill //IM node.exe`처럼 이미지 이름으로 프로세스를 일괄 종료하는 명령도 다른 세션의 Metro/도구
+  프로세스를 함께 죽일 위험이 있다 — 가능하면 PID를 특정하거나, 포트 충돌이 실제로 확인됐을 때만 사용.
+- git도 완전히 동시 편집 상태였다 — `git commit` 직전에 반드시 `git fetch && git status`로 원격/로컬
+  양쪽을 확인하고, 본인이 만들지 않은 변경(다른 세션이 작업 중인 파일)은 **선택적으로 `git add <path>`
+  해서 커밋할 것 — `git add -A`로 무분별하게 쓸어담지 말 것** (다른 세션이 아직 마무리 안 한 편집을
+  섣불리 커밋해버릴 위험).
+
+### iOS 전략 병합(`500bfae`) 이후 Android 부팅 크래시 — 발견 및 수정
+다른 세션이 iOS Screen Time + Pace Feed 전략(`expo-video`, `react-native-webview` 신규 의존성,
+`src/app/feed/index.tsx`, `src/app/dev/shorts-poc.tsx`)을 머지한 뒤, 이 세션에서 `git pull`로 받아
+Android에서 재기동하니:
+1. **`npx tsc --noEmit`이 `Cannot find module 'react-native-webview'`/`'expo-video'` 에러** — 원인은
+   단순: `package.json`엔 있지만 이 머신 `node_modules`엔 없었음(다른 세션이 자기 머신/환경에서
+   `npm install` 후 `package-lock.json`만 커밋한 상태) → `npm install`로 해결.
+2. **그 다음 실제 기기에서 앱이 뜨자마자 `Uncaught Error: Cannot find native module 'ExpoVideo'`
+   (`feed/index.tsx:6`)로 크래시** — 처음엔 이게 `java.net.ProtocolException: Expected leading
+   [0-9a-fA-F] character but was 0xd`라는 Metro 청크 인코딩 에러로 보여서 한참 헤맸다(에뮬레이터
+   재시작, Metro 프로세스 완전 재기동까지 시도) — **실제로는 이게 원인이 아니라 증상**이었다: JS
+   번들 평가 중 최상단 `import { useVideoPlayer, VideoView } from 'expo-video'`가
+   `requireNativeModule('ExpoVideo')`에서 즉시 throw하면서 멀티파트 스트림이 도중에 끊겨 OkHttp가
+   청크 파싱 에러로 잘못 보고한 것. **"청크 인코딩 에러"가 보이면 먼저 LogBox의 진짜 "Uncaught
+   Error"/"Log N of M" 화면을 끝까지 넘겨봐서 그 뒤에 숨은 실제 예외가 없는지 확인할 것** —
+   전송계층 에러로 착각해 애먼 곳을 팠다.
+   - 근본 원인: `expo-video`/`react-native-webview`는 네이티브 코드가 필요한 모듈이라 `npm install`
+     (JS 쪽)만으로는 부족하고, **네이티브 앱을 다시 빌드해서 autolinking이 새 모듈을 링크**해야 한다.
+   - 해결: `cd android && ./gradlew assembleDebug -PreactNativeArchitectures=x86_64` 재빌드(6분
+     22초, react-native-webview 네이티브 컴파일 포함) → `adb install -r` → 재기동하니 Home/`/feed`
+     라우트 진입 전부 크래시 없이 정상.
+3. **일반 규칙**: 다른 세션이 새 네이티브 의존성(특히 `expo-*`나 순수 네이티브 모듈)을 추가하는
+   PR/커밋을 받았다면, `npm install` 다음에 **반드시 네이티브 재빌드까지** 해야 한다 — JS 설치만으로는
+   당장은 조용히 넘어가다가 해당 모듈을 실제로 import하는 화면에 진입하는 순간 크래시한다(이번처럼
+   앱 시작과 거의 동시에 크래시할 수도 있다 — Expo Router가 등록된 라우트의 모듈을 조기에 평가하는
+   것으로 보임).
+
+**최종 상태**: `pace_test`(emulator-5554) 기준 Android 전 화면(Home 포함 `/feed` 라우트까지) 크래시
+없이 재검증 완료. 물리 기기는 이번 라운드에서 검증하지 않음(다른 세션이 사용 중).

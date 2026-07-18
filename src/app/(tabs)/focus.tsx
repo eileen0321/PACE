@@ -317,11 +317,24 @@ export default function FocusScreen() {
                   {bluetooth.isConnected ? (bluetooth.deviceName ?? 'Connected') : 'Not Connected'}
                 </Text>
               </View>
-              {!capabilities.bluetoothHardwareVerified && (
-                <View style={styles.unverifiedBadge}>
-                  <Text style={styles.unverifiedBadgeText}>Unverified</Text>
+              {/* healthy-shorts-assistant(3) 뱃지 필 스타일 이식 — connected/not connected 둘 다 표시.
+                  (3)의 device-selector 드롭다운/가짜 배터리%/"Connect Device" 버튼(앱에서 실제로 블루투스
+                  페어링을 못 시키므로 눌러도 아무 일도 안 일어나는 가짜 버튼)/키보드 단축키 가이드(웹
+                  전용 개념, 모바일에 해당 없음)는 이식하지 않음 — 아래 3버튼이 이미 실제 동작하는
+                  컨트롤이라 대체할 필요가 없다. */}
+              <View style={styles.handsFreeStatusRight}>
+                <View style={[styles.connectionPill, bluetooth.isConnected ? styles.connectionPillOn : styles.connectionPillOff]}>
+                  <View style={[styles.connectionPillDot, bluetooth.isConnected ? styles.connectionPillDotOn : styles.connectionPillDotOff]} />
+                  <Text style={[styles.connectionPillText, bluetooth.isConnected ? styles.connectionPillTextOn : styles.connectionPillTextOff]}>
+                    {bluetooth.isConnected ? 'Connected' : 'Not Connected'}
+                  </Text>
                 </View>
-              )}
+                {!capabilities.bluetoothHardwareVerified && (
+                  <View style={styles.unverifiedBadge}>
+                    <Text style={styles.unverifiedBadgeText}>Unverified</Text>
+                  </View>
+                )}
+              </View>
             </View>
             <View style={styles.handsFreeButtonRow}>
               <Pressable onPress={() => bluetooth.previous()} style={styles.handsFreeBtn}>
@@ -479,7 +492,17 @@ const styles = StyleSheet.create({
   handsFreeCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.md, gap: spacing.md },
   handsFreeStatusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   handsFreeStatusLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  handsFreeStatusRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   handsFreeStatusText: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
+  connectionPill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3, borderWidth: 1 },
+  connectionPillOn: { backgroundColor: `${colors.primary}1A`, borderColor: `${colors.primary}33` },
+  connectionPillOff: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.05)' },
+  connectionPillDot: { width: 6, height: 6, borderRadius: 3 },
+  connectionPillDotOn: { backgroundColor: colors.primary },
+  connectionPillDotOff: { backgroundColor: colors.textTertiary },
+  connectionPillText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.5, textTransform: 'uppercase' },
+  connectionPillTextOn: { color: colors.primary },
+  connectionPillTextOff: { color: colors.textSecondary },
   unverifiedBadge: { backgroundColor: 'rgba(245,158,11,0.15)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },
   unverifiedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyBold, color: colors.warning, textTransform: 'uppercase' },
   handsFreeButtonRow: { flexDirection: 'row', gap: spacing.sm },

@@ -13,6 +13,7 @@ import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
 import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
+import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
@@ -41,6 +42,7 @@ export default function HomeScreen() {
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
+  const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -55,9 +57,18 @@ export default function HomeScreen() {
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
+  // healthy-shorts-assistant(3) 이식 — 실제 /overlay 이동 전에 ConnectingOverlay 체크리스트
+  // 애니메이션을 먼저 보여준다(App.tsx triggerConnectingSequence). 애니메이션이 끝나면
+  // handleConnectingComplete가 실제 라우팅을 수행.
   const startSession = useCallback((platform: AppShieldTarget) => {
-    router.push({ pathname: '/overlay', params: { platform } });
-  }, [router]);
+    setConnectingPlatform(platform);
+  }, []);
+
+  const handleConnectingComplete = useCallback(() => {
+    const platform = connectingPlatform;
+    setConnectingPlatform(null);
+    if (platform) router.push({ pathname: '/overlay', params: { platform } });
+  }, [connectingPlatform, router]);
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {
@@ -81,11 +92,13 @@ export default function HomeScreen() {
   // 상태줄에서 전면에 노출하지 않는다(스토어 심사 리스크 + 타겟 연령대엔 "자동 조작 앱"보다 "프리미엄
   // 집중 관리 앱" 인상이 낫다는 판단). 플랫폼별 상태문구 대신 실제 세션 상태 기반 Active/Available
   // 2단만 사용 — 원본 App.tsx의 statusAutoNext/statusShield 문구는 더 이상 이식하지 않음.
-  const PLATFORM_CARDS: { id: AppShieldTarget; title: string; cover: ImageSourcePropType; gradientFrom: string }[] = [
-    { id: 'youtube', title: 'YouTube Shorts', cover: YOUTUBE_COVER, gradientFrom: 'rgba(220,38,38,0.35)' },
-    { id: 'instagram', title: 'Instagram Reels', cover: INSTAGRAM_COVER, gradientFrom: 'rgba(219,39,119,0.35)' },
-    { id: 'tiktok', title: 'TikTok Video Loop', cover: TIKTOK_COVER, gradientFrom: 'rgba(13,148,136,0.35)' },
+  const PLATFORM_CARDS: { id: AppShieldTarget; title: string; badge: string; cover: ImageSourcePropType; gradientFrom: string }[] = [
+    { id: 'youtube', title: 'YouTube Shorts', badge: 'SHORTS', cover: YOUTUBE_COVER, gradientFrom: 'rgba(220,38,38,0.35)' },
+    { id: 'instagram', title: 'Instagram Reels', badge: 'REELS', cover: INSTAGRAM_COVER, gradientFrom: 'rgba(219,39,119,0.35)' },
+    { id: 'tiktok', title: 'TikTok Video Loop', badge: 'LOOPS', cover: TIKTOK_COVER, gradientFrom: 'rgba(13,148,136,0.35)' },
   ];
+  const PLATFORM_SHORT_NAME: Record<AppShieldTarget, string> = { youtube: 'YouTube', instagram: 'Instagram', tiktok: 'TikTok' };
+  const connectingCard = PLATFORM_CARDS.find((p) => p.id === connectingPlatform);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -104,6 +117,7 @@ export default function HomeScreen() {
             <PlatformPickerCard
               key={p.id}
               title={p.title}
+              badge={p.badge}
               statusText={
                 activeSessionPlatform === p.id
                   ? 'Active'
@@ -127,6 +141,13 @@ export default function HomeScreen() {
         visible={pendingPlatform !== null}
         onEnable={() => dismissOnboarding(true)}
         onDismiss={() => dismissOnboarding(false)}
+      />
+
+      <ConnectingOverlay
+        visible={connectingPlatform !== null}
+        platformName={connectingPlatform ? PLATFORM_SHORT_NAME[connectingPlatform] : ''}
+        platformFullTitle={connectingCard?.title ?? ''}
+        onComplete={handleConnectingComplete}
       />
     </SafeAreaView>
   );

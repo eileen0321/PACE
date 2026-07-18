@@ -12,8 +12,11 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 깜빡였는데, 그러면 "지금 실제로 세션이 진행 중인 플랫폼이 어디인지"가 안 보인다. isActive(실제
 // useSessionStore의 활성 세션 platformApp과 일치하는 카드만 true)일 때만 초록색으로 펄스,
 // 나머지는 펄스 없는 정적 회색 점 — 시선이 실제 활성 세션에만 쏠리게.
-export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onPress, isActive }: {
+// 2026-07-19: healthy-shorts-assistant(3)이 제목 옆에 작은 배지(SHORTS/REELS/LOOPS)를 추가 — 순수
+// 장식용이라 실제 상태와 무관하게 항상 표시.
+export function PlatformPickerCard({ title, badge, statusText, cover, gradientFrom, onPress, isActive }: {
   title: string;
+  badge: string;
   statusText: string;
   cover: ImageSourcePropType;
   gradientFrom: string;
@@ -43,7 +46,12 @@ export function PlatformPickerCard({ title, statusText, cover, gradientFrom, onP
           <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
             <LinearGradient colors={[gradientFrom, 'rgba(0,0,0,0.9)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.overlay}>
               <View style={styles.textCol}>
-                <Text style={styles.title} numberOfLines={1}>{title}</Text>
+                <View style={styles.titleRow}>
+                  <Text style={styles.title} numberOfLines={1}>{title}</Text>
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{badge}</Text>
+                  </View>
+                </View>
                 <View style={styles.statusRow}>
                   <Animated.View style={[styles.statusDot, isActive ? styles.statusDotActive : styles.statusDotIdle, { opacity: pulse }]} />
                   <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
@@ -77,7 +85,10 @@ const styles = StyleSheet.create({
   coverImage: { resizeMode: 'cover' },
   overlay: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14 },
   textCol: { gap: 3, flexShrink: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF', letterSpacing: -0.2 },
+  badge: { borderRadius: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 5, paddingVertical: 2 },
+  badgeText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: 'rgba(255,255,255,0.5)', letterSpacing: 1 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusDotActive: { backgroundColor: colors.successLight },

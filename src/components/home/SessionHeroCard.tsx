@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, gradients, radius, spacing, typography } from '../../constants/theme';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
 
 // healthy-shorts-assistant(2) App.tsx "Today / Remaining / Auto Next Ready Hero Card"를 토씨 하나
 // 안 틀리고 그대로 이식(사용자 명시적 지시) — 원본 JSX(App.tsx:280-329) 값 그대로: rounded-[28px],
@@ -11,7 +12,16 @@ import { colors, gradients, radius, spacing, typography } from '../../constants/
 // 이 카드는 원본에서 translations 딕셔너리를 전혀 안 쓰는 구간(App.tsx Home 탭 전체가 그렇다) —
 // "Today Session"/"Complete"/"Auto Next Ready"/"Remaining"을 t()로 번역하면 한국어에서 텍스트가
 // 길어져 고정폭 카드를 넘치므로, 원본처럼 항상 영어 하드코딩으로 고정.
+//
+// 2026-07-19: healthy-shorts-assistant(3) 라벨 갱신("Today Session"→"SESSION STATUS",
+// "Complete"→"CONSUMED") + 신규 "HANDS-FREE CONTROLLER" 행 추가(사용자 지시, 이번 라운드 Bluetooth
+// Hands-Free 작업과 직결 — real useBluetoothStore 상태 사용, 가짜 배터리%/기기명 없음). ⚠️ (3)이
+// 하단 상태줄 문구를 "Auto Mode ON"/"Shield Suspended"로 바꿨지만, 이건 그대로 안 옮겼다 — 이전
+// 세션에서 사용자가 명시적으로 "AUTO" 브랜딩을 전면에서 빼기로 결정한 것과 다시 충돌하기 때문
+// (PACE_ARCHITECTURE.md "제품 방향 결정 — AUTO 브랜딩 제거" 참고) — 기존 Session Ready/Standby 유지.
 export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled }: { minutesWatched: number; limitMinutes: number; autoNextEnabled: boolean }) {
+  const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
+  const bluetoothDeviceName = useBluetoothStore((s) => s.deviceName);
   const percentage = Math.min(100, (minutesWatched / Math.max(1, limitMinutes)) * 100);
   const percentageLabel = Math.round((minutesWatched / Math.max(1, limitMinutes)) * 100);
   const remainingMinutes = Math.max(0, limitMinutes - minutesWatched);
@@ -34,14 +44,14 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled 
 
       <View style={styles.topRow}>
         <View>
-          <Text style={styles.sessionLabel}>Today Session</Text>
+          <Text style={styles.sessionLabel}>SESSION STATUS</Text>
           <View style={styles.valueRow}>
             <Text style={styles.value}>{minutesWatched} <Text style={styles.valueUnit}>/ {limitMinutes} min</Text></Text>
           </View>
         </View>
         <View style={styles.percentWrap}>
           <Text style={styles.percentValue}>{percentageLabel}%</Text>
-          <Text style={styles.percentLabel}>Complete</Text>
+          <Text style={styles.percentLabel}>CONSUMED</Text>
         </View>
       </View>
 
@@ -58,6 +68,22 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled 
           <Text style={styles.statusText}>{autoNextEnabled ? 'Session Ready' : 'Standby'}</Text>
         </View>
         <Text style={styles.remainingText}>{remainingMinutes}m Remaining</Text>
+      </View>
+
+      {/* Hands-Free Controller 행 — healthy-shorts-assistant(3) 신규 추가, 실제 Bluetooth 상태 사용. */}
+      <View style={styles.handsFreeRow}>
+        <Text style={styles.handsFreeLabel}>HANDS-FREE CONTROLLER</Text>
+        {isBluetoothConnected ? (
+          <View style={[styles.handsFreePill, styles.handsFreePillOn]}>
+            <Text style={styles.handsFreePillIcon}>🎧</Text>
+            <Text style={styles.handsFreePillTextOn}>{bluetoothDeviceName ?? 'Device'} Connected</Text>
+          </View>
+        ) : (
+          <View style={[styles.handsFreePill, styles.handsFreePillOff]}>
+            <Text style={styles.handsFreePillIcon}>⚪</Text>
+            <Text style={styles.handsFreePillTextOff}>Hands-Free Available</Text>
+          </View>
+        )}
       </View>
     </LinearGradient>
   );
@@ -83,4 +109,12 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   statusText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB', letterSpacing: 0.5, textTransform: 'uppercase' },
   remainingText: { fontSize: 10, fontFamily: typography.monoFontFamilyBold, color: colors.primary, letterSpacing: 0.5, textTransform: 'uppercase' },
+  handsFreeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.03)' },
+  handsFreeLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1.4, textTransform: 'uppercase' },
+  handsFreePill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3, borderWidth: 1 },
+  handsFreePillOn: { backgroundColor: `${colors.primary}1A`, borderColor: `${colors.primary}33` },
+  handsFreePillOff: { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.04)' },
+  handsFreePillIcon: { fontSize: 10 },
+  handsFreePillTextOn: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.primary, letterSpacing: 0.3 },
+  handsFreePillTextOff: { fontSize: 10, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, letterSpacing: 0.3 },
 });

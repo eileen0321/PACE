@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,12 +8,14 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
 import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
+import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
@@ -41,8 +43,20 @@ export default function HomeScreen() {
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
+  const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
+  const [dismissedLimitReached, setDismissedLimitReached] = useState(false);
+
+  // healthy-shorts-assistant(3) App.tsx의 "APPLE SCREEN TIME LOCKOUT OVERLAY" 이식 — 일일 한도 도달 시
+  // Home에 전체화면 안내를 띄운다(LimitReachedOverlay.tsx). focus.tsx와 동일한 계산식(dailyLimitMinutes
+  // + 오늘 보너스). isLimitReached가 false로 돌아오면(Extend Time으로 한도를 늘렸거나 자정이 지나
+  // 새 날짜가 됐을 때) dismissedLimitReached도 리셋 — 다음에 다시 한도에 도달하면 새로 뜨게.
+  const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
+  const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
+  useEffect(() => {
+    if (!isLimitReached) setDismissedLimitReached(false);
+  }, [isLimitReached]);
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -71,6 +85,10 @@ export default function HomeScreen() {
   }, [connectingPlatform, router]);
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
+    if (isLimitReached) {
+      setDismissedLimitReached(false);
+      return;
+    }
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {
       if (seen) {
         startSession(platform);
@@ -78,7 +96,7 @@ export default function HomeScreen() {
         setPendingPlatform(platform);
       }
     }).catch(() => startSession(platform));
-  }, [startSession]);
+  }, [startSession, isLimitReached]);
 
   const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
     AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});
@@ -104,7 +122,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-        <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={settings.dailyLimitMinutes} autoNextEnabled={settings.autoNext} />
+        <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} />
 
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Choose Platform</Text>
@@ -148,6 +166,13 @@ export default function HomeScreen() {
         platformName={connectingPlatform ? PLATFORM_SHORT_NAME[connectingPlatform] : ''}
         platformFullTitle={connectingCard?.title ?? ''}
         onComplete={handleConnectingComplete}
+      />
+
+      <LimitReachedOverlay
+        visible={isLimitReached && !dismissedLimitReached && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null}
+        limitMinutes={effectiveDailyLimitMinutes}
+        onExtend={() => { addBonusMinutes(15); setDismissedLimitReached(false); }}
+        onDismiss={() => setDismissedLimitReached(true)}
       />
     </SafeAreaView>
   );

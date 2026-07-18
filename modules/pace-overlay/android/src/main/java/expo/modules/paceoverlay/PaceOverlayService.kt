@@ -29,12 +29,21 @@ import androidx.core.content.ContextCompat
 //
 // ⚠️ POC 단계: 실제 RN 컴포넌트(OverlayBar.android.tsx)를 그대로 이 창에 렌더링하는 것이 이상적이지만,
 // 별도 윈도우에 React 트리를 브릿지하는 건 훨씬 복잡한 작업(두 번째 ReactRootView 인스턴스 필요)이라
-// 1단계 POC는 순수 네이티브 View(TextView)로 최소 정보만 표시한다. 색상 값은 constants/theme.ts의
-// colors.primary(#5856D6)를 하드코딩(Kotlin이 JS 상수를 읽을 수 없음 — 값이 바뀌면 양쪽 다 갱신 필요).
+// 순수 네이티브 View로 그린다. 색상 값은 constants/theme.ts의 colors.primary(#5856D6) 등을
+// 하드코딩(Kotlin이 JS 상수를 읽을 수 없음 — 값이 바뀌면 양쪽 다 갱신 필요).
+// 2026-07-19: healthy-shorts-assistant(3)의 Android 컴팩트 알약 시각 스타일(dark glass, pulsing
+// dot, AUTO ON/OFF 배지)을 이식(showOverlay 참고) — 원본의 펼침형 어시스턴트 패널은 이식 범위 밖
+// (여전히 두 번째 ReactRootView가 필요한 스케일이라 위와 같은 이유로 보류).
 class PaceOverlayService : Service() {
   private var windowManager: WindowManager? = null
   private var overlayView: LinearLayout? = null
   private var remainingLabel: TextView? = null
+  private var autoBadge: TextView? = null
+  // start()가 세션 시작 시 넘겨준 값으로 초기화되고, 이후엔 배지 탭(아래 showOverlay)이 유일한
+  // 갱신 경로 — JS 쪽에서 세션 도중 Auto Next를 토글해도 이 배지엔 실시간 반영 안 됨(overlayService.
+  // android.ts에 updateRemaining같은 별도 업데이트 액션이 없음). 배지 자체가 토글의 소스오브트루스가
+  // 되게 설계해 이 비대칭을 우회.
+  private var autoNextEnabled = false
 
   // 포그라운드 앱 감지 폴링 — SupportedApps.PACKAGES(YouTube/Instagram)에 있을 때만 오버레이를
   // 보이게 하고, 그 외(카카오톡/런처/Pace 자신 등)에서는 숨긴다(ForegroundAppWatcher.kt 참고,
@@ -356,6 +365,7 @@ class PaceOverlayService : Service() {
         notifyRemaining = intent.getBooleanExtra(EXTRA_NOTIFY_REMAINING, true)
         notifyLimit = intent.getBooleanExtra(EXTRA_NOTIFY_LIMIT, true)
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
+        autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
         showOverlay(remainingMinutes)
         startForegroundAppPolling()
         startTicking()
@@ -406,6 +416,14 @@ class PaceOverlayService : Service() {
       .build()
   }
 
+  // 2026-07-19: healthy-shorts-assistant(3) ShortsPlayer.tsx의 Android 컴팩트 알약(dark glass +
+  // pulsing dot + AUTO ON/OFF 배지) 시각 스타일을 순수 네이티브로 이식. 원본의 펼침형 어시스턴트
+  // 패널(오늘 사용량/진행바/Sleep Timer/Daily Limit 사이클/Pause/End 버튼)까지는 이식하지 않았다 —
+  // 그건 RN 트리를 이 창에 브릿지해야(두 번째 ReactRootView 인스턴스) 가능한 범위라 파일 상단
+  // 주석에 이미 POC 단계 보류 항목으로 명시돼 있다. 대신: 배지 탭 = 실제 Auto Mode 토글
+  // (companion setAutoMode 재사용 — Bluetooth Play/Pause 하드웨어 버튼과 동일한 진짜 동작, 가짜
+  // 버튼 아님), 알약 본문 탭 = Pace 앱을 포그라운드로 열어서 이미 존재하는 Focus 탭 전체 컨트롤로
+  // 안내 — 없는 패널을 흉내내지 않고 같은 목적(원격 제어 접근)을 실제 동작으로 달성한다.
   private fun showOverlay(remainingMinutes: Int) {
     if (overlayView != null) return
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -413,19 +431,49 @@ class PaceOverlayService : Service() {
     val bar = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
-      setPadding(32, 20, 32, 20)
+      setPadding(36, 22, 20, 22)
       background = GradientDrawable().apply {
-        cornerRadius = 28f
-        setColor(Color.parseColor("#BFFFFFFF")) // rgba(255,255,255,0.75) 근사
+        cornerRadius = 30f
+        setColor(Color.parseColor("#E60C0D12")) // rgba(12,13,18,0.9) 근사 — (3) bg-[#0C0D12]/90
       }
+      isClickable = true
+      setOnClickListener { openPaceApp() }
     }
+
+    val dot = View(this).apply {
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#30D158"))
+      }
+      startAnimation(android.view.animation.AlphaAnimation(1f, 0.35f).apply {
+        duration = 700
+        repeatMode = android.view.animation.Animation.REVERSE
+        repeatCount = android.view.animation.Animation.INFINITE
+      })
+    }
+    bar.addView(dot, LinearLayout.LayoutParams(14, 14).apply { rightMargin = 18 })
+
     remainingLabel = TextView(this).apply {
       text = "Pace  ⏱ ${remainingMinutes}m Left"
-      setTextColor(Color.parseColor("#1C1C1E"))
+      setTextColor(Color.WHITE)
       textSize = 13f
       setTypeface(typeface, android.graphics.Typeface.BOLD)
     }
-    bar.addView(remainingLabel)
+    bar.addView(remainingLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 16 })
+
+    autoBadge = TextView(this).apply {
+      textSize = 9f
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      isClickable = true
+      setOnClickListener {
+        autoNextEnabled = !autoNextEnabled
+        setAutoMode(applicationContext, autoNextEnabled)
+        applyAutoBadgeStyle()
+      }
+    }
+    applyAutoBadgeStyle()
+    bar.addView(autoBadge)
+
     overlayView = bar
 
     val params = WindowManager.LayoutParams(
@@ -442,6 +490,24 @@ class PaceOverlayService : Service() {
     windowManager?.addView(overlayView, params)
   }
 
+  private fun applyAutoBadgeStyle() {
+    autoBadge?.apply {
+      text = if (autoNextEnabled) "AUTO ON" else "AUTO OFF"
+      setPadding(20, 10, 20, 10)
+      setTextColor(if (autoNextEnabled) Color.WHITE else Color.parseColor("#9CA3AF"))
+      background = GradientDrawable().apply {
+        cornerRadius = 100f
+        setColor(if (autoNextEnabled) Color.parseColor("#5856D6") else Color.parseColor("#14FFFFFF"))
+      }
+    }
+  }
+
+  private fun openPaceApp() {
+    val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
+    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+    startActivity(launchIntent)
+  }
+
   private fun setRemainingText(remainingMinutes: Int) {
     Log.d("PaceOverlay", "setRemainingText($remainingMinutes) remainingLabel=${if (remainingLabel != null) "exists" else "NULL"}")
     remainingLabel?.text = "Pace  ⏱ ${remainingMinutes}m Left"
@@ -451,6 +517,7 @@ class PaceOverlayService : Service() {
     overlayView?.let { windowManager?.removeView(it) }
     overlayView = null
     remainingLabel = null
+    autoBadge = null
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽

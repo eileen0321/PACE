@@ -265,10 +265,13 @@ export default function FocusScreen() {
         </View>
 
         {/* 7. iOS Pace Feed / dev POC 진입 (2026-07-18 iOS 전략 확정 — PACE_ARCHITECTURE.md 참고).
-            Pace Feed = Screen Time으로 차단한 실제 숏폼의 "건강한 대체 출구"(자체 플레이어+Auto-Next).
+            Pace Feed = iOS에서 YouTube Shorts를 순차 재생하는 자체 화면(iOS 전용).
+            QA #19 수정(2026-07-19): capabilities.supportsPaceFeed(iOS 전용)로 섹션 전체를 게이팅 —
+            이전엔 라벨 접미사만 iOS 조건이고 버튼은 무조건 렌더돼 Android에도 노출됐음.
             NOTE(i18n): 스캐폴드 단계라 리터럴 문자열 — feed.* 키 배선은 후속 작업. */}
+        {capabilities.supportsPaceFeed && (
         <View>
-          <Text style={styles.sectionLabel}>Pace Feed{Platform.OS === 'ios' ? ' (iOS)' : ''}</Text>
+          <Text style={styles.sectionLabel}>Pace Feed</Text>
           <Pressable onPress={() => router.push('/feed')} style={styles.feedEntryBtn}>
             <View style={styles.feedEntryLeft}>
               <View style={styles.feedEntryIcon}><Feather name="play-circle" size={18} color={colors.successLight} /></View>
@@ -292,6 +295,7 @@ export default function FocusScreen() {
             </Pressable>
           )}
         </View>
+        )}
       </ScrollView>
 
       {/* Demo Mindful Break Prompt Modal */}

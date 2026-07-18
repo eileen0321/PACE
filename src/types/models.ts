@@ -118,3 +118,14 @@ export type PlaylistSession = {
   videosWatched: number;
   category: PaceFeedCategory | null;
 };
+
+// ── iOS Pace Feed = YouTube Shorts 순차 재생 (2026-07-18 사용자 지시, PACE_ARCHITECTURE.md
+// "iOS Pace Feed 재정의" 참고) ──
+// 재생은 공식 YouTube IFrame Player API(합법)로 하고, 리스트(영상 ID)만 Data API/스크래핑으로 받는다.
+// 스트림을 긁지 않는다 — videoId만 있으면 IFrame이 YouTube 서버에서 직접 스트리밍.
+export type YouTubeShort = {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string | null;
+};

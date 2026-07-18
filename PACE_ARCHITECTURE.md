@@ -2153,3 +2153,89 @@ Set에도 동일하게 두 번째 패키지명 추가(Kotlin이 JS 상수를 못
 실기기에서 TikTok 열어 "Pace ⏱ 0m Left" 오버레이가 실제 TikTok 피드 위에 정상 표시되는 것 확인.
 **다른 리전(일본 등)에서 또 다른 TikTok 패키지명을 쓸 가능성은 배제 못 함** — 이번엔 실제로 마주친
 한국 리전 패키지명만 추가했다.
+
+---
+
+## iOS Pace Feed 재정의 — YouTube Shorts "리스트 순차 재생" (IFrame Player API) (2026-07-18 사용자 지시)
+
+> 사용자 지시: **"iOS는 자체 미디어 플레이어에 YouTube Shorts를 띄운다. 자동 넘김(웹 스크롤)이 아니라,
+> YouTube API로 Shorts 리스트를 받아 1,2,3을 준비하고 1이 끝나면 2,3을 이어서 재생. 리스트를 스케줄로
+> 관리해서 부족하면 다시 받아오고, 이미 보여준 것은 리스트에서 삭제하는 방식."**
+> → 앞선 "iOS 전략 확정"의 ③ Pace Feed(콘텐츠 출처 = Pexels 웰니스 클립)를 **iOS에 한해 YouTube Shorts
+> 순차 재생으로 교체**. Pexels 경로는 폐기가 아니라 **폴백/대체 소스로 강등**(YouTube 키·쿼터 없을 때,
+> 또는 심사 리스크 회피 모드).
+
+### 원안 ①(웹 자동스크롤)과의 차이 — 이건 "큐 기반 순차 재생"이다
+- 원안 ①: `WKWebView`로 `m.youtube.com/shorts`를 통째로 로드하고 JS로 스크롤을 주입해 무한 피드를
+  자동으로 넘김 → YouTube ToS의 "자동화된 수단/서비스 간섭"에 정면으로 걸려 폐기됨(위 "iOS 전략 확정").
+- 이번 방식: **개별 영상 ID 리스트를 미리 받아** 큐로 만들고, **공식 IFrame Player**로 한 개씩 재생,
+  `ended` 이벤트가 오면 큐의 다음 ID를 로드. 즉 "무한 피드를 자동 조작"하는 게 아니라 "우리가 만든
+  플레이리스트를 공식 플레이어로 순차 재생"하는 것 → 아래 근거로 **훨씬 방어 가능**.
+
+### 합법성 근거 — 왜 IFrame Player API인가 (중요, 사용자 기대치 정렬)
+- **재생은 반드시 YouTube 공식 IFrame Player API로 한다.** 이게 영상 ID로 재생·다음 영상 cue를 공식
+  지원하는 유일한 인가 경로다. 스트림을 긁어(yt-dlp류) 자체 `AVPlayer`/`expo-video`에 넣는 것은 ToS
+  위반 + 저작권 침해 + 스토어 리젝이라 **절대 하지 않는다**(위 "길 1" 리서치 참고).
+- **트레이드오프(사용자 필수 인지)**: IFrame Player는 **YouTube 브랜딩/로고/광고/일부 컨트롤을 벗길 수
+  없다.** `controls=0`, `modestbranding` 등으로 최소화는 되지만 "완전한 자체 UI 플레이어"로 리스킨은
+  불가능. 즉 "자체 미디어 플레이어"는 실제로는 **"우리 화면이 공식 YouTube 임베드를 감싼 형태"**다.
+  광고가 나오면 그 영상에서 광고가 끝나야 `ended`가 오므로 순차 재생 타이밍도 광고 영향을 받는다.
+- **리스트(Shorts ID) 확보**는 두 경로:
+  1. **YouTube Data API v3**(권장·합법): `search.list?type=video&videoDuration=short`로 후보를 받고,
+     `videos.list?part=contentDetails`의 `duration`으로 60초 이하(또는 Shorts 상한 3분) 확인.
+     ⚠️ Data API엔 **`isShort` 필드가 없다** — 세로/≤60s/#Shorts 조합으로 추정할 수밖에 없음.
+     ⚠️ 쿼터: `search.list`는 호출당 **100 units**, 일 기본 10,000 units = 하루 ~100회 → **배치로
+     받고 캐시**해야 함(아래 스케줄 참고).
+  2. **스크래핑 폴백**(사용자가 "웹스크롤링 통해서"라고 지시한 부분, 그레이존): Data API 키/쿼터가
+     없을 때 `youtube.com/results?search_query=...&sp=...`(shorts 필터) 또는 `/shorts` 페이지의
+     `ytInitialData` JSON을 파싱해 videoId 목록만 추출. **주의: 이건 영상 ID(메타) 수집이지 스트림
+     절도가 아니며, 재생은 여전히 공식 IFrame으로 한다.** 그래도 스크래핑 자체가 ToS 그레이존이라
+     프로덕션 기본값은 Data API로 두고, 스크래핑은 `__DEV__`/키 부재 시 폴백으로만 사용.
+
+### 아키텍처 (구현)
+```
+src/
+  services/api/youtube.ts        # Shorts 리스트 fetch (Data API primary + 스크래핑 폴백), pageToken 페이지네이션
+  components/feed/
+    YouTubeShortsPlayer.tsx      # react-native-webview + IFrame Player API HTML.
+                                 # onReady/onEnded/onError를 postMessage로 RN에 브릿지. videoId를 prop으로 받아
+                                 # loadVideoById로 교체(재로드 없이 다음 영상 이어붙임).
+  store/useShortsQueueStore.ts   # 큐 상태 = { queue: YouTubeShort[], watchedIds: Set, isLoading, nextPageToken }
+                                 #   loadInitial(): 리스트 첫 배치 fetch
+                                 #   current(): queue[0]
+                                 #   advance(): watchedIds.add(queue[0].id); queue.shift(); 부족하면 refill()
+                                 #   refill(): nextPageToken으로 더 받아 append, watchedIds/중복 제거
+  app/feed/index.tsx             # iOS: YouTubeShortsPlayer + 큐. 영상 끝(onEnded) → advance().
+                                 # Pexels(usePlayerStore) 경로는 유지하되 소스 토글/폴백으로.
+```
+
+**타입**(`types/models.ts`):
+```ts
+export type YouTubeShort = {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string | null;
+};
+```
+
+**큐/스케줄 로직 (사용자가 말한 그대로)**:
+1. 최초 진입: `loadInitial()`로 Shorts 15~20개 fetch → `queue = [1,2,3,...]`.
+2. 현재 영상 = `queue[0]`을 IFrame Player로 재생.
+3. `onEnded` 수신 → `advance()`: `queue[0]`을 `watchedIds`에 넣고 `queue.shift()`(=**보여준 건 리스트에서 삭제**) → 다음 `queue[0]` 자동 로드.
+4. **스케줄**: `queue.length <= REFILL_THRESHOLD(3)`가 되면 `refill()`이 `nextPageToken`으로 다음 페이지를 받아 `queue`에 append(단 `watchedIds`에 있는 ID는 제외 → **재시청 방지**).
+5. 쿼터 절약: fetch 결과를 `pace_videos`(또는 신규 캐시 테이블)에 write-through, `watchedIds`는 로컬 영속(AsyncStorage/SQLite)해서 앱 재실행 시에도 이미 본 Shorts 재등장 방지.
+
+**환경변수**: `EXPO_PUBLIC_YOUTUBE_API_KEY`(Google Cloud Console, YouTube Data API v3 사용 설정 필요).
+미설정 시 스크래핑 폴백 → 그것도 실패하면 Pexels Pace Feed로 최종 폴백(항상 뭔가는 재생되게).
+
+### 미해결 / 다음 세션 확인 필요
+- **YouTube Data API 키 발급 + 쿼터 정책 확인** — 실사용 시 하루 검색 100회 제한이 병목. `search.list`
+  대신 특정 채널/플레이리스트 기반으로 받으면 쿼터를 크게 아낄 수 있음(채널 uploads 플레이리스트는
+  `playlistItems.list` = 1 unit). "Shorts 큐레이션 채널 몇 개를 소스로" 전략 검토.
+- **App Store 심사 리스크 재평가** — IFrame 임베드 자체는 표준이지만, "YouTube Shorts를 자동 순차
+  재생하는 앱"이 5.2.5(타사 서비스) 관점에서 어떻게 읽히는지 실제 제출 전 검토 필요. 광고를 건너뛰지
+  않고(자동 스킵 X) 공식 플레이어 그대로 쓰는 한 리스크는 원안 ①보다 낮음.
+- **Shorts 판별 정확도** — Data API에 `isShort`가 없어 `videoDuration=short`+duration≤60s로 추정.
+  가로 영상/일반 숏폼 아닌 것이 섞일 수 있음 → `videos.list`로 후검증하는 2단계 필수.
+- **광고 중 `ended` 미발생 구간의 UX** — 광고가 길거나 스킵 불가일 때 순차 재생 흐름 관찰 필요(실기기).

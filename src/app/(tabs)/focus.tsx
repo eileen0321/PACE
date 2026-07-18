@@ -274,7 +274,7 @@ export default function FocusScreen() {
               <View style={styles.feedEntryIcon}><Feather name="play-circle" size={18} color={colors.successLight} /></View>
               <View style={styles.feedEntryTextWrap}>
                 <Text style={styles.feedEntryTitle}>Open Pace Feed</Text>
-                <Text style={styles.feedEntrySub}>차단 대신 볼 건강한 대체 피드 · Auto-Next</Text>
+                <Text style={styles.feedEntrySub}>차단 대신 볼 차분한 대체 피드</Text>
               </View>
             </View>
             <Feather name="chevron-right" size={18} color={colors.textSecondary} />

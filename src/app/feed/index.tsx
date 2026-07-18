@@ -100,7 +100,7 @@ export default function PaceFeedScreen() {
           </View>
           <Pressable onPress={toggleAutoNext} hitSlop={12} style={[styles.autoNextBtn, autoNext && styles.autoNextBtnOn]}>
             <Feather name={autoNext ? 'chevrons-down' : 'pause-circle'} size={13} color={autoNext ? '#000000' : '#FFFFFF'} />
-            <Text style={[styles.autoNextText, autoNext && styles.autoNextTextOn]}>Auto</Text>
+            <Text style={[styles.autoNextText, autoNext && styles.autoNextTextOn]}>{autoNext ? 'Next On' : 'Next Off'}</Text>
           </Pressable>
         </View>
 

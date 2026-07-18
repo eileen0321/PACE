@@ -1502,15 +1502,31 @@ iOS 라이트 팔레트(#F2F2F7 배경 등)와 "No Gradients" 원칙은 이 리�
    빠뜨렸었다 — `barHoverRing`/`barHoverRingSelected`로 추가(호버는 터치 기기에 해당 없음, 선택
    상태만 적용).
 
-### 미해결 / 다음 세션 확인 필요
-- [ ] Stats 화면을 "This Week Hero + Focus/Streak 그리드 + Best Day" 레이아웃으로 재배치(값은
-  기존 실계측 데이터 재사용, Focus Score 등 미정의 지표는 제외).
+### 미해결 / 다음 세션 확인 필요 (2026-07-18 4차 갱신 — 실기기+에뮬레이터 전체 화면 재검증 완료)
+
+**이번 세션에 실제로 완료된 것(재확인 완료, 더 이상 갭 아님)**: Stats 화면 전체 재구축(This Week
+Hero/일일 평균+Healthy Streak 2단 그리드/Platform Breakdown/Today's Behavior/Weekly Activity/
+Best Day, 전부 실데이터), WeeklyGraphCard 복원, Home 전체 레이아웃·사이즈·정렬 보정, AppHeader
+구조, 탭 순서/라벨, 안드로이드 하단 내비게이션 바 색상, Switch 토글 색상, QuickControls 정렬 —
+Home/Focus/Stats/Settings 4탭 전부 에뮬레이터+실기기(갤럭시 Note20) 양쪽에서 스크린샷으로 재검증.
+
+**진짜 남은 갭 — 가짜 숫자로 채우지 않고 실제 알고리즘/트래킹부터 정의해야 하는 것**:
+- [ ] Stats "This Week" 트렌드 칩("18% 지난주 대비 감소") — `getWeeklyStats()`는 최근 7일
+  슬라이딩 윈도우만 반환. 그 이전 7일과 비교하는 `getPreviousWeekStats()` 신규 쿼리 필요.
+- [ ] Stats "Focus Score"(82점) — 채점 알고리즘 자체가 미정의. 대신 같은 그리드 슬롯에 실제
+  "일일 평균" 데이터를 넣어 레이아웃은 유지, 라벨/숫자만 실측치로 대체(완료).
+- [ ] Stats "Auto Next Impact"(31개 비디오 자동 넘김) — Auto Next로 자동 스킵된 영상 수를 세는
+  카운터가 스키마에 없음(`videos_watched`는 전체 시청 수일 뿐 자동 스킵/수동 스와이프 구분 불가).
+  섹션 자체를 아직 포함 안 함.
+- [ ] Focus/Settings의 알림 토글(5분 전 경고/한도 도달/휴식 알림)은 아직 로컬 state일 뿐 실제
+  로컬 알림(expo-notifications) 발송과 연결 안 됨 — UI만 존재.
 - [ ] iOS 실기기/시뮬레이터에서 전체 다크 리스킨 육안 확인(이 세션은 Windows라 불가) — 특히
-  `GlassSurface`의 iOS `BlurView` 경로, `OverlayBar.ios.tsx`.
-- [ ] `PlatformPickerCard`/`SessionHeroCard`의 pulse 애니메이션이 실기기에서 버벅이지 않는지
-  확인(현재 `Animated.loop` 사용, 저사양 기기 성능 미검증).
-- [ ] Focus/Settings 화면에 새로 추가된 알림 토글(5분 전 경고/한도 도달/휴식 알림)은 아직 로컬
-  state일 뿐 실제 로컬 알림(expo-notifications) 발송과 연결 안 됨 — UI만 존재.
+  `GlassSurface`의 iOS `BlurView` 경로, `OverlayBar.ios.tsx`, 안드로이드에서만 고친 네비게이션
+  바/edge-to-edge 이슈가 iOS 쪽엔 해당 없는지 확인.
+- [ ] `PlatformPickerCard`/`SessionHeroCard`/`WeeklyGraphCard`의 pulse·selection 애니메이션이
+  저사양 기기에서 버벅이지 않는지 확인(현재 `Animated.loop`/`Animated.timing` 사용, 성능 미검증).
+- [ ] 이번 세션에 발견한 "실기기가 갱신 안 되던 문제"(USB `adb reverse` 포트포워딩 누락)가
+  재발하지 않도록, 실기기 테스트 시작 시 `adb reverse tcp:8081 tcp:8081`을 표준 절차에 포함할 것.
 
 ---
 

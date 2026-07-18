@@ -61,7 +61,7 @@ export default function SettingsScreen() {
         {/* 1. Account */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.account')}</Text>
-          <View style={[styles.card, styles.accountCard]}>
+          <View style={[styles.card, styles.singleCard, styles.accountCard]}>
             <View style={styles.accountLeft}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
               <View>
@@ -114,7 +114,7 @@ export default function SettingsScreen() {
         {/* 4. Platform Configuration — 실제 Platform.OS 고정 표시(데모 토글 버튼 제외) */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.platform')}</Text>
-          <View style={styles.card}>
+          <View style={[styles.card, styles.singleCard]}>
             <View style={styles.platformRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>{Platform.OS === 'android' ? t('settings.overlayAssistant') : t('settings.pacePlayer')}</Text>
@@ -132,6 +132,25 @@ export default function SettingsScreen() {
             <NotifRow title={t('settings.remainingAlert')} desc={t('settings.remainingAlertDesc')} value={notif5m} onChange={setNotif5m} />
             <NotifRow title={t('settings.limitAlert')} desc={t('settings.limitAlertDesc')} value={notifLimit} onChange={setNotifLimit} bordered />
             <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={notifBreak} onChange={setNotifBreak} bordered />
+          </View>
+        </View>
+
+        {/* 5.5 Privacy — SettingsTab.tsx SECTION 6, 이전 버전에서 통째로 빠뜨렸던 섹션 */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('settings.privacy')}</Text>
+          <View style={styles.card}>
+            <View style={styles.row}>
+              <Text style={styles.rowTitle}>{t('settings.localData')}</Text>
+              <Text style={styles.privacyValue}>{t('settings.storedSafely')}</Text>
+            </View>
+            <View style={[styles.row, styles.rowBordered]}>
+              <Text style={styles.rowTitle}>{t('settings.usageAnalytics')}</Text>
+              <View style={styles.statusTag}><Text style={styles.statusTagText}>ENABLED</Text></View>
+            </View>
+            <Pressable style={[styles.row, styles.rowBordered]}>
+              <Text style={styles.rowTitle}>{t('settings.exportData')}</Text>
+              <Feather name="chevron-right" size={16} color={colors.textSecondary} />
+            </Pressable>
           </View>
         </View>
 
@@ -230,7 +249,7 @@ function ConnectedAppRow({ label, active, bordered }: { label: string; active: b
 
 function NotifRow({ title, desc, value, onChange, bordered }: { title: string; desc: string; value: boolean; onChange: (v: boolean) => void; bordered?: boolean }) {
   return (
-    <View style={[styles.row, bordered && styles.rowBordered]}>
+    <View style={[styles.row, styles.notifRow, bordered && styles.rowBordered]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.rowSubtitle}>{desc}</Text>
@@ -254,24 +273,31 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg, paddingBottom: layout.tabBarContentClearance },
   screenTitle: { fontSize: 24, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   sectionLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
-  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.lg },
+  // App.tsx SettingsTab.tsx 전 섹션이 카드에 p-5/px-5(20px)를 쓰는데 spacing.lg(24px)로 잘못
+  // 이식돼 있었다. 리스트형 카드(divide-y)는 각 행이 자체 py-4(16px)로 세로 여백을 담당하므로
+  // 카드 자체엔 세로 패딩을 안 준다 — Account/Platform/Advanced처럼 단일 콘텐츠 카드만
+  // paddingVertical 20을 별도로 추가(singleCard). 테두리도 구분선(0.04)과 다른 0.05로 분리.
+  card: { backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderRadius: radius.card, paddingHorizontal: 20 },
+  singleCard: { paddingVertical: 20 },
   accountCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   accountLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, flex: 1 },
-  avatar: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: colors.primaryTint, borderWidth: 1, borderColor: `${colors.primary}4D`, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: colors.primary, fontFamily: typography.displayFontFamily, fontSize: 16 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  profileName: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, letterSpacing: -0.2 },
+  profileName: { fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, letterSpacing: -0.2 },
   premiumTag: { backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   premiumTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5 },
   profileEmail: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontFamily: typography.bodyFontFamilyMedium },
   manageSubBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  manageSubText: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8' },
+  manageSubText: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8' },
 
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm + 4 },
-  rowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle, marginTop: 2, paddingTop: spacing.md },
-  rowLast: { marginTop: 2, borderTopWidth: 1, borderTopColor: colors.borderSubtle, paddingTop: spacing.md },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
+  notifRow: { paddingVertical: 18 },
+  rowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle, paddingTop: 16 },
+  rowLast: { borderTopWidth: 1, borderTopColor: colors.borderSubtle, paddingTop: 16 },
   rowTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   rowSubtitle: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+  privacyValue: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
   valuePill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 6 },
   valuePillText: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8' },
 
@@ -293,7 +319,7 @@ const styles = StyleSheet.create({
   versionLabel: { fontSize: 11, fontFamily: typography.monoFontFamily, color: colors.textSecondary },
   versionValue: { fontSize: 11, fontFamily: typography.monoFontFamily, color: colors.textSecondary },
 
-  advancedCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  advancedCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
   resetTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.dangerLight },
   resetIconBtn: { width: 36, height: 36, borderRadius: radius.chip, backgroundColor: colors.dangerBg, alignItems: 'center', justifyContent: 'center' },
 

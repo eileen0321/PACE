@@ -2,6 +2,8 @@
 // Platform.OS를 직접 검사하지 않는다 — 실제 구현은 ./android, ./ios가 담당하고 ./index.ts가 선택한다.
 // PACE_ARCHITECTURE.md "구현상 제약" 참고: 실제 네이티브 모듈(Kotlin/Swift)은 별도 작업.
 
+import type { SessionEndStatus } from '../../types/models';
+
 export type AppUsage = {
   appId: string;
   minutes: number;
@@ -26,7 +28,23 @@ export interface AutoNextService {
 export interface OverlayService {
   /** Android: 시스템 오버레이 윈도우. iOS: false — Live Activity로 대체. */
   readonly supportsSystemOverlay: boolean;
-  startSession(params: { dailyLimitMinutes: number; remainingMinutes: number; autoNext: boolean }): Promise<void>;
+  /**
+   * 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
+   * Android 네이티브(PaceOverlayService)가 자기 완결적으로 담당 — 백그라운드에서도 JS 없이
+   * 카운트다운·알림·세션차단이 계속 동작해야 하므로 세션 시작 시점의 값을 전부 함께 넘긴다.
+   * sleepTimerMinutes<=0/breakIntervalMinutes<=0은 "꺼짐". iOS는 이 파라미터들을 무시(no-op) —
+   * Screen Time이 별도로 차단을 집행하고, 알림은 여전히 JS 타이머(overlay/index.tsx)가 담당.
+   */
+  startSession(params: {
+    dailyLimitMinutes: number;
+    remainingMinutes: number;
+    autoNext: boolean;
+    sleepTimerMinutes: number;
+    breakIntervalMinutes: number;
+    notifyRemaining: boolean;
+    notifyLimit: boolean;
+    notifyBreak: boolean;
+  }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;
   /** Android: "다른 앱 위에 표시"(SYSTEM_ALERT_WINDOW) 권한 실제 부여 상태. iOS: 항상 true(no-op, 개념 자체가 없음). */
@@ -36,12 +54,12 @@ export interface OverlayService {
   hasForegroundDetectionPermission(): Promise<boolean>;
   requestForegroundDetectionPermission(): Promise<void>;
   /**
-   * Android: 네이티브 카운트다운(PaceOverlayService)이 백그라운드에서 스스로 0에 도달해 세션을
-   * 차단했는지 확인(1회성 소비, 읽으면 즉시 리셋) — JS setInterval이 백그라운드에서 죽는 문제의
-   * 우회책(PACE_ARCHITECTURE.md "백그라운드 타이머 버그" 참고). iOS: 항상 false(no-op, Screen Time이
-   * 자체적으로 차단을 집행하므로 이 경로가 필요 없음).
+   * Android: 네이티브 카운트다운(PaceOverlayService)이 백그라운드에서 스스로 Daily Limit 또는
+   * Sleep Timer 만료로 세션을 차단했는지 확인(1회성 소비, 읽으면 즉시 리셋) — JS setInterval이
+   * 백그라운드에서 죽는 문제의 우회책(PACE_ARCHITECTURE.md "백그라운드 타이머 버그" 참고). 만료 안
+   * 됐으면 null. iOS: 항상 null(no-op, Screen Time이 자체적으로 차단을 집행하므로 이 경로가 필요 없음).
    */
-  consumeExpired(): Promise<boolean>;
+  consumeExpired(): Promise<SessionEndStatus | null>;
 }
 
 export interface FocusService {

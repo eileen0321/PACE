@@ -95,10 +95,17 @@ export default function OverlaySessionScreen() {
       hasSessionStartedRef.current = true;
       if (settings.autoNext) autoNextRuntime.start(null);
       // Android 실기기에서 native 모듈이 링크돼 있으면 시스템 오버레이도 함께 띄운다(미링크 시 no-op).
+      // 2026-07-19: Sleep Timer/Break Reminder/알림 설정까지 전부 네이티브가 자기 완결적으로
+      // 담당하도록 세션 시작 시점 값을 함께 넘긴다(같은 파일 하단 tick 주석 참고).
       overlayService.startSession({
         dailyLimitMinutes: settings.dailyLimitMinutes,
         remainingMinutes,
         autoNext: settings.autoNext,
+        sleepTimerMinutes: settings.sleepTimerMinutes ?? 0,
+        breakIntervalMinutes: settings.breakIntervalMinutes,
+        notifyRemaining: settings.notifyRemaining,
+        notifyLimit: settings.notifyLimit,
+        notifyBreak: settings.notifyBreak,
       }).catch(() => {});
       launchPlatformApp(platform).catch(() => {});
     })();
@@ -120,17 +127,19 @@ export default function OverlaySessionScreen() {
     // 안에서 setState 이후의 최신 값을 직접 읽어 네이티브로 즉시 밀어준다 — React 렌더/effect에
     // 전혀 의존하지 않는 순수 명령형 경로라 백그라운드에서도 동일하게 동작(setInterval 자체는
     // JS 엔진 타이머라 액티비티 가시성과 무관하게 계속 돈다).
-    // ⚠️ 아래 4가지(오버레이 텍스트 갱신/세션 자동 종료/Break Reminder 알림/저시간·한도도달 알림)
-    // 전부 원래 각각 별도 useEffect(state를 deps로 구독)였는데, 방금 위 주석에서 설명한 이유로
-    // 백그라운드에서 하나도 안 돈다 — "세션을 실제로 끝내는" router.back() 호출까지 포함이라, 이
-    // 버그가 고쳐지기 전엔 한도를 넘겨도 세션이 절대 안 끝나는(=시간제어 기능 자체가 무력화되는)
-    // 상태였다. 전부 이 틱 콜백 안으로 옮겨서 React 렌더 사이클과 완전히 분리했다.
+    // ⚠️ 2026-07-19: 위 4가지(오버레이 텍스트 갱신/세션 자동 종료/Break Reminder 알림/저시간·한도도달
+    // 알림)를 Android에서도 이 JS 틱이 계속 담당하면, 같은 걸 이제 네이티브(PaceOverlayService)도
+    // 독립적으로 판단·발송하므로 알림이 두 번 뜨거나 서로 다른 시점에 남은시간을 판단해 어긋날 수
+    // 있다 — Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간경고/한도도달 알림 전부 네이티브가
+    // 자기 완결적으로 담당하도록 확장했으므로(PaceOverlayService.kt 주석 참고), Android에서는 이
+    // 알림 발송/만료 판정 로직을 더 이상 돌리지 않는다 — tickMinute()만 계속 불러서 화면(확장 카드
+    // 등)에 보여줄 로컬 숫자만 갱신한다. iOS는 이 네이티브 카운트다운이 없으므로(Screen Time이 대신
+    // 차단) 기존 로직을 그대로 유지.
     const tickInterval = setInterval(() => {
       if (!hasSessionStartedRef.current) return; // 세션 시작 비동기 처리가 아직 안 끝났으면 스킵(0 오판 방지)
       useTimerStore.getState().tickMinute();
+      if (Platform.OS === 'android') return;
       const fresh = useTimerStore.getState();
-
-      overlayService.updateRemaining(fresh.remainingMinutes).catch(() => {});
 
       if (fresh.remainingMinutes === 5 || fresh.remainingMinutes === 1) {
         notifyLowTime(fresh.remainingMinutes).catch(() => {});
@@ -169,21 +178,22 @@ export default function OverlaySessionScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // 2026-07-18: 위 tickInterval의 남은시간 계산/네이티브 갱신은 여전히 JS setInterval이라 백그라운드에서
-  // 안 돈다는 근본 한계가 있다(같은 파일 상단 주석 참고) — 그래서 실제 시간 소진 시 "오버레이가 사라지고
-  // 서비스가 멈추는" 차단 자체는 이제 네이티브(PaceOverlayService.tickRunnable)가 자기 완결적으로
-  // 수행한다. 이 effect는 그 네이티브 차단이 실제로 있었는지 사후 확인하는 역할 — Pace가 다시
-  // 포그라운드로 돌아올 때마다(AppState 'active') consumeExpired()로 플래그를 1회 소비해서, 아직
-  // 못 끝낸 JS 쪽 뒷정리(DB 세션 기록/알림/router.back())를 뒤늦게 완료한다.
+  // 2026-07-19: Android에서 실제 시간 소진(Daily Limit 또는 Sleep Timer) 시 "오버레이가 사라지고
+  // 서비스가 멈추는" 차단 + 저시간/한도도달/Break Reminder 알림 발송까지 전부 이제 네이티브
+  // (PaceOverlayService.tickRunnable)가 자기 완결적으로 즉시 수행한다(PaceOverlayService.kt 주석
+  // 참고) — 알림은 이미 발송됐으므로 여기서 또 쏘지 않는다. 이 effect는 그 네이티브 차단이 실제로
+  // 있었는지 사후 확인해 JS 쪽 뒷정리(DB 세션 기록/router.back())만 뒤늦게 완료하는 역할 — Pace가
+  // 다시 포그라운드로 돌아올 때마다(AppState 'active') consumeExpired()로 사유를 1회 소비한다.
   useEffect(() => {
     const consumeIfExpired = () => {
       if (!hasSessionStartedRef.current || hasAutoEndedRef.current) return;
-      overlayService.consumeExpired().then((expired) => {
-        if (!expired || hasAutoEndedRef.current) return;
+      overlayService.consumeExpired().then((reason) => {
+        if (!reason || hasAutoEndedRef.current) return;
         hasAutoEndedRef.current = true;
-        endReasonRef.current = 'daily_limit_reached';
-        useTimerStore.setState({ remainingMinutes: 0 });
-        notifyLimitReached().catch(() => {});
+        endReasonRef.current = reason;
+        useTimerStore.setState(
+          reason === 'sleep_timer_expired' ? { sleepTimerRemainingMinutes: 0 } : { remainingMinutes: 0 }
+        );
         router.back();
       }).catch(() => {});
     };

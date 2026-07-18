@@ -1,4 +1,5 @@
 import type { OverlayService } from './types';
+import type { SessionEndStatus } from '../../types/models';
 
 // modules/pace-overlay(Expo Modules API 로컬 모듈, PACE_ARCHITECTURE.md "Android Overlay 네이티브 POC"
 // 참고)는 npx expo prebuild + EAS Dev Client 빌드가 있어야 링크된다 — Expo Go/일반 JS 번들에서
@@ -8,10 +9,18 @@ let PaceOverlay: {
   requestOverlayPermission(): void;
   hasUsageAccessPermission(): boolean;
   requestUsageAccessPermission(): void;
-  start(remainingMinutes: number, autoNextEnabled: boolean): Promise<void>;
+  start(
+    remainingMinutes: number,
+    autoNextEnabled: boolean,
+    sleepTimerMinutes: number,
+    breakIntervalMinutes: number,
+    notifyRemaining: boolean,
+    notifyLimit: boolean,
+    notifyBreak: boolean
+  ): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
-  consumeExpired(): boolean;
+  consumeExpired(): string | null;
 } | null = null;
 
 try {
@@ -25,7 +34,7 @@ try {
 export const overlayService: OverlayService = {
   supportsSystemOverlay: PaceOverlay !== null,
 
-  async startSession({ remainingMinutes, autoNext }) {
+  async startSession({ remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak }) {
     if (!PaceOverlay) return;
     if (!PaceOverlay.hasOverlayPermission()) {
       PaceOverlay.requestOverlayPermission();
@@ -37,7 +46,7 @@ export const overlayService: OverlayService = {
     if (!PaceOverlay.hasUsageAccessPermission()) {
       PaceOverlay.requestUsageAccessPermission();
     }
-    await PaceOverlay.start(remainingMinutes, autoNext);
+    await PaceOverlay.start(remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak);
   },
 
   async updateRemaining(remainingMinutes) {
@@ -65,6 +74,6 @@ export const overlayService: OverlayService = {
   },
 
   async consumeExpired() {
-    return PaceOverlay?.consumeExpired() ?? false;
+    return (PaceOverlay?.consumeExpired() ?? null) as SessionEndStatus | null;
   },
 };

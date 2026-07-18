@@ -62,15 +62,53 @@ class PaceOverlayService : Service() {
   // 플래그만 남긴다. JS는 그 다음 Pace로 돌아왔을 때(AppState 'active') 그 플래그를 읽어서 DB
   // 세션 기록 + 알림만 뒤늦게(eventually-consistent) 처리 — 실시간 이벤트 배관 없이도 핵심 UX(차단)는
   // 100% 네이티브가 보장한다.
+  // 2026-07-19: Daily Limit과 정확히 같은 이유로 Sleep Timer/Break Reminder/저시간(5분·1분)
+  // 경고/한도도달 알림도 전부 이 네이티브 tickRunnable로 옮긴다. 사용자 지적(정리하면): "타이머
+  // 자체는 플랫폼 공통 개념인데 왜 iOS/Android 구분에 매달리냐, 카운트다운이 실제로 동작하고
+  // 실제로 끄는 게 핵심이고 끄는 '방법'만 다른 것 아니냐" — 맞는 지적이라 Daily Limit에만 적용했던
+  // 네이티브-자기완결 패턴을 이 서비스가 담당하는 나머지 시간제한 기능 전부(Android 한정, iOS는애초에
+  // Screen Time이 이 문제 자체가 없음)에 동일하게 확장한다. -1 = "Sleep Timer 꺼짐"(0으로 하면
+  // "막 만료됨"과 구분이 안 돼서 별도 sentinel 사용).
   private var remainingMinutes = 0
+  private var sleepTimerRemainingMinutes = -1
+  private var breakIntervalMinutes = 0
+  private var nextBreakInMinutes = 0
+  private var notifyRemaining = true
+  private var notifyLimit = true
+  private var notifyBreak = true
   private val tickHandler = Handler(Looper.getMainLooper())
   private var isTicking = false
   private val tickRunnable = object : Runnable {
     override fun run() {
       remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+      if (sleepTimerRemainingMinutes > 0) {
+        sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
+      }
+      if (breakIntervalMinutes > 0) {
+        nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
+        if (nextBreakInMinutes <= 0) {
+          if (notifyBreak) {
+            sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "휴식 시간이에요", "잠깐 스트레칭하거나 심호흡을 해보세요.")
+          }
+          nextBreakInMinutes = breakIntervalMinutes
+        }
+      }
       setRemainingText(remainingMinutes)
-      if (remainingMinutes <= 0) {
-        markExpired()
+      Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
+
+      if (notifyRemaining && (remainingMinutes == 5 || remainingMinutes == 1)) {
+        sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
+      }
+
+      // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
+      // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
+      // "Sleep Timer가 켜져 있었고 방금 만료됐다"로 판단 가능.
+      if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0) {
+        val reason = if (remainingMinutes <= 0) "daily_limit_reached" else "sleep_timer_expired"
+        markExpired(reason)
+        if (notifyLimit) {
+          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
+        }
         stopForegroundAppPolling()
         stopTicking()
         removeOverlay()
@@ -82,10 +120,38 @@ class PaceOverlayService : Service() {
     }
   }
 
-  private fun markExpired() {
+  private fun markExpired(reason: String) {
     getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
       .putBoolean(PREF_EXPIRED, true)
+      .putString(PREF_EXPIRE_REASON, reason)
       .apply()
+  }
+
+  // Daily Limit 알림(notifyLimit)/저시간 경고(notifyRemaining)/Break Reminder(notifyBreak) 전부
+  // 이 헬퍼로 통일 — expo-notifications(JS)와 별개의 네이티브 채널을 쓴다. JS 쪽 'pace-session'
+  // 채널은 JS 코드가 실행돼야(ensureAndroidChannel) 생성되는데, 이 서비스는 JS 없이도(백그라운드에서)
+  // 독립적으로 동작해야 하므로 채널 생성 자체도 네이티브에서 자기 완결적으로 처리한다.
+  private fun ensureAlertChannel() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val channel = NotificationChannel(ALERT_CHANNEL_ID, "Pace Alerts", NotificationManager.IMPORTANCE_HIGH)
+      getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+  }
+
+  private fun sendAlertNotification(id: Int, title: String, body: String) {
+    ensureAlertChannel()
+    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      Notification.Builder(this, ALERT_CHANNEL_ID)
+    } else {
+      @Suppress("DEPRECATION") Notification.Builder(this)
+    }
+    val notification = builder
+      .setContentTitle(title)
+      .setContentText(body)
+      .setSmallIcon(android.R.drawable.ic_menu_recent_history)
+      .setAutoCancel(true)
+      .build()
+    (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
   }
 
   companion object {
@@ -98,17 +164,41 @@ class PaceOverlayService : Service() {
     private const val ACTION_STOP = "expo.modules.paceoverlay.STOP"
     private const val EXTRA_REMAINING = "remainingMinutes"
     private const val EXTRA_AUTO_NEXT = "autoNextEnabled"
+    private const val EXTRA_SLEEP_TIMER_MINUTES = "sleepTimerMinutes"
+    private const val EXTRA_BREAK_INTERVAL_MINUTES = "breakIntervalMinutes"
+    private const val EXTRA_NOTIFY_REMAINING = "notifyRemaining"
+    private const val EXTRA_NOTIFY_LIMIT = "notifyLimit"
+    private const val EXTRA_NOTIFY_BREAK = "notifyBreak"
+    private const val ALERT_CHANNEL_ID = "pace_overlay_alerts"
+    private const val NOTIFICATION_ID_LOW_TIME = 4202
+    private const val NOTIFICATION_ID_LIMIT_REACHED = 4203
+    private const val NOTIFICATION_ID_BREAK_REMINDER = 4204
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
-    // 차단했다" 플래그 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 false로 리셋)한다.
+    // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.
     const val PREFS_NAME = "pace_overlay"
     const val PREF_EXPIRED = "expired"
+    const val PREF_EXPIRE_REASON = "expire_reason"
 
-    fun start(context: Context, remainingMinutes: Int, autoNextEnabled: Boolean) {
+    fun start(
+      context: Context,
+      remainingMinutes: Int,
+      autoNextEnabled: Boolean,
+      sleepTimerMinutes: Int,
+      breakIntervalMinutes: Int,
+      notifyRemaining: Boolean,
+      notifyLimit: Boolean,
+      notifyBreak: Boolean
+    ) {
       val intent = Intent(context, PaceOverlayService::class.java).apply {
         action = ACTION_START
         putExtra(EXTRA_REMAINING, remainingMinutes)
         putExtra(EXTRA_AUTO_NEXT, autoNextEnabled)
+        putExtra(EXTRA_SLEEP_TIMER_MINUTES, sleepTimerMinutes)
+        putExtra(EXTRA_BREAK_INTERVAL_MINUTES, breakIntervalMinutes)
+        putExtra(EXTRA_NOTIFY_REMAINING, notifyRemaining)
+        putExtra(EXTRA_NOTIFY_LIMIT, notifyLimit)
+        putExtra(EXTRA_NOTIFY_BREAK, notifyBreak)
       }
       ContextCompat.startForegroundService(context, intent)
     }
@@ -135,6 +225,13 @@ class PaceOverlayService : Service() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_EXPIRED, false).apply()
         startForeground(NOTIFICATION_ID, buildNotification())
         remainingMinutes = intent.getIntExtra(EXTRA_REMAINING, 0)
+        val sleepTimerMinutes = intent.getIntExtra(EXTRA_SLEEP_TIMER_MINUTES, 0)
+        sleepTimerRemainingMinutes = if (sleepTimerMinutes > 0) sleepTimerMinutes else -1
+        breakIntervalMinutes = intent.getIntExtra(EXTRA_BREAK_INTERVAL_MINUTES, 0)
+        nextBreakInMinutes = breakIntervalMinutes
+        notifyRemaining = intent.getBooleanExtra(EXTRA_NOTIFY_REMAINING, true)
+        notifyLimit = intent.getBooleanExtra(EXTRA_NOTIFY_LIMIT, true)
+        notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
         showOverlay(remainingMinutes)
         startForegroundAppPolling()
         startTicking()

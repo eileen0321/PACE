@@ -55,9 +55,12 @@ class PaceOverlayModule : Module() {
       }
     }
 
-    AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean ->
+    // 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
+    // 네이티브(PaceOverlayService)가 자기 완결적으로 담당하도록 확장 — 세션 시작 시점의 값을
+    // 전부 함께 넘긴다(PaceOverlayService.kt 상단 주석 참고).
+    AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean, sleepTimerMinutes: Int, breakIntervalMinutes: Int, notifyRemaining: Boolean, notifyLimit: Boolean, notifyBreak: Boolean ->
       appContext.reactContext?.let { context ->
-        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled)
+        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak)
       }
     }
 
@@ -76,18 +79,25 @@ class PaceOverlayModule : Module() {
       }
     }
 
-    // 네이티브 카운트다운(PaceOverlayService.tickRunnable)이 0에 도달해 스스로 세션을 차단했는지
-    // 확인 — 읽는 즉시 false로 리셋(1회성 소비). JS가 앱 포그라운드 복귀 시(AppState 'active')
-    // 호출해서 DB 세션 기록/알림 등 백그라운드 JS 타이머로는 더 이상 처리할 수 없는 후속 작업을
-    // 뒤늦게(eventually-consistent) 마무리한다 — PaceOverlayService.kt 상단 주석 참고.
+    // 네이티브 카운트다운(PaceOverlayService.tickRunnable)이 Daily Limit 또는 Sleep Timer 만료로
+    // 스스로 세션을 차단했는지 확인 — 읽는 즉시 리셋(1회성 소비). JS가 앱 포그라운드 복귀
+    // 시(AppState 'active') 호출해서 DB 세션 기록 등 백그라운드 JS 타이머로는 더 이상 처리할 수
+    // 없는 후속 작업을 뒤늦게(eventually-consistent) 마무리한다 — 알림 자체는 이제 네이티브가
+    // 즉시 쏘므로(sendAlertNotification) JS는 더 이상 신경 안 써도 됨. 만료 안 됐으면 null,
+    // 만료됐으면 사유 문자열("daily_limit_reached"/"sleep_timer_expired") 반환.
     Function("consumeExpired") {
-      val expired = appContext.reactContext?.let { context ->
+      val reason: String? = appContext.reactContext?.let { context ->
         val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val wasExpired = prefs.getBoolean(PaceOverlayService.PREF_EXPIRED, false)
-        if (wasExpired) prefs.edit().putBoolean(PaceOverlayService.PREF_EXPIRED, false).apply()
-        wasExpired
-      } ?: false
-      expired
+        if (wasExpired) {
+          val expireReason = prefs.getString(PaceOverlayService.PREF_EXPIRE_REASON, "daily_limit_reached")
+          prefs.edit().putBoolean(PaceOverlayService.PREF_EXPIRED, false).apply()
+          expireReason
+        } else {
+          null
+        }
+      }
+      reason
     }
 
     // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — ⚠️ Play 스토어 정책 리스크

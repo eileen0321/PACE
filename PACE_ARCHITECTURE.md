@@ -2239,3 +2239,87 @@ export type YouTubeShort = {
 - **Shorts 판별 정확도** — Data API에 `isShort`가 없어 `videoDuration=short`+duration≤60s로 추정.
   가로 영상/일반 숏폼 아닌 것이 섞일 수 있음 → `videos.list`로 후검증하는 2단계 필수.
 - **광고 중 `ended` 미발생 구간의 UX** — 광고가 길거나 스킵 불가일 때 순차 재생 흐름 관찰 필요(실기기).
+
+---
+
+## 실기기 검증 5차 — 시간제한 관련 기능 전수 확장(Sleep Timer/Break Reminder/저시간·한도도달 알림 네이티브화) + 부수 버그 2건 (2026-07-19)
+
+> 배경: "실기기 검증 4차"가 Daily Limit 세션종료 하나만 네이티브로 옮기고 검증했는데, "시간제한관련
+> 모든 기능"을 나열해보니 저시간(5분·1분) 경고/Sleep Timer 만료/Break Reminder는 여전히 백그라운드에서
+> 죽는 JS `setInterval`에만 의존하는 채 그대로 남아있었다(같은 파일 안에서도 뒤늦게 발견). 사용자가
+> "저 타이머는 공통인데 무슨소리야, 카운트다운이 실제로 동작하고 실제로 끄는 게 핵심이고 끄는 방법만
+> 다른 거 아니냐"고 정확히 지적 — Daily Limit에만 적용했던 "네이티브가 자기 완결적으로 판단+집행"
+> 패턴을 이 서비스가 담당하는 시간제한 기능 전부(Android 한정)로 확장했다.
+
+### 확장 내용
+`PaceOverlayService.kt`의 `tickRunnable`(60초 `Handler.postDelayed`, 이미 Daily Limit으로 검증된
+패턴)이 이제 한 번에:
+1. `remainingMinutes`(Daily Limit) 감소 — 기존과 동일.
+2. `sleepTimerRemainingMinutes` 감소(설정 안 했으면 -1 sentinel, 영구 비활성).
+3. `breakIntervalMinutes` 켜져 있으면 `nextBreakInMinutes` 감소 → 0 도달 시 즉시 네이티브 알림 발송 +
+   `breakIntervalMinutes`로 리셋(반복).
+4. 저시간 경고: `remainingMinutes`가 5 또는 1에 도달하면 즉시 네이티브 알림 발송.
+5. `remainingMinutes<=0` 또는 `sleepTimerRemainingMinutes==0`(둘 중 뭐가 됐든) → 사유
+   문자열(`daily_limit_reached`/`sleep_timer_expired`)과 함께 `SharedPreferences`에 만료 기록, 네이티브
+   알림 발송, 오버레이 제거 + 서비스 자체 종료까지 전부 자기 완결적으로 수행.
+
+알림은 `expo-notifications`(JS, 공통 코드)를 거치지 않고 `NotificationManager`로 완전히 네이티브에서
+직접 발송(`sendAlertNotification`, 새 채널 `pace_overlay_alerts`) — 이 서비스는 JS가 살아있는지와
+무관하게 독립적으로 동작해야 하므로 채널 생성부터 발송까지 전부 자체 처리.
+
+**JS 쪽 정리(`overlay/index.tsx`)**: 기존 JS `setInterval`이 하던 저시간·Break Reminder·한도도달 알림
+발송 + `router.back()` 트리거를 Android에서는 전부 제거(`if (Platform.OS === 'android') return;`로
+게이팅) — 네이티브랑 JS 둘 다 각자 판단해서 알림을 두 번 쏘거나 서로 다른 시점에 값을 판단해 어긋나는
+걸 방지. `tickMinute()` 자체(로컬 숫자 갱신용)는 계속 양쪽 다 돌지만, 실제 알림 발송/세션종료 판단은
+Android=네이티브 전담, iOS=기존 JS 로직 그대로(iOS는 Screen Time이 실제 차단을 담당하고 이 앱-백그라운드
+시나리오 자체가 없어 이 버그의 적용 대상이 아님). `consumeExpired()`도 boolean→사유 문자열(`string |
+null`)로 변경해 JS가 어떤 사유로 끝났는지 알고 DB에 정확히 기록.
+
+### 실기기 라이브 검증
+Sleep Timer/Break Reminder 둘 다 실제 옵션 최솟값(15분/10분)은 검증에 너무 오래 걸려서, 검증 전용으로
+`QuickControlsGrid.tsx`의 옵션 배열에 "2분" 테스트값을 임시로 추가해서 사용(검증 후 원복, 커밋에는
+포함 안 됨) — Sleep Timer=2분, Break Reminder=2분, Daily Limit=60분(간섭 방지)으로 세션 시작 후 관찰:
+```
+01:57:45 onStartCommand remaining=60
+01:58:45 tick remaining=59 sleepTimer=1 nextBreakIn=1
+01:59:45 tick remaining=58 sleepTimer=0 nextBreakIn=2   ← 둘 다 이 틱에서 0 도달
+```
+같은 틱에서 sleepTimer=0(Sleep Timer 만료) + nextBreakIn이 0→2로 리셋(Break Reminder 발송+리셋
+완료)이 동시에 정확히 처리된 것을 확인. 이어서 `dumpsys activity services`로 서비스가 완전히
+종료됐음을 확인(`(nothing)`), `dumpsys notification`으로 알림 ID `4203`(한도/Sleep Timer 만료)과
+`4204`(Break Reminder) 둘 다 `pace_overlay_alerts` 채널에 실제로 발송돼 있는 것을 확인. 앱을
+포그라운드로 복귀시켜 JS `consumeExpired()`가 사유를 소비 → SQLite `viewing_sessions.status =
+'sleep_timer_expired'` + `overlay_events`에 `SESSION_STOP/sleep_timer_expired` 정상 기록까지 3중으로
+확인. **Sleep Timer/Break Reminder 둘 다 이제 Daily Limit과 동일한 신뢰도로 백그라운드에서 동작한다.**
+
+**알려진 사소한 갭(우선순위 낮음, 기록만)**: 이 테스트는 세션 내내 Pace 자체 화면(개발용 dev
+시뮬레이터)에 머문 채 진행됐는데, JS `tickMinute()`이 로컬 숫자 갱신을 위해 여전히 계속 돌다 보니
+JS 쪽 `sleepTimerRemainingMinutes`도 (네이티브와 별개로, 거의 같은 시점에) 0에 도달해
+`useTimerStore.tickMinute()`이 자체적으로 `endSession()`을 호출 — 그 결과 화면 상단 인앱
+`OverlayBar`(네이티브 시스템 오버레이 알약과는 다른, 이 화면 자체 JSX)가 실제 정리(router.back())보다
+먼저 "0m Left"로 잠깐 표시됐다. 실사용 흐름(YouTube 등 실제 앱으로 전환해 네이티브 알약만 보이는
+경우)에서는 이 인앱 바 자체가 안 보이므로 무관하지만, "Pace 자체 화면에 계속 머무는" 드문 경로에서는
+정리 전까지 잠깐 어긋난 숫자가 보일 수 있다 — 기능적 오류는 아니고(네이티브가 이미 올바르게 차단·알림
+처리 끝냄) 순수 표시상의 사소한 지연이라 이번엔 그대로 남겨둠.
+
+### 검증 중 발견한 별개 버그 2건(사용자가 실기기에서 직접 지적)
+**1) Choose Platform 카드가 한도 도달 시 불투명 40%+터치불가 처리되던 것.** 요청한 적 없는 동작 —
+`home.tsx`의 `isLimitReached` 계산 + `PlatformPickerCard`의 `disabled` prop/스타일을 완전히 제거.
+사용자가 실제로 요청한 건 "활성 세션인 카드만 상태점 초록색"(`isActive` prop, 이미 구현돼 있었음)뿐.
+
+**2) TikTok 앱 실행은 되는데 오버레이가 전혀 안 뜨던 것.** 이 기기(한국 리전)에 설치된 TikTok의 실제
+패키지명이 `com.ss.android.ugc.trill`(글로벌 `com.zhiliaoapp.musically`와 다름) — 딥링크는 패키지명과
+무관하게 열려서 앱 실행 자체는 됐지만, `ForegroundAppWatcher`가 이 패키지를 "지원 앱 아님"으로 판단해
+오버레이를 숨겼다. `packageName: string` → `packageNames: string[]`로 바꿔 두 패키지명 다 등록(JS
+`supportedApps.ts` + Kotlin `ForegroundAppWatcher.PACKAGES` 양쪽 동기화, 기존 컨벤션대로 하드코딩
+중복). 재빌드 후 실제 TikTok 피드 위에 오버레이가 뜨는 것 확인. Instagram은 앱 실행+오버레이 둘 다
+정상이었지만 Reels 탭이 아닌 홈 피드로 열림 — Instagram 자체 App Links가 YouTube의 `/shorts`처럼
+세부 탭 딥링크를 지원 안 해서이고, 우리 쪽 코드 버그 아님.
+
+### 아직 검증 안 된 것(다음 세션)
+- Extend Time(Daily Bonus)이 활성 세션 도중 실제로 눌리는 시나리오 — 현재 UI 흐름상 Extend Time은
+  Focus 탭에 있고 오버레이 세션 화면을 벗어나면(=Focus 탭 이동) 세션이 언마운트돼 끝나버리므로,
+  "세션 도중 Extend Time"이 애초에 지금 네비게이션 구조로는 도달 불가능한 상태일 수 있음 — 이게
+  의도한 설계인지 확인 필요(오버레이 화면 안에 Extend Time 진입점이 따로 있어야 하는 게 아닌지).
+- iOS 쪽은 이번 라운드에서 전혀 손대지 않음(Screen Time이 별도 경로) — Mac 세션의 "iOS Pace Feed"
+  작업과 겹치는 부분 없는지 다음에 서로 확인.

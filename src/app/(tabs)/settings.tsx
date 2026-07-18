@@ -9,6 +9,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTranslation } from '../../services/i18n';
 import { requestNotificationPermission } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { GlassSurface } from '../../components/ui/GlassSurface';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
 
@@ -67,7 +68,7 @@ export default function SettingsScreen() {
         {/* 1. Account */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.account')}</Text>
-          <View style={[styles.card, styles.singleCard, styles.accountCard]}>
+          <GlassSurface style={[styles.card, styles.singleCard, styles.accountCard]}>
             <View style={styles.accountLeft}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
               <View>
@@ -82,13 +83,13 @@ export default function SettingsScreen() {
               <Text style={styles.manageSubText}>{t('settings.manageSub')}</Text>
               <Feather name="chevron-right" size={14} color="#818CF8" />
             </Pressable>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 2. Session Defaults — Pace는 데모 로컬 state 대신 실제 useSettingsStore에 직결 */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.sessionDefaults')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <DefaultRow
               title={t('settings.defaultSleep')} desc={t('settings.defaultSleepDesc')}
               value={settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.off')}
@@ -104,23 +105,23 @@ export default function SettingsScreen() {
               value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')} bordered
               onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
             />
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 3. Connected Apps — 실제 appShields 상태 반영 */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.connectedApps')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <ConnectedAppRow label={t('home.youtubeShorts')} active={settings.appShields.youtube} />
             <ConnectedAppRow label={t('home.instagramReels')} active={settings.appShields.instagram} bordered />
             <ConnectedAppRow label={t('home.tiktokVideoLoop')} active={settings.appShields.tiktok} bordered />
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 4. Platform Configuration — 실제 Platform.OS 고정 표시(데모 토글 버튼 제외) */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.platform')}</Text>
-          <View style={[styles.card, styles.singleCard]}>
+          <GlassSurface style={[styles.card, styles.singleCard]}>
             <View style={styles.platformRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>{Platform.OS === 'android' ? t('settings.overlayAssistant') : t('settings.pacePlayer')}</Text>
@@ -128,23 +129,23 @@ export default function SettingsScreen() {
               </View>
               <View style={styles.readyTag}><Text style={styles.readyTagText}>{t('settings.ready')}</Text></View>
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 5. Notifications */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.notifications')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <NotifRow title={t('settings.remainingAlert')} desc={t('settings.remainingAlertDesc')} value={settings.notifyRemaining} onChange={onToggleNotif('notifyRemaining')} />
             <NotifRow title={t('settings.limitAlert')} desc={t('settings.limitAlertDesc')} value={settings.notifyLimit} onChange={onToggleNotif('notifyLimit')} bordered />
             <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={settings.notifyBreak} onChange={onToggleNotif('notifyBreak')} bordered />
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 5.5 Privacy — SettingsTab.tsx SECTION 6, 이전 버전에서 통째로 빠뜨렸던 섹션 */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.privacy')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <View style={styles.row}>
               <Text style={styles.rowTitle}>{t('settings.localData')}</Text>
               <Text style={styles.privacyValue}>{t('settings.storedSafely')}</Text>
@@ -157,13 +158,13 @@ export default function SettingsScreen() {
               <Text style={styles.rowTitle}>{t('settings.exportData')}</Text>
               <Feather name="chevron-right" size={16} color={colors.textSecondary} />
             </Pressable>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 6. Language (Pace 전용) */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.languageSection')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <View style={styles.languageRow}>
               {LANGUAGE_OPTIONS.map((opt) => {
                 const active = settings.language === opt.value;
@@ -174,13 +175,13 @@ export default function SettingsScreen() {
                 );
               })}
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 7. Support */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.support')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card}>
             <ChevronRow title={t('settings.helpCenter')} />
             <ChevronRow title={t('settings.sendFeedback')} bordered />
             <ChevronRow title={t('settings.rateApp')} bordered />
@@ -188,13 +189,13 @@ export default function SettingsScreen() {
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>
               <Text style={styles.versionValue}>1.0.0</Text>
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 8. Advanced — Reset */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.advanced')}</Text>
-          <View style={[styles.card, styles.advancedCard]}>
+          <GlassSurface style={[styles.card, styles.advancedCard]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.resetTitle}>{t('settings.resetSettings')}</Text>
               <Text style={styles.rowSubtitle}>{t('settings.resetSettingsDesc')}</Text>
@@ -202,7 +203,7 @@ export default function SettingsScreen() {
             <Pressable style={styles.resetIconBtn} onPress={() => setShowResetConfirm(true)}>
               <Feather name="refresh-cw" size={16} color={colors.dangerLight} />
             </Pressable>
-          </View>
+          </GlassSurface>
         </View>
       </ScrollView>
 

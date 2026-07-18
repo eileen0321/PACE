@@ -1779,3 +1779,53 @@ Android에서 재기동하니:
 
 **최종 상태**: `pace_test`(emulator-5554) 기준 Android 전 화면(Home 포함 `/feed` 라우트까지) 크래시
 없이 재검증 완료. 물리 기기는 이번 라운드에서 검증하지 않음(다른 세션이 사용 중).
+
+---
+
+## 제품 방향 결정 — "AUTO" 브랜딩 제거 + Family Control 프레이밍 (2026-07-18)
+
+사용자가 외부 프로덕트 조언(타 AI 툴과의 대화 캡처)을 근거로 두 가지를 결정했다:
+
+### 1. UI 전면에서 "AUTO"/"자동" 브랜딩 축소
+근거: (a) 스토어 심사 관점에서 "사용자 대신 자동으로 조작하는 앱"으로 읽히는 문구는 리스크,
+(b) 타겟 연령대(10대 후반~30대 초반)가 원하는 건 "스크린타임/부모통제 앱"이 아니라 "프리미엄 숏폼
+관리 앱" 인상. **기능 자체(Auto Next 자동 재생)는 전혀 안 건드림 — 문구만 변경.**
+
+적용된 변경:
+- `PlatformPickerCard` 상태 문구: "Auto Next Ready"/"Continuous Watch Shield Active" 등 →
+  실제 활성 세션 여부 기반 **"Active"/"Available"** 2단으로 단순화. 이 김에 실제 데이터 소스도
+  고쳤다 — `useSessionStore`가 정의만 되고 어디서도 안 쓰이던 죽은 상태였는데, `overlay/index.tsx`의
+  세션 시작/종료에 `useSessionStore.getState().start()/.finish()`를 연결해 "지금 실제로 어떤
+  플랫폼이 세션 중인지"의 진실원천으로 삼았다. 그 플랫폼 카드만 초록색 펄스 점, 나머지는 정적 회색 점.
+- `SessionHeroCard` 하단 상태줄: "Auto Next Ready"/"Auto Next Suspended" → "Session Ready"/"Standby".
+- `OverlayBar.android.tsx`의 알약 토글: "AUTO ON"/"AUTO OFF" → "NEXT ON"/"NEXT OFF"(토글이 실제로
+  하는 일은 그대로 명확히 남기되 "AUTO" 단어만 제거).
+- `QuickControlsGrid`(Home) 3번째 타일: "Auto Next" → "Break Reminder"로 교체. Auto Next 토글
+  자체는 없어진 게 아니라 Focus 탭에서 여전히 켜고 끌 수 있음 — Home 전면 노출만 줄인 것.
+- `focus.healthyPause` 문구 "Healthy Pause"/"도파민 제어 일시정지" → **"Mindful Pause"**(EN/KO
+  동일 — 짧은 기능명은 한국어에서도 영문 유지하는 기존 관례 따름). 한국어 원문이 "AI가 지어낸 듯한"
+  어색한 표현이라는 지적으로 교체.
+
+### 2. iOS Screen Time = "차단 기능"은 유지, "Family Control" 프레이밍만 제거
+처음엔 이걸 "Family Control 기능 자체를 MVP에서 빼야 하나"로 오해했었는데, 사용자가 바로 정정:
+**차단 기능(사용자가 설정한 일일 한도를 넘으면 실제로 접근을 막는 것)은 그대로 유지.** iOS에서
+앱 차단을 구현하려면 애플의 `FamilyControls`/`DeviceActivity`/`ManagedSettings` 프레임워크를 쓰는
+것 자체가 유일한 방법이라 이건 그대로 둔다(다른 세션이 이미 `modules/pace-screentime`으로 스캐폴딩
+완료 — 건드릴 필요 없음). **바뀌는 건 사용자에게 보이는 문구/브랜딩뿐** — "부모가 자녀를 통제하는
+느낌"이 나지 않도록 "Daily Limit"/"내 시간 관리" 프레이밍으로 유지하고, "Family"/"Parental" 같은
+단어를 UI 카피에 노출하지 않는다. 다음에 iOS Screen Time 관련 UI 카피를 작성할 세션(주로 iOS
+세션)이 참고할 것 — 아직 관련 UI 카피 자체가 없어서(네이티브 스켈레톤 단계) 지금 당장 고칠 곳은 없음,
+다음에 화면을 붙일 때 이 원칙만 지키면 됨.
+
+### 3. 글래스모피즘(Glassmorphism) 확장 — Stats/Settings 전체, Focus는 옅게
+기존 `GlassSurface` 컴포넌트(iOS `BlurView` 실제 블러 / Android 평평한 반투명 폴백, Overlay/바텀시트
+에서 이미 사용 중)를 다른 탭에도 확장하기로 결정. 범위는 사용자가 명시적으로 확정: **Stats + Settings
+는 카드 전체에 적용, Home은 제외, Focus는 살짝만.** 전부 적용 완료:
+- Stats: `card`/`gridCard`/`divideCard` 스타일을 쓰는 View 전부 `GlassSurface`로 교체(다른 세션이
+  그사이 Focus Score/지난주 대비 트렌드 카드를 추가해서 3단 그리드로 바뀌었는데 그 위에도 자연스럽게
+  적용됨).
+- Settings: Account/Session Defaults/Connected Apps/Platform Configuration/Notifications/
+  Privacy/Language/Support/Advanced — 8개 카드 전부 `GlassSurface`로 교체.
+- Focus: "살짝만"이라는 지시를 "카드 1개만 적용"으로 해석 — Session Status 카드에만 `GlassSurface`
+  (기본 intensity 40 대신 `intensity={20}`로 낮춰서 더 옅게), Android Guard Services/Interventions
+  카드는 기존 플랫 유지. 이후 사용자 피드백에 따라 범위 조정 가능.

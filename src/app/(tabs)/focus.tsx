@@ -11,6 +11,7 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
 import { overlayService } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { GlassSurface } from '../../components/ui/GlassSurface';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) SettingsSection.tsx(Focus 탭)를 토씨 하나 안 틀리고 그대로 이식
@@ -99,7 +100,7 @@ export default function FocusScreen() {
         {/* 2. Session Status */}
         <View>
           <Text style={styles.sectionLabel}>{t('focus.sessionStatus')}</Text>
-          <View style={styles.card}>
+          <GlassSurface style={styles.card} intensity={20}>
             <View style={styles.statusTopRow}>
               <Text style={styles.statusTitle}>{t('focus.sessionActive')}</Text>
               <View style={styles.pulsePill}>
@@ -115,7 +116,7 @@ export default function FocusScreen() {
               <Text style={styles.statusRowLabel}>{t('focus.sleepTimer')}</Text>
               <Text style={styles.statusRowValueMonoPrimary}>{settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.disabled')}</Text>
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 2.5 Android Guard Services (Android 전용, iOS는 원본대로 렌더 안 함) */}

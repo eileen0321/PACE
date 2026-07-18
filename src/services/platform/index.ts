@@ -4,6 +4,7 @@ export { usageService } from './usageService';
 export { autoNextService } from './autoNextService';
 export { overlayService } from './overlayService';
 export { focusService } from './focusService';
+export { screenTimeService } from './screenTimeService';
 export { capabilities, useCapabilities } from './capabilities';
 export type { AppCapabilities } from './capabilities';
 export * from './types';

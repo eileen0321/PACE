@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -22,6 +23,7 @@ import { bottomSheetPadding, colors, layout, radius, spacing, typography } from 
 export default function FocusScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const user = useUserStore((s) => s.user);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, todayVideosWatched, todayAverageDurationSeconds, refresh } = useStatsStore();
@@ -232,6 +234,35 @@ export default function FocusScreen() {
             </View>
           </View>
         </View>
+
+        {/* 7. iOS Pace Feed / dev POC 진입 (2026-07-18 iOS 전략 확정 — PACE_ARCHITECTURE.md 참고).
+            Pace Feed = Screen Time으로 차단한 실제 숏폼의 "건강한 대체 출구"(자체 플레이어+Auto-Next).
+            NOTE(i18n): 스캐폴드 단계라 리터럴 문자열 — feed.* 키 배선은 후속 작업. */}
+        <View>
+          <Text style={styles.sectionLabel}>Pace Feed{Platform.OS === 'ios' ? ' (iOS)' : ''}</Text>
+          <Pressable onPress={() => router.push('/feed')} style={styles.feedEntryBtn}>
+            <View style={styles.feedEntryLeft}>
+              <View style={styles.feedEntryIcon}><Feather name="play-circle" size={18} color={colors.successLight} /></View>
+              <View style={styles.feedEntryTextWrap}>
+                <Text style={styles.feedEntryTitle}>Open Pace Feed</Text>
+                <Text style={styles.feedEntrySub}>차단 대신 볼 건강한 대체 피드 · Auto-Next</Text>
+              </View>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textSecondary} />
+          </Pressable>
+          {__DEV__ && (
+            <Pressable onPress={() => router.push('/dev/shorts-poc')} style={[styles.feedEntryBtn, styles.devEntryBtn]}>
+              <View style={styles.feedEntryLeft}>
+                <View style={styles.feedEntryIcon}><Feather name="alert-triangle" size={16} color={colors.warning} /></View>
+                <View style={styles.feedEntryTextWrap}>
+                  <Text style={styles.feedEntryTitle}>Shorts WebView POC (dev)</Text>
+                  <Text style={styles.feedEntrySub}>원안 ① 자동넘김 검증용 · 출시 금지</Text>
+                </View>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textSecondary} />
+            </Pressable>
+          )}
+        </View>
       </ScrollView>
 
       {/* Demo Mindful Break Prompt Modal */}
@@ -359,4 +390,12 @@ const styles = StyleSheet.create({
   modalSecondaryBtn: { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.button, paddingVertical: spacing.sm + 4, alignItems: 'center' },
   modalSecondaryBtnText: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary, textTransform: 'uppercase' },
   modalDangerBtn: { flex: 1, backgroundColor: 'rgba(239,68,68,0.8)', borderRadius: radius.button, paddingVertical: spacing.sm + 4, alignItems: 'center' },
+
+  feedEntryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.md, marginBottom: spacing.sm },
+  devEntryBtn: { borderColor: 'rgba(245,158,11,0.25)', borderStyle: 'dashed' },
+  feedEntryLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
+  feedEntryTextWrap: { flex: 1 },
+  feedEntryIcon: { width: 36, height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)' },
+  feedEntryTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  feedEntrySub: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, marginTop: 2 },
 });

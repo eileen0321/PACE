@@ -80,3 +80,36 @@ export type DailyStats = {
   totalVideos: number;
   longestSessionSeconds: number;
 };
+
+// ── iOS Pace Feed (2026-07-18 iOS 전략 확정 — PACE_ARCHITECTURE.md "iOS 전략 확정" 참고) ──
+// iOS는 다른 앱을 오버레이/자동넘김할 수 없으므로(OS 제약), Screen Time으로 실제 숏폼을 차단하고
+// 그 대체 출구로 우리 자체 플레이어(expo-video)가 라이선스 콘텐츠(Pexels 등)를 Auto-Next로 재생한다.
+// 우리가 권리를 가진 콘텐츠라 재생·자동넘김·UI가 100% 합법·자유 — YouTube WebView 래핑(원안 ①)의
+// 약관/심사 리스크가 없다.
+export type PaceFeedSource = 'pexels' | 'sample';
+
+/** Pace Feed의 큐레이션 무드 — Pexels 검색 쿼리로 매핑된다(constants/paceFeed.ts). */
+export type PaceFeedCategory = 'calm' | 'nature' | 'ocean' | 'focus';
+
+export type PaceVideo = {
+  id: string; // 'pexels_12345' | 'sample_xxx'
+  title: string;
+  creator: string;
+  durationSeconds: number;
+  /** 직접 재생 가능한 mp4 URL(세로 우선). expo-video의 source로 그대로 사용. */
+  url: string;
+  thumbnailUrl: string | null;
+  width: number;
+  height: number;
+  category: PaceFeedCategory;
+  source: PaceFeedSource;
+};
+
+/** Pace Feed 시청 세션 — viewing_sessions(실제 숏폼 앱 세션)와 구분되는, 우리 플레이어 안에서의 세션. */
+export type PlaylistSession = {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  videosWatched: number;
+  category: PaceFeedCategory | null;
+};

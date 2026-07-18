@@ -85,6 +85,10 @@ export default function RootLayout() {
             <Stack.Screen name="onboarding/index" />
             <Stack.Screen name="auth/index" />
             <Stack.Screen name="paywall/index" options={{ presentation: 'modal' }} />
+            {/* iOS Pace Feed(자체 대체 피드 플레이어) — 2026-07-18 iOS 전략 확정. 풀스크린 재생. */}
+            <Stack.Screen name="feed/index" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
+            {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. dev/shorts-poc.tsx의 __DEV__ 가드 참고. */}
+            <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />
           </Stack>
         </QueryClientProvider>
       </SafeAreaProvider>

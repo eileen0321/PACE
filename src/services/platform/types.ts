@@ -39,3 +39,24 @@ export interface FocusService {
   setDailyLimit(minutes: number): Promise<void>;
   isBlocked(): Promise<boolean>;
 }
+
+// iOS 전략 확정(2026-07-18, PACE_ARCHITECTURE.md 참고): iOS는 실제 숏폼을 오버레이/자동넘김할 수
+// 없으므로 Screen Time(FamilyControls/DeviceActivity/ManagedSettings)으로 "차단"하고, 그 대체 출구로
+// Pace Feed(자체 플레이어)를 제시한다. Android는 접근성/오버레이가 그 역할을 대신하므로 no-op.
+//
+// ⚠️ FamilyActivitySelection(사용자가 고른 앱 집합)은 불투명 토큰이라 JS로 직렬화해 넘길 수 없다 —
+// 네이티브가 선택을 저장하고, JS는 "고르게 하라 / 감시 시작하라"는 coarse 명령만 준다.
+export interface ScreenTimeService {
+  /** iOS만 true. Android는 false — 상위 UI가 이 값으로 Screen Time 설정 항목 자체를 iOS 전용으로 노출. */
+  readonly supportsScreenTimeControl: boolean;
+  /** FamilyControls AuthorizationCenter.requestAuthorization(.individual). 성공 여부 반환. */
+  requestAuthorization(): Promise<boolean>;
+  isAuthorized(): Promise<boolean>;
+  /** FamilyActivityPicker를 띄워 사용자가 차단할 앱을 고르게 한다(네이티브가 선택을 영속). */
+  presentAppPicker(): Promise<void>;
+  /** DeviceActivityMonitor 임계값 설정 + 모니터링 스케줄 시작. 초과 시 ManagedSettings Shield 적용. */
+  startMonitoring(params: { dailyLimitMinutes: number }): Promise<void>;
+  stopMonitoring(): Promise<void>;
+  /** 현재 Shield가 걸려(차단) 있는지 — 상위 UI가 "Pace Feed로 대체" 유도에 사용. */
+  isShielded(): Promise<boolean>;
+}

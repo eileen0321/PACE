@@ -76,4 +76,32 @@ CREATE TABLE IF NOT EXISTS overlay_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_overlay_events_created_at ON overlay_events(created_at);
+
+-- ── iOS Pace Feed (2026-07-18 iOS 전략 확정) ──
+-- pace_videos: Pexels 등에서 받아온 피드의 로컬 캐시(오프라인/재방문 시 즉시 표시 + 통계 조인용).
+-- 진실원천은 원격 API고, 이 테이블은 write-through 캐시 — database/repositories/playlistRepository.ts가 채운다.
+CREATE TABLE IF NOT EXISTS pace_videos (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  creator TEXT,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  category TEXT,
+  source TEXT NOT NULL,
+  cached_at TEXT NOT NULL
+);
+
+-- playlist_sessions: Pace Feed 자체 플레이어 안에서의 시청 세션(viewing_sessions=실제 숏폼 앱 세션과 구분).
+-- Auto-Next로 몇 개를 봤는지/어떤 무드였는지 기록 → Insights에서 "건강한 대체 소비" 통계로 활용.
+CREATE TABLE IF NOT EXISTS playlist_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  videos_watched INTEGER NOT NULL DEFAULT 0,
+  category TEXT,
+  synced INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_sessions_started_at ON playlist_sessions(started_at);
 `;

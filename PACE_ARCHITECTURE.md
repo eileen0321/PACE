@@ -206,6 +206,78 @@ Shorts + Auto Next가 실제로 되는가"가 선행 조건. 결과가 NO로 나
 
 ---
 
+## iOS 전략 확정 — "실제 사용 통제(Screen Time) + 대체 피드(Pace Feed)" 이원화 (2026-07-18 확정)
+
+> 위 "iOS Pace Player 성립 가능성 검증" POC의 핵심 전제였던 **"WKWebView로 m.youtube.com/shorts를
+> 감싸 자동넘김"(원안 ①)을 iOS 출시 제품의 토대에서 제외**하고, 아래 ②+③ 이원화로 확정한다.
+> 웹 리서치(경쟁사 조사 + YouTube ToS + Apple 심사 가이드라인)로 원안 ①이 "기술은 되지만 출시
+> 불가" 영역임이 확인됐기 때문. 사용자가 "②·③ 둘 다 하자"로 방향 확정.
+
+### 왜 원안 ①(YouTube WebView 자동넘김)을 토대에서 뺐나 — 웹 리서치 근거
+
+**기술(POC #5)은 문제가 아니다**: 영상 `ended` 감지 → 다음 Short로 스크롤 주입은 크롬 확장/북마클릿
+(Auto Youtube Shorts Scroller 등)이 이미 하는 검증된 기법. 모바일 웹 Virtualized Feed면 TouchEvent
+스와이프 시뮬레이션으로 폴백. 즉 "된다".
+
+**막는 건 정책(POC #8)이고, 이게 진짜 벽이다**:
+- **YouTube ToS**: (a) "자동화된 수단(automated means)으로 서비스 접근" 금지 — 스크립트 자동 스크롤이
+  정확히 여기 해당. (b) "서비스 수정(modify)·간섭(interfere)" 금지 — UI 숨김 + JS 주입 + 주소창 은닉.
+  (c) 광고 차단/스킵 시 명시적 위반. → 조항 (a)(b)만으로도 이미 위반.
+- **Apple App Store**: Guideline 4.2(Minimum Functionality) — 원격 URL 로드 WebView는 리젝 단골(단
+  Pace는 네이티브 탭/통계/오버레이가 있어 "WebView가 전부"는 아니라 리스크 중간). Guideline
+  5.2.5(타사 서비스 무단 이용) — YouTube를 감싸 UI 벗기고 자동 스크롤 = "비인가 개조 클라이언트"로 읽힘.
+- **종합 판정: MEDIUM-HIGH.** POC는 가능하나 iOS 앱 전체를 이 위에 짓는 건 리젝/C&D 리스크 위의 도박.
+
+**경쟁사 실측 — shipping 앱들의 3-패턴(2026-07-18 웹 조사)**:
+| 패턴 | 대표 앱 | 방식 | App Store | 시사점 |
+|---|---|---|---|---|
+| A. Screen Time 차단 | Opal, one sec, ScreenZen | FamilyControls+ManagedSettings+DeviceActivity로 차단·마찰 | ✅ Apple 공인 | 실제 사용 개입의 유일한 합법 API |
+| B. WebView/Safari확장 숨김 | StopScroll, ScrollGuard, UNDOOMED, WallHabit | 내장 브라우저·확장에 JS 주입해 Shorts/Reels **숨김** | ✅ 통과 | **원안 ①과 같은 기술이나 "빼는 쪽"이라 통과** |
+| C. YouTube 개조 클라이언트 | ReVanced, NewPipe | YouTube 앱 패치/재구현 | ❌ Android 사이드로드 전용 | iOS 샌드박스로 **원천 불가** |
+- 핵심: **동일한 WebView+JS 기술이 "숨기면(B)" 십수 개 앱이 출시 중, "자동재생시키면(①)" iOS에
+  아무도 없음.** 그걸 하는 ReVanced/NewPipe(C)는 iOS에 존재 자체가 불가 → 원안 ①의 위치가 바로 여기.
+- **Android=오버레이(패턴 C 계열, OS가 허용)** vs **iOS=(A/B, Apple이 허용하는 것만)** 의 갈림도
+  이 조사로 정당화됨 — "제품 전략 피벗"의 플랫폼 비대칭이 시장 근거를 얻음.
+
+### 확정 설계 — ②Screen Time(차단) → ③Pace Feed(대체)로 연결
+
+두 옵션은 따로 노는 게 아니라 **차단 → 건강한 대체 출구**로 하나의 흐름을 이룬다:
+
+1. **② Screen Time로 실제 도파민 루프 차단**
+   - `FamilyControls`의 `FamilyActivityPicker`로 사용자가 YouTube/Instagram 선택
+   - `DeviceActivity`로 사용량 모니터 → 임계 초과/앱 오픈 시 `ManagedSettings` Shield 차단
+   - `ShieldConfiguration`으로 차단 화면 커스텀, `ShieldActionExtension` 버튼 → Pace 진입 유도
+2. **③ Pace Feed를 그 자리의 대체재로**
+   - 차단 순간 "대신 Pace로 숨 고르기" → 자체 `<Video>` 플레이어(expo-video) 진입
+   - Pexels/Pixabay **라이선스 콘텐츠**(상업적 무료, 출처표기 불필요) 세로 숏폼 피드
+   - **Auto-Next 메커니즘이 여기서 합법적으로 부활** — 우리 콘텐츠라 재생·자동넘김·UI 100% 자유
+   - 즉 ③은 "웰니스 클립 뷰어"가 아니라 ②가 끊어낸 무한스크롤의 **대체 출구**로서 존재 의의를 가짐
+
+크로스플랫폼 정합성:
+| | 실제 피드 | Pace 자체 피드 |
+|---|---|---|
+| Android | 오버레이로 능동 페이싱 | (선택) |
+| iOS | Screen Time로 차단·제한 | Pace Feed로 대체 |
+→ 양쪽 다 "실제 사용에 개입", 방식만 각 OS가 허락하는 만큼 다름. 정직하고 방어 가능한 설계.
+
+### 착수 전 현실 리스크 (구현 전 필수)
+
+1. **`FamilyControls` 배포 entitlement는 Apple 승인제** — 개인 개발자가 임의로 못 켬. `Family Controls
+   (Distribution)` entitlement를 Apple에 별도 신청·승인받아야 실기기·심사 통과. 개발용
+   `Family Controls (Development)`은 시뮬레이터에서 제한적. **일정에 승인 대기 시간 반영 필수.**
+2. **Shield → 앱 딥링크 제약** — `ShieldActionExtension` 버튼이 Pace 앱을 여는 딥링크까지 되는지
+   iOS 버전별 확인 필요. "차단 → 대체 피드"의 매끄러움이 여기 달림 → POC 1순위.
+3. **Pexels/Pixabay API 키 발급** 필요(무료). 없으면 ③은 `EXPO_PUBLIC_PEXELS_KEY` 미설정 시
+   `CURATED_VIDEOS` 목업으로 폴백만 동작.
+
+### 원안 ①의 처리 — 폐기 아닌 "버리는 dev POC"
+
+①은 프로덕션 네비게이션에 넣지 않고, `__DEV__` 가드 하의 **dev 전용 WKWebView POC 화면**
+(`app/dev/shorts-poc.tsx`)으로만 남긴다 — 위 POC #5(자동넘김 되는가)·#8(심사 리스크)을 Mac 실기기에서
+직접 눈으로 검증하는 용도. **이 화면은 절대 프로덕션 빌드/스토어 제출에 포함하지 않는다.**
+
+---
+
 ## 폴더 구조
 
 ```
@@ -1555,10 +1627,14 @@ Home/Focus/Stats/Settings 4탭 전부 에뮬레이터+실기기(갤럭시 Note20
 - [ ] 커스텀 백엔드 서버 자체 구현(현재 `API_BASE_URL`은 자리표시자, 실제 서버 없음)
 - [ ] Android AccessibilityService(포그라운드 앱 감지 + Auto Next 감지), Bubbles(17+) 네이티브 모듈 — "제품 전략 피벗" 섹션 피벗으로 우선순위 상승
 - [ ] iOS 네이티브 모듈(ActivityKit, FamilyControls) — 피벗 후 핵심 경로 아님, App Blocking 등 보조 기능용으로만 유효. EAS Dev Client 빌드 전제
-- [ ] **[블로커] iOS Pace Player 콘텐츠 출처 확정** — "제품 전략 피벗" 섹션 참고. 결정 전까지 아래 iOS Player 관련 항목 전부 착수 불가
+- [x] **[블로커 해소] iOS 콘텐츠 출처/전략 확정** — 원안 ①(YouTube WebView 자동넘김) 폐기, iOS = ②Screen Time 차단 + ③Pace Feed(Pexels 라이선스) 대체로 확정. "iOS 전략 확정 — Screen Time + Pace Feed 이원화" 섹션 참고 (2026-07-18)
 - [ ] Android App Picker 바텀시트 UI(Start 탭 시 YouTube/Instagram 선택) — 신규
 - [ ] iOS 온보딩 시트 + Source 선택 시트 UI — 신규, 콘텐츠 출처 확정 후 착수
-- [ ] iOS Pace Player 화면 + 재생 엔진 + `usePlayerStore` + `videos`/`playlist_sessions` DB 테이블 — 신규, 콘텐츠 출처 확정 후 착수
+- [x] ③ Pace Feed 스캐폴딩 완료 — `usePlayerStore`, `services/api/pexels.ts`(Pexels 클라이언트+DEV 샘플 폴백), `app/feed/index.tsx`(expo-video 플레이어+Auto-Next), `pace_videos`/`playlist_sessions` DB 테이블, `playlistRepository`. tsc 0 errors. **남음: EXPO_PUBLIC_PEXELS_KEY 발급, 실기기 재생 검증**
+- [x] ② Screen Time 스캐폴딩 완료 — `ScreenTimeService` 인터페이스 + `screenTimeService.ios/android`, `modules/pace-screentime`(Swift Module: FamilyControls 권한/FamilyActivityPicker/DeviceActivity 스케줄/ManagedSettings Shield 해제 + podspec + config), capability 플래그(`supportsScreenTimeControl`/`supportsPaceFeed`). **남음: Family Controls entitlement 승인, DeviceActivityMonitor/ShieldConfiguration Extension 타깃, prebuild+Dev Client 빌드**
+- [x] ① dev 전용 WKWebView Shorts POC 화면(`app/dev/shorts-poc.tsx`, `__DEV__` 가드, 프로덕션 금지) — POC #5 자동넘김 3단계 폴백+TouchEvent 스와이프 주입, RN 로그 패널. **Mac 실기기에서 POC #5·#8 육안 검증용**
+- [ ] ②→③ 연결: ShieldActionExtension 버튼 → Pace Feed 딥링크(POC 1순위, iOS 버전별 제약 확인 필요)
+- [ ] Pace Feed UI i18n 배선(현재 리터럴 문자열), Insights에 playlist_sessions 통계 반영
 - [ ] MVP 지원 앱 축소 반영: `SUPPORTED_APPS` 상수(YouTube+Instagram만) 코드에 실제 적용 — 현재 미반영
 - [x] 폰트 실제 로드(Plus Jakarta Sans/JetBrains Mono, `@expo-google-fonts` + `useFonts`) — "타이포그래피 실제 로드 + OS별 탭바 처리" 섹션 참고, Android 실기기 확인 완료
 - [ ] iOS 탭바 Liquid Glass 블러(`BlurView`) 육안 확인 — Windows 개발 환경이라 iOS 시뮬레이터/실기기 없어 이번 세션엔 미검증, 코드는 완료

@@ -26,4 +26,7 @@ export const overlayService: OverlayService = {
   async requestForegroundDetectionPermission() {
     // no-op
   },
+  async consumeExpired() {
+    return false; // iOS는 Screen Time(ManagedSettings Shield)이 자체적으로 차단을 집행 — no-op
+  },
 };

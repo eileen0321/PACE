@@ -39,21 +39,35 @@ object ForegroundAppWatcher {
     return mode == AppOpsManager.MODE_ALLOWED
   }
 
-  // 최근 이벤트 윈도우 중 가장 최근 MOVE_TO_FOREGROUND의 packageName. 폴링 간격(1초) 대비 여유를 두고
-  // 최근 10초 윈도우만 훑는다 — 오래된 이벤트까지 매번 다시 훑을 필요 없음.
+  // 마지막으로 확인된 포그라운드 패키지 + 그 시점의 커서(다음 조회 시작점) — 폴링마다 유지.
+  // 인스턴스 상태가 아니라 object(싱글턴) 상태라 서비스가 재시작되면(onDestroy 후 재생성) 자동
+  // 초기화된다.
+  private var lastKnownForegroundPackage: String? = null
+  private var cursor: Long = 0L
+
+  // ⚠️ 실기기 검증 중 발견한 버그(2026-07-18): MOVE_TO_FOREGROUND는 "앱 전환이 일어난 순간"에만
+  // 한 번 발생하는 전이(edge-triggered) 이벤트지, "지금 이 앱이 포그라운드다"를 매초 계속 알려주는
+  // 신호가 아니다. 처음엔 최근 10초 윈도우만 훑었는데, 사용자가 YouTube Shorts 한 화면에 10초
+  // 넘게 머무르기만 해도(스와이프 안 하고 그냥 시청) 윈도우 안에 새 전이 이벤트가 없어 null을
+  // 반환 — 오버레이가 아직 YouTube를 보고 있는데도 사라지는 실버그로 실기기에서 재현 확인됨.
+  // 고정 윈도우 크기를 아무리 늘려도 "그보다 오래 한 화면에 머무르면" 같은 버그가 재발하므로,
+  // 윈도우 크기에 의존하지 않는 증분(incremental) 방식으로 교체 — 마지막으로 조회한 시점(cursor)
+  // 이후의 새 이벤트만 훑고, 새 MOVE_TO_FOREGROUND가 없으면 마지막으로 알려진 값을 그대로 유지한다
+  // (그게 "다음 전이가 오기 전까진 여전히 유효한 현재 상태"라는 UsageEvents의 실제 의미이므로).
   fun getForegroundPackage(context: Context): String? {
     val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     val end = System.currentTimeMillis()
-    val begin = end - 10_000
+    // 최초 호출(cursor==0)이면 최근 2분만 소급 조회 — 그 이전 히스토리는 어차피 지금 상태와 무관.
+    val begin = if (cursor == 0L) end - 120_000 else cursor
     val events = usageStatsManager.queryEvents(begin, end)
-    var lastForegroundPackage: String? = null
     val event = UsageEvents.Event()
     while (events.hasNextEvent()) {
       events.getNextEvent(event)
       if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
-        lastForegroundPackage = event.packageName
+        lastKnownForegroundPackage = event.packageName
       }
     }
-    return lastForegroundPackage
+    cursor = end
+    return lastKnownForegroundPackage
   }
 }

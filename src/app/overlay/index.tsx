@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { AppState, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -107,8 +107,47 @@ export default function OverlaySessionScreen() {
     // 어디에도 없었다 — 남은시간/수면타이머/휴식리마인더 카운트다운이 세션 시작 값에서 실제로는
     // 한 번도 줄어들지 않는 치명적 버그. 여기서 1분마다 직접 틱을 돌린다(네이티브 포그라운드
     // 서비스가 아직 JS로 틱 이벤트를 보내지 않으므로 JS 인터벌이 유일한 소스).
+    //
+    // ⚠️ 2차 버그(같은 날 실기기 재검증 중 발견): 처음엔 이 틱과 별개로 아래
+    // `useEffect(..., [timer.remainingMinutes, ...])`가 네이티브 오버레이 갱신
+    // (overlayService.updateRemaining)을 담당했는데, 사용자가 YouTube로 나가서 Pace가
+    // 백그라운드로 가면 이 effect가 다시는 안 돈다 — 60초+ 실기기 실측으로 확인(logcat에
+    // updateRemaining 호출이 최초 1회 이후 전혀 안 찍힘). 원인: Zustand 상태(zustand의
+    // getState/setState)는 React 렌더 사이클과 무관하게 즉시 갱신되지만, 그 상태를 "구독"해서
+    // 반응하는 useEffect는 컴포넌트가 리렌더돼야 실행되는데, 액티비티가 백그라운드로 가면 RN이
+    // 리렌더/커밋을 지연·중단시킨다 — 오버레이 알약은 여전히 "15m Left"에 멈춰있는데 실제
+    // 남은시간은 계속 줄어드는(=시간제어가 사실상 무력화되는) 심각한 버그였다. 고침: 틱 콜백
+    // 안에서 setState 이후의 최신 값을 직접 읽어 네이티브로 즉시 밀어준다 — React 렌더/effect에
+    // 전혀 의존하지 않는 순수 명령형 경로라 백그라운드에서도 동일하게 동작(setInterval 자체는
+    // JS 엔진 타이머라 액티비티 가시성과 무관하게 계속 돈다).
+    // ⚠️ 아래 4가지(오버레이 텍스트 갱신/세션 자동 종료/Break Reminder 알림/저시간·한도도달 알림)
+    // 전부 원래 각각 별도 useEffect(state를 deps로 구독)였는데, 방금 위 주석에서 설명한 이유로
+    // 백그라운드에서 하나도 안 돈다 — "세션을 실제로 끝내는" router.back() 호출까지 포함이라, 이
+    // 버그가 고쳐지기 전엔 한도를 넘겨도 세션이 절대 안 끝나는(=시간제어 기능 자체가 무력화되는)
+    // 상태였다. 전부 이 틱 콜백 안으로 옮겨서 React 렌더 사이클과 완전히 분리했다.
     const tickInterval = setInterval(() => {
+      if (!hasSessionStartedRef.current) return; // 세션 시작 비동기 처리가 아직 안 끝났으면 스킵(0 오판 방지)
       useTimerStore.getState().tickMinute();
+      const fresh = useTimerStore.getState();
+
+      overlayService.updateRemaining(fresh.remainingMinutes).catch(() => {});
+
+      if (fresh.remainingMinutes === 5 || fresh.remainingMinutes === 1) {
+        notifyLowTime(fresh.remainingMinutes).catch(() => {});
+      }
+
+      if (fresh.nextBreakInMinutes === 0 && settings.breakIntervalMinutes > 0) {
+        notifyBreakReminder().catch(() => {});
+        if (user?.id) logOverlayEvent(user.id, sessionIdRef.current, 'BREAK_REMINDER').catch(() => {});
+        useTimerStore.setState({ nextBreakInMinutes: settings.breakIntervalMinutes });
+      }
+
+      if (!hasAutoEndedRef.current && (fresh.remainingMinutes <= 0 || fresh.sleepTimerRemainingMinutes === 0)) {
+        hasAutoEndedRef.current = true;
+        endReasonRef.current = fresh.remainingMinutes <= 0 ? 'daily_limit_reached' : 'sleep_timer_expired';
+        if (endReasonRef.current === 'daily_limit_reached') notifyLimitReached().catch(() => {});
+        router.back();
+      }
     }, 60_000);
 
     return () => {
@@ -130,44 +169,31 @@ export default function OverlaySessionScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // 남은 시간/수면 타이머가 0에 도달하면 세션 종료 사유를 기록(수동 Stop과 구분) + 네이티브 오버레이 갱신.
+  // 2026-07-18: 위 tickInterval의 남은시간 계산/네이티브 갱신은 여전히 JS setInterval이라 백그라운드에서
+  // 안 돈다는 근본 한계가 있다(같은 파일 상단 주석 참고) — 그래서 실제 시간 소진 시 "오버레이가 사라지고
+  // 서비스가 멈추는" 차단 자체는 이제 네이티브(PaceOverlayService.tickRunnable)가 자기 완결적으로
+  // 수행한다. 이 effect는 그 네이티브 차단이 실제로 있었는지 사후 확인하는 역할 — Pace가 다시
+  // 포그라운드로 돌아올 때마다(AppState 'active') consumeExpired()로 플래그를 1회 소비해서, 아직
+  // 못 끝낸 JS 쪽 뒷정리(DB 세션 기록/알림/router.back())를 뒤늦게 완료한다.
   useEffect(() => {
-    if (timer.remainingMinutes <= 0) endReasonRef.current = 'daily_limit_reached';
-    else if (timer.sleepTimerRemainingMinutes === 0) endReasonRef.current = 'sleep_timer_expired';
-    overlayService.updateRemaining(timer.remainingMinutes).catch(() => {});
-  }, [timer.remainingMinutes, timer.sleepTimerRemainingMinutes]);
-
-  // 남은시간 또는 수면타이머가 0에 도달하면(바로 위 useEffect가 endReasonRef를 먼저 세팅한 다음
-  // 프레임에) 실제로 세션을 종료해 오버레이를 닫는다 — 틱이 안 돌던 예전엔 이 상태 자체가 도달
-  // 불가능했다. ⚠️ useTimerStore.tickMinute()이 0 도달 시 내부적으로 자기 own endSession()을 먼저
-  // 호출해 같은 렌더에서 isSessionActive가 이미 false가 되므로, 그 플래그로 게이팅하면 안 되고
-  // ref로 "이미 처리했는지"만 본다.
-  useEffect(() => {
-    if (!hasSessionStartedRef.current || hasAutoEndedRef.current) return;
-    if (timer.remainingMinutes <= 0 || timer.sleepTimerRemainingMinutes === 0) {
-      hasAutoEndedRef.current = true;
-      router.back();
-    }
-  }, [timer.remainingMinutes, timer.sleepTimerRemainingMinutes, router]);
-
-  // Break Reminder: 카운트다운이 0에 도달하면 알림을 띄우고 다음 주기로 리셋(설정이 꺼져있으면 스킵).
-  useEffect(() => {
-    if (timer.nextBreakInMinutes === 0 && settings.breakIntervalMinutes > 0) {
-      notifyBreakReminder().catch(() => {});
-      if (user?.id) logOverlayEvent(user.id, sessionIdRef.current, 'BREAK_REMINDER').catch(() => {});
-      useTimerStore.setState({ nextBreakInMinutes: settings.breakIntervalMinutes });
-    }
-  }, [timer.nextBreakInMinutes, settings.breakIntervalMinutes, user?.id]);
-
-  // 저시간 경고(5분/1분)와 한도 도달 시 로컬 알림 — 오버레이가 화면에 안 보이는 상태(백그라운드 앱
-  // 전환 중)에도 사용자에게 도달하는 유일한 채널.
-  useEffect(() => {
-    if (timer.remainingMinutes === 5 || timer.remainingMinutes === 1) {
-      notifyLowTime(timer.remainingMinutes).catch(() => {});
-    } else if (timer.remainingMinutes === 0 && endReasonRef.current === 'daily_limit_reached') {
-      notifyLimitReached().catch(() => {});
-    }
-  }, [timer.remainingMinutes]);
+    const consumeIfExpired = () => {
+      if (!hasSessionStartedRef.current || hasAutoEndedRef.current) return;
+      overlayService.consumeExpired().then((expired) => {
+        if (!expired || hasAutoEndedRef.current) return;
+        hasAutoEndedRef.current = true;
+        endReasonRef.current = 'daily_limit_reached';
+        useTimerStore.setState({ remainingMinutes: 0 });
+        notifyLimitReached().catch(() => {});
+        router.back();
+      }).catch(() => {});
+    };
+    consumeIfExpired(); // 화면이 이미 백그라운드 만료 이후 다시 마운트되는 경우 대비
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') consumeIfExpired();
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —
   // 여기서는 dev 시뮬레이터에서 데모 영상이 끝나면 다음 영상으로 넘어가는 흉내만 낸다.

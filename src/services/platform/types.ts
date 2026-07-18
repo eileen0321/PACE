@@ -35,6 +35,13 @@ export interface OverlayService {
   /** Android: UsageStatsManager 기반 포그라운드 앱 감지 권한(오버레이 자동 표시/숨김에 필요). iOS: 항상 true(no-op). */
   hasForegroundDetectionPermission(): Promise<boolean>;
   requestForegroundDetectionPermission(): Promise<void>;
+  /**
+   * Android: 네이티브 카운트다운(PaceOverlayService)이 백그라운드에서 스스로 0에 도달해 세션을
+   * 차단했는지 확인(1회성 소비, 읽으면 즉시 리셋) — JS setInterval이 백그라운드에서 죽는 문제의
+   * 우회책(PACE_ARCHITECTURE.md "백그라운드 타이머 버그" 참고). iOS: 항상 false(no-op, Screen Time이
+   * 자체적으로 차단을 집행하므로 이 경로가 필요 없음).
+   */
+  consumeExpired(): Promise<boolean>;
 }
 
 export interface FocusService {

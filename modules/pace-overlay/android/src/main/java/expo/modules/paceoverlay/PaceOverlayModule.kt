@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -61,15 +62,32 @@ class PaceOverlayModule : Module() {
     }
 
     AsyncFunction("updateRemaining") { remainingMinutes: Int ->
-      appContext.reactContext?.let { context ->
-        PaceOverlayService.updateRemaining(context, remainingMinutes)
-      }
+      // 2026-07-18 실기기 검증 중 발견: 앱이 백그라운드(YouTube 위 오버레이 표시 중)로 가면
+      // remainingMinutes가 JS 쪽 타이머에서는 정확히 줄어드는데도 네이티브 알약 텍스트가 갱신 안
+      // 되는 버그 재현 — appContext.reactContext가 백그라운드 상태에서 null이 되는지 진단용 로그.
+      val context = appContext.reactContext
+      Log.d("PaceOverlay", "updateRemaining($remainingMinutes) called, reactContext=${if (context != null) "OK" else "NULL"}")
+      context?.let { PaceOverlayService.updateRemaining(it, remainingMinutes) }
     }
 
     AsyncFunction("stop") {
       appContext.reactContext?.let { context ->
         PaceOverlayService.stop(context)
       }
+    }
+
+    // 네이티브 카운트다운(PaceOverlayService.tickRunnable)이 0에 도달해 스스로 세션을 차단했는지
+    // 확인 — 읽는 즉시 false로 리셋(1회성 소비). JS가 앱 포그라운드 복귀 시(AppState 'active')
+    // 호출해서 DB 세션 기록/알림 등 백그라운드 JS 타이머로는 더 이상 처리할 수 없는 후속 작업을
+    // 뒤늦게(eventually-consistent) 마무리한다 — PaceOverlayService.kt 상단 주석 참고.
+    Function("consumeExpired") {
+      val expired = appContext.reactContext?.let { context ->
+        val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        val wasExpired = prefs.getBoolean(PaceOverlayService.PREF_EXPIRED, false)
+        if (wasExpired) prefs.edit().putBoolean(PaceOverlayService.PREF_EXPIRED, false).apply()
+        wasExpired
+      } ?: false
+      expired
     }
 
     // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — ⚠️ Play 스토어 정책 리스크

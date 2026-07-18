@@ -11,6 +11,7 @@ let PaceOverlay: {
   start(remainingMinutes: number, autoNextEnabled: boolean): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
+  consumeExpired(): boolean;
 } | null = null;
 
 try {
@@ -61,5 +62,9 @@ export const overlayService: OverlayService = {
 
   async requestForegroundDetectionPermission() {
     PaceOverlay?.requestUsageAccessPermission();
+  },
+
+  async consumeExpired() {
+    return PaceOverlay?.consumeExpired() ?? false;
   },
 };

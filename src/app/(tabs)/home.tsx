@@ -1,6 +1,6 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -34,9 +34,15 @@ export default function HomeScreen() {
   const { todayUsageMinutes, refresh } = useStatsStore();
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
 
-  useEffect(() => {
-    if (user?.id) refresh(user.id);
-  }, [user?.id, refresh]);
+  // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
+  // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
+  // 시작 전 값에 멈춰 있는 버그를 직접 확인(664초짜리 세션이 끝났는데도 Home이 이전 세션 값을
+  // 그대로 표시). useFocusEffect로 교체해 이 탭이 다시 포커스될 때마다(세션 종료 복귀 포함) 갱신.
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) refresh(user.id);
+    }, [user?.id, refresh])
+  );
 
   const isLimitReached = todayUsageMinutes >= settings.dailyLimitMinutes;
 

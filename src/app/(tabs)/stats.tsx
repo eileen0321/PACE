@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useCallback } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from 'expo-router';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -44,12 +45,17 @@ export default function StatsScreen() {
   const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
 
-  useEffect(() => {
-    if (!user?.id) return;
-    refresh(user.id);
-    // 이전 세션 종료 시점에 오프라인이었거나 실패해 못 보낸 백로그가 있으면 여기서 한 번 더 시도.
-    pushUnsyncedSessions(user.id).catch(() => {});
-  }, [user?.id, refresh]);
+  // 2026-07-18: home.tsx와 동일한 이유로 useFocusEffect로 교체(마운트 1회만 refresh하면 세션 종료 후
+  // 이 탭으로 돌아와도 방금 끝난 세션이 반영 안 됨 — 실기기 검증 중 Home에서 먼저 발견한 버그를
+  // Stats에도 동일하게 적용해 미리 예방).
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id) return;
+      refresh(user.id);
+      // 이전 세션 종료 시점에 오프라인이었거나 실패해 못 보낸 백로그가 있으면 여기서 한 번 더 시도.
+      pushUnsyncedSessions(user.id).catch(() => {});
+    }, [user?.id, refresh])
+  );
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const totalMinutesThisWeek = weeklyStats.reduce((acc, d) => acc + d.totalMinutes, 0);

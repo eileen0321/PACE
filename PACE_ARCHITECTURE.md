@@ -1977,3 +1977,138 @@ AccessibilityService 최적화 원칙" 섹션에 "AccessibilityService로 사용
 "로컬 검증까지만(권장)"** — 위 5번 항목의 로컬 H2 스모크테스트로 API 계약 자체는 이미 검증됐으므로,
 실제 배포는 사용자가 Railway 계정으로 직접/동석해서 진행하는 것으로 보류. 코드/설정(`Dockerfile`,
 `railway.json`)은 이전 세션에서 이미 준비돼 있어 배포 자체는 언제든 시도 가능한 상태.
+
+---
+
+## 실기기 검증 4차 — 백그라운드 Daily Limit 미집행 치명적 버그 + 전수 기능 검증 (2026-07-18)
+
+> 사용자 지시(원문): "로컬이니까 자동넘김 활성화해서 각 기능들 전수 확인해 나 외출하니까 수정해서
+> 기기에서 확인하고 git푸쉬하고 md남겨서 맥과 확인해" — 사용자가 외출하며 자율적으로 이어서 작업하라는
+> 지시. 실제 물리 기기(R3CN80S5GWW, Samsung)에서 오버레이/Auto Next/시간제어가 "화면상으로만 그럴듯한"
+> 게 아니라 진짜로 동작하는지 직접 검증하라는 요구였고, 검증 과정에서 **가장 치명적인 버그**를 찾아
+> 고쳤다.
+
+### 배경 — 왜 이 검증이 필요했나
+사용자가 실기기에서 직접 확인한 결과 "오버레이가 안 보인다"는 보고, 이어서 "유튜브 링크를 쇼츠가
+아닌 걸로 한 거 아니냐"는 정확한 지적(→ App Link 우선순위 버그, 이전 라운드에서 수정됨)이 있었다.
+그 다음 단계로 **시간제어(Daily Limit)와 Auto Next가 백그라운드(실제 YouTube 위)에서도 진짜로
+동작하는지**를 명령형으로 요구받았다.
+
+### 핵심 발견: JS `setInterval`은 액티비티가 백그라운드로 가면 신뢰할 수 없다
+`overlay/index.tsx`의 남은시간 카운트다운은 `setInterval(() => useTimerStore.getState().tickMinute(),
+60_000)`으로 구현돼 있었다(이전 라운드에 4개 흩어진 `useEffect`를 이 콜백 하나로 통합한 상태 — "React
+렌더 사이클과 무관하게 순수 명령형으로 동작하니 백그라운드에서도 안전할 것"이라는 가설이었다). 실기기
+로그캣으로 직접 대조한 결과 **이 가설은 틀렸다**:
+- 같은 `PaceOverlayService.kt` 안에 이미 존재하던 `foregroundPollHandler`(네이티브 `Handler.postDelayed`
+  기반, 포그라운드 앱 감지 폴링용)는 앱이 백그라운드로 가도 1초 간격을 정확히 유지하며 계속 실행됐다.
+- 반면 JS `setInterval` 콜백은 앱이 YouTube 뒤로 넘어간 직후 실행이 사실상 멈췄다 — 60초+ 대기해도
+  `overlayService.updateRemaining()` 호출이 최초 1회 이후 로그캣에 전혀 안 찍힘.
+- 결론: 이 앱의 RN New Architecture(Bridgeless/Fabric) 환경에서 백그라운드 JS 타이머는 억제된다. 즉
+  **오버레이 알약 텍스트가 멈추는 건 증상일 뿐, 진짜 문제는 한도를 넘겨도 세션이 절대 자동으로 안
+  끝난다는 것** — Daily Limit이라는 앱의 핵심 가치가 실사용(화면 잠금 후 방치, 다른 앱으로 장시간 전환)
+  에서 통째로 무력화되는 최고 심각도 버그였다.
+
+### Fix-attempt-1(폐기): Expo Modules Events로 네이티브→JS 실시간 브릿지
+처음엔 "네이티브가 매분 틱을 JS로 이벤트로 쏴주면 JS는 순수 리스너만 하면 된다"는 설계로
+`PaceOverlayService.kt`에 `onTickListener`/`onExpiredListener` 콜백 훅을 만들고
+`PaceOverlayModule.sendEvent()`로 연결하려 했다. 하지만 이 프로젝트가 쓰는 Expo Modules Kotlin DSL
+버전에서 이벤트를 등록하는 정확한 `Events(...)` 선언 문법을 소스에서 찾지 못했다(grep으로 여러 차례
+탐색해도 매치 없음) — 틀린 문법으로 빌드를 몇 번이고 실패시키며 시간을 태우는 리스크가 컸다.
+**포기하고 더 단순한 설계로 전환.**
+
+### Fix-attempt-2(채택): 네이티브 자기완결적 차단 + JS는 사후 확인만
+설계를 뒤집었다 — "네이티브가 JS에 실시간으로 알려줘야 한다"가 아니라, **"네이티브가 차단 자체를
+스스로 끝까지 수행하고, JS는 나중에 한 번 확인만 한다"**로:
+
+1. **`PaceOverlayService.kt`**: `remainingMinutes` 카운트다운을 서비스가 직접 소유. 이미 검증된
+   `foregroundPollRunnable`과 동일한 패턴(`Handler.postDelayed`, 60초 간격)의 `tickRunnable` 신규 추가.
+   0에 도달하면 **서비스 스스로** `removeOverlay()` + `stopForegroundAppPolling()` + `stopTicking()` +
+   `stopForeground(STOP_FOREGROUND_REMOVE)` + `stopSelf()`까지 전부 수행 — 즉 사용자 눈에 보이는
+   "차단"(오버레이 사라짐, 포그라운드 서비스 알림 사라짐) 자체는 100% 네이티브가 JS 개입 없이 보장한다.
+   그리고 `SharedPreferences("pace_overlay")`에 `expired=true` 플래그 하나만 남긴다.
+2. **`PaceOverlayModule.kt`**: `consumeExpired()` 신규 함수 — 이 플래그를 읽고 즉시 `false`로 리셋(1회성
+   소비). `appContext.reactContext` null 방어는 기존 컨벤션(`?.let{}`, 조기 `return@Function` 금지 —
+   0-인자 블록에서 조기 return 시 컴파일 에러 나던 과거 사례를 다시 반복하지 않도록 `?.let{} ?: false`
+   패턴 유지)을 그대로 따름.
+3. **`overlay/index.tsx`**: 새 `useEffect` — 마운트 시 1회 + `AppState.addEventListener('change', ...)`로
+   `state === 'active'`일 때마다 `consumeExpired()` 호출. `true`가 오면 그제서야 DB 세션 종료
+   기록/`notifyLimitReached()`/`router.back()`을 수행(=이전엔 JS 틱 콜백 안에 있던 로직을 이쪽으로 이동).
+   **eventually-consistent 설계**: 사용자가 Pace로 돌아오기 전까지는 DB에 세션 종료가 기록되지 않지만,
+   사용자 경험상 이미 오버레이가 사라져 있으므로("차단됨"이라는 사실 자체는 실시간으로 보장됨) 문제가
+   되지 않는다 — Stats 집계가 늦게 반영되는 것뿐.
+
+### 실기기 라이브 검증 (물리 기기, arm64 재빌드 후)
+Daily Limit을 15분(오늘 이미 6분 사용, 9분 남음)으로 두고 YouTube Shorts 세션 시작 → 실제 YouTube
+Shorts 화면으로 넘어간 뒤 **9분 이상 무조작으로 방치**(백그라운드), 로그캣/`dumpsys`/SQLite를 직접
+캡처해 검증:
+```
+07-18 15:30:11 D PaceOverlay: onStartCommand action=START remaining=9
+07-18 15:31:11 D PaceOverlay: setRemainingText(8)   ← 이하 8,7,6,5,4,3,2,1,0까지
+07-18 15:39:11 D PaceOverlay: setRemainingText(0)
+```
+9번의 틱이 정확히 60초 간격으로, **앱이 계속 백그라운드인 상태에서** 끝까지 찍혔다(이전 JS 방식은
+최초 1회 이후 완전히 멈췄던 것과 정반대). 0 도달 시점에 `dumpsys activity services
+expo.modules.paceoverlay.PaceOverlayService` → `(nothing)` — 서비스가 스스로 완전히 종료된 것 확인,
+스크린샷상으로도 YouTube Shorts 위 오버레이 알약이 실제로 사라져 있었다. 이후 Pace를 다시 포그라운드로
+가져오니(`AppState` active) 알림 권한 요청 팝업이 뜨며(`notifyLimitReached()`가 최초 호출이라 권한을
+아직 안 받은 상태였음) Home으로 자동 복귀. 기기에서 SQLite(`files/SQLite/pace.db`)를 직접 pull해
+`sqlite3`로 조회한 결과:
+```
+viewing_sessions: duration_seconds=664, status='daily_limit_reached', ended_at 정상 기록
+overlay_events:   SESSION_STOP / daily_limit_reached 정상 기록
+```
+**시간제어(Daily Limit)가 실기기 백그라운드에서 완전히 집행된다는 것을 최초로 실증했다.**
+
+### 검증 중 부수적으로 발견한 버그: Home/Stats 탭이 세션 종료 후 갱신 안 됨
+위 배경 테스트 도중 Home 화면이 세션 종료 후에도 "6/15분(이전 세션 값)"을 계속 보여주는 걸 직접 목격 —
+664초(≈11분)짜리 세션이 방금 끝났는데 반영이 안 됨. 원인: `home.tsx`/`stats.tsx` 둘 다
+`useEffect(() => { if (user?.id) refresh(user.id) }, [user?.id, refresh])`로 **마운트 시 1회만**
+`refresh()`를 호출했다 — Expo Router 탭 네비게이터는 탭을 언마운트하지 않으므로 `router.back()`으로
+오버레이에서 Home으로 돌아와도 이 effect가 재실행 안 됨. `useFocusEffect`(expo-router가 re-export)로
+교체해 탭이 포커스될 때마다(세션 종료 복귀 포함) 재조회하도록 수정. 수정 후 재검증: "17/60분, 0m
+Remaining"(6+11=17로 정확히 합산) 정상 표시, 한도 초과로 플랫폼 카드 자동 비활성화까지 확인.
+
+### Auto Next 실스와이프 재검증 — Accessibility 서비스가 앱 재설치로 조용히 리셋됨
+`.env`의 `EXPO_PUBLIC_ENABLE_AUTO_NEXT=true`로 재빌드·재설치 후 `adb shell settings put secure
+enabled_accessibility_services ...`로 활성화했었는데, **이후 `dumpsys accessibility`로 확인하니
+`Bound services:{}`(빈 값)** — 새로 빌드한 APK를 `adb install -r`로 재설치하면서 접근성 서비스 등록이
+조용히 초기화된 것으로 보인다(Samsung 기기의 보안 정책 추정, `SYSTEM_ALERT_WINDOW`/`GET_USAGE_STATS`는
+재설치 후에도 유지됐던 것과 대조적). **최초 9분 배경 테스트 구간 동안은 실제로 Auto Next 스와이프가
+동작하지 않았을 가능성이 높다** — 그 구간엔 별도로 검증하지 않았음(진짜 목적은 시간제어였고, 목격한
+비디오 전환 증거는 없었음). 재바인딩(`settings put` 재실행 → `dumpsys accessibility`로 `Bound
+services:{Service[label=Pace, ...]}` 확인) 후 별도 세션으로 재검증: 세션 시작 후 **아무 조작 없이 12초
+대기 → 스크린샷 비교 결과 완전히 다른 두 영상**("핸드폰 사려고 고민중이야" 광고 → "Genspark AI"
+영상)으로 자동 전환됨을 직접 확인 — `dispatchGesture()` 기반 실스와이프가 실제로 동작한다는 명확한
+증거. **다음 세션 유의사항**: 이 기기에서 앱을 재설치할 때마다 접근성 서비스 재활성화가 필요할 수
+있음(설정 앱 UI로 껐다 켜거나 `adb shell settings put secure enabled_accessibility_services` 재실행).
+
+### Instagram/TikTok 링크 — 기기에 앱 자체가 미설치, 완전한 종단검증 불가
+`launchPlatformApp()`의 `webFallback` 우선 로직은 YouTube 전용 특수 처리가 아니라 플랫폼 공통
+로직이라, 이론상 Instagram/TikTok도 동일하게 동작해야 한다. 실제로 Instagram Reels 카드를 눌러보니
+Chrome 브라우저에서 `instagram.com/accounts/login` 페이지가 열렸다 — 이건 버그가 아니라 **이
+물리 기기에 Instagram/TikTok 앱 자체가 설치돼 있지 않아서**(`adb shell pm list packages | grep
+instagram` 결과 없음) App Link가 브라우저로 정상 폴백된 것. YouTube가 설치돼 있어서 실제로 앱으로
+열렸던 것과 대조하면 이 폴백 동작 자체가 오히려 로직이 올바르다는 방증. 완전한 앱-실행 검증은 두 앱을
+실제로 설치한 뒤(또는 다른 검증 기기에서) 별도로 확인 필요.
+
+### 보안: `.env.example`에 Pexels API 실키가 커밋 대기 상태로 노출돼 있던 것 발견·제거
+이번 세션 작업 시작 시점에 `git status`로 미커밋 변경사항을 확인하던 중, **커밋 대상 템플릿 파일인
+`.env.example`**(실키가 들어가면 안 되는 파일 — `0f98cd5` 커밋 메시지 자체가 "Pexels 등 실제 키 노출
+방지, .env.example만 커밋"이라고 명시한 그 파일)에 `EXPO_PUBLIC_PEXELS_API_KEY=<실제 키 값>`이 그대로
+추가돼 있는 것을 발견했다. 아직 커밋/푸시 전이라 원격엔 안 나갔지만, **다른 동시 작업 세션(추정: 맥
+세션)이 로컬 `.env`에 넣으려던 걸 실수로 커밋 대상 `.env.example`에 넣은 것으로 보인다.** 값을
+빈 문자열로 되돌려 다른 키들과 같은 플레이스홀더 패턴으로 맞춰뒀다 — **맥 세션은 실제 Pexels 키를
+로컬 `.env`(gitignore 대상)에 넣을 것.**
+
+### Mac 세션에 대한 조율 메모 (병합 시 참고)
+이번 라운드에서 수정한 파일: `modules/pace-overlay/android/.../PaceOverlayService.kt`(네이티브 틱
+카운트다운 + 자기종료 로직 신규),`PaceOverlayModule.kt`(`consumeExpired()` 신규 함수),
+`modules/pace-overlay/index.ts` + `overlayService.android.ts`/`.ios.ts` + `types.ts`(전부
+`consumeExpired` 타입 배선), `src/app/overlay/index.tsx`(`AppState` 리스너 신규 useEffect),
+`src/app/(tabs)/home.tsx` + `stats.tsx`(`useFocusEffect`로 교체), `.env.example`(유출된 실키 제거).
+맥 세션이 `overlay/index.tsx`에 동시 작업 중이던(`useDailyBonusStore`/알림 권한/`effectiveDailyLimitMinutes`
+관련) 이력이 있으므로, 이 파일 병합 시 새로 추가된 `AppState` useEffect 블록이 충돌 없이 살아있는지
+확인 필요. `ACTION_UPDATE`(Extend Time이 남은시간을 늘릴 때 호출하는 경로)는 이번 리팩터 이후에도
+`remainingMinutes` 필드를 그대로 덮어쓰기만 하고 틱 스케줄은 안 건드리므로 Extend Time과의 상호작용은
+설계상 안전하지만, **실제 Extend Time 버튼을 누른 채로 백그라운드 만료까지 가는 시나리오는 이번
+라운드에서 별도로 실기기 검증하지 못했다** — 다음 세션에서 확인 필요.

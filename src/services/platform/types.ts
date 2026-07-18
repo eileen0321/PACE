@@ -62,6 +62,31 @@ export interface OverlayService {
   consumeExpired(): Promise<SessionEndStatus | null>;
 }
 
+export type BluetoothState = {
+  isConnected: boolean;
+  deviceName: string | null;
+  autoModeEnabled: boolean;
+  nextCount: number;
+  previousCount: number;
+  autoToggleCount: number;
+};
+
+// 2026-07-19: Bluetooth Hands-Free Control(사용자 지시, Copilot 스펙 정리) — 이어폰 Next/Previous/
+// Play-Pause로 숏폼을 조작. Android: 실제 스와이프/Auto Mode 토글/토스트는 전부 네이티브
+// MediaSession 콜백(PaceOverlayService.kt)이 자기 완결적으로 처리 — getState()는 표시용 폴링,
+// next()/previous()/toggleAutoMode()는 Focus 탭 등 "인앱 버튼 탭"으로 같은 동작을 트리거하는
+// 경로(하드웨어 버튼과 별개 입력 소스, 최종 동작은 동일). iOS: 실제 하드웨어 리모컨 이벤트 수신
+// (MPRemoteCommandCenter)은 Xcode/실기기가 있어야 작성·검증 가능해 이번 라운드에서 스텁만 있음 —
+// next()/previous()/toggleAutoMode()는 useShortsQueueStore를 직접 조작해 화면 버튼 탭까지는 동작.
+export interface BluetoothService {
+  /** 실제 하드웨어 리모컨 이벤트까지 검증된 상태인가. Android=true(네이티브 구현+검증 완료), iOS=false(스텁, 인앱 버튼만 동작). */
+  readonly supportsHardwareRemote: boolean;
+  getState(): Promise<BluetoothState>;
+  next(): Promise<void>;
+  previous(): Promise<void>;
+  toggleAutoMode(enable: boolean): Promise<void>;
+}
+
 export interface FocusService {
   requestAuthorization(): Promise<boolean>;
   setDailyLimit(minutes: number): Promise<void>;

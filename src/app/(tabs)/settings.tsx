@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -6,6 +6,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { capabilities } from '../../services/platform';
 import { useTranslation } from '../../services/i18n';
 import { requestNotificationPermission } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -45,6 +47,12 @@ export default function SettingsScreen() {
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const { settings, update } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const bluetooth = useBluetoothStore();
+
+  useEffect(() => {
+    bluetooth.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 2026-07-18: 알림 토글은 이전엔 화면 로컬 state라 탭을 벗어나면 항상 기본값으로 리셋되고 실제
   // 알림 발송 여부(services/notifications)에도 전혀 반영되지 않았다 — useSettingsStore에 직결해
@@ -141,6 +149,29 @@ export default function SettingsScreen() {
             <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={settings.notifyBreak} onChange={onToggleNotif('notifyBreak')} bordered />
           </GlassSurface>
         </View>
+
+        {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
+        {capabilities.supportsHandsFreeControl && (
+        <View>
+          <Text style={styles.sectionLabel}>Playback Controls</Text>
+          <GlassSurface style={styles.card}>
+            <View style={styles.row}>
+              <Text style={styles.rowTitle}>Hands-Free Control</Text>
+              <View style={styles.statusTag}>
+                <Text style={styles.statusTagText}>{capabilities.bluetoothHardwareVerified ? 'READY' : 'BETA'}</Text>
+              </View>
+            </View>
+            <View style={[styles.row, styles.rowBordered]}>
+              <Text style={styles.rowTitle}>Connected Device</Text>
+              <Text style={styles.privacyValue}>{bluetooth.isConnected ? (bluetooth.deviceName ?? 'Connected') : 'Not Connected'}</Text>
+            </View>
+            <View style={[styles.row, styles.rowBordered]}>
+              <Text style={styles.rowTitle}>Play/Pause Action</Text>
+              <Text style={styles.privacyValue}>Toggle Auto Mode</Text>
+            </View>
+          </GlassSurface>
+        </View>
+        )}
 
         {/* 5.5 Privacy — SettingsTab.tsx SECTION 6, 이전 버전에서 통째로 빠뜨렸던 섹션 */}
         <View>

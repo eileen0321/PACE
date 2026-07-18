@@ -15,6 +15,7 @@ import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
+import { ToastHost } from '../components/ui/ToastHost';
 
 const queryClient = new QueryClient();
 
@@ -100,6 +101,7 @@ export default function RootLayout() {
             {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. dev/shorts-poc.tsx의 __DEV__ 가드 참고. */}
             <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />
           </Stack>
+          <ToastHost />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

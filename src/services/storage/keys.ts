@@ -8,6 +8,7 @@ export const STORAGE_KEYS = {
   dailyBonus: 'pace_daily_bonus',
   premiumIsPremium: 'pace_premium_is_premium',
   premiumExpiresAt: 'pace_premium_expires_at',
+  bluetoothOnboardingSeen: 'pace_bluetooth_onboarding_seen',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

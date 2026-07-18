@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
+import { useToastStore } from '../../store/useToastStore';
+import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { hasYouTubeKey } from '../../services/api/youtube';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -12,6 +14,14 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // PACE_ARCHITECTURE.md "iOS Pace Feed 재정의" 참고 — 큐에서 1 재생, 끝나면(onEnded) advance()로 다음.
 // 재생은 공식 IFrame Player(합법). Pexels Pace Feed(usePlayerStore)는 코드베이스에 폴백 소스로 유지.
 // NOTE(i18n): 스캐폴드 단계라 리터럴 문자열 — feed.* 키 배선은 후속 작업.
+//
+// 2026-07-19: Bluetooth(AirPods) 리모컨 상태 머신 도입(사용자 지시, 상태 전이표 정리 반영).
+// PlayerStatus: IDLE(로딩 전) → READY(재생 대기) → PLAYING(시청 중) ↔ PAUSED.
+// isAutoMode: 리모컨 Play/Pause로 토글하는 "손 안 대고 정주행" 스위치 — true면 영상이 끝나자마자
+// advance()로 다음, false면 끝난 자리에서 멈추고(PAUSED) 사용자가 Next를 눌러야 넘어간다. 리모컨
+// Next/Previous는 이 스위치와 무관하게 항상 즉시 이동(상태 전이표 규칙 A/B).
+type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
+
 export default function PaceFeedScreen() {
   const router = useRouter();
   const queue = useShortsQueueStore((s) => s.queue);
@@ -20,19 +30,68 @@ export default function PaceFeedScreen() {
   const error = useShortsQueueStore((s) => s.error);
   const loadInitial = useShortsQueueStore((s) => s.loadInitial);
   const advance = useShortsQueueStore((s) => s.advance);
+  const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
 
-  const [playing, setPlaying] = useState(true);
+  const [status, setStatus] = useState<PlayerStatus>('IDLE');
+  const [isAutoMode, setIsAutoMode] = useState(false);
   const current = queue[0] ?? null;
   const usingScrape = !hasYouTubeKey();
+  const playing = status === 'PLAYING' || status === 'READY';
 
   useEffect(() => {
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onNext = () => {
-    setPlaying(true);
-    advance(); // 스킵도 시청 완료로 간주 → watched로 이동(리스트에서 삭제)
+  // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS).
+  useEffect(() => {
+    if (status === 'IDLE' && queue.length > 0) setStatus('READY');
+  }, [status, queue.length]);
+
+  // 2026-07-19: Auto Mode를 앱이 백그라운드로 갈 때 자동으로 끈다 — 사용자 지시("카톡 확인하러
+  // 잠깐 나갔다 5분 뒤 복귀하면 이미 여러 영상이 지나가 있는 걸 방지"). Bluetooth 연결 해제와는
+  // 무관하게(그건 별개 입력장치일 뿐) 앱 자체의 포그라운드 상태만 본다.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        setIsAutoMode((prev) => (prev ? false : prev));
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const goNext = () => {
+    setStatus('PLAYING');
+    advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
+  };
+
+  const goPrevious = () => {
+    if (goToPrevious()) setStatus('PLAYING');
+  };
+
+  const toggleAutoMode = () => {
+    setIsAutoMode((prev) => {
+      const next = !prev;
+      useToastStore.getState().show(next ? '🎧 Auto Mode Enabled' : '🎧 Auto Mode Disabled');
+      return next;
+    });
+  };
+
+  // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
+  useFeedRemoteControl({
+    onNext: () => { goNext(); useToastStore.getState().show('⏭ Next Short'); },
+    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show('⏮ Previous Short'); } },
+    onToggleAutoMode: toggleAutoMode,
+  });
+
+  // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
+  // 멈추고 리모컨/화면 탭 입력을 기다린다.
+  const onEnded = () => {
+    if (isAutoMode) {
+      goNext();
+    } else {
+      setStatus('PAUSED');
+    }
   };
 
   return (
@@ -41,11 +100,8 @@ export default function PaceFeedScreen() {
         <YouTubeShortsPlayer
           videoId={current.videoId}
           playing={playing}
-          onEnded={() => {
-            setPlaying(true);
-            advance();
-          }}
-          onError={() => advance()} // 재생 불가한 영상(지역제한 등)은 건너뜀
+          onEnded={onEnded}
+          onError={() => goNext()} // 재생 불가한 영상(지역제한 등)은 건너뜀
         />
       )}
 
@@ -74,13 +130,22 @@ export default function PaceFeedScreen() {
 
         {current && (
           <View style={styles.bottom} pointerEvents="box-none">
+            <View style={[styles.autoModeBadge, isAutoMode ? styles.autoModeBadgeOn : styles.autoModeBadgeOff]}>
+              <Feather name="headphones" size={11} color={isAutoMode ? '#000000' : colors.textSecondary} />
+              <Text style={[styles.autoModeBadgeText, isAutoMode && styles.autoModeBadgeTextOn]}>
+                {isAutoMode ? 'Auto Mode ON' : 'Hands-Free Ready'}
+              </Text>
+            </View>
             <Text style={styles.title} numberOfLines={2}>{current.title}</Text>
             {!!current.channelTitle && <Text style={styles.creator}>{current.channelTitle}</Text>}
             <View style={styles.controls}>
-              <Pressable onPress={() => setPlaying((v) => !v)} hitSlop={10} style={styles.ctrlBtnMain}>
+              <Pressable onPress={goPrevious} hitSlop={10} style={styles.ctrlBtn}>
+                <Feather name="skip-back" size={20} color="#FFFFFF" />
+              </Pressable>
+              <Pressable onPress={() => setStatus((s) => (s === 'PAUSED' ? 'PLAYING' : 'PAUSED'))} hitSlop={10} style={styles.ctrlBtnMain}>
                 <Feather name={playing ? 'pause' : 'play'} size={22} color="#000000" />
               </Pressable>
-              <Pressable onPress={onNext} hitSlop={10} style={styles.ctrlBtn}>
+              <Pressable onPress={goNext} hitSlop={10} style={styles.ctrlBtn}>
                 <Feather name="skip-forward" size={20} color="#FFFFFF" />
               </Pressable>
             </View>
@@ -121,6 +186,11 @@ const styles = StyleSheet.create({
   fallbackBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', marginTop: spacing.sm, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   fallbackText: { color: colors.textSecondary, fontSize: 10, fontFamily: typography.bodyFontFamilyMedium },
   bottom: { paddingBottom: spacing.md, gap: spacing.xs },
+  autoModeBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4, marginBottom: spacing.xs },
+  autoModeBadgeOn: { backgroundColor: colors.successLight },
+  autoModeBadgeOff: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  autoModeBadgeText: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  autoModeBadgeTextOn: { color: '#000000' },
   title: { color: '#FFFFFF', fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold },
   creator: { color: colors.textSecondary, fontSize: 12, fontFamily: typography.bodyFontFamilyBold },
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl, marginTop: spacing.md },

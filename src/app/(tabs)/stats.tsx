@@ -7,6 +7,8 @@ import { useFocusEffect } from 'expo-router';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { capabilities } from '../../services/platform';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { useTranslation } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -44,6 +46,7 @@ export default function StatsScreen() {
   const user = useUserStore((s) => s.user);
   const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
+  const bluetooth = useBluetoothStore();
 
   // 2026-07-18: home.tsx와 동일한 이유로 useFocusEffect로 교체(마운트 1회만 refresh하면 세션 종료 후
   // 이 탭으로 돌아와도 방금 끝난 세션이 반영 안 됨 — 실기기 검증 중 Home에서 먼저 발견한 버그를
@@ -54,6 +57,8 @@ export default function StatsScreen() {
       refresh(user.id);
       // 이전 세션 종료 시점에 오프라인이었거나 실패해 못 보낸 백로그가 있으면 여기서 한 번 더 시도.
       pushUnsyncedSessions(user.id).catch(() => {});
+      bluetooth.refresh();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, refresh])
   );
 
@@ -210,6 +215,28 @@ export default function StatsScreen() {
 
         {/* 7. WEEKLY USAGE GRAPH (App.tsx가 StatsTab 뒤에 별도로 덧붙이는 카드, WeeklyGraph.tsx) */}
         <WeeklyGraphCard weeklyStats={weeklyStats} />
+
+        {/* 8. BLUETOOTH USAGE(2026-07-19, 사용자 지시) — 실제 집계된 카운터만 표시(누적, 세션 단위
+            아님 — "몇 % 세션이 Hands-Free였는지"는 세션별 기록이 없어 정직하게 뺐다). */}
+        {capabilities.supportsHandsFreeControl && (bluetooth.nextCount + bluetooth.previousCount + bluetooth.autoToggleCount) > 0 && (
+          <View>
+            <Text style={styles.sectionTitle}>Bluetooth Controls</Text>
+            <GlassSurface style={styles.card}>
+              <View style={styles.behaviorRow}>
+                <Text style={styles.behaviorTitle}>Next</Text>
+                <Text style={styles.behaviorValue}>{bluetooth.nextCount}</Text>
+              </View>
+              <View style={[styles.behaviorRow, styles.behaviorRowBordered]}>
+                <Text style={styles.behaviorTitle}>Previous</Text>
+                <Text style={styles.behaviorValue}>{bluetooth.previousCount}</Text>
+              </View>
+              <View style={[styles.behaviorRow, styles.behaviorRowBordered]}>
+                <Text style={styles.behaviorTitle}>Auto Mode Toggles</Text>
+                <Text style={styles.behaviorValue}>{bluetooth.autoToggleCount}</Text>
+              </View>
+            </GlassSurface>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

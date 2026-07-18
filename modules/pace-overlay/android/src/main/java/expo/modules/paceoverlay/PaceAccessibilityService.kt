@@ -72,6 +72,14 @@ class PaceAccessibilityService : AccessibilityService() {
         service.handler.removeCallbacks(service.swipeRunnable)
       }
     }
+
+    // 2026-07-19: Bluetooth Hands-Free Next/Previous — 위 interval 기반 Auto Next 루프와 별개로,
+    // 리모컨 버튼 1회 입력에 스와이프 1회로 즉시 응답하는 단발성 트리거. 감시 대상 앱이 포그라운드가
+    // 아니어도(예: 사용자가 Pace 쪽을 보고 있어도) 그냥 시도한다 — 리모컨을 눌렀다는 것 자체가 이미
+    // 숏폼을 보고 있다는 강한 신호라 startWatching()의 포그라운드 패키지 체크만큼 보수적일 필요가 없음.
+    fun swipeOnce(up: Boolean) {
+      instance?.let { service -> if (up) service.performSwipeUp() else service.performSwipeDown() }
+    }
   }
 
   override fun onServiceConnected() {
@@ -108,6 +116,23 @@ class PaceAccessibilityService : AccessibilityService() {
       moveTo(width / 2f, height * 0.75f)
       lineTo(width / 2f, height * 0.25f)
     }
+    dispatchSwipe(path)
+  }
+
+  // Bluetooth Previous 전용(2026-07-19) — performSwipeUp의 역방향(화면 상단→하단, 이전 영상).
+  private fun performSwipeDown() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+    val metrics = resources.displayMetrics
+    val width = metrics.widthPixels
+    val height = metrics.heightPixels
+    val path = Path().apply {
+      moveTo(width / 2f, height * 0.25f)
+      lineTo(width / 2f, height * 0.75f)
+    }
+    dispatchSwipe(path)
+  }
+
+  private fun dispatchSwipe(path: Path) {
     val gesture = GestureDescription.Builder()
       .addStroke(GestureDescription.StrokeDescription(path, 0, 250))
       .build()

@@ -5,16 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
+import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 
 // Android=떠 있는 알약(pill) 오버레이(PACE_ARCHITECTURE.md "Android=floating pill / iOS=frame 차분"과
@@ -112,12 +118,89 @@ class PaceOverlayService : Service() {
         stopForegroundAppPolling()
         stopTicking()
         removeOverlay()
+        teardownMediaSession()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         return
       }
       tickHandler.postDelayed(this, TICK_INTERVAL_MS)
     }
+  }
+
+  // 2026-07-19: Bluetooth Hands-Free Control — 사용자 지시(Copilot 스펙 정리) 반영. 새 네이티브
+  // 의존성(react-native-track-player 등) 없이 Android SDK 표준 android.media.session.MediaSession
+  // 하나로 구현 — 이미 검증된 이 서비스(포그라운드, 세션 생명주기와 일치) 안에서 세션을 열고 닫는다.
+  // ⚠️ 실기기 검증 중 발견(2026-07-19): MediaSession만 active=true로 만들어도 부족했다 —
+  // `adb shell dumpsys media_session`으로 직접 확인한 결과, YouTube가 실제로 오디오를 재생 중이면
+  // 시스템의 "Media button session"(하드웨어 버튼이 실제로 라우팅되는 대상)이 YouTube 쪽에 그대로
+  // 남아있었다. Android는 미디어 버튼을 "활성 세션"이 아니라 "오디오 포커스를 쥔 쪽"에 우선
+  // 라우팅한다 — Pace는 자체 오디오를 전혀 재생 안 해서 포커스를 요청한 적이 없었던 게 원인.
+  // 고침: AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK으로 짧게 포커스를 요청 — YouTube 재생을 멈추게 하지
+  // 않고(다른 앱이 STOP당하는 GAIN이 아니라 TRANSIENT) 살짝 더킹만 허용하면서 미디어 버튼 라우팅
+  // 우선권을 가져온다. 이게 표준 Android 패턴(재생은 안 하지만 버튼은 받고 싶은 앱들이 쓰는 방식).
+  private var mediaSession: MediaSession? = null
+  private var audioFocusRequest: AudioFocusRequest? = null
+
+  private fun setupMediaSession() {
+    if (mediaSession != null) return
+    val session = MediaSession(this, "PaceSession")
+    session.setCallback(object : MediaSession.Callback() {
+      override fun onSkipToNext() { triggerNext(applicationContext) }
+      override fun onSkipToPrevious() { triggerPrevious(applicationContext) }
+      override fun onPlay() { setAutoMode(applicationContext, true) }
+      override fun onPause() { setAutoMode(applicationContext, false) }
+    })
+    session.isActive = true
+    mediaSession = session
+    updateMediaSessionPlaybackState(playing = true)
+    requestAudioFocusForMediaButtons()
+  }
+
+  private fun teardownMediaSession() {
+    abandonAudioFocus()
+    mediaSession?.release()
+    mediaSession = null
+  }
+
+  private fun requestAudioFocusForMediaButtons() {
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val attrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_UNKNOWN)
+        .build()
+      val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        .setAudioAttributes(attrs)
+        .setWillPauseWhenDucked(false)
+        .build()
+      audioManager.requestAudioFocus(request)
+      audioFocusRequest = request
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+    }
+  }
+
+  private fun abandonAudioFocus() {
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+      audioFocusRequest = null
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.abandonAudioFocus(null)
+    }
+  }
+
+  private fun updateMediaSessionPlaybackState(playing: Boolean) {
+    val state = PlaybackState.Builder()
+      .setActions(
+        PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+          PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE
+      )
+      .setState(if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED, 0, 1f)
+      .build()
+    mediaSession?.setPlaybackState(state)
   }
 
   private fun markExpired(reason: String) {
@@ -179,6 +262,47 @@ class PaceOverlayService : Service() {
     const val PREFS_NAME = "pace_overlay"
     const val PREF_EXPIRED = "expired"
     const val PREF_EXPIRE_REASON = "expire_reason"
+    const val PREF_AUTO_MODE = "bt_auto_mode"
+
+    // Bluetooth Hands-Free(2026-07-19) — MediaSession 콜백(하드웨어 리모컨)과 PaceOverlayModule의
+    // JS 바인딩(Focus 탭 인앱 버튼 탭) 둘 다 이 companion 함수를 호출한다 — 입력 소스만 다르고 실제
+    // 동작(스와이프/토글/토스트/카운터)은 하나로 통일. instance는 활성 세션이 있을 때만 재생상태를
+    // MediaSession에 반영하는 용도라, 세션 없이 호출돼도(instance==null) 스와이프/토스트/카운터
+    // 자체는 정상 동작한다.
+    private var instance: PaceOverlayService? = null
+
+    fun triggerNext(context: Context) {
+      PaceAccessibilityService.swipeOnce(up = true)
+      bumpBluetoothCounter(context, "bt_next_count")
+      showToast(context, "⏭ Next Short")
+    }
+
+    fun triggerPrevious(context: Context) {
+      PaceAccessibilityService.swipeOnce(up = false)
+      bumpBluetoothCounter(context, "bt_previous_count")
+      showToast(context, "⏮ Previous Short")
+    }
+
+    // Play/Pause → Auto Mode 토글(기존 Auto Next 기능과 동일한 스위치, 별개 개념 아님) — 이미 검증된
+    // PaceAccessibilityService.startWatching/stopWatching 그대로 재사용.
+    fun setAutoMode(context: Context, enable: Boolean) {
+      if (enable) PaceAccessibilityService.startWatching(8_000L) else PaceAccessibilityService.stopWatching()
+      bumpBluetoothCounter(context, "bt_auto_toggle_count")
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
+      instance?.updateMediaSessionPlaybackState(playing = enable)
+      showToast(context, if (enable) "🎧 Auto Mode Enabled" else "🎧 Auto Mode Disabled")
+    }
+
+    private fun bumpBluetoothCounter(context: Context, key: String) {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
+    }
+
+    private fun showToast(context: Context, text: String) {
+      Handler(Looper.getMainLooper()).post {
+        Toast.makeText(context.applicationContext, text, Toast.LENGTH_SHORT).show()
+      }
+    }
 
     fun start(
       context: Context,
@@ -235,6 +359,7 @@ class PaceOverlayService : Service() {
         showOverlay(remainingMinutes)
         startForegroundAppPolling()
         startTicking()
+        setupMediaSession()
       }
       // ACTION_UPDATE: JS(Extend Time 등)가 남은시간을 외부에서 조정했을 때만 씀 — 정상 카운트다운
       // 자체는 이제 이 서비스가 스스로 하므로(tickRunnable), 여기선 값만 덮어쓰고 틱 스케줄은
@@ -247,6 +372,7 @@ class PaceOverlayService : Service() {
         stopForegroundAppPolling()
         stopTicking()
         removeOverlay()
+        teardownMediaSession()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
@@ -351,6 +477,7 @@ class PaceOverlayService : Service() {
     stopForegroundAppPolling()
     stopTicking()
     removeOverlay()
+    teardownMediaSession()
     super.onDestroy()
   }
 }

@@ -2323,3 +2323,107 @@ JS 쪽 `sleepTimerRemainingMinutes`도 (네이티브와 별개로, 거의 같은
   의도한 설계인지 확인 필요(오버레이 화면 안에 Extend Time 진입점이 따로 있어야 하는 게 아닌지).
 - iOS 쪽은 이번 라운드에서 전혀 손대지 않음(Screen Time이 별도 경로) — Mac 세션의 "iOS Pace Feed"
   작업과 겹치는 부분 없는지 다음에 서로 확인.
+
+---
+
+## 실기기 검증 6차 — Bluetooth Hands-Free Control 전면 구현 (2026-07-19)
+
+> 배경: 사용자가 외부 AI(Copilot)가 생성한 대량의 스펙 문서를 여러 차례에 걸쳐 붙여넣으며 "AirPods 등
+> 블루투스 리모컨으로 Shorts를 조작"하는 기능(Next/Previous/Play-Pause → Auto Mode 토글)을 요청 —
+> Home/Focus/Settings/Insights UI 노출 포함 전체 스펙을 한 번에 구현하라는 명시적 지시.
+
+### 착수 전 반드시 재확인해야 했던 것 — iOS 아키텍처 충돌
+스펙의 iOS 재생 방식(raw `WKWebView`로 `m.youtube.com/shorts`를 열어 사용자의 실제 로그인/쿠키/개인화
+피드/광고를 그대로 노출)은, 바로 직전에 Mac 세션이 커밋한 "iOS Pace Feed"(YouTube Data API + 공식
+IFrame Player API 기반 **큐 재생**, 실제 로그인 피드 아님)와 정면으로 다른 방향이었다. 이 저장소에는
+이미 **정확히 이 WebView 방식을 시도했다가 정책 리스크(YouTube ToS 위반 + Apple 4.2/5.2.5) 때문에
+프로덕션에서 뺀 이력**이 `app/dev/shorts-poc.tsx`(`if (!__DEV__) return`으로 하드 차단)와
+"iOS 전략 확정 — 원안 ①의 처리" 섹션에 이미 구체적으로 문서화돼 있었다(YouTube ToS 조항별 인용,
+Apple 가이드라인 번호, 경쟁사 3-패턴 비교까지 완료된 리서치). 이 근거를 사용자에게 다시 제시하자
+**"기존 IFrame API 큐 유지"로 결론** — 처음엔 사용자가 "WKWebView 실제 로그인 방식으로 전환"을
+골랐다가, 구체적 근거(ToS 조항/Apple 가이드라인 번호/경쟁사 비교/이미 존재하는 dev-only 하드
+가드)를 다시 보여준 뒤 번복했다. **이미 한 번 결론 낸 사안을 외부 스펙이 반대로 제안한다고 말없이
+뒤집으면 안 된다**는 걸 실제로 겪은 사례.
+
+### 최종 구현 범위
+**공통(플랫폼 무관)**:
+- `useToastStore` + `components/ui/ToastHost.tsx`(신규) — 프로젝트에 토스트 컴포넌트가 아예 없어서
+  새로 만듦. `_layout.tsx` 루트에 1회 마운트.
+- `useBluetoothStore` — `isConnected`/`deviceName`/`autoModeEnabled`/`nextCount`/`previousCount`/
+  `autoToggleCount` 표시용 상태 + `refresh()`/`next()`/`previous()`/`toggleAutoMode()` 액션.
+  `services/platform/bluetoothService.{android,ios}.ts`(기존 `overlayService` 등과 동일한
+  플랫폼-분기 컨벤션)를 감싼다.
+- Home: "🎧 Hands-Free Ready" 배지(Bluetooth 연결 시 플랫폼 카드 상태문구가 "Available"→이걸로
+  바뀜) + 최초 1회 온보딩 바텀시트(`BluetoothOnboardingSheet.tsx`, `STORAGE_KEYS.
+  bluetoothOnboardingSeen`로 재노출 방지).
+- Focus: "Hands-Free Control" 카드(연결 상태, Next/Previous/Auto Mode 버튼 — 버튼 탭은 네이티브
+  함수를 직접 호출해 하드웨어 리모컨과 동일 경로를 탄다).
+- Settings: "Playback Controls" 섹션(연결 기기명, Play/Pause 매핑 설명).
+- Stats: "Bluetooth Controls" 카드(누적 Next/Previous/Auto Toggle 횟수 — 실제 카운터만 표시,
+  "세션의 몇 %가 Hands-Free였는지" 같은 세션 단위 지표는 근거 데이터가 없어 정직하게 뺐다).
+
+**Android(네이티브, 새 의존성 0개)**: `PaceOverlayService.kt`에 `android.media.session.MediaSession`
+을 세션 생명주기와 함께 열고 닫도록 추가 — Daily Limit 때 이미 검증한 "네이티브가 자기 완결적으로
+처리" 원칙을 그대로 따라, Next/Previous 스와이프(`PaceAccessibilityService.swipeOnce`, 기존 Auto
+Next 제스처 재사용) + Play/Pause→Auto Mode 토글(`PaceAccessibilityService.startWatching/
+stopWatching`, 기존 함수 재사용) + 네이티브 Toast(`Toast.makeText`) + SharedPreferences 카운터
+전부 Kotlin 안에서 직접 처리한다. `PaceOverlayModule.kt`에 `triggerSwipe`/`setBluetoothAutoMode`/
+`getBluetoothState` 3개 함수 추가해 Focus 탭 인앱 버튼도 같은 네이티브 경로를 타게 연결.
+
+**iOS(react-native-track-player, 신규 의존성)**: `hooks/useFeedRemoteControl.ios.ts`가
+`react-native-track-player`의 `useTrackPlayerEvents`(RemoteNext/RemotePrevious/RemotePlay/
+RemotePause)를 구독해 `app/feed/index.tsx`의 상태 머신에 연결. **⚠️ 이 라이브러리는 Android
+네이티브 코드(Kotlin)가 이 프로젝트의 Kotlin 컴파일러 설정과 안 맞아(`Bundle?`/`Bundle` nullability
+불일치) 오토링킹 시 Android 빌드 자체가 깨진다** — `react-native.config.js`(신규)에서 Android
+플랫폼만 오토링킹 제외 처리했다. Android는 이 라이브러리를 아예 참조하지 않으므로(`hooks/
+useFeedRemoteControl.android.ts`는 no-op 스텁, `react-native-webview` 미링크 크래시 전례와 같은
+이유로 top-level import 자체를 플랫폼 분리 파일로 원천 차단) 영향 없음.
+
+**iOS Pace Feed 상태 머신**(`app/feed/index.tsx` 재작성): `IDLE→READY→PLAYING↔PAUSED` 상태 머신
+도입, `isAutoMode`(리모컨 Play/Pause로 토글 — 켜져 있으면 영상 종료 시 자동으로 다음, 꺼져 있으면
+멈추고 대기) 추가. 기존 `useShortsQueueStore`에 `history`/`goToPrevious()`(Bluetooth Previous 지원용
+— 기존엔 앞으로만 가는 큐라 "뒤로 가기" 개념이 없었음) 추가. 앱이 백그라운드로 가면 Auto Mode를
+자동으로 끄는 `AppState` 리스너도 추가(사용자 지시 — "카톡 확인하러 나갔다 복귀하면 이미 여러 영상
+지나가 있는 것" 방지).
+
+### 실기기(Android) 검증 결과 — 정직하게 기록
+1. **네이티브 스와이프/토글/토스트/카운터 메커니즘 자체는 정상 동작 확인** — Focus 탭 인앱 버튼
+   경로(`triggerSwipe`/`setBluetoothAutoMode` 직접 호출)는 Daily Limit 때 이미 검증된 것과 동일한
+   패턴이라 신뢰도 높음. MediaSession도 정상 등록됨을 `adb shell dumpsys media_session`으로 확인
+   (`PaceSession` 세션이 `active=true`로 스택에 정상 등록).
+2. **⚠️ 하드웨어 미디어 버튼 라우팅은 이번 라운드에서 신뢰성 있게 검증하지 못했다.** 실제 YouTube가
+   오디오를 재생 중인 상태에서 `adb shell input keyevent 87`(MEDIA_NEXT)을 보내도
+   `dumpsys media_session`의 "Media button session"이 여전히 YouTube 쪽으로 남아있었다 — Android는
+   미디어 버튼을 "활성 세션"이 아니라 "오디오 포커스를 쥔 쪽"에 우선 라우팅하는데, Pace는 자체
+   오디오를 재생하지 않아 포커스가 없었던 게 원인으로 보여 `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`으로
+   짧게 포커스를 요청하는 표준 패턴을 추가했지만(YouTube 재생을 멈추지 않으면서 버튼 우선권만
+   가져오려는 시도), 그래도 YouTube가 "Media button session"을 유지했다. **YouTube 없이 Pace만
+   포그라운드인 단독 상태에서도** 같은 키 이벤트를 보냈을 때 `PaceOverlayService`의 콜백이 실제로
+   호출됐다는 증거(SharedPreferences `bt_next_count` 카운터 증가)를 찾지 못했다 — `adb shell input
+   keyevent`가 시뮬레이션하는 경로 자체가 실제 블루투스 이어폰의 HFP/AVRCP 버튼 이벤트 전달 경로와
+   다를 가능성도 있어, **이 결과가 "실제 이어폰도 안 된다"를 증명하진 않는다.** 다음 세션에서
+   실제 블루투스 이어폰(AirPods/Galaxy Buds 등)으로 직접 재확인 필요 — 이 스펙 자체도 "Auto Next
+   Research Mode"로 실험적 성격을 인정하고 있었다.
+3. iOS 쪽(`react-native-track-player`)은 Mac/Xcode가 없는 이 환경에서 전혀 빌드·실행 검증 불가 —
+   코드만 작성, 런타임 동작 미확인 상태로 기록.
+
+### 실기기 검증 중 발견해 같이 고친 버그
+- **`useShortsQueueStore`의 페이지네이션 무한 루프 가능성** — `nextPageToken`이 "아직 한 번도 안
+  받아옴"과 "마지막 페이지까지 다 받아서 진짜 없음"을 둘 다 `null`로 표현해서, 큐가 고갈된 뒤에도
+  `refill()`이 계속 첫 페이지로 되돌아가 무한 재조회할 수 있는 구조였다 — `hasMore` 플래그를
+  별도로 둬서 고갈 시 재호출을 멈추도록 수정.
+
+### Mac 세션에 대한 조율 메모
+`react-native-track-player`가 `package.json`에 새로 추가됐지만 **Android는 `react-native.config.js`
+로 오토링킹에서 명시적으로 제외**돼 있다 — Android 네이티브를 재빌드(`expo prebuild`/`expo run:
+android`)해도 이 라이브러리는 안 잡힌다(의도된 동작). 혹시 iOS 네이티브(`expo run:ios`/Xcode)에서
+이 라이브러리 관련 빌드 문제가 있으면 그건 이번에 처음 추가된 의존성이니 여기서부터 확인할 것.
+`app/feed/index.tsx`를 대대적으로 수정했으니(상태 머신 도입) Mac 세션이 그 사이 이 파일을 건드렸다면
+병합 시 주의 필요.
+
+### 명시적으로 안 한 것
+사용자가 이어서 Supabase/Vercel 기반 실제 백엔드 Feed Service(수집기 → DB → `/feed` API) 구축을
+요청했으나, **이번 세션에서는 시작하지 않았다** — 이 저장소에 없는 완전히 별도의 인프라 프로젝트(새
+호스팅, 새 DB, 새 배포 파이프라인, 새 크리덴셜)라 앱 코드 세션에 슬쩍 끼워넣기엔 부적절하다고
+판단해 사용자에게 명시적으로 이유를 설명하고 보류했다. 현재 YouTube Data API 직접 연동은 이미
+실제 데이터로 동작 중이라(Mock 아님) 이 보류로 인한 기능 공백은 없다.

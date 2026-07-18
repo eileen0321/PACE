@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useTranslation } from '../../services/i18n';
 import { overlayService, autoNextService, capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -35,9 +36,12 @@ export default function FocusScreen() {
   const [hasOverlayPermission, setHasOverlayPermission] = useState(false);
   const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
   const [hasAutoNextPermission, setHasAutoNextPermission] = useState(false);
+  const bluetooth = useBluetoothStore();
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
+    bluetooth.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, refresh]);
 
   // 실제 권한 부여 상태를 조회 — 이전엔 "연결됨"/"실행 중"이 하드코딩돼 있어 권한이 없어도 항상
@@ -296,6 +300,46 @@ export default function FocusScreen() {
           )}
         </View>
         )}
+
+        {/* 8. Hands-Free Control(2026-07-19, 사용자 지시 — Bluetooth 이어폰 Next/Previous/Play-Pause).
+            Android: 버튼 탭 = 실제 하드웨어 리모컨과 같은 네이티브 경로(스와이프/토스트/카운터 전부
+            동일). iOS: 화면 안 재생(Pace Feed) 조작에는 실제 하드웨어 연동(react-native-track-player)
+            이 있지만, 이 카드의 버튼은 어느 화면이든 상태 표시/토글 용도라 로컬 no-op에 가깝다 — 실제
+            리모컨 신호 자체는 Xcode/실기기가 없어 이번 라운드에서 검증 못 했음(정직하게 배지로 표시). */}
+        {capabilities.supportsHandsFreeControl && (
+        <View>
+          <Text style={styles.sectionLabel}>Hands-Free Control</Text>
+          <View style={styles.handsFreeCard}>
+            <View style={styles.handsFreeStatusRow}>
+              <View style={styles.handsFreeStatusLeft}>
+                <Feather name="headphones" size={16} color={bluetooth.isConnected ? colors.successLight : colors.textSecondary} />
+                <Text style={styles.handsFreeStatusText}>
+                  {bluetooth.isConnected ? (bluetooth.deviceName ?? 'Connected') : 'Not Connected'}
+                </Text>
+              </View>
+              {!capabilities.bluetoothHardwareVerified && (
+                <View style={styles.unverifiedBadge}>
+                  <Text style={styles.unverifiedBadgeText}>Unverified</Text>
+                </View>
+              )}
+            </View>
+            <View style={styles.handsFreeButtonRow}>
+              <Pressable onPress={() => bluetooth.previous()} style={styles.handsFreeBtn}>
+                <Feather name="skip-back" size={18} color={colors.textPrimary} />
+                <Text style={styles.handsFreeBtnLabel}>Previous</Text>
+              </Pressable>
+              <Pressable onPress={() => bluetooth.next()} style={styles.handsFreeBtn}>
+                <Feather name="skip-forward" size={18} color={colors.textPrimary} />
+                <Text style={styles.handsFreeBtnLabel}>Next</Text>
+              </Pressable>
+              <Pressable onPress={() => bluetooth.toggleAutoMode()} style={[styles.handsFreeBtn, bluetooth.autoModeEnabled && styles.handsFreeBtnActive]}>
+                <Feather name={bluetooth.autoModeEnabled ? 'pause' : 'play'} size={18} color={bluetooth.autoModeEnabled ? '#000000' : colors.textPrimary} />
+                <Text style={[styles.handsFreeBtnLabel, bluetooth.autoModeEnabled && styles.handsFreeBtnLabelActive]}>Auto Mode</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+        )}
       </ScrollView>
 
       {/* Demo Mindful Break Prompt Modal */}
@@ -431,4 +475,16 @@ const styles = StyleSheet.create({
   feedEntryIcon: { width: 36, height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)' },
   feedEntryTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   feedEntrySub: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, marginTop: 2 },
+
+  handsFreeCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.md, gap: spacing.md },
+  handsFreeStatusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  handsFreeStatusLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  handsFreeStatusText: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
+  unverifiedBadge: { backgroundColor: 'rgba(245,158,11,0.15)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },
+  unverifiedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyBold, color: colors.warning, textTransform: 'uppercase' },
+  handsFreeButtonRow: { flexDirection: 'row', gap: spacing.sm },
+  handsFreeBtn: { flex: 1, alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.button, paddingVertical: spacing.sm },
+  handsFreeBtnActive: { backgroundColor: colors.successLight },
+  handsFreeBtnLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
+  handsFreeBtnLabelActive: { color: '#000000' },
 });

@@ -1,15 +1,19 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSessionStore } from '../../store/useSessionStore';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
 import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
+import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
+import { STORAGE_KEYS } from '../../services/storage/keys';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
 
@@ -33,6 +37,10 @@ export default function HomeScreen() {
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
+  const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
+  const refreshBluetooth = useBluetoothStore((s) => s.refresh);
+  const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
+  const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -41,12 +49,33 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       if (user?.id) refresh(user.id);
-    }, [user?.id, refresh])
+      refreshBluetooth();
+    }, [user?.id, refresh, refreshBluetooth])
   );
 
-  const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
+  // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
+  // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
+  const startSession = useCallback((platform: AppShieldTarget) => {
     router.push({ pathname: '/overlay', params: { platform } });
   }, [router]);
+
+  const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
+    AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {
+      if (seen) {
+        startSession(platform);
+      } else {
+        setPendingPlatform(platform);
+      }
+    }).catch(() => startSession(platform));
+  }, [startSession]);
+
+  const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
+    AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});
+    if (enableAutoMode) toggleAutoMode();
+    const platform = pendingPlatform;
+    setPendingPlatform(null);
+    if (platform) startSession(platform);
+  }, [pendingPlatform, startSession, toggleAutoMode]);
 
   // 2026-07-18: 사용자 지시(외부 프로덕트 조언 반영) — "AUTO NEXT READY" 등 AUTO 브랜딩을 카드
   // 상태줄에서 전면에 노출하지 않는다(스토어 심사 리스크 + 타겟 연령대엔 "자동 조작 앱"보다 "프리미엄
@@ -75,7 +104,13 @@ export default function HomeScreen() {
             <PlatformPickerCard
               key={p.id}
               title={p.title}
-              statusText={activeSessionPlatform === p.id ? 'Active' : 'Available'}
+              statusText={
+                activeSessionPlatform === p.id
+                  ? 'Active'
+                  : isBluetoothConnected
+                    ? '🎧 Hands-Free Ready'
+                    : 'Available'
+              }
               cover={p.cover}
               gradientFrom={p.gradientFrom}
               onPress={() => onSelectPlatform(p.id)}
@@ -87,6 +122,12 @@ export default function HomeScreen() {
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>Quick Controls</Text>
         <QuickControlsGrid />
       </ScrollView>
+
+      <BluetoothOnboardingSheet
+        visible={pendingPlatform !== null}
+        onEnable={() => dismissOnboarding(true)}
+        onDismiss={() => dismissOnboarding(false)}
+      />
     </SafeAreaView>
   );
 }

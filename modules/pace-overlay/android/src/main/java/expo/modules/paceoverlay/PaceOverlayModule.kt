@@ -1,6 +1,9 @@
 package expo.modules.paceoverlay
 
+import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,6 +17,17 @@ import expo.modules.kotlin.modules.ModuleDefinition
 // PACE_ARCHITECTURE.md "Android Overlay 네이티브 POC" 섹션 참고 — 아직 npx expo prebuild +
 // EAS Dev Client로 실기기 빌드 검증 전인 POC 코드다.
 class PaceOverlayModule : Module() {
+  // Bluetooth Hands-Free(2026-07-19) — AudioManager로 현재 연결된 블루투스 오디오 출력을 조회.
+  // BLUETOOTH_CONNECT 런타임 권한(Android 12+)이 필요한 건 BluetoothAdapter의 클래식 API 쪽이고,
+  // AudioManager.getDevices()로 출력 라우팅만 보는 이 경로는 별도 권한 없이 동작한다.
+  private fun getConnectedBluetoothAudioDevice(context: Context): Pair<Boolean, String?> {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return Pair(false, null)
+    val btDevice = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+      it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+    }
+    return Pair(btDevice != null, btDevice?.productName?.toString())
+  }
+
   override fun definition() = ModuleDefinition {
     Name("PaceOverlay")
 
@@ -123,6 +137,37 @@ class PaceOverlayModule : Module() {
 
     AsyncFunction("stopAutoNextWatching") {
       PaceAccessibilityService.stopWatching()
+    }
+
+    // Bluetooth 리모컨 버튼뿐 아니라 Focus 탭 등 인앱 Next/Previous 버튼 탭에서도 같은 스와이프를
+    // 쓸 수 있도록 노출(2026-07-19) — MediaSession 콜백(PaceOverlayService)이 부르는 것과 동일한
+    // PaceAccessibilityService.swipeOnce()를 JS에서도 직접 호출 가능하게 한다.
+    Function("triggerSwipe") { up: Boolean ->
+      PaceAccessibilityService.swipeOnce(up)
+    }
+
+    // Focus 탭 Auto Mode 토글 버튼 등 인앱 탭에서도 하드웨어 리모컨 Play/Pause와 동일한 경로
+    // (PaceOverlayService.setAutoMode — 카운터/토스트/MediaSession 재생상태 동기화까지 포함)를 타게 한다.
+    Function("setBluetoothAutoMode") { enable: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setAutoMode(context, enable) }
+    }
+
+    // Bluetooth Hands-Free Control(2026-07-19, Copilot 스펙 정리 반영) — 실제 스와이프/Auto Mode
+    // 토글/토스트는 전부 PaceOverlayService의 MediaSession 콜백에서 네이티브가 자기 완결적으로
+    // 처리한다(이벤트 브릿지 불필요, Daily Limit과 같은 설계 원칙). JS는 이 함수로 표시용 상태만
+    // 폴링해서 Home/Focus/Settings/Insights UI에 반영한다.
+    Function("getBluetoothState") {
+      val context = appContext.reactContext
+      val prefs = context?.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      val deviceInfo = context?.let { getConnectedBluetoothAudioDevice(it) }
+      mapOf(
+        "isConnected" to (deviceInfo?.first ?: false),
+        "deviceName" to deviceInfo?.second,
+        "autoModeEnabled" to (prefs?.getBoolean(PaceOverlayService.PREF_AUTO_MODE, false) ?: false),
+        "nextCount" to (prefs?.getInt("bt_next_count", 0) ?: 0),
+        "previousCount" to (prefs?.getInt("bt_previous_count", 0) ?: 0),
+        "autoToggleCount" to (prefs?.getInt("bt_auto_toggle_count", 0) ?: 0)
+      )
     }
   }
 }

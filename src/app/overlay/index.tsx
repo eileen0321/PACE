@@ -31,10 +31,16 @@ async function launchPlatformApp(platform: AppShieldTarget | undefined) {
   if (Platform.OS !== 'android' || !platform) return;
   const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
   if (!app) return;
+  // 2026-07-18 실기기 검증 중 발견한 실버그: YouTube는 `vnd.youtube://`(커스텀 스킴)로 열면 앱이
+  // 설치돼 있을 때 항상 "성공"으로 catch를 안 타서, Shorts 전용 URL인 webFallback
+  // (m.youtube.com/shorts)이 영영 안 쓰이고 매번 YouTube 홈 탭만 열렸다("Shorts 카드를 눌렀는데
+  // YouTube 홈이 뜬다"는 사용자 지적으로 발견). https Shorts URL은 Android App Links로 앱이 설치돼
+  // 있으면 네이티브 앱의 Shorts 탭으로, 안 돼있으면 브라우저로 자동 라우팅되므로 —
+  // 커스텀 스킴 우선순위를 뒤집어 App Link(webFallback)를 먼저 시도.
   try {
-    await Linking.openURL(app.androidScheme);
+    await Linking.openURL(app.webFallback);
   } catch {
-    await Linking.openURL(app.webFallback).catch(() => {});
+    await Linking.openURL(app.androidScheme).catch(() => {});
   }
 }
 

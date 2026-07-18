@@ -9,7 +9,7 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
-import { overlayService } from '../../services/platform';
+import { overlayService, autoNextService, capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -34,6 +34,7 @@ export default function FocusScreen() {
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [hasOverlayPermission, setHasOverlayPermission] = useState(false);
   const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
+  const [hasAutoNextPermission, setHasAutoNextPermission] = useState(false);
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -45,13 +46,15 @@ export default function FocusScreen() {
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
-      const [overlay, usageAccess] = await Promise.all([
+      const [overlay, usageAccess, autoNextPermission] = await Promise.all([
         overlayService.hasOverlayPermission(),
         overlayService.hasForegroundDetectionPermission(),
+        capabilities.supportsAutoNext ? autoNextService.hasPermission() : Promise.resolve(false),
       ]);
       if (!cancelled) {
         setHasOverlayPermission(overlay);
         setHasUsageAccessPermission(usageAccess);
+        setHasAutoNextPermission(autoNextPermission);
       }
     };
     check();
@@ -151,6 +154,25 @@ export default function FocusScreen() {
                   </Text>
                 </View>
               </Pressable>
+              {/* Auto Next 실제 스와이프 — EXPO_PUBLIC_ENABLE_AUTO_NEXT=true 빌드에서만 노출(2026-07-18,
+                  Play 스토어 정책 결정 전까지 스토어 빌드에서는 항상 숨김). */}
+              {capabilities.supportsAutoNext && (
+                <Pressable
+                  style={[styles.guardRow, styles.guardRowBordered]}
+                  onPress={() => !hasAutoNextPermission && autoNextService.requestPermission()}
+                >
+                  <View style={styles.guardLeft}>
+                    <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>
+                    <Text style={styles.guardDesc}>{t('focus.autoNextAccessibilityStatusDesc')}</Text>
+                  </View>
+                  <View style={[styles.pulsePill, !hasAutoNextPermission && styles.pulsePillWarning]}>
+                    <View style={[styles.pulseDot, !hasAutoNextPermission && styles.pulseDotWarning]} />
+                    <Text style={[styles.pulsePillText, !hasAutoNextPermission && styles.pulsePillTextWarning]}>
+                      {hasAutoNextPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
             </View>
           </View>
         )}

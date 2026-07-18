@@ -4,6 +4,10 @@ import type { AutoNextService } from './types';
 // supportsAutoNext=false — 상위 UI(설정 화면, 오버레이)는 이 값으로 토글을 숨기거나 비활성 처리한다.
 export const autoNextService: AutoNextService = {
   supportsAutoNext: false,
+  async hasPermission() {
+    return true; // 개념 자체가 없음(no-op)
+  },
+  async requestPermission() {},
   async start() {
     throw new Error('Auto Next is not supported on iOS');
   },

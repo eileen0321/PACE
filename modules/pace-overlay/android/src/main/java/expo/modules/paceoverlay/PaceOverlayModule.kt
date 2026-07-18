@@ -71,5 +71,30 @@ class PaceOverlayModule : Module() {
         PaceOverlayService.stop(context)
       }
     }
+
+    // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — ⚠️ Play 스토어 정책 리스크
+    // (PACE_ARCHITECTURE.md 참고): "사용자 대신 스와이프"는 AccessibilityService 심사에서 "접근성
+    // 목적이 아닌 남용"으로 리젝될 수 있다. 사용자 결정(2026-07-18): 코드는 완성해두되 스토어 제출
+    // 시 활성화 여부는 EXPO_PUBLIC_ENABLE_AUTO_NEXT 빌드 플래그로 별도 결정(autoNextService.android.ts).
+    Function("hasAccessibilityPermission") {
+      appContext.reactContext?.let { context -> PaceAccessibilityService.isEnabled(context) } ?: false
+    }
+
+    Function("requestAccessibilityPermission") {
+      appContext.reactContext?.let { context ->
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+      }
+    }
+
+    AsyncFunction("startAutoNextWatching") { intervalMs: Int ->
+      PaceAccessibilityService.startWatching(intervalMs.toLong())
+    }
+
+    AsyncFunction("stopAutoNextWatching") {
+      PaceAccessibilityService.stopWatching()
+    }
   }
 }

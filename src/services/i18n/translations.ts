@@ -88,6 +88,9 @@ export const translations = {
       // 아니라 UsageStatsManager(Usage Access) 기반으로 구현이 바뀌어 있는 걸 발견해 라벨을 맞췄다.
       accessibilityStatus: 'Usage Access Status',
       accessibilityStatusDesc: 'Needed to detect the foreground app',
+      // 2026-07-18: Auto Next 실제 스와이프용 별도 접근성 서비스 — Usage Access와는 다른 권한.
+      autoNextAccessibilityStatus: 'Auto Next Swipe Status',
+      autoNextAccessibilityStatusDesc: 'Accessibility permission for auto-swiping videos',
       connected: 'Connected',
       notConnected: 'Not Connected',
       running: 'Running',
@@ -295,6 +298,8 @@ export const translations = {
       overlayStatusDesc: '화면 넘김 제어 오버레이 작동 중',
       accessibilityStatus: '사용 정보 접근 상태',
       accessibilityStatusDesc: '포그라운드 앱 감지에 필요',
+      autoNextAccessibilityStatus: 'Auto Next 스와이프 상태',
+      autoNextAccessibilityStatusDesc: '영상 자동 넘김에 필요한 접근성 권한',
       connected: '연결됨',
       notConnected: '미연결',
       running: '실행 중',

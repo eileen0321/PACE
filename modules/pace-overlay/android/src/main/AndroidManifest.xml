@@ -17,5 +17,20 @@
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Pace digital-wellbeing session overlay" />
     </service>
+
+    <!-- Auto Next 실제 스와이프(2026-07-18, PaceAccessibilityService.kt 주석 참고) — exported="true"는
+         AccessibilityService의 필수 관례이고(시스템이 바인딩해야 함), android:permission이 시스템
+         외 어떤 앱도 이 서비스에 바인딩할 수 없도록 실질적으로 보호한다. -->
+    <service
+      android:name="expo.modules.paceoverlay.PaceAccessibilityService"
+      android:exported="true"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/accessibility_service_config" />
+    </service>
   </application>
 </manifest>

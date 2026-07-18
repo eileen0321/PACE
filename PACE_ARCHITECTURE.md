@@ -1055,11 +1055,12 @@ webhook 서버 검증 불가"라고 명시했던 반면, jlpt-master(`backend/SU
 | Service | `services/api/client.ts` | 🟡 부분 | 클라이언트 완료, 백엔드 스펙 확정(Java/Spring, 위 "백엔드 스택 확정" 섹션) — 서버 구현 진행 중, API_BASE_URL은 로컬 개발 서버 연결 전까지 자리표시자 |
 | Backend | `backend/`(신설, Java/Spring Boot) | ✅ 로컬 검증 완료 | AuthController/SessionController/StatsController/SettingsController/WebhookController 5종 + Flyway V1 + GlobalExceptionHandler + RevenueCatServiceTest(8종, 전부 통과) 구현 완료. 이 개발 환경에 Docker/MySQL이 없어 **H2(MySQL 호환 모드)로 대체 기동**해 전 엔드포인트 curl 검증 — 실제 MySQL 대상 검증과 Railway 실배포는 아직 안 함(별도 승인 필요) |
 | Service | `services/auth/google.ts`, `apple.ts` | ✅ 완료(코드), 🔴 실기기 미검증 | 실키+Dev Client 빌드 필요 |
-| Service | `services/platform/usageService.*`, `autoNextService.*`, `focusService.*` | 🔴 인터페이스만 | 네이티브 모듈 없음 |
-| Service | `services/platform/overlayService.android.ts` | 🟡 POC 연결됨 | `modules/pace-overlay` 방어적 require, 컴파일 미검증 |
+| Service | `services/platform/usageService.*`, `focusService.*` | 🔴 인터페이스만 | 네이티브 모듈 없음 |
+| Service | `services/platform/autoNextService.android.ts` | ✅ 완료(컴파일 검증) | PaceAccessibilityService 브릿지 — `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 빌드 플래그로 게이팅(기본 OFF). 아래 "Auto Next 실제 스와이프 구현" 섹션 참고 |
+| Service | `services/platform/overlayService.android.ts` | 🟡 POC 연결됨, 컴파일 검증 완료 | `modules/pace-overlay` 방어적 require. 2026-07-18 `:pace-overlay:compileDebugKotlin`+`:app:processDebugManifest` 그린 확인(아래 섹션) — 아직 실기기 오버레이 UI 렌더 자체는 이전 라운드에서 검증됨 |
 | Service | `services/platform/capabilities.ts` | ✅ 완료 | 통합 capability 배럴 + useCapabilities() 훅 |
 | 네이티브(Android) | `modules/pace-overlay`(Expo Modules API) | 🟡 POC 작성 완료 | Foreground Service + TYPE_APPLICATION_OVERLAY, prebuild+Dev Client 빌드 검증 전 |
-| 네이티브(Android) | PaceAccessibilityService, Bubbles(17+) | 🔴 미착수 | |
+| 네이티브(Android) | `PaceAccessibilityService`(Auto Next 실제 스와이프) | ✅ 컴파일+매니페스트+시스템 바인딩(`dumpsys accessibility`) 검증 완료 | 실제 YouTube Shorts에서 제스처가 눈으로 보이게 동작하는지는 아직 미검증(아래 섹션). Bubbles(17+)는 여전히 🔴 미착수 |
 | UI | `app/(tabs)/*`, `app/overlay`, `app/auth`, `app/paywall`, `app/onboarding` | ✅ 완료 | healthy-shorts-assistant 포팅 완료, tsc 0 errors |
 | 네이티브(iOS) | ActivityKit, FamilyControls | 🔴 미착수 | EAS Dev Client + Swift 모듈 필요 |
 | 백엔드 | 커스텀 REST 서버 | 🔴 미착수 | jlpt-master RevenueCat 웹훅 계약 참고해 구현 예정 |
@@ -1829,3 +1830,150 @@ Android에서 재기동하니:
 - Focus: "살짝만"이라는 지시를 "카드 1개만 적용"으로 해석 — Session Status 카드에만 `GlassSurface`
   (기본 intensity 40 대신 `intensity={20}`로 낮춰서 더 옅게), Android Guard Services/Interventions
   카드는 기존 플랫 유지. 이후 사용자 피드백에 따라 범위 조정 가능.
+
+---
+
+## "미구현/명확한 갭" 목록 해소 (2026-07-18)
+
+이전 세션에서 정리한 구현/미구현 기능 리스트 중 "❌ 전혀 안 됨" 항목을 사용자 지시("이거부터 하나씩
+해")에 따라 순서대로 해소했다. 아래는 실제 코드 확인·수정·검증 순서 그대로.
+
+### 1. 치명적 버그 발견: 세션 카운트다운이 실제로는 한 번도 안 줄어들었음
+`useTimerStore.tickMinute()`를 호출하는 곳이 코드 전체(grep)에 **어디에도 없었다.** 세션 시작 시
+`remainingMinutes`/`sleepTimerRemainingMinutes`/`nextBreakInMinutes`를 한 번 계산해 넣기만 하고, 그
+이후 실시간으로 줄어드는 메커니즘 자체가 없었다는 뜻 — 즉 남은시간 한도 도달, 수면 타이머 만료,
+휴식 리마인더가 전부 **실질적으로 도달 불가능한 상태**였다. 원래 "❌ 갭" 리스트에 없던 항목인데,
+조사 중 발견해 최우선으로 고쳤다.
+
+수정(`app/overlay/index.tsx`):
+- 세션 시작 시 `setInterval(() => useTimerStore.getState().tickMinute(), 60_000)`으로 1분마다 직접
+  틱. 네이티브 포그라운드 서비스가 아직 JS로 틱 이벤트를 보내지 않으므로 현재는 JS 인터벌이 유일한
+  소스(추후 네이티브가 붙으면 대체 가능).
+- 남은시간/수면타이머가 0에 도달하면 실제로 `router.back()`으로 세션을 종료하도록 새 `useEffect` 추가
+  — ⚠️ `tickMinute()`이 0 도달 시 **내부적으로 자기 자신의 `endSession()`을 같은 렌더에서 먼저
+  호출**하기 때문에 `isSessionActive` 플래그로 게이팅하면 "이미 false"라 트리거가 누락된다. `ref`
+  두 개(`hasSessionStartedRef`, `hasAutoEndedRef`)로 "세션이 실제로 시작됐는지"와 "이미 자동종료
+  처리했는지"를 별도 추적해서 해결(초기 렌더의 `remainingMinutes===0` false-positive도 같이 방지).
+- 휴식 리마인더(`nextBreakInMinutes===0`)에 도달하면 알림을 띄우고 `breakIntervalMinutes`로 리셋
+  — 예전엔 리셋 로직 자체가 없어서(애초에 틱이 안 돌아 도달 불가능했으니) 한 번 울리고 끝이었을 것.
+
+### 2. 세션 종료 시 `durationSeconds`가 항상 0으로 기록되던 버그
+`sessionsRepository.endSession()`을 호출하는 자리에 실제 값 대신 하드코딩된 `0`이 들어있었다
+(`endSessionRow(sessionIdRef.current, 0, videoIndex + 1, ...)`). 세션 시작 시각을
+`sessionStartedAtMsRef`(ref, `Date.now()`)에 저장해두고 세션 종료(cleanup) 시점에
+`Math.round((Date.now() - sessionStartedAtMsRef.current) / 1000)`로 실제 경과 시간을 계산해 전달하도록
+수정. 이 필드는 Stats 탭의 "오늘 사용 시간"/"Focus Score"/"지난주 대비" 전부의 원천 데이터라 파급力이 큰 수정.
+
+### 3. Extend Time(+10/20/30m)이 오늘 하루가 아니라 영구히 한도를 늘리던 버그
+Focus 탭의 Extend Time 버튼이 `update({ dailyLimitMinutes: settings.dailyLimitMinutes + amount })`를
+호출 — `dailyLimitMinutes`는 영속 설정(기본값)이라 다음날 이후에도 늘어난 한도가 그대로 남는 버그였다.
+새 스토어 `store/useDailyBonusStore.ts` 추가: 날짜별로 스코프된 "오늘 보너스 분(extraMinutes)"을
+AsyncStorage에 저장하고, 저장된 날짜가 오늘과 다르면 자동으로 0으로 리셋. `dailyLimitMinutes` 자체는
+전혀 건드리지 않고, 화면에서 `effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes`로만
+합산해서 보여준다(`focus.tsx`, `overlay/index.tsx` 둘 다 반영). Focus 탭의 "Finish Session" 확인
+모달도 이 참에 실제 동작을 갖게 됐다 — 원문 카피가 "reset today's active session counters"인데, 이
+화면엔 애초에 실시간으로 붙잡을 "라이브 세션"이 없어서(오버레이가 열려 있으면 탭 자체에 접근 불가)
+문자 그대로 "오늘 세션 카운터 리셋"에 대응하는 유일한 실제 상태인 `useDailyBonusStore.resetToday()`를
+호출하도록 연결.
+
+### 4. 알림 시스템 — 완전 미연동 → expo-notifications 실제 연동
+`expo-notifications`가 `package.json`엔 있었지만 어디서도 `import`되지 않았고, Settings 탭의 알림
+토글 3개(`notif5m`/`notifLimit`/`notifBreak`)는 화면 로컬 `useState`라 탭을 벗어나면 항상 기본값
+`true`로 리셋되고 실제 발송 여부에 전혀 영향을 못 줬다.
+- `UserSettings`에 `notifyRemaining`/`notifyLimit`/`notifyBreak` 필드 추가(영속), Settings 탭 토글을
+  `useSettingsStore`에 직결 — ON으로 켜면 그 자리에서 `requestNotificationPermission()`도 호출해
+  권한이 없으면 미리 알 수 있게 함.
+- 새 모듈 `services/notifications/index.ts`: `Notifications.scheduleNotificationAsync(..., trigger:
+  null)`로 즉시 로컬 알림 발송. Android 채널(`pace-session`, `IMPORTANCE_HIGH`) 1회 생성.
+  `notifyLowTime`/`notifyLimitReached`/`notifyBreakReminder` 3개 함수, 각각 해당 설정 토글을 먼저 체크.
+- `overlay/index.tsx`의 남은시간/수면타이머/휴식리마인더 `useEffect`에서 실제 호출 — 오버레이가 화면에
+  안 보이는 상태(백그라운드 앱 전환 중)에도 사용자에게 닿는 유일한 채널이 됨.
+- `app.json`의 `plugins`에 `"expo-notifications"` 추가(config plugin 필수 — 없으면 Android
+  13+ 알림 권한 프롬프트가 안 뜬다는 걸 공식 문서로 확인 후 추가).
+
+### 5. 프론트-백엔드 완전 미배선 → `statsApi`/`settingsApi` 실제 호출 연결
+`services/api/client.ts`의 `statsApi.pushSessions`/`settingsApi.*`는 정의만 있고 앱 어디서도 호출되지
+않는 죽은 코드였다(이전 세션에 백엔드를 다 만들어놓고 프론트와 잇지 않은 상태). 이번에 실제 배선:
+- **불일치 발견 및 수정**: `statsApi.pushSessions`가 `/stats/sessions`를 호출하도록 돼 있었는데, 실제
+  백엔드 `StatsController`는 계획 단계에서 `/stats/sync`로 개명된 채 구현돼 있었다(`grep`으로 대조해
+  확인) — 클라이언트가 갱신 안 된 상태. `/stats/sync`로 수정.
+- 새 모듈 `services/sync/backendSync.ts`: `pushUnsyncedSessions(userId)`(로컬 SQLite의
+  `getUnsyncedSessions`→서버 push→`markSynced`), `pushSettings(settings)`, `pullSettings()`. **토큰이
+  없으면(= `useUserStore.loginAsGuest`의 로컬 전용 폴백 유저) 시도 자체를 스킵** — 안 그러면 401이
+  나서 `setUnauthorizedHandler`가 불필요하게 자동 로그아웃을 유발할 뻔했다.
+- `useSettingsStore.update()`/`updateAppOverride()`가 로컬 저장 후 `pushSettings()`도 fire-and-forget
+  호출. 새 액션 `syncFromServer()` 추가 — 앱 시작 시(`_layout.tsx`, `initUser()` 완료 후) 서버 설정을
+  당겨와 로컬과 병합(새 기기/재설치 복구용).
+- `overlay/index.tsx` 세션 종료 후, `stats.tsx` 탭 마운트 시 `pushUnsyncedSessions()` 호출(후자는
+  오프라인이었거나 실패한 이전 백로그를 재시도하는 opportunistic sync).
+- **로컬 스모크테스트로 실제 검증**(H2 인메모리, `pom.xml`의 h2 scope를 `test`→`runtime`으로 잠깐
+  바꿨다가 검증 후 원복 + `mvn test` 재확인 — 이전 세션과 동일한 패턴): `POST /auth/guest` →
+  `PUT/GET /settings` → `POST /stats/sync` 전부 curl로 200 확인. **처음엔 Java `LocalDateTime` 필드가
+  클라이언트가 보내는 `Date.toISOString()`의 `'Z'` 접미사를 거부할 거라 예상하고 방어적으로 잘라내는
+  코드를 넣었는데, 실제로 `'Z'` 포함 페이로드로도 curl 테스트가 200을 반환했다** — Jackson이 예상보다
+  관대했다. 잘라내는 코드 자체는 유지(의미상 더 정확하고 향후 버전 변화에 안전)하되, 주석에서 "400
+  버그를 막는다"는 틀린 주장은 "방어적 정규화"로 정정.
+
+### 6. Focus Score / 지난주 대비 트렌드 — 로컬 전용 정의로 gap 해소
+서버 스키마(`daily_stats.focus_score`)는 "산출 공식이 없는 채로 서버가 먼저 만든 허상 개념"이라는
+이유로 의도적으로 뺐던 결정(위 "백엔드 스택 확정" 섹션)은 **그대로 유지** — 서버에 이 컬럼을 다시
+추가하지 않았다. 대신 클라이언트에서만 계산하는 정직한 정의를 붙였다:
+- **Focus Score** = "이번 주 사용 기록이 있는 날 중, 일일 한도(`dailyLimitMinutes`) 이내로 마친 날의
+  비율"(0~100, 저장 없이 매번 로컬 데이터로 재계산). 사용 기록이 아예 없으면 "아직 기록 없음" 표시.
+  (`useStatsStore.ts`의 `computeFocusScore`)
+- **지난주 대비 트렌드**: `statsRepository.ts`에 `getPreviousWeekStats()`(-13일~-7일) 신규 추가 —
+  이전엔 이번 주 쿼리만 있어서 비교 기준 자체가 없었다. Stats 탭 Hero 카드 아래 "↓12% Less Than Last
+  Week" / "↑8% More Than Last Week" 형태로 표시, 지난주 기록이 없으면 "지난주 기록이 아직 없어요".
+
+### 7. Auto Next 실제 스와이프(AccessibilityService) — Play 정책 리스크와 정면 충돌하는 결정 재확인 후 구현
+이 항목은 진짜 미구현 갭이자 동시에 **이미 문서화된 결정과 충돌**하는 사안이었다 — "Android
+AccessibilityService 최적화 원칙" 섹션에 "AccessibilityService로 사용자 대신 스와이프하는 건 '접근성
+목적이 아닌 남용'으로 Play 심사 리젝 리스크가 크다"는 이유로 의도적으로 빼뒀던 기능이다. 구현 전에
+사용자에게 명시적으로 확인:
+- 질문: "기존 결정(리스크 회피) 유지 vs 리스크 감수하고 구현 vs 대안 조사"
+- **답변: "리스크 감수하고 구현"**, 이어서 **"구현은 해놓고 출시 전에 정책을 결정할 거야"** — 즉
+  코드는 지금 완성해두되, 스토어 제출 시점에 실제로 켜서 낼지는 그때 가서 별도 결정.
+
+구현 내용(`modules/pace-overlay/android/src/main/java/expo/modules/paceoverlay/`):
+- **`PaceAccessibilityService.kt`(신규)**: `dispatchGesture()`(API 24+)로 화면 하단→상단 스와이프
+  제스처를 디스패치. 문서 초안엔 "MediaSession PlaybackState 우선, Accessibility 이벤트 폴백"이라
+  적혀 있었지만 **MediaSession 감지는 알림 리스너라는 별도 특수 권한이 더 필요해 스코프가 커진다** —
+  1단계는 "감시 대상 앱(`SupportedApps.PACKAGES`)이 포그라운드인 동안 고정 간격(8초, 근사치)으로
+  스와이프"하는 단순 타이머 방식만 구현(정직한 MVP, 영상 경계 정밀 감지는 후속 과제).
+  `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`를 직접 파싱해 활성화 여부 확인(`isEnabled()`).
+- **`accessibility_service_config.xml`(신규)**: `canPerformGestures="true"`, 감시 패키지 3개
+  하드코딩(Kotlin `SupportedApps.PACKAGES`와 반드시 동기화 — 기존 모듈 컨벤션과 동일한 이유로 양쪽
+  각각 하드코딩), 사용자에게 노출되는 `description` 문자열로 용도를 정직하게 명시.
+- **`AndroidManifest.xml`**: `BIND_ACCESSIBILITY_SERVICE` 권한으로 보호된 `exported="true"` 서비스
+  선언(시스템만 바인딩 가능하도록 보호하면서도 접근성 서비스 관례상 exported는 true여야 함).
+- **`PaceOverlayModule.kt`**: `hasAccessibilityPermission`/`requestAccessibilityPermission`/
+  `startAutoNextWatching`/`stopAutoNextWatching` 4개 함수 추가.
+- **JS 배선**: `autoNextService.android.ts`가 `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 빌드 플래그(기존 계획대로
+  기본 OFF)로 네이티브 모듈 자체를 로드할지부터 게이팅. `AutoNextService` 인터페이스에
+  `hasPermission()`/`requestPermission()` 추가(iOS는 no-op). `useAutoNextStore.start()/stop()`의
+  기존 TODO 주석("NativeModules 연결 예정")을 실제 호출로 교체. Focus 탭에 "Auto Next Swipe Status"
+  가드 행을 추가하되 **`capabilities.supportsAutoNext`(=빌드 플래그 ON일 때만 true)로 감싸 스토어
+  빌드에서는 화면에 아예 안 보이게** 처리.
+- **검증**: `cd android && ./gradlew :pace-overlay:compileDebugKotlin` — BUILD SUCCESSFUL(Kotlin 컴파일
+  에러 없음). `./gradlew :app:processDebugManifest` — BUILD SUCCESSFUL, 병합된 최종
+  `AndroidManifest.xml`에 `PaceAccessibilityService` 선언이 올바르게 반영된 것을 직접 grep으로 확인.
+  이어서 `EXPO_PUBLIC_ENABLE_AUTO_NEXT=true`로 `assembleDebug -PreactNativeArchitectures=x86_64`
+  전체 빌드 → `pace_test`(emulator-5554, `adb emu avd name`로 신원 재확인 후 사용) 설치 →
+  `adb shell settings put secure enabled_accessibility_services
+  com.pace.app/expo.modules.paceoverlay.PaceAccessibilityService`로 강제 활성화 시도. **시스템이 이
+  설정값을 그대로 받아들였고(잘못된 매니페스트/XML이면 시스템이 거부하거나 무시함), `adb shell dumpsys
+  accessibility`에 실제로 다음과 같이 바인딩된 것을 확인**:
+  `Bound services:{Service[label=Pace, feedbackType[FEEDBACK_GENERIC], capabilities=32
+  (=CAN_PERFORM_GESTURES), eventTypes=TYPE_WINDOW_STATE_CHANGED, notificationTimeout=100]}` — XML에
+  선언한 제스처 권한/이벤트타입/알림지연이 정확히 시스템에 반영됐다는 뜻. 검증 후 설정을 다시
+  `settings delete`로 원복(에뮬레이터를 다른 세션이 이어 쓸 수 있으므로 테스트 상태를 남기지 않음).
+  **아직 안 한 것**: 실제로 YouTube Shorts 등을 열어 `dispatchGesture()`가 화면에서 눈으로 보이는
+  스와이프를 일으키는지의 완전한 end-to-end 확인(위 검증은 "서비스가 시스템에 올바르게 등록·바인딩됐다"는
+  것까지고, "제스처가 실제로 원하는 대로 넘겨준다"는 아직 시각적으로 확인 전) — 다음 세션이 이어서
+  YouTube Shorts 화면에서 직접 관찰할 것.
+
+### 8. Railway 배포 — 보류 결정
+질문: "지금 Railway에 실배포할까요?"(사용자 계정 로그인/시크릿 발급 필요, 실비용 발생 가능). **답변:
+"로컬 검증까지만(권장)"** — 위 5번 항목의 로컬 H2 스모크테스트로 API 계약 자체는 이미 검증됐으므로,
+실제 배포는 사용자가 Railway 계정으로 직접/동석해서 진행하는 것으로 보류. 코드/설정(`Dockerfile`,
+`railway.json`)은 이전 세션에서 이미 준비돼 있어 배포 자체는 언제든 시도 가능한 상태.

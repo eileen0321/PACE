@@ -11,6 +11,12 @@ type PaceOverlayNativeModule = {
   start(remainingMinutes: number, autoNextEnabled: boolean): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
+  // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — Play 스토어 정책 리스크가 있어
+  // EXPO_PUBLIC_ENABLE_AUTO_NEXT 빌드에서만 상위 UI/서비스가 이 함수들을 호출한다.
+  hasAccessibilityPermission(): boolean;
+  requestAccessibilityPermission(): void;
+  startAutoNextWatching(intervalMs: number): Promise<void>;
+  stopAutoNextWatching(): Promise<void>;
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

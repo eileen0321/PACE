@@ -16,6 +16,9 @@ export interface UsageService {
 export interface AutoNextService {
   /** iOS는 항상 false — 상위 UI가 이 값으로 토글 자체를 숨긴다. */
   readonly supportsAutoNext: boolean;
+  /** Android: PaceAccessibilityService가 시스템 설정 > 접근성에 활성화돼 있는지. iOS: 항상 true(no-op). */
+  hasPermission(): Promise<boolean>;
+  requestPermission(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 }

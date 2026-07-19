@@ -10,6 +10,9 @@ type TimerState = {
   nextBreakInMinutes: number | null;
   startSession: (params: { sessionId: string; remainingMinutes: number; sleepTimerMinutes: number | null; breakIntervalMinutes: number }) => void;
   tickMinute: () => void;
+  /** Extend Time(오버레이 확장 카드) — 세션 중 남은시간에 즉시 더한다. 호출부(overlay/index.tsx)가
+   * 반환값으로 useDailyBonusStore 영속 + overlayService.updateRemaining() 네이티브 동기화까지 한다. */
+  addMinutes: (minutes: number) => number;
   endSession: () => void;
 };
 
@@ -44,6 +47,14 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     if (remaining <= 0 || sleep === 0) {
       get().endSession();
     }
+  },
+
+  addMinutes: (minutes) => {
+    const s = get();
+    if (!s.isSessionActive) return s.remainingMinutes;
+    const remaining = s.remainingMinutes + minutes;
+    set({ remainingMinutes: remaining });
+    return remaining;
   },
 
   endSession: () => {

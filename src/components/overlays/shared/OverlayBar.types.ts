@@ -24,6 +24,11 @@ export type OverlayExpandedInfo = {
   isPlaying: boolean;
   onTogglePlaying: () => void;
   onStop: () => void;
+  /** Extend Time(오늘 하루치 보너스 분 추가) — Focus 탭 Extend Time 칩과 같은 메커니즘
+   * (useDailyBonusStore), 세션 중에도 Focus 탭으로 나가지 않고 바로 쓸 수 있게 오버레이 확장
+   * 카드에도 추가(2026-07-19 — 세션 중엔 탭 네비게이터 밖의 /overlay 화면이라 Focus 탭 자체에
+   * 물리적으로 접근 불가능했던 갭). */
+  onExtend: (minutes: number) => void;
 };
 
 export const OVERLAY_BAR_HEIGHT = 48; // 44~56px 범위 내 기본값

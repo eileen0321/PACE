@@ -297,6 +297,12 @@ export default function OverlaySessionScreen() {
               isPlaying={isPlaying}
               onTogglePlaying={() => { setIsPlaying((v) => !v); setExpanded(false); }}
               onStop={onStop}
+              onExtend={(amount) => {
+                useDailyBonusStore.getState().addMinutes(amount);
+                const newRemaining = useTimerStore.getState().addMinutes(amount);
+                overlayService.updateRemaining(newRemaining).catch(() => {});
+                useToastStore.getState().show(`+${amount}m added`);
+              }}
             />
           </View>
         )}

@@ -19,6 +19,7 @@ export function OverlayExpandedCard({
   isPlaying,
   onTogglePlaying,
   onStop,
+  onExtend,
 }: OverlayExpandedInfo) {
   const { t } = useTranslation();
   const progressPct = Math.min(100, Math.round((todayUsedMinutes / Math.max(1, dailyLimitMinutes)) * 100));
@@ -74,6 +75,21 @@ export function OverlayExpandedCard({
         }
       />
 
+      {/* 2026-07-19: 세션 중엔 탭 네비게이터 밖(/overlay)이라 Focus 탭의 Extend Time 칩에 물리적으로
+          접근할 수 없었던 갭 — Focus 탭과 동일한 useDailyBonusStore 메커니즘을 여기서도 노출한다.
+          하단 한도 도달 직전에야(Home 잠금화면) 연장할 수 있던 것과 달리, 세션을 끊지 않고 미리
+          연장 가능. */}
+      <View style={styles.extendRow}>
+        <Text style={styles.extendLabel}>{t('focus.extendTime')}</Text>
+        <View style={styles.extendChips}>
+          {[10, 20, 30].map((amt) => (
+            <Pressable key={amt} onPress={() => onExtend(amt)} style={styles.extendChip}>
+              <Text style={styles.extendChipText}>+{amt}m</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
       <View style={styles.actions}>
         <Pressable style={styles.actionBtn} onPress={onTogglePlaying}>
           <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.textPrimary} />
@@ -122,6 +138,11 @@ const styles = StyleSheet.create({
   pillActive: { backgroundColor: colors.primary },
   pillText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 0.5 },
   pillTextActive: { color: '#FFFFFF' },
+  extendRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  extendLabel: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
+  extendChips: { flexDirection: 'row', gap: 6 },
+  extendChip: { backgroundColor: colors.background, borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 6 },
+  extendChipText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary },
   actions: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: spacing.sm + 2, borderRadius: radius.chip, backgroundColor: colors.background },
   stopBtn: { backgroundColor: colors.dangerBg },

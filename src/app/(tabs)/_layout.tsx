@@ -6,18 +6,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
 
-// 2026-07-19 실기기(3버튼 내비게이션) 발견: Android는 SDK 57부터 edge-to-edge가 강제라 탭바가
-// 시스템 내비게이션 바 영역까지 직접 패딩을 챙겨야 하는데, Expo Router의 내장 BottomTabBar가
-// 기본으로 넣어주는 paddingBottom(=insets.bottom)을 그대로 믿었더니 일부 실기기에서 3버튼
-// 내비게이션 바와 탭바가 살짝 겹쳤다(제스처 내비게이션 기기에서는 안 보이던 문제라 에뮬레이터
-// 검증에서 놓쳤다). jlpt-master/zen-master의 HomeScreen.tsx 커스텀 하단바가 쓰는 것과 동일한
-// 방어적 최솟값 패턴(paddingBottom = Math.max(insets.bottom, floor))을 그대로 이식 — 두 프로젝트
-// 모두 raw insets.bottom을 곧이곧대로 쓰지 않고 Android 10dp/iOS 8dp 최솟값을 강제한다(일부 기기가
-// insets.bottom을 실제 내비게이션 바 높이보다 작게 보고하는 경우에 대한 방어). Expo Router의
-// BottomTabBar는 `[내부계산, ...사용자 tabBarStyle]` 순서로 스타일 배열을 합치므로, 여기서 height/
-// paddingBottom을 명시하면 내부 기본값(insets.bottom 그대로)을 그대로 덮어쓴다.
+// 2026-07-19 실기기(갤럭시 Note20, 3버튼 내비게이션) 1차 수정 — jlpt-master/zen-master의 방어적
+// 최솟값 패턴(paddingBottom = Math.max(insets.bottom, 10))을 그대로 이식했으나, 실기기 스크린샷을
+// 픽셀 단위로 재확인한 결과 여전히 탭 라벨과 시스템 내비게이션 아이콘 사이 여백이 거의 0이었다.
+// 원인 파악: 이 기기는 insets.bottom을 이미 "정확하게"(내비게이션 바 실제 높이만큼) 보고하고
+// 있어서 Math.max(...) 최솟값 자체가 발동하지 않았다 — 최솟값 패턴은 "insets.bottom이 부정확하게
+// 작게 보고되는" 기기를 방어하는 것이지, "insets.bottom이 정확해도 탭바 내용물과 내비게이션 바
+// 사이에 숨 쉴 공간이 없는" 문제는 애초에 못 막는다. paddingBottom을 insets.bottom과 똑같이 주면
+// 탭바 콘텐츠가 내비게이션 바 바로 위 경계에 딱 붙어(기능적으로는 안 가려지지만) 시각적으로는
+// "겹쳐 보인다". 그래서 최솟값 위에 순수 여유값(EXTRA_GAP)을 항상 더한다 — insets.bottom이 얼마든
+// 상관없이 추가 여백은 항상 보장된다.
 const TAB_BAR_BASE_HEIGHT = 49; // expo-router 내장 BottomTabBar의 TABBAR_HEIGHT_UIKIT과 동일
-const ANDROID_MIN_BOTTOM_INSET = 10; // jlpt-master/zen-master HomeScreen.tsx와 동일한 최솟값
+const ANDROID_MIN_BOTTOM_INSET = 10; // insets.bottom이 비정상적으로 작게 보고되는 기기에 대한 방어
+const ANDROID_EXTRA_BOTTOM_GAP = 12; // insets.bottom이 정확해도 탭바-내비게이션 바 사이에 항상 둘 순수 시각적 여백
 
 // healthy-shorts-assistant(2) App.tsx 하단 내비게이션 아이콘을 토씨 하나 안 틀리고 그대로 이식
 // (App.tsx:539/550/561/572, lucide-react Home/Sliders/BarChart2/Settings) — outline↔filled
@@ -35,7 +36,7 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
 export default function TabsLayout() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const androidBottomInset = Math.max(insets.bottom, ANDROID_MIN_BOTTOM_INSET);
+  const androidBottomInset = Math.max(insets.bottom, ANDROID_MIN_BOTTOM_INSET) + ANDROID_EXTRA_BOTTOM_GAP;
 
   const renderIcon = (routeName: string) => ({ focused, color }: { focused: boolean; color: import('react-native').ColorValue; size: number }) => {
     return <Feather name={TAB_ICONS[routeName]} size={22} color={color as string} style={focused ? styles.iconActive : undefined} />;

@@ -36,7 +36,10 @@ type VercelResponse = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const apiKey = process.env.YOUTUBE_API_KEY;
+  // Vercel 프로젝트에 EXPO_PUBLIC_YOUTUBE_API_KEY라는 이름으로 이미 등록돼 있어(대시보드에서 직접
+  // 확인) 두 이름 다 받아준다 — EXPO_PUBLIC_ 접두사가 붙어 있어도 이건 Vercel 서버 환경변수일 뿐이라
+  // 클라이언트 번들에 실리지 않는다(그 접두사는 Expo 빌드 쪽 컨벤션이지 Vercel과는 무관).
+  const apiKey = process.env.YOUTUBE_API_KEY || process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
   if (!apiKey) {
     res.status(500).json({ error: 'YOUTUBE_API_KEY not configured on server' });
     return;

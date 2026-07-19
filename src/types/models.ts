@@ -46,6 +46,12 @@ export type UserSettings = {
   notifyRemaining: boolean;
   notifyLimit: boolean;
   notifyBreak: boolean;
+  /**
+   * 2026-07-19: 한도/Sleep Timer 만료 시 전체화면 Overlay 차단(항상 켜짐, 옵트아웃 불가)에 더해
+   * YouTube 자체를 강제로 홈 화면으로 내보낼지(Android GLOBAL_ACTION_HOME). 기본 false — 사용자가
+   * Settings에서 명시적으로 켜야만 동작(제품 결정: 침해감이 큰 동작이라 기본값 ON은 안 함).
+   */
+  hardBlockMode: boolean;
 };
 
 /** 특정 앱에 적용될 유효 설정 — override가 없으면 전역값으로 폴백. */

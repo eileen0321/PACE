@@ -72,9 +72,9 @@ class PaceOverlayModule : Module() {
     // 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
     // 네이티브(PaceOverlayService)가 자기 완결적으로 담당하도록 확장 — 세션 시작 시점의 값을
     // 전부 함께 넘긴다(PaceOverlayService.kt 상단 주석 참고).
-    AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean, sleepTimerMinutes: Int, breakIntervalMinutes: Int, notifyRemaining: Boolean, notifyLimit: Boolean, notifyBreak: Boolean ->
+    AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean, sleepTimerMinutes: Int, breakIntervalMinutes: Int, notifyRemaining: Boolean, notifyLimit: Boolean, notifyBreak: Boolean, hardBlockMode: Boolean ->
       appContext.reactContext?.let { context ->
-        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak)
+        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode)
       }
     }
 

@@ -114,6 +114,15 @@ class PaceAccessibilityService : AccessibilityService() {
     fun swipeOnce(up: Boolean) {
       instance?.let { service -> if (up) service.performSwipeUp() else service.performSwipeDown() }
     }
+
+    // 2026-07-19 Hard Block Mode(Settings에서 사용자가 직접 켜야만 호출됨, 기본 OFF) — 한도 도달 시
+    // YouTube 자체를 홈으로 강제 이동. performGlobalAction은 이미 확보된 gesture 접근성 권한 범위
+    // 안이라 추가 권한이 필요 없다. instance가 null(접근성 꺼짐)이면 조용히 무시 —
+    // PaceOverlayService의 전체화면 차단(showBlockOverlay)이 항상 별도로 뜨므로 이게 실패해도
+    // "아무 일도 안 일어남" 상태는 아니다.
+    fun goHome() {
+      instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+    }
   }
 
   override fun onServiceConnected() {

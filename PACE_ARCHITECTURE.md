@@ -2652,3 +2652,98 @@ Focus/Stats 탭의 "오늘 본 영상 수"로 새고 있었다. 정직하게 0�
 - `setAndAllowWhileIdle()`은 "정확히 60초"를 보장하지 않는다(Doze 유지보수 윈도우 안에서 소폭
   지연 가능) — Daily Limit이 몇 분 늦게 걸릴 수는 있어도 영구히 안 걸리는 최악은 막았다는 정도로
   이해할 것.
+
+---
+
+## 전체화면 차단 오버레이(Block Overlay) + Hard Block Mode (2026-07-19)
+
+> 배경: 위 세션의 sleep/kill 강건성 검증 도중, "한도 도달 시 Pace는 만료로 판단하지만 YouTube는 계속
+> 재생 가능하다"는 더 근본적인 갭을 사용자가 직접 지적("지금 시간이 지나면 유튜브를 끄게 되어 있어?" →
+> 코드 확인 결과 답은 "아니오"). 웹 리서치로 경쟁 앱들의 시간제한/알림 패턴을 조사한 뒤, 사용자가
+> 다이어그램을 곁들여 직접 설계를 지시했다 — 이 섹션은 그 설계를 그대로 구현·검증한 기록이다.
+
+### 문제였던 3개의 실질적 갭
+1. **한도 도달(#1)**: `remainingMinutes<=0`이 되어도 YouTube는 계속 재생됨 — 알림 하나와 오버레이
+   알약 제거뿐, 실제 "차단"은 없었다.
+2. **Sleep Timer 만료(#3)**: 위와 동일한 문제.
+3. **알림 권한 없음(#9)**: 알림 권한을 거부한 사용자에게는 #1/#3 상황에서 신호가 아예 없었다 — 알림에
+   의존하는 한 "권한 미부여 = 무방비"가 구조적으로 성립.
+
+### 사용자가 정한 우선순위 — 왜 GLOBAL_ACTION_HOME을 기본값으로 넣지 않았는가
+`PaceAccessibilityService`가 이미 제스처 권한(`canPerformGestures`)을 갖고 있어
+`performGlobalAction(GLOBAL_ACTION_HOME)`을 추가 권한 없이 호출할 수 있다는 걸 알고도, 사용자는
+**이걸 기본 동작으로 넣지 않기로 결정**했다: "사용자 동의 없이 실행 중인 다른 앱을 강제로 홈으로
+보내는 것"은 Google Play Accessibility 정책이 허용하는 "결정론적 규칙 기반 자동화(Trigger→Action)"
+범위 안이긴 하지만, 리뷰 리스크와 별개로 제품 경험상 과격하다고 판단. 대신:
+- **전체화면 차단 오버레이를 무조건 띄우는 것**(옵트아웃 불가, 알림 권한/설정과 무관)을 1차 방어선으로.
+- **Hard Block Mode**(Settings, 기본 OFF)를 사용자가 직접 켰을 때만 추가로 `GLOBAL_ACTION_HOME` 실행.
+
+> "LimitReachedOverlay를 강제 표시하고, GLOBAL_ACTION_HOME은 사용자가 직접 켜는 Hard Block Mode로
+> 제공하는 게 PACE의 MVP 방향과 사용자 경험 모두에 더 적합해 보인다" — 사용자 최종 결론 그대로.
+
+### 구현
+**`PaceOverlayService.kt`의 만료 분기**(`performTick()`, `remainingMinutes<=0 ||
+sleepTimerRemainingMinutes==0`)가 이제:
+1. `markExpired(reason)` + `clearSessionActive()` — 기존과 동일.
+2. `notifyLimit`이 켜져 있으면 알림 발송 — 기존과 동일(단 아래 3번은 이 설정과 무관하게 항상 실행).
+3. **`showBlockOverlay(reason)`** — `TYPE_APPLICATION_OVERLAY` 전체화면(`MATCH_PARENT`/`MATCH_PARENT`,
+   `flags=0`이라 기존 알약의 `FLAG_NOT_TOUCH_MODAL`과 달리 터치를 전부 막음) 오버레이를 무조건 띄운다.
+   사유별 문구("오늘의 한도에 도달했어요"/"Sleep Timer 종료") + 버튼 두 개:
+   - **"+5분"**(`extendFromBlockOverlay()`): `EXTEND_MINUTES=5`만큼 연장, sleep-timer 만료였다면 그
+     플래그도 리셋, 오버레이 제거 후 알약/폴링/미디어세션/다음 틱 예약을 전부 재개 — 세션이 실제로
+     이어진다(단순히 화면만 닫는 게 아님).
+   - **"휴식하기"**(`endFromBlockOverlay()`): 오버레이 제거, `openPaceApp()`으로 Pace 앱 자체를
+     포그라운드로 열고, 서비스는 `stopForeground(STOP_FOREGROUND_REMOVE)` + `stopSelf()`로 완전 종료.
+   - 서비스 자체는 만료 시점에 `stopSelf()`하지 않고 계속 살아있는다("+5분"으로 재개 가능해야 하므로)
+     — "휴식하기"를 눌러야만 완전히 죽는다는 점이 이전(만료 즉시 서비스 종료)과 달라진 부분.
+4. **Hard Block Mode**(`hardBlockMode: Boolean`, 기본 false): 켜져 있으면 `showBlockOverlay()` 호출
+   *전에* `PaceAccessibilityService.goHome()`(companion 함수, `instance?.performGlobalAction
+   (GLOBAL_ACTION_HOME)`)을 먼저 실행 — YouTube 등 포그라운드 앱을 홈으로 내보낸 뒤 그 위에 차단
+   화면을 덮는 순서.
+
+**설정 배선**: `hardBlockMode`가 `UserSettings`(기본 false) → `useSettingsStore` →
+`overlayService.startSession()` → `PaceOverlay.start()`(네이티브 모듈 9번째 파라미터) →
+`PaceOverlayService.start()`의 `EXTRA_HARD_BLOCK_MODE` → `PREF_HARD_BLOCK_MODE`로 세션 내내
+`SharedPreferences`에 영속(프로세스 재시작 시 `restoreStateFromPrefs()`가 함께 복구)까지 한 줄로
+이어진다. Settings 탭에는 Notifications 섹션과 Playback Controls 섹션 사이에 새 "Enforcement" 섹션을
+추가, 토글 설명 문구로 동작을 명시적으로 고지("When the limit is reached, Pace immediately exits
+YouTube and other blocked apps for you, in addition to the full-screen block screen.").
+
+### 실기기(에뮬레이터) 검증
+`pace_test`에서 두 라운드로 나눠 검증했다.
+
+**1라운드 — 차단 오버레이 자체(알약이 아니라 전체화면)가 실제 YouTube 위에 뜨는가**: 실제 YouTube
+앱(`com.google.android.youtube`)을 포그라운드에 둔 채 `run-as ... kill -9`로 프로세스를 죽이고
+`SharedPreferences`의 `session_remaining_minutes`를 0으로 조작해 재시작 시 즉시 만료를 유도. 결과:
+- 차단 오버레이가 실제 YouTube 화면 위에 정확히 렌더링됨(스크린샷으로 확인 — 뒤에 흐릿하게 비치는
+  YouTube 콘텐츠 + 앞쪽 불투명 차단 화면).
+- **"+5분"**: 오버레이 제거 → 알약이 연장된 시간("5m Left")으로 복귀 → YouTube 다시 조작 가능.
+- **"휴식하기"**: 오버레이 제거 → `dumpsys activity activities`로 `topResumedActivity`가
+  `com.pace.app/.MainActivity`로 바뀐 것 확인 → `dumpsys window windows`로 `com.pace.app` 오버레이
+  창이 완전히 사라진 것(깨끗한 정리) 확인.
+
+**2라운드 — Hard Block Mode가 실제로 `GLOBAL_ACTION_HOME`을 실행하는가**: 처음 시도에서 `kill -9`를
+반복한 부작용으로 **`PaceAccessibilityService` 자체가 시스템에 의해 비활성화됨**(`settings get secure
+accessibility_enabled` → `0`, `enabled_accessibility_services` → `null` — 접근성 서비스를 호스팅하는
+프로세스가 반복적으로 죽으면 안드로이드가 안정성 문제로 서비스를 자동으로 꺼버리는 것으로 추정,
+`goHome()`의 `instance?.performGlobalAction(...)`이 `instance==null`이라 조용히 no-op됐다). 이건 앱
+버그가 아니라 `kill -9` 기반 테스트 방법론 자체의 부작용이라 판단, 접근성 서비스를 `adb shell settings
+put secure enabled_accessibility_services .../PaceAccessibilityService` + `accessibility_enabled 1`로
+재활성화한 뒤 **이번엔 프로세스를 죽이지 않고** Daily Limit을 15분(Settings UI로 설정, 당일 이미
+6분 소비된 상태라 실질 9분 남음)으로 낮춰 자연 만료를 그대로 기다리는 방식으로 재검증했다. 실제
+YouTube 앱을 포그라운드에 둔 채 약 9분 대기 후:
+- `dumpsys activity activities` → `topResumedActivity`가 `com.google.android.youtube`가 아니라
+  **`com.google.android.apps.nexuslauncher`(홈 런처)**로 바뀐 것 확인 — `GLOBAL_ACTION_HOME`이 실제로
+  YouTube를 밀어냄.
+- 동시에 `dumpsys window windows`에 `com.pace.app`의 `SYSTEM_ALERT_WINDOW` 오버레이 창이 떠 있는 것
+  확인 — 차단 화면이 그 위에 정상적으로 덮임.
+- 스크린샷으로 최종 확인: 흐릿한 홈 런처(Gmail/Photos/YouTube 아이콘, 검색바)가 배경에 비치고, 그 위에
+  차단 화면("오늘의 한도에 도달했어요" + "+5분"/"휴식하기" 버튼)이 정확히 렌더링됨 — 설계한 순서
+  (홈으로 내보낸 뒤 차단 화면을 덮는다) 그대로 동작.
+- `AsyncStorage`(`pace_user_settings` 키)와 네이티브 `SharedPreferences`(`pace_overlay.xml`의
+  `session_hard_block_mode`) 양쪽에서 `hardBlockMode: true`가 정확히 영속되는 것도 별도로 확인.
+
+**교훈(기록용)**: 접근성 서비스가 붙어있는 프로세스를 `kill -9`로 반복 죽이는 테스트 방식은 안드로이드가
+해당 접근성 서비스를 자동 비활성화시키는 부작용을 유발할 수 있다 — 접근성 관련 기능(Hard Block Mode,
+Bluetooth Hands-Free 스와이프 등)을 검증할 때는 프로세스 킬 대신 설정값을 낮춰 자연 만료를 기다리는
+방식을 우선 고려할 것.

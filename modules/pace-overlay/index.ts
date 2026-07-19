@@ -17,7 +17,8 @@ type PaceOverlayNativeModule = {
     breakIntervalMinutes: number,
     notifyRemaining: boolean,
     notifyLimit: boolean,
-    notifyBreak: boolean
+    notifyBreak: boolean,
+    hardBlockMode: boolean
   ): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;

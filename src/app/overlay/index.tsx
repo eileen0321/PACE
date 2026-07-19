@@ -120,6 +120,7 @@ export default function OverlaySessionScreen() {
         notifyRemaining: settings.notifyRemaining,
         notifyLimit: settings.notifyLimit,
         notifyBreak: settings.notifyBreak,
+        hardBlockMode: settings.hardBlockMode,
       }).catch(() => {});
       launchPlatformApp(platform).catch(() => {});
     })();

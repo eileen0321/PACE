@@ -150,6 +150,24 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
+        {/* 5.6 Enforcement — 2026-07-19 사용자 제품 결정: 한도 도달 시 전체화면 Overlay 차단은
+            항상 켜짐(옵트아웃 불가, Android 네이티브에서 자동 처리)이라 여기 토글이 없다. 이 토글은
+            그 위에 "YouTube 자체를 강제 종료"까지 할지의 옵트인 스위치 — 기본 OFF, 침해적인 동작이라
+            명확한 고지 문구 필수(정책 리서치에서 확인한 요건). */}
+        {Platform.OS === 'android' && (
+          <View>
+            <Text style={styles.sectionLabel}>{t('settings.enforcementSection')}</Text>
+            <GlassSurface style={styles.card}>
+              <NotifRow
+                title={t('settings.hardBlockMode')}
+                desc={t('settings.hardBlockModeDesc')}
+                value={settings.hardBlockMode}
+                onChange={(value) => update({ hardBlockMode: value })}
+              />
+            </GlassSurface>
+          </View>
+        )}
+
         {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
         {capabilities.supportsHandsFreeControl && (
         <View>

@@ -40,6 +40,9 @@ class PaceOverlayService : Service() {
   private var overlayView: LinearLayout? = null
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
+  // 2026-07-19: 한도/Sleep Timer 만료 시 뜨는 전체화면 차단 화면 — 작은 알약(overlayView)과 별개
+  // View. 알림 권한과 무관하게 항상 뜬다(SYSTEM_ALERT_WINDOW는 세션 시작 때 이미 확인된 별개 권한).
+  private var blockOverlayView: View? = null
   // start()가 세션 시작 시 넘겨준 값으로 초기화되고, 이후엔 배지 탭(아래 showOverlay)이 유일한
   // 갱신 경로 — JS 쪽에서 세션 도중 Auto Next를 토글해도 이 배지엔 실시간 반영 안 됨(overlayService.
   // android.ts에 updateRemaining같은 별도 업데이트 액션이 없음). 배지 자체가 토글의 소스오브트루스가
@@ -88,6 +91,10 @@ class PaceOverlayService : Service() {
   private var notifyRemaining = true
   private var notifyLimit = true
   private var notifyBreak = true
+  // 2026-07-19 사용자 제품 결정: 한도 도달 시 기본은 전체화면 Overlay 차단(항상 ON, 알림 권한과
+  // 무관). GLOBAL_ACTION_HOME으로 YouTube 자체를 강제 종료하는 건 침해감이 훨씬 크다고 판단해
+  // 사용자가 Settings에서 직접 켜야만 동작하는 별도 옵션으로 분리 — 기본값 false.
+  private var hardBlockMode = false
   // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
   // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
   private var infraReady = false
@@ -219,6 +226,7 @@ class PaceOverlayService : Service() {
       .putBoolean(PREF_NOTIFY_LIMIT, notifyLimit)
       .putBoolean(PREF_NOTIFY_BREAK, notifyBreak)
       .putBoolean(PREF_AUTO_NEXT_SESSION, autoNextEnabled)
+      .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
       .apply()
   }
 
@@ -233,6 +241,7 @@ class PaceOverlayService : Service() {
     notifyLimit = prefs.getBoolean(PREF_NOTIFY_LIMIT, true)
     notifyBreak = prefs.getBoolean(PREF_NOTIFY_BREAK, true)
     autoNextEnabled = prefs.getBoolean(PREF_AUTO_NEXT_SESSION, false)
+    hardBlockMode = prefs.getBoolean(PREF_HARD_BLOCK_MODE, false)
     return true
   }
 
@@ -280,6 +289,8 @@ class PaceOverlayService : Service() {
     private const val EXTRA_NOTIFY_REMAINING = "notifyRemaining"
     private const val EXTRA_NOTIFY_LIMIT = "notifyLimit"
     private const val EXTRA_NOTIFY_BREAK = "notifyBreak"
+    private const val EXTRA_HARD_BLOCK_MODE = "hardBlockMode"
+    private const val EXTEND_MINUTES = 5
     private const val ALERT_CHANNEL_ID = "pace_overlay_alerts"
     private const val NOTIFICATION_ID_LOW_TIME = 4202
     private const val NOTIFICATION_ID_LIMIT_REACHED = 4203
@@ -303,6 +314,7 @@ class PaceOverlayService : Service() {
     private const val PREF_NOTIFY_LIMIT = "session_notify_limit"
     private const val PREF_NOTIFY_BREAK = "session_notify_break"
     private const val PREF_AUTO_NEXT_SESSION = "session_auto_next_enabled"
+    private const val PREF_HARD_BLOCK_MODE = "session_hard_block_mode"
 
     // Bluetooth Hands-Free(2026-07-19) — MediaSession 콜백(하드웨어 리모컨)과 PaceOverlayModule의
     // JS 바인딩(Focus 탭 인앱 버튼 탭) 둘 다 이 companion 함수를 호출한다 — 입력 소스만 다르고 실제
@@ -353,7 +365,8 @@ class PaceOverlayService : Service() {
       breakIntervalMinutes: Int,
       notifyRemaining: Boolean,
       notifyLimit: Boolean,
-      notifyBreak: Boolean
+      notifyBreak: Boolean,
+      hardBlockMode: Boolean
     ) {
       val intent = Intent(context, PaceOverlayService::class.java).apply {
         action = ACTION_START
@@ -364,6 +377,7 @@ class PaceOverlayService : Service() {
         putExtra(EXTRA_NOTIFY_REMAINING, notifyRemaining)
         putExtra(EXTRA_NOTIFY_LIMIT, notifyLimit)
         putExtra(EXTRA_NOTIFY_BREAK, notifyBreak)
+        putExtra(EXTRA_HARD_BLOCK_MODE, hardBlockMode)
       }
       ContextCompat.startForegroundService(context, intent)
     }
@@ -432,6 +446,8 @@ class PaceOverlayService : Service() {
         notifyLimit = intent.getBooleanExtra(EXTRA_NOTIFY_LIMIT, true)
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
         autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
+        hardBlockMode = intent.getBooleanExtra(EXTRA_HARD_BLOCK_MODE, false)
+        removeBlockOverlay() // 이전 세션이 만료→차단 화면인 채로 새 세션이 시작되는 경우 정리
         infraReady = false
         ensureInfraReady()
         persistState()
@@ -473,6 +489,7 @@ class PaceOverlayService : Service() {
         cancelScheduledTick(this)
         stopForegroundAppPolling()
         removeOverlay()
+        removeBlockOverlay()
         teardownMediaSession()
         infraReady = false
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -523,12 +540,21 @@ class PaceOverlayService : Service() {
           sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
         }
         cancelScheduledTick(this)
+        // 2026-07-19 사용자 제품 결정: "Pace가 만료로 판단했는데 YouTube는 계속 시청 가능"했던 기존
+        // 갭(#1/#3)을 여기서 닫는다 — 작은 알약 대신 전체화면 차단(showBlockOverlay)을 항상 띄운다
+        // (알림 권한 유무와 무관, notifyLimit 설정과도 무관 — 차단 자체는 옵트아웃 대상이 아님).
+        // 포그라운드 앱 감지 폴링/미디어세션은 더 필요 없음(전체화면 차단이 항상 보이므로) — 하지만
+        // stopForeground/stopSelf는 하지 않는다: "+5분" 버튼으로 재개 가능해야 하므로 서비스 자체는
+        // "종료" 버튼을 눌러야만(endFromBlockOverlay) 완전히 죽는다.
         stopForegroundAppPolling()
-        removeOverlay()
         teardownMediaSession()
-        infraReady = false
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // Hard Block Mode(기본 OFF, Settings에서 사용자가 직접 켠 경우만): 전체화면 차단에 더해
+        // YouTube 자체를 강제로 홈으로 내보낸다 — PaceAccessibilityService가 이미 gesture 권한을
+        // 갖고 있어 추가 권한 없이 가능(performGlobalAction은 canPerformGestures 범위 안).
+        if (hardBlockMode) {
+          PaceAccessibilityService.goHome()
+        }
+        showBlockOverlay(reason)
         return
       }
       scheduleNextTick(this)
@@ -637,6 +663,126 @@ class PaceOverlayService : Service() {
     windowManager?.addView(overlayView, params)
   }
 
+  // 2026-07-19 사용자 제품 결정 반영 — 한도 도달 시 실제로 YouTube를 "막는" 전체화면 차단. 작은
+  // 알약(showOverlay)과 달리 FLAG_NOT_TOUCH_MODAL을 안 쓴다 — 화면 전체를 덮으므로 그 아래 앱으로
+  // 터치가 통과할 "바깥"이 없고, 오히려 통과시키면 안 된다(차단의 핵심). 버튼 2개만 인터랙션 가능:
+  // "+5분"(세션 재개) / "휴식하기"(Pace로 이동 + 세션 완전 종료) — GLOBAL_ACTION_HOME은 여기서
+  // 호출하지 않는다(그건 Hard Block Mode 옵트인 전용, performTick의 만료 분기에서 별도 처리).
+  private fun showBlockOverlay(reason: String) {
+    if (blockOverlayView != null) return
+    windowManager = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    removeOverlay() // 작은 알약은 전체화면 차단으로 대체되므로 치운다
+
+    val isSleepTimer = reason == "sleep_timer_expired"
+    val titleText = if (isSleepTimer) "Sleep Timer 종료" else "오늘의 한도에 도달했어요"
+    val bodyText = if (isSleepTimer) "설정한 Sleep Timer 시간이 다 됐어요." else "오늘 정해둔 시청 시간을 다 썼어요."
+    val d = resources.displayMetrics.density
+
+    val root = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setBackgroundColor(Color.parseColor("#F20B0C0F")) // rgba(11,12,15,0.95) — theme.ts colors.background 근사
+      setPadding((32 * d).toInt(), 0, (32 * d).toInt(), 0)
+    }
+
+    root.addView(TextView(this).apply {
+      text = "⏸"
+      textSize = 40f
+      gravity = Gravity.CENTER
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (24 * d).toInt() })
+
+    root.addView(TextView(this).apply {
+      text = titleText
+      setTextColor(Color.WHITE)
+      textSize = 20f
+      gravity = Gravity.CENTER
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (10 * d).toInt() })
+
+    root.addView(TextView(this).apply {
+      text = bodyText
+      setTextColor(Color.parseColor("#9CA3AF"))
+      textSize = 13f
+      gravity = Gravity.CENTER
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (36 * d).toInt() })
+
+    val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+
+    buttonRow.addView(TextView(this).apply {
+      text = "+${EXTEND_MINUTES}분"
+      setTextColor(Color.WHITE)
+      textSize = 13f
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      setPadding((22 * d).toInt(), (13 * d).toInt(), (22 * d).toInt(), (13 * d).toInt())
+      background = GradientDrawable().apply { cornerRadius = 100f; setColor(Color.parseColor("#5856D6")) }
+      isClickable = true
+      setOnClickListener { extendFromBlockOverlay() }
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = (10 * d).toInt() })
+
+    buttonRow.addView(TextView(this).apply {
+      text = "휴식하기"
+      setTextColor(Color.parseColor("#D1D5DB"))
+      textSize = 13f
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      setPadding((22 * d).toInt(), (13 * d).toInt(), (22 * d).toInt(), (13 * d).toInt())
+      background = GradientDrawable().apply { cornerRadius = 100f; setColor(Color.parseColor("#1AFFFFFF")) }
+      isClickable = true
+      setOnClickListener { endFromBlockOverlay() }
+    })
+
+    root.addView(buttonRow)
+    blockOverlayView = root
+
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      0, // flags=0: 풀스크린 전체가 터치를 그대로 흡수(모달) — 알약과 반대로 "통과 금지"가 목적
+      android.graphics.PixelFormat.TRANSLUCENT
+    )
+    windowManager?.addView(blockOverlayView, params)
+  }
+
+  private fun removeBlockOverlay() {
+    blockOverlayView?.let { windowManager?.removeView(it) }
+    blockOverlayView = null
+  }
+
+  private fun extendFromBlockOverlay() {
+    removeBlockOverlay()
+    remainingMinutes += EXTEND_MINUTES
+    // Sleep Timer 만료로 여기 온 거면 그냥 꺼버린다 — 안 그러면 재개하자마자 다음 틱에서 다시 0이라
+    // 즉시 재만료(무한 루프)된다. Daily Limit로 온 경우는 sleepTimerRemainingMinutes가 이미 -1이거나
+    // 양수라 이 분기가 영향을 안 준다.
+    if (sleepTimerRemainingMinutes == 0) sleepTimerRemainingMinutes = -1
+    persistState() // PREF_SESSION_ACTIVE를 다시 true로 되돌림(만료 시 clearSessionActive됐던 것)
+    showOverlay(remainingMinutes) // 작은 알약 복귀
+    startForegroundAppPolling()
+    setupMediaSession()
+    scheduleNextTick(this)
+  }
+
+  private fun endFromBlockOverlay() {
+    removeBlockOverlay()
+    openPaceApp()
+    cancelScheduledTick(this)
+    infraReady = false
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelf()
+  }
+
+  private fun openPaceApp() {
+    try {
+      val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      }
+      launchIntent?.let { startActivity(it) }
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "openPaceApp failed", e)
+    }
+  }
+
   private fun applyAutoBadgeStyle() {
     autoBadge?.apply {
       text = if (autoNextEnabled) "AUTO ON" else "AUTO OFF"
@@ -688,6 +834,7 @@ class PaceOverlayService : Service() {
   override fun onDestroy() {
     stopForegroundAppPolling()
     removeOverlay()
+    removeBlockOverlay()
     teardownMediaSession()
     infraReady = false
     if (instance === this) instance = null

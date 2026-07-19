@@ -55,5 +55,8 @@ export async function loadSettingsMirror(userId: string): Promise<UserSettings |
     notifyRemaining: true,
     notifyLimit: true,
     notifyBreak: true,
+    // 2026-07-19: hardBlockMode도 같은 이유로 미러 테이블에 컬럼이 없다 — 기본값(false, 침해적
+    // 동작이라 안전한 기본값)으로 채운다. 실제 값은 useSettingsStore(AsyncStorage)가 진실원천.
+    hardBlockMode: false,
   };
 }

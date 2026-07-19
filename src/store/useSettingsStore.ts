@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   notifyRemaining: true,
   notifyLimit: true,
   notifyBreak: true,
+  hardBlockMode: false,
 };
 
 type SettingsState = {

@@ -44,6 +44,12 @@ export interface OverlayService {
     notifyRemaining: boolean;
     notifyLimit: boolean;
     notifyBreak: boolean;
+    /**
+     * 2026-07-19 사용자 제품 결정: 한도 도달 시 기본 동작은 전체화면 Overlay 차단(항상 ON) —
+     * 이 플래그는 그 위에 추가로 YouTube 자체를 GLOBAL_ACTION_HOME으로 강제 종료할지 여부.
+     * 기본 false, Settings의 "Hard Block Mode" 토글로만 사용자가 직접 켠다. iOS는 무시(no-op).
+     */
+    hardBlockMode: boolean;
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;

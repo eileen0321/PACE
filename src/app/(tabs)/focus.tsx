@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,10 +9,12 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { useToastStore } from '../../store/useToastStore';
 import { useTranslation } from '../../services/i18n';
 import { overlayService, autoNextService, capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
+import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) SettingsSection.tsx(Focus 탭)를 토씨 하나 안 틀리고 그대로 이식
@@ -36,6 +38,7 @@ export default function FocusScreen() {
   const [hasOverlayPermission, setHasOverlayPermission] = useState(false);
   const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
   const [hasAutoNextPermission, setHasAutoNextPermission] = useState(false);
+  const [showAccessibilityOnboarding, setShowAccessibilityOnboarding] = useState(false);
   const bluetooth = useBluetoothStore();
 
   useEffect(() => {
@@ -45,8 +48,10 @@ export default function FocusScreen() {
   }, [user?.id, refresh]);
 
   // 실제 권한 부여 상태를 조회 — 이전엔 "연결됨"/"실행 중"이 하드코딩돼 있어 권한이 없어도 항상
-  // 정상으로 표시되는 실버그였다(2026-07-18 실기기 검증 중 발견). 화면 포커스마다 재조회해서
-  // 사용자가 설정에서 권한을 켜고 돌아왔을 때도 반영되게 한다.
+  // 정상으로 표시되는 실버그였다(2026-07-18 실기기 검증 중 발견). 마운트 시 1회 + AppState 'active'
+  // (설정 화면에서 돌아올 때마다) 재조회해서 반영한다 — 2026-07-19: 주석은 이미 "화면 포커스마다
+  // 재조회"라고 적혀 있었지만 실제 코드는 마운트 1회뿐이었던 문서/코드 불일치를 여기서 같이 바로잡음.
+  // Accessibility 권한이 방금 켜졌으면(showAccessibilityOnboarding이 대기 중이던 경우) 토스트로 확인.
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
@@ -55,15 +60,22 @@ export default function FocusScreen() {
         overlayService.hasForegroundDetectionPermission(),
         capabilities.supportsAutoNext ? autoNextService.hasPermission() : Promise.resolve(false),
       ]);
-      if (!cancelled) {
-        setHasOverlayPermission(overlay);
-        setHasUsageAccessPermission(usageAccess);
-        setHasAutoNextPermission(autoNextPermission);
+      if (cancelled) return;
+      setHasOverlayPermission(overlay);
+      setHasUsageAccessPermission(usageAccess);
+      if (autoNextPermission && !hasAutoNextPermission && showAccessibilityOnboarding) {
+        setShowAccessibilityOnboarding(false);
+        useToastStore.getState().show('✅ Hands-Free Shorts Enabled');
       }
+      setHasAutoNextPermission(autoNextPermission);
     };
     check();
-    return () => { cancelled = true; };
-  }, []);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') check();
+    });
+    return () => { cancelled = true; sub.remove(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAccessibilityOnboarding]);
 
   // 2026-07-18 버그 수정: Extend Time(+10/20/30m)이 예전엔 settings.dailyLimitMinutes를 직접 올려버려서
   // "오늘만" 늘려주려던 의도와 달리 다음날 이후에도 영구히 늘어난 한도가 유지됐다. 이제 오늘 하루치
@@ -163,7 +175,7 @@ export default function FocusScreen() {
               {capabilities.supportsAutoNext && (
                 <Pressable
                   style={[styles.guardRow, styles.guardRowBordered]}
-                  onPress={() => !hasAutoNextPermission && autoNextService.requestPermission()}
+                  onPress={() => !hasAutoNextPermission && setShowAccessibilityOnboarding(true)}
                 >
                   <View style={styles.guardLeft}>
                     <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>
@@ -391,6 +403,12 @@ export default function FocusScreen() {
           </View>
         </View>
       </Modal>
+
+      <AccessibilityOnboardingSheet
+        visible={showAccessibilityOnboarding}
+        onEnable={() => autoNextService.requestPermission()}
+        onDismiss={() => setShowAccessibilityOnboarding(false)}
+      />
     </SafeAreaView>
   );
 }

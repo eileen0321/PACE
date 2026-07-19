@@ -38,6 +38,8 @@ export function QuickControlsGrid() {
       <QuickControlSheet
         visible={openSheet === 'sleepTimer'}
         title="Sleep Timer"
+        description="Stop and lock short session automatically"
+        icon="moon"
         options={SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m }))}
         selectedValue={settings.sleepTimerMinutes ?? 0}
         onSelect={(v) => update({ sleepTimerMinutes: v === 0 ? null : v })}
@@ -46,6 +48,8 @@ export function QuickControlsGrid() {
       <QuickControlSheet
         visible={openSheet === 'dailyLimit'}
         title="Daily Limit"
+        description="Set healthy boundaries for shorts platforms"
+        icon="clock"
         options={DAILY_LIMIT_OPTIONS.map((m) => ({ label: `${m}m`, value: m }))}
         selectedValue={settings.dailyLimitMinutes}
         onSelect={(v) => update({ dailyLimitMinutes: v })}
@@ -54,6 +58,8 @@ export function QuickControlsGrid() {
       <QuickControlSheet
         visible={openSheet === 'breakReminder'}
         title="Break Reminder"
+        description="Take short breaks during your session"
+        icon="coffee"
         options={BREAK_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m }))}
         selectedValue={settings.breakIntervalMinutes}
         onSelect={(v) => update({ breakIntervalMinutes: v })}

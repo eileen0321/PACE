@@ -2959,6 +2959,18 @@ ON" 배지가 화면에 표시. 둘 다 `MediaSessionService` 로그(`targetPack
    것보다 더 회색지대에 가깝다 — YouTube가 2023년부터 WebView Media Integrity API를 도입해 막으려
    했던 "비공식 재구현/래퍼"(Vanced류) 패턴과 사실상 같은 범주로 보일 위험이 크다.
 
+**`/overlay`(오버레이+실제 앱 실행)는 왜 이 위험이 없는가 — 사용자 질문에 답하며 정리**: `/overlay`
+플로우(`home.tsx`의 정상 진입 경로, `launchPlatformApp()`)는 **Pace가 유튜브 콘텐츠를 아예 렌더링도
+제어도 하지 않는다** — 진짜 유튜브 앱을 딥링크로 그냥 실행시키고, 유튜브는 자기 창에서 완전히
+독립적으로 돈다. Pace는 그 위에 작은 플로팅 알약(`SYSTEM_ALERT_WINDOW`, 화면 녹화 앱·채팅
+버블처럼 아주 흔하고 정책상 문제없는 패턴)만 별도로 띄울 뿐, 유튜브의 화면/데이터를 렌더링·수정·
+오버레이하지 않는다. 반면 `/feed`(Pace Feed, WebView 기반)는 **Pace 자신의 WebView 안에 유튜브
+콘텐츠를 직접 가져와 렌더링하고 그 위에 Pace 자체 컨트롤을 겹쳐 놓는다** — 이게 정확히 위 1번
+("남의 웹사이트를 앱으로 감싸기")과 2번("플레이어 위에 오버레이 얹기") 정책이 금지하는 패턴 그
+자체다. 한 줄 요약: **오버레이는 유튜브를 안 건드리고 옆에서만 관리(안전), Feed/IFrame은 유튜브
+콘텐츠 자체를 가져다 쓰는 것(위험)** — 같은 "유튜브 위에 뭔가 띄운다"는 인상이라 헷갈리기 쉽지만
+기술적 구조가 완전히 다르다.
+
 **결론**: 이건 이미 빌드 플래그(`EXPO_PUBLIC_ENABLE_AUTO_NEXT`)로 막아둔 Auto Next(접근성 스와이프)
 리스크와 같은 종류이거나 오히려 더 명확한 정책 위반 소지다. **실제 프로덕션/스토어 제출용으로
 그대로 쓰면 안 되고**, 다음 중 하나가 필요하다:
@@ -2985,3 +2997,70 @@ Pace의 실제 `AudioTrack` 없음, `AAudio` 타입 항목은 `PaceFeedMediaSess
 (정책 위험은 여전히 미해결 — 위 세 옵션 결정 필요). 다음 세션에서 IFrame을 또 재시도하기 전에
 Chrome 원격 디버거(chrome://inspect)로 실제 네트워크 요청/응답을 직접 봐야 진짜 원인이 나올 것 —
 adb 로그만으로는 이 이상 못 판다.
+
+### 실기기 검증 9차 — 오버레이 알약 Next/Previous 버튼 (Bluetooth 대체안)
+
+**배경**: Bluetooth 하드웨어 버튼은 실제 유튜브 재생 중엔 절대 Pace에 안 온다는 게 8차까지 확정됐다
+(`MediaSessionService`가 OS 레벨에서 가로챔). 대안으로 사용자가 제안: 오버레이 알약 자체에 탭 가능한
+⏮/⏭ 버튼을 붙여서, 블루투스 라우팅 없이 직접 트리거하자는 것.
+
+**구현**(`PaceOverlayService.kt`): 알약 `showOverlay()`에 `TextView` 두 개(⏮/⏭) 추가, 기존 Bluetooth
+MediaSession 콜백이 이미 쓰던 `triggerNext(context)`/`triggerPrevious(context)` companion 함수를
+그대로 재사용(swipeOnce + 카운터 + 토스트). 새 `applyPillButtonStyle()` 헬퍼로 dp 스케일 원형 배경.
+
+**정책 재검토 — 사용자 질문("정책에는 안 걸려?")에 웹 검색으로 답함**: Google Play Console 공식
+Accessibility API 정책 문구(정확 인용): *"Any use of the Accessibility API that enables an app to
+autonomously initiate, plan, and execute actions or decisions is strictly prohibited. However,
+deterministic, rule-based automation is permitted, where behavior follows a static, human-defined
+script (e.g., 'If Trigger X occurs, perform Action Y')."* — 이 기준으로 보면:
+- **알약 탭 → 즉시 스와이프 1회**는 "사용자가 직접 트리거한 결정적 단일 동작"이라 **허용 범주에
+  더 가깝다** (Bluetooth 버튼 콜백도 동일 논리 — 사람이 물리 버튼을 누른 직접 트리거).
+- 반면 **Auto Next**(영상 위치를 스스로 모니터링하다 앱이 자율적으로 "지금 넘길 시점"을 판단해
+  스와이프)는 "자율적으로 계획·실행"에 더 가까워 **오히려 이쪽이 진짜 회색지대**다.
+- 결론: 기존에 `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 플래그로 막아둔 게 맞는 대상은 Auto Next 쪽이고,
+  알약 버튼/Bluetooth 콜백처럼 사용자가 직접 누르는 액션까지 같이 게이팅할 필요는 낮아 보인다.
+  (단, 이 플래그가 JS 레이어(`autoNextService.android.ts`)만 막고 네이티브 `swipeOnce()` 자체는
+  못 막는다는 건 별개로 발견된 사실 — 알약/Bluetooth 경로는 원래도 플래그를 거치지 않고 네이티브를
+  직접 호출하므로 이 갭과 무관하다.)
+
+**실기기 검증 결과**: 빌드 성공(`BUILD SUCCESSFUL`) 후 APK 설치, 알약에 ⏮/⏭ 버튼 정상 렌더링
+확인(스크린샷). 실제 유튜브 Shorts 전체화면 재생 중 ⏭ 탭 → 토스트는 정상 발생(버튼 인식/클릭
+핸들러/`triggerNext()` 호출 체인은 전부 정상)했지만 **실제 영상은 안 넘어감**(같은 영상, 같은
+댓글이 그대로 유지). 원인 확인:
+```
+$ adb shell dumpsys accessibility
+Bound services:{}
+Enabled services:{}
+```
+→ **APK 재설치 시 안드로이드가 접근성 서비스를 자동으로 다시 끈다**(이전 세션에도 여러 번 확인된
+동일 OS 동작 — `enabled_accessibility_services` 설정값엔 Pace가 여전히 남아있지만 실제 바인딩은
+꺼짐). 즉 알약 버튼 자체의 UI/이벤트 배선은 완전히 검증됐고, 안 넘어간 원인은 새 코드의 버그가
+아니라 **접근성 권한이 재설치로 리셋된 것** — 사람이 설정에서 다시 토글해야만 풀리는 OS 보안
+정책이라 자동화로 우회 불가능. **다음 세션 최우선 작업**: 사용자가 설정 → 접근성에서 Pace를 다시
+켠 뒤 동일 테스트(⏮/⏭ 탭 → 실제 스와이프 확인) 재실행 필요.
+
+**스와이프보다 편리한가 — 사용자의 두 번째 질문에 대한 정직한 답**: 알약 버튼은 화면 아무 데서나
+누를 수 있는 게 장점이지만, 손가락을 화면 위쪽 알약까지 옮겨야 하는 반면 스와이프는 화면 어디서든
+바로 할 수 있어 이동 거리가 더 짧다 — Next/Previous만 놓고 보면 **스와이프보다 명확히 편한 건
+아니다.** 알약 조합에서 진짜 차별화 포인트는 Next/Prev가 아니라 **AUTO ON/OFF 토글**(스와이프로는
+못 하는, 손 안 대고 계속 보게/막게 하는 기능) — Next/Prev 버튼은 "혹시 몰라 넣어둔 보조 기능"
+정도로 기대치를 낮춰야 한다는 게 현재 판단. 실사용 데이터(다음 세션 실기기 재검증) 이후 유지/제거
+결정.
+
+### iOS 세션(맥) 크로스체크 — 같은 딜레마가 두 플랫폼 다 확정됨 (2026-07-20)
+
+동시 진행 중이던 iOS 세션이 `QA_IOS_IFRAME_2026-07-20.md`에서 독립적으로 같은 결론에 도달했다:
+iOS WKWebView에서는 **공식 IFrame Embed API가 `onReady`까지는 정상 수신되지만(Android처럼 아예
+막힌 게 아님), `<video>`가 `readyState=0`에서 끝내 못 벗어남**(유튜브가 임베드 스트림 자체를 안
+붙여줌 — 서버 사이드 정책으로 추정, 기기 무관 가능성 높음). 반대로 **원본 페이지(`/shorts/{id}`,
+Android와 동일 방식)는 iOS에서도 실제로 재생됨**(Rick Astley 테스트 영상, 자막까지 정상 재생
+스크린샷 확보) — 즉 "합법(임베드)이면 재생 안 되고, 재생되면(원본페이지) 위반"이라는 동일한
+막다른 길이 **Android뿐 아니라 iOS에서도 실측으로 재확인**됐다.
+
+iOS 세션의 강한 권고: Pace Feed를 두 플랫폼 다 YouTube 기반에서 **Pexels/Pixabay 라이선스 세로
+숏폼(Plan B, 이미 `usePlayerStore`/`pexels.ts` 경로로 코드에 폴백 존재)으로 전환**. 근거는 위 (a)
+옵션(임베드 우회)의 기대값이 낮다는 것(서버 정책이라 실기기서도 결과 동일할 가능성), 이미 전환
+비용이 낮다는 것. 단, `feed/index.tsx`와 큐 스토어가 두 플랫폼 공유 코드라 **일방적으로 바꾸지
+않고 보류**해뒀다고 명시함 — 이 문서의 기존 "세 옵션 중 결정 필요" 항목과 정확히 같은 결론이며,
+이제 두 플랫폼 실측으로 뒷받침되어 **(c) Pexels 전환 쪽으로 근거가 더 강해졌다.** 최종 결정은
+여전히 사용자 몫으로 남겨둠(제품 방향 판단).

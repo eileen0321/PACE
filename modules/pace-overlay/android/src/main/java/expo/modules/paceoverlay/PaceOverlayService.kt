@@ -656,6 +656,34 @@ class PaceOverlayService : Service() {
     }
     bar.addView(remainingLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 16 })
 
+    // 2026-07-20 실기기 검증 7차에서 확정된 사실 — 실제 유튜브 앱 재생 중엔 Bluetooth 하드웨어
+    // 버튼이 절대 Pace로 안 온다(OS가 MediaSessionService 내부에서 무조건 YouTube로 타겟팅, 5가지
+    // 우회 다 실패). 반면 이 알약 자체는 Pace 소유의 진짜 View라 탭은 100% Pace가 받는다 — 블루투스
+    // 라우팅을 아예 안 거치므로 그 제약이 적용되지 않는 별도 경로(사용자 제안). triggerNext/
+    // triggerPrevious는 이미 Bluetooth 경로에서 검증된 PaceAccessibilityService.swipeOnce()를 그대로
+    // 재사용 — 새 스와이프 로직 아님, 입력 소스만 하드웨어 버튼 대신 알약 탭으로 바뀐 것.
+    val prevBtn = TextView(this).apply {
+      text = "⏮"
+      textSize = 13f
+      isClickable = true
+      setOnClickListener { triggerPrevious(applicationContext) }
+    }
+    applyPillButtonStyle(prevBtn)
+    bar.addView(prevBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      rightMargin = (6 * resources.displayMetrics.density).toInt()
+    })
+
+    val nextBtn = TextView(this).apply {
+      text = "⏭"
+      textSize = 13f
+      isClickable = true
+      setOnClickListener { triggerNext(applicationContext) }
+    }
+    applyPillButtonStyle(nextBtn)
+    bar.addView(nextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      rightMargin = (10 * resources.displayMetrics.density).toInt()
+    })
+
     autoBadge = TextView(this).apply {
       textSize = 9f
       setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -803,6 +831,19 @@ class PaceOverlayService : Service() {
       launchIntent?.let { startActivity(it) }
     } catch (e: Exception) {
       Log.w("PaceOverlay", "openPaceApp failed", e)
+    }
+  }
+
+  // Previous/Next 알약 버튼 공용 스타일 — autoBadge와 동일하게 dp 스케일 패딩을 써서 고밀도
+  // 화면에서 터치 영역이 raw px처럼 쪼그라드는 걸 방지(2026-07-19 AUTO 배지 오작동 버그와 동일한
+  // 원인을 처음부터 피함).
+  private fun applyPillButtonStyle(view: TextView) {
+    val d = resources.displayMetrics.density
+    view.setPadding((10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt())
+    view.setTextColor(Color.WHITE)
+    view.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.parseColor("#14FFFFFF"))
     }
   }
 

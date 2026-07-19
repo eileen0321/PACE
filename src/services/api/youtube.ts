@@ -127,8 +127,17 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   return { shorts, nextPageToken: null };
 }
 
+// ⚠️ DEV 전용 폴백 — 프록시/키/스크래핑이 전부 빈 결과일 때(시뮬레이터의 RN fetch는 YouTube 검색
+// HTML을 제대로 못 받는 경우가 많음), IFrame 플레이어+큐 순차재생 "메커니즘"을 검증할 수 있게 안정적인
+// 공개·임베드 가능 영상 ID 몇 개를 큐에 넣는다. 프로덕션에선 절대 도달 안 함(프록시/키/스크래핑 성공 시 미사용).
+const DEV_FALLBACK_SHORTS: YouTubeShort[] = [
+  { videoId: 'dQw4w9WgXcQ', title: '[DEV] Sample 1', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg' },
+  { videoId: 'jNQXAC9IVRw', title: '[DEV] Sample 2', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg' },
+  { videoId: 'aqz-KE-bpKQ', title: '[DEV] Sample 3', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg' },
+];
+
 /** Shorts 한 페이지를 받는다. 프록시 설정돼 있으면 프록시, __DEV__면 클라이언트 직접호출,
- * 둘 다 없으면 스크래핑 폴백. */
+ * 둘 다 없으면 스크래핑 폴백, 그것도 비면(dev) 샘플. */
 export async function fetchShortsPage(opts: { query?: string; pageToken?: string | null } = {}): Promise<ShortsPage> {
   const query = opts.query || DEFAULT_QUERY;
   if (hasYouTubeProxy()) {
@@ -137,5 +146,9 @@ export async function fetchShortsPage(opts: { query?: string; pageToken?: string
   if (__DEV__ && hasYouTubeKey()) {
     return fetchShortsViaDataApi(query, opts.pageToken ?? null);
   }
-  return fetchShortsViaScrape(query);
+  const scraped = await fetchShortsViaScrape(query).catch(() => ({ shorts: [], nextPageToken: null } as ShortsPage));
+  if (scraped.shorts.length === 0 && __DEV__) {
+    return { shorts: DEV_FALLBACK_SHORTS, nextPageToken: null };
+  }
+  return scraped;
 }

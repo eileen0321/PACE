@@ -2,8 +2,22 @@ import { Platform, StyleSheet } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
+
+// 2026-07-19 실기기(3버튼 내비게이션) 발견: Android는 SDK 57부터 edge-to-edge가 강제라 탭바가
+// 시스템 내비게이션 바 영역까지 직접 패딩을 챙겨야 하는데, Expo Router의 내장 BottomTabBar가
+// 기본으로 넣어주는 paddingBottom(=insets.bottom)을 그대로 믿었더니 일부 실기기에서 3버튼
+// 내비게이션 바와 탭바가 살짝 겹쳤다(제스처 내비게이션 기기에서는 안 보이던 문제라 에뮬레이터
+// 검증에서 놓쳤다). jlpt-master/zen-master의 HomeScreen.tsx 커스텀 하단바가 쓰는 것과 동일한
+// 방어적 최솟값 패턴(paddingBottom = Math.max(insets.bottom, floor))을 그대로 이식 — 두 프로젝트
+// 모두 raw insets.bottom을 곧이곧대로 쓰지 않고 Android 10dp/iOS 8dp 최솟값을 강제한다(일부 기기가
+// insets.bottom을 실제 내비게이션 바 높이보다 작게 보고하는 경우에 대한 방어). Expo Router의
+// BottomTabBar는 `[내부계산, ...사용자 tabBarStyle]` 순서로 스타일 배열을 합치므로, 여기서 height/
+// paddingBottom을 명시하면 내부 기본값(insets.bottom 그대로)을 그대로 덮어쓴다.
+const TAB_BAR_BASE_HEIGHT = 49; // expo-router 내장 BottomTabBar의 TABBAR_HEIGHT_UIKIT과 동일
+const ANDROID_MIN_BOTTOM_INSET = 10; // jlpt-master/zen-master HomeScreen.tsx와 동일한 최솟값
 
 // healthy-shorts-assistant(2) App.tsx 하단 내비게이션 아이콘을 토씨 하나 안 틀리고 그대로 이식
 // (App.tsx:539/550/561/572, lucide-react Home/Sliders/BarChart2/Settings) — outline↔filled
@@ -20,6 +34,8 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
 
 export default function TabsLayout() {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
+  const androidBottomInset = Math.max(insets.bottom, ANDROID_MIN_BOTTOM_INSET);
 
   const renderIcon = (routeName: string) => ({ focused, color }: { focused: boolean; color: import('react-native').ColorValue; size: number }) => {
     return <Feather name={TAB_ICONS[routeName]} size={22} color={color as string} style={focused ? styles.iconActive : undefined} />;
@@ -43,7 +59,13 @@ export default function TabsLayout() {
         // 같이 흐려지는 문제로 실제 블러를 쓰지 않고 flat 컬러로 대체했던 전례를 그대로 따른다.
         tabBarStyle: Platform.select({
           ios: { position: 'absolute', borderTopWidth: 0, elevation: 0 },
-          android: { backgroundColor: colors.card, borderTopColor: colors.border, elevation: 8 },
+          android: {
+            backgroundColor: colors.card,
+            borderTopColor: colors.border,
+            elevation: 8,
+            height: TAB_BAR_BASE_HEIGHT + androidBottomInset,
+            paddingBottom: androidBottomInset,
+          },
         }),
         // 2026-07-18: 앱 전체가 항상-다크 테마로 리스킨되면서(시스템 라이트/다크 모드를 따라가는 게
         // 아니라 앱 자체가 다크 고정) 블러 틴트도 Dark로 고정.

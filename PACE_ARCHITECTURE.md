@@ -2747,3 +2747,200 @@ YouTube 앱을 포그라운드에 둔 채 약 9분 대기 후:
 해당 접근성 서비스를 자동 비활성화시키는 부작용을 유발할 수 있다 — 접근성 관련 기능(Hard Block Mode,
 Bluetooth Hands-Free 스와이프 등)을 검증할 때는 프로세스 킬 대신 설정값을 낮춰 자연 만료를 기다리는
 방식을 우선 고려할 것.
+
+---
+
+## 실기기 검증 7차 — AirPods 하드웨어 버튼으로 실제 YouTube 앱 제어는 불가능함이 확정됨 (2026-07-19)
+
+> 배경: 6차에서 구현한 Bluetooth Hands-Free Control(`PaceOverlayService.setupMediaSession()` +
+> `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`)이 실제로 하드웨어 버튼을 가로채는지 실기기(AirPods Pro,
+> 실제 YouTube 앱 세션)로 처음 검증. **결론: 안 된다 — 그리고 안 되는 이유가 4가지 서로 다른 우회
+> 시도를 통해 아키텍처 차원에서 명확히 규명됨.** 아래는 "된다/안 된다 주장" 대신 전부 실기기 로그로
+> 확인한 결과다.
+
+### 재현 조건
+실제 물리 기기(`R3CN80S5GWW`, Galaxy, Android 13/API 33, One UI), 실제 페어링된 AirPods Pro
+(MAC `20:F4:D4:24:2D:54`), Pace가 `launchPlatformApp()`으로 연 진짜 `com.google.android.youtube`
+Shorts 화면. 에뮬레이터가 아니라 물리 기기 + 실제 페어링 하드웨어라는 점이 중요 — 이 클래스의 버그는
+에뮬레이터에서 재현 안 됨.
+
+### 시도 1 — AudioFocus로 미디어 버튼 소유권 뺏기 (6차에서 구현한 기존 방식)
+`requestAudioFocus(AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)`. 실기기 확인 결과 `dumpsys audio`의 진짜
+포커스 스택에서 **Pace가 최상단을 차지하고 YouTube가 `LOSS_TRANSIENT_CAN_DUCK`으로 밀려난 것까지
+확인**했음에도(`requestAudioFocus()` 반환값 `1=GRANTED`, 이후 한 번도 안 뺏김), `dumpsys media_session`의
+"Media button session"은 세션 내내 계속 `com.google.android.youtube`였다. → **오디오 포커스 승리가
+버튼 라우팅 승리를 보장하지 않는다.**
+
+### 시도 2 — Pace 자체 화면(Pace Feed IFrame)을 진짜 포그라운드로 띄워서 이기기
+"포그라운드 액티비티가 이긴다"는 가설을 검증하려고 `pace://feed` 딥링크로 Pace의 자체 WebView/IFrame
+플레이어 화면을 실제 포그라운드로 띄운 채(`mCurrentFocus=...com.pace.app`) 같은 방식으로 확인 —
+YouTube는 이제 완전히 백그라운드인데도 "Media button session"은 여전히 YouTube. → **포그라운드
+액티비티 여부도 결정 요인이 아니다.**
+
+### 시도 3 — NotificationListenerService + MediaSessionManager로 "관찰 + 명령"
+알림 접근 권한을 받아(`PaceNotificationListenerService`) `MediaSessionManager.getActiveSessions()`로
+실제 YouTube Shorts `MediaController`를 정상적으로 잡아냄 — `actions=6`(PAUSE+PLAY만, **SKIP_TO_NEXT/
+PREVIOUS 비트 자체가 없음**, 즉 Shorts는 skip을 MediaSession으로 아예 노출 안 함). `pause()`를 실제로
+호출했지만 화면 녹화(스크린샷 연속 캡처)로 확인한 결과 영상이 멈추지 않고 계속 재생됨 — **광고된
+capability와 실제 동작이 다르다.** `skipToNext()`는 애초에 capability가 없으므로 예상대로 no-op.
+
+### 시도 4 — `ACTION_MEDIA_BUTTON` 브로드캐스트를 `android:priority=2147483647`로 하이재킹
+`PaceMediaButtonReceiver`를 최우선순위로 매니페스트 등록(`dumpsys package`로 등록 자체는 성공 확인).
+AirPods 버튼을 여러 차례 실제로 눌렀지만 `onReceive`가 단 한 번도 호출 안 됨 — 로그 완전 침묵.
+
+### 결정적 근거 — 왜 4가지가 전부 실패했는지 (`logcat`으로 직접 확인)
+버튼을 누르는 순간 시스템 로그:
+```
+AvrcpTargetJni: sendMediaKeyEvent
+MediaSessionService: tempAllowlistTargetPkgIfPossible
+  callingPackage:com.android.bluetooth
+  targetPackage:com.google.android.youtube
+  reason:action=ACTION_DOWN;code=KEYCODE_MEDIA_PAUSE
+```
+Bluetooth AVRCP 스택(`com.android.bluetooth`)이 버튼 신호를 정상적으로 `KeyEvent`로 변환하는 것,
+그리고 **`MediaSessionService`가 그 자리에서 곧바로 타겟 패키지를 `com.google.android.youtube`로
+직접 지정**하는 것까지 로그로 확인됨 — 이 타겟 결정은 브로드캐스트도, 알림 리스너 콜백도, 오디오
+포커스 스택 조회도 거치지 않는, **OS 내부 `MediaSessionService`의 시스템 프로세스(uid 1000) 코드
+안에서 일어나는 결정**이다. 서드파티 앱이 개입할 수 있는 지점(브로드캐스트 리시버, 알림 리스너,
+오디오 포커스 요청)은 전부 이 결정 지점보다 **뒤**에 있거나 아예 무관한 별도 경로라 애초에 끼어들
+틈이 없다. 참고로 Bluetooth A2DP(오디오 스트리밍) 자체는 완전히 정상 — 문제는 AVRCP 버튼 신호의
+라우팅 결정 지점에 한정된다.
+
+### 최종 결론
+**루팅되지 않은 기기에서, 시스템 앱/특수 권한 없이는, 실제 YouTube 앱이 재생 중일 때 그 앱으로 가는
+AirPods 하드웨어 버튼 신호를 서드파티 앱이 가로챌 방법이 없다.** 이건 버그가 아니라 Android의
+의도된 보안 설계(악성 앱이 다른 앱의 미디어 재생을 하이재킹 못 하게 막는 것과 동일한 이유)다.
+Bluetooth Hands-Free Control 기능은 **Pace 자체 오버레이/세션에 대해서만**(Pace가 직접 오디오를
+재생하는 경우, 예: iOS Pace Feed) 의미가 있고, "실제 외부 앱(YouTube) 재생 중 하드웨어 버튼 가로채기"는
+로드맵에서 제외해야 한다 — 앱 안내 문구/UI에서도 이 한계를 정직하게 반영할 것(예: "Hands-Free" 기능은
+Play/Pause 인앱 토글에는 여전히 유효할 수 있으나 실제 재생 중인 외부 앱에 대한 물리 버튼 가로채기는
+불가).
+
+**이번 라운드에서 추가로 만든 PoC 전용 파일(프로덕션 미배선, 필요시 정리 대상)**:
+`PaceNotificationListenerService.kt`(+ 매니페스트의 `BIND_NOTIFICATION_LISTENER_SERVICE` 서비스 등록),
+`PaceMediaButtonReceiver.kt`(+ 매니페스트의 `MEDIA_BUTTON` 리시버 등록). 둘 다 adb 브로드캐스트로만
+트리거되는 실험 코드로, 정식 기능이 아니라 이 결론을 실기기로 검증하기 위한 일회성 도구였다.
+
+### 결론 발표 후 추가 검증 — 웹 검색 기반 반박 시도 2건, 둘 다 재확정
+결론을 내린 뒤 "실기기 실험만 믿지 말고 외부 자료도 찾아봤냐"는 지적을 받아 웹 검색으로 선례를 확인—
+검색 결과 자체는 위 결론과 대체로 일치했지만("포그라운드 앱이 미디어 버튼 우선권을 가진다", Android
+8+ 암시적 브로드캐스트 제한이 매니페스트 리시버를 막는다), **매니페스트 대신 런타임
+`registerReceiver()`로 동적 등록하면 Android 8+ 암시적 브로드캐스트 제한을 우회할 수 있다**는,
+시도 4에서 테스트 안 한 변수 하나가 나왔다. `PaceNotificationListenerService.onListenerConnected()`
+안에 `ACTION_MEDIA_BUTTON`용 런타임 리시버를 추가로 등록해 실기기로 재검증(`cmd notification
+disallow_listener`/`allow_listener`로 강제 재연결시켜 등록 로그까지 직접 확인) — AirPods 버튼을
+4번 눌러 Bluetooth 스택이 4번 다 정상 수신·타겟팅(`AvrcpTargetJni`/`MediaSessionService` 로그로
+확인)하는 동안 런타임 리시버는 이번에도 단 한 번도 안 불림. **매니페스트냐 런타임이냐는 애초에
+무관했다** — `ACTION_MEDIA_BUTTON`이 이 경로에서는 일반 브로드캐스트로 전혀 안 나가고
+`MediaSessionService`가 타겟 앱에 직접 전달하기 때문(위 "결정적 근거" 섹션과 동일한 이유). 마지막
+남은 변수까지 반박 완료 — 이 결론은 더 뒤집을 시도가 남아있지 않다.
+
+**별도로 이번 라운드에서 발견/수정한 실기기 버그(Bluetooth Hands-Free와 무관하지만 같은 세션에서 발견)**:
+- `adb shell am force-stop <pkg>`가 `AccessibilityManagerService`의 `PackageMonitor.onHandleForceStop`을
+  트리거해 해당 앱의 접근성 서비스를 자동으로 비활성화시킨다(재설치와는 별개의 트리거) — 실기기
+  테스트 중 "AUTO 배지는 켜져 있는데 스와이프가 전혀 안 됨" 현상의 진짜 원인이었다. 접근성 기능을
+  실기기로 반복 검증할 때는 **`am force-stop`을 쓰지 말고** `am start`만으로 재실행할 것.
+- `PaceAccessibilityService.startWatching()`이 `instance==null`(서비스가 아직 시스템에 안 바인딩된
+  상태)일 때 조용히 무시되던 것 — 로그 추가(`Log.w`)로 "권한 꺼짐"과 "바인딩 레이스"를 구분 가능하게 함.
+- `PaceOverlayModule.requestAccessibilityPermission()`의 API 34+ 전용 딥링크
+  (`ACTION_ACCESSIBILITY_DETAILS_SETTINGS`) 폴백이 `ActivityNotFoundException`만 잡고 있었는데, 실제
+  삼성 기기(API 33)에서는 `SecurityException`(Permission Denial)이 던져져 크래시로 이어졌다 —
+  `RuntimeException`으로 catch 범위를 넓혀 수정.
+
+---
+
+## 실기기 검증 8차 — Pace Feed(Android) 검은 화면/무음 버그 근본 해결 (2026-07-20)
+
+> 배경: 7차(Bluetooth Hands-Free)에서 "YouTube with Pace" Android 버전을 IFrame 기반 Pace Feed로
+> 성립시키려다 막힌 검은 화면 버그(6차 이전부터 미해결로 남아있던 것)를 이번 라운드에서 근본
+> 원인까지 찾아 해결했다.
+
+### 근본 원인
+`src/components/feed/YouTubeShortsPlayer.tsx`가 쓰던 YouTube 공식 **IFrame Embed API**
+(`new YT.Player(...)`)가 Android WebView에서 구조적으로 막혀 있었다. 증상: `onReady`/
+`onStateChange` 등 JS 콜백은 정상 동작(영상 제목/재생상태 전환 다 됨)하는데, 그 밑의 실제
+`<video>` 엘리먼트는 `readyState=0`(HAVE_NOTHING), `videoWidth/Height=0`, `src=빈값`에서 세션
+내내(수 시간, 수십 회 재확인) 단 한 번도 못 벗어났다 — `dumpsys audio`에도 Pace의 `AudioTrack`이
+단 한 번도 안 잡힘. `onError` 콜백도, 브라우저 레벨 CORS/네트워크 에러도 전혀 안 뜸(조용히
+실패). 사용자 지시로 웹 검색 확인 결과, YouTube가 2023년부터 임베드 플레이어에 도입한 **"Android
+WebView Media Integrity API"**(임베딩 앱의 Google Play 서명/무결성을 검증)와 Referer 헤더 요구
+(Error 153 계열, `loadDataWithBaseURL`로 로드한 페이지는 baseUrl을 지정해도 하위 iframe에 Referer가
+안 붙는 경우가 다수 보고됨)가 가장 유력한 원인 — 둘 다 "임베드 전용 경로"에만 걸리는 검증이라
+표준 인증 안 된 WebView 임베드는 통과 못 하고 에러 없이 스트림만 조용히 거부하는 것으로 추정.
+
+### 해결
+**IFrame Embed API를 완전히 제거하고, 실제 브라우저처럼 `https://www.youtube.com/shorts/{videoId}`로
+직접 네비게이션**하는 방식으로 전면 재작성(`YouTubeShortsPlayer.tsx`). "임베드"가 아니라 순수
+브라우징이라 위 검증 경로 자체를 안 만난다(사용자 지시 — 브레이브 등 일반 브라우저는 유튜브를
+문제없이 재생한다는 지적이 결정적 힌트였음). 실기기 검증 완료:
+- `readyState=4`(HAVE_ENOUGH_DATA), 실제 `videoWidth/Height`(360x640), `src=blob:https://m.youtube.com/...`
+  (정상 MediaSource Extensions 재생) — 24초 이상 안정적으로 유지.
+- `dumpsys audio`에 Pace(uid 10722)의 진짜 `AudioTrack`/`AAudio` 플레이어가 `state:started`로 확인
+  — 이번 세션 최초로 Pace Feed가 실제 소리를 낸 순간.
+- 스크린샷으로 실제 영상 프레임(사람 얼굴 등 실사 콘텐츠) 렌더링까지 육안 확인 — 항상 검은 화면이던
+  것이 완전히 해결.
+
+### 함께 고친 부수 버그
+- **`source={{ html, baseUrl }}` 인라인 객체 리렌더 버그**: 부모(`feed/index.tsx`)가 리렌더될 때마다
+  (타이머 틱 등) 매번 새 객체 참조가 생성돼 WebView가 불필요하게 통째로 리로드되고 있었다(콘솔 로그로
+  확인: iframe 초기화가 끝나기도 전에 ~1.6초 만에 페이지가 처음부터 재시작). `useMemo`로 `source`
+  객체 자체를 메모이즈해 해결 — 새 구현(`source={{ uri }}`)에도 동일하게 `useMemo([videoId])` 적용.
+- **`pace_watched_shorts` 캐시 무한 누적**: 고정된(다양성 없는) 기본 검색어를 계속 재사용하는 상태에서
+  반복 테스트하면 워치드 캐시가 API 결과 페이지 크기를 넘어서 거의 다 걸러버리는 현상 재확인(6차
+  이전부터 알려진 제품 레벨 한계, 이번엔 근본 원인의 연쇄 증상까지 확인: 영상이 실제로 재생이 안
+  되니 즉시 종료 판정되어 큐를 비정상적으로 빠르게 소진 — 재생 버그가 고쳐지면 이 소진 속도도
+  정상화될 것으로 예상, 단 다양성 없는 고정 쿼리 자체는 여전히 별도 개선 과제로 남음).
+- **로컬 dev 환경 사고(작업 방법론 오류, 기록용)**: `adb shell cat databases/RKStorage > file`처럼
+  `adb shell` 표준출력 리다이렉트로 바이너리(SQLite) 파일을 받으면 손상된다(`database disk image is
+  malformed`) — 반드시 `adb exec-out`(바이너리 세이프) 사용할 것. 복구 시 `run-as ... cp
+  /sdcard/파일 databases/RKStorage`가 최신 Android Scoped Storage에서 권한 거부될 수 있어, 앱
+  자신의 외부 파일 디렉터리(`/sdcard/Android/data/<pkg>/files/`)를 경유지로 쓸 것 — 이 과정에서
+  한 번 `run-as ... sh -c 'cat src > dst'`가 src 읽기 실패 전에 dst를 truncate시켜 DB를 완전히
+  날린 사고 발생, 즉시 같은 방법으로 복구됨(치명적 데이터는 아니었음 — 로컬 dev 테스트 데이터).
+- **Metro CI 모드 파일 감시 비활성화 함정**: `CI=1 npx expo start`로 띄운 Metro는 파일 변경 감지
+  (watch mode) 자체가 꺼져서, 이후 소스 수정이 전혀 번들에 반영 안 된 채(`bundling:done` 로그의
+  `total` 모듈 수가 매번 `1`로 고정) 계속 캐시만 재서빙하고 있었다 — 몇 차례의 "코드 고쳤는데 왜
+  안 바뀌지" 삽질의 진짜 원인. **실기기 반복 검증 중엔 `CI=1` 없이 Metro를 띄울 것.**
+
+### 알려진 트레이드오프(향후 과제로 남김)
+- JS 제어 API(`loadVideoById` 등)가 없어져 영상 전환마다 실제 페이지 재네비게이션이 필요(이어붙여
+  재생이 아님) — 전환 시 짧은 로딩이 보일 수 있음.
+- YouTube 자체 UI(구독/좋아요/댓글/추천 등)가 그대로 노출됨 — `controls=0` 같은 임베드 전용 숨김
+  옵션을 못 씀. Pace 자체 오버레이와의 시각적 조화는 별도 UI 작업 필요.
+- 종료 감지가 실제 `<video>`의 `ended` DOM 이벤트 의존.
+- **(실기기로 새로 확인된 중요 트레이드오프) 진짜 유튜브 페이지라 사용자가 화면을 직접 스와이프/
+  탭해서 Pace의 큐 제어를 완전히 우회할 수 있다** — `isAutoMode`가 꺼져있어 Pace의 `goNext()`가
+  전혀 호출 안 된 상태에서도 사용자가 직접 위로 스와이프하면 화면 속 영상이 바로 바뀌는 것을
+  실기기로 확인(처음엔 YouTube 자체 알고리즘 자동 연속재생으로 오판했으나, 사용자 확인 결과 실제로는
+  수동 스와이프였음). `controls=0` 같은 임베드 전용 제약이 없어진 대가로 **화면이 완전히 진짜
+  유튜브 UI라 스와이프/구독/좋아요 등 모든 상호작용이 다 살아있다** — Pace의 `queue`/`watchedIds`
+  dedup/추적 시스템과 실제 화면에 보이는 영상이 사용자의 직접 조작만으로 바로 어긋날 수 있는
+  근본적 갭. 해결하려면 스와이프 자체를 막거나(예: 터치 오버레이로 제스처 흡수 후 Pace가 대신
+  `goNext()` 호출), 혹은 `onNavigationStateChange`로 실제 재생 중인 videoId를 주기적으로 감지해
+  Pace의 큐 상태를 그에 맞춰 동기화하는 로직이 필요(이번 라운드 범위 밖, 후속 과제).
+- **iOS는 이 결론이 적용되는지 미검증** — 근본 원인(Android WebView Media Integrity API)이 Android
+  전용 메커니즘이라 iOS(WKWebView)는 애초에 이 문제가 없었을 가능성이 있음. 컴포넌트 자체는 플랫폼
+  분기 없이 공유되므로 새 구현은 iOS에도 동일하게 적용되지만, iOS 실기기 검증은 이 세션에 Mac/Xcode가
+  없어 여전히 불가능.
+
+### 후속 — Bluetooth 하드웨어 버튼도 Pace Feed에서는 실제로 동작함 (같은 라운드, 실기기 검증 완료)
+7차에서 "실제 YouTube 앱 재생 중엔 서드파티가 하드웨어 버튼을 절대 못 가져온다"고 확정한 것과
+모순되지 않는다 — 이번엔 **Pace 자신이 유일한 실제 재생자**라는 조건이 다르다. `PaceFeedMediaSession.kt`
+(신규, `object` 싱글턴)를 추가해 Feed 화면이 떠 있는 동안만 독립적인 `MediaSession` +
+`AudioFocus`(PaceOverlayService에서 이미 검증된 `GAIN_TRANSIENT_MAY_DUCK` + 포커스 뺏기면
+재요청 패턴 재사용)를 잡고, `PaceOverlayModule`에 `Events("onFeedMediaCommand")` +
+`startFeedMediaSession`/`stopFeedMediaSession`/`setFeedPlaybackState` 추가, JS 쪽은
+`useFeedRemoteControl.android.ts`를 no-op에서 실제 구현으로 교체(iOS의 `react-native-track-player`
+버전과 동일한 콜백 인터페이스 — Next/Previous/Play-Pause→Auto Mode 토글).
+
+실기기 검증: 세션 시작 직후 `dumpsys media_session` → `Media button session is
+com.pace.app/PaceFeedSession`, `controllers: android com.android.bluetooth com.android.systemui` —
+경쟁 상대(YouTube 네이티브 앱) 자체가 없으니 자연스럽게 Pace가 소유. AirPods로 실제 버튼을 눌러
+최종 확인: 더블 프레스(NEXT) → 영상이 실제로 다음으로 전환, 싱글 프레스(PLAY/PAUSE) → "Auto Mode
+ON" 배지가 화면에 표시. 둘 다 `MediaSessionService` 로그(`targetPackage:com.pace.app`)와 화면
+스크린샷 양쪽으로 확인 완료.
+
+**함께 고친 부수 버그**: 네이티브 이벤트 리스너 콜백이 React 렌더 사이클과 타이밍이 겹쳐
+"Cannot update a component (ToastHost) while rendering a different component" 경고(dev 빌드에서
+빨간 에러 배너로 표시)가 뜨는 걸 실기기로 발견 — `useFeedRemoteControl.android.ts`의 리스너 콜백을
+`setTimeout(fn, 0)`으로 감싸 현재 렌더/마이크로태스크 밖에서 실행되게 해 해결.

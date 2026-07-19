@@ -223,6 +223,8 @@ export const translations = {
       notifLimitReachedBody: "You've reached today's mindful limit. Time to put the phone down.",
       notifBreakReminderTitle: 'Time for a break',
       notifBreakReminderBody: 'Take a short stretch or breathing break before continuing.',
+      notifAccessibilityNeededTitle: 'Hands-Free Shorts needs one tap',
+      notifAccessibilityNeededBody: 'Tap here, then turn PACE on under Installed apps.',
     },
   },
 
@@ -431,6 +433,12 @@ export const translations = {
       tapForDetails: '탭하면 상세 정보를 볼 수 있어요',
       lowTimeWarningPlural: '⏰ 오늘 {{n}}분 남았어요! 잠시 숨을 돌려볼까요.',
       lowTimeWarningSingular: '⏰ 오늘 {{n}}분 남았어요! 잠시 숨을 돌려볼까요.',
+      notifLimitReachedTitle: '오늘의 한도에 도달했어요',
+      notifLimitReachedBody: '오늘 정해둔 한도를 다 썼어요. 이제 폰을 내려놓을 시간이에요.',
+      notifBreakReminderTitle: '잠깐 쉬어갈 시간이에요',
+      notifBreakReminderBody: '계속하기 전에 짧게 스트레칭하거나 숨을 골라보세요.',
+      notifAccessibilityNeededTitle: '한 번만 탭하면 핸즈프리 완성',
+      notifAccessibilityNeededBody: '여기를 탭한 다음, 설치된 앱에서 PACE를 켜주세요.',
     },
   },
 } as const;

@@ -3,7 +3,9 @@ import { Platform, Text } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
+import { autoNextService } from '../services/platform';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
@@ -75,6 +77,19 @@ export default function RootLayout() {
     if (Platform.OS === 'android') {
       NavigationBar.setStyle('light');
     }
+  }, []);
+
+  // 2026-07-19: notifyAccessibilityNeeded() 알림 탭 처리 — data.action을 보고 바로 접근성 설정으로
+  // 보낸다(services/notifications/index.ts 참고). 앱이 백그라운드/종료 상태에서 탭해도 콜드 스타트 후
+  // 이 리스너가 붙으면 마지막으로 탭한 알림의 response를 즉시 재전달해주는 expo-notifications 동작을
+  // 그대로 활용 — 별도의 "초기 알림" 처리 코드 불필요.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      if (response.notification.request.content.data?.action === 'open-accessibility-settings') {
+        autoNextService.requestPermission();
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   const onLayoutRootView = useCallback(() => {

@@ -11,6 +11,7 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useTranslation } from '../../services/i18n';
+import { notifyAccessibilityNeeded } from '../../services/notifications';
 import { overlayService, autoNextService, capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
@@ -175,7 +176,11 @@ export default function FocusScreen() {
               {capabilities.supportsAutoNext && (
                 <Pressable
                   style={[styles.guardRow, styles.guardRowBordered]}
-                  onPress={() => !hasAutoNextPermission && setShowAccessibilityOnboarding(true)}
+                  onPress={() => {
+                    if (hasAutoNextPermission) return;
+                    setShowAccessibilityOnboarding(true);
+                    notifyAccessibilityNeeded().catch(() => {});
+                  }}
                 >
                   <View style={styles.guardLeft}>
                     <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>

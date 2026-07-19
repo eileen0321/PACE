@@ -86,18 +86,24 @@ class PaceAccessibilityService : AccessibilityService() {
     // 바뀌었다 — JS↔네이티브 브릿지 시그니처(PaceOverlayModule.startAutoNextWatching)는 그대로 두고
     // 값의 의미만 재정의(호출부: autoNextService.android.ts, PaceOverlayService.setAutoMode).
     fun startWatching(intervalMs: Long) {
-      instance?.let { service ->
-        service.safetyTimeoutMs = intervalMs
-        if (!service.isWatching) {
-          service.isWatching = true
-          service.lastKnownCurrentSec = -1
-          service.lastSwipeAtMs = SystemClock.elapsedRealtime()
-          service.handler.post(service.pollRunnable)
-        }
+      val service = instance
+      if (service == null) {
+        // 2026-07-19 실기기 검증 중 발견: JS는 AUTO ON 배지를 켰는데 실제 스와이프 로그가 전혀
+        // 안 남는 케이스 재현 중 — instance가 이 시점에 null이면 여기서 조용히 무시되고 있었다.
+        // 원래 주석은 "권한이 꺼진 정상 케이스"만 가정했는데, 접근성을 방금 껐다 켠 직후(APK
+        // 재설치 등으로) 서비스가 아직 시스템에 바인딩되기 전에 호출되는 레이스도 같은 경로를
+        // 타서 구분이 안 됐다 — 최소한 로그로는 남겨서 둘을 구분할 수 있게 한다.
+        Log.w("PaceAccessibility", "startWatching() called but instance is null — accessibility not bound yet, silently ignored")
+        return
       }
-      // instance가 아직 null이면(서비스가 시스템에 의해 아직 바인딩되지 않음) 사용자가 설정에서
-      // 권한을 켜지 않은 상태 — JS 쪽(autoNextService.android.ts)이 hasAccessibilityPermission()으로
-      // 먼저 확인하므로 여기서는 조용히 무시한다.
+      service.safetyTimeoutMs = intervalMs
+      if (!service.isWatching) {
+        service.isWatching = true
+        service.lastKnownCurrentSec = -1
+        service.lastSwipeAtMs = SystemClock.elapsedRealtime()
+        service.handler.post(service.pollRunnable)
+        Log.d("PaceAccessibility", "startWatching() -> polling started, safetyTimeoutMs=$intervalMs")
+      }
     }
 
     fun stopWatching() {
@@ -128,6 +134,7 @@ class PaceAccessibilityService : AccessibilityService() {
   override fun onServiceConnected() {
     super.onServiceConnected()
     instance = this
+    Log.d("PaceAccessibility", "onServiceConnected — instance bound")
     // 세부 설정(canPerformGestures, packageNames, eventTypes)은 전부
     // res/xml/accessibility_service_config.xml에 선언 — 여기서 serviceInfo를 재조립하지 않는다.
   }

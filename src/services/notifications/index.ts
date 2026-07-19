@@ -37,11 +37,11 @@ function currentLocale() {
   return language === 'system' ? resolveSystemLocale() : language;
 }
 
-async function fireLocal(title: string, body: string) {
+async function fireLocal(title: string, body: string, data?: Record<string, string>) {
   const granted = await requestNotificationPermission();
   if (!granted) return;
   await ensureAndroidChannel();
-  await Notifications.scheduleNotificationAsync({ content: { title, body }, trigger: null });
+  await Notifications.scheduleNotificationAsync({ content: { title, body, data }, trigger: null });
 }
 
 export async function notifyLowTime(remainingMinutes: number): Promise<void> {
@@ -62,4 +62,17 @@ export async function notifyBreakReminder(): Promise<void> {
   if (!useSettingsStore.getState().settings.notifyBreak) return;
   const locale = currentLocale();
   await fireLocal(translate(locale, 'overlay.notifBreakReminderTitle'), translate(locale, 'overlay.notifBreakReminderBody'));
+}
+
+// 2026-07-19: 사용자 지시 — 접근성 권한 On/Off 화면 안내(AccessibilityOnboardingSheet)는 앱을 나가면
+// 사라지는 일회성 모달이라, 사용자가 설정 화면을 보다가 다른 데로 새면 다시 앱으로 안 돌아올 수
+// 있다. 탭하면 바로 설정으로 이어지는 알림을 별도 채널로 남겨 "나중에라도" 진입점이 있게 한다.
+// data.action은 _layout.tsx의 알림 탭 리스너가 읽어 autoNextService.requestPermission()을 호출.
+export async function notifyAccessibilityNeeded(): Promise<void> {
+  const locale = currentLocale();
+  await fireLocal(
+    translate(locale, 'overlay.notifAccessibilityNeededTitle'),
+    translate(locale, 'overlay.notifAccessibilityNeededBody'),
+    { action: 'open-accessibility-settings' }
+  );
 }

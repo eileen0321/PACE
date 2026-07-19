@@ -17,7 +17,7 @@ import { useToastStore } from '../../store/useToastStore';
 import { overlayService, autoNextService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
-import { notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
+import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { SUPPORTED_APPS } from '../../constants/supportedApps';
@@ -104,8 +104,12 @@ export default function OverlaySessionScreen() {
       // 시작하고 없으면 AccessibilityOnboardingSheet로 먼저 설명한 뒤에만 리다이렉트한다.
       if (settings.autoNext) {
         autoNextService.hasPermission().then((granted) => {
-          if (granted) autoNextRuntime.start(null);
-          else setShowAccessibilityOnboarding(true);
+          if (granted) {
+            autoNextRuntime.start(null);
+          } else {
+            setShowAccessibilityOnboarding(true);
+            notifyAccessibilityNeeded().catch(() => {});
+          }
         });
       }
       // Android 실기기에서 native 모듈이 링크돼 있으면 시스템 오버레이도 함께 띄운다(미링크 시 no-op).

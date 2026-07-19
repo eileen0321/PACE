@@ -112,6 +112,25 @@ class PaceOverlayService : Service() {
   // 우선권을 가져온다. 이게 표준 Android 패턴(재생은 안 하지만 버튼은 받고 싶은 앱들이 쓰는 방식).
   private var mediaSession: MediaSession? = null
   private var audioFocusRequest: AudioFocusRequest? = null
+  private val audioFocusHandler = Handler(Looper.getMainLooper())
+  // 2026-07-19 3차 보강(실기기 재검증): TRANSIENT_MAY_DUCK 요청은 세션 시작 시 딱 1번뿐이었다 —
+  // YouTube가 곧이어 자기 영상 재생을 위해 AUDIOFOCUS_GAIN(완전 점유)을 요청하면 Pace의 임시
+  // 포커스가 그 즉시 밀려나고, 그 뒤로 재요청 로직이 없어 세션 끝날 때까지 버튼이 계속 YouTube로
+  // 갔다(`dumpsys media_session`으로 반복 재현 확인). OnAudioFocusChangeListener로 LOSS 콜백을
+  // 받을 때마다 짧은 지연 후 재요청 — YouTube가 재생을 시작할 때마다 뺏겼다 곧바로 되찾는 식으로
+  // "핑퐁"하되, 최종적으로 Pace가 하드웨어 버튼 콜백은 계속 받을 수 있게 한다.
+  private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+    Log.d("PaceOverlay", "audioFocus changed: $focusChange (mediaSession=${if (mediaSession != null) "alive" else "null"})")
+    if (mediaSession == null) return@OnAudioFocusChangeListener
+    when (focusChange) {
+      AudioManager.AUDIOFOCUS_LOSS,
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+        audioFocusHandler.postDelayed({ if (mediaSession != null) requestAudioFocusForMediaButtons() }, 400)
+      }
+      else -> {}
+    }
+  }
 
   private fun setupMediaSession() {
     if (mediaSession != null) return
@@ -129,6 +148,7 @@ class PaceOverlayService : Service() {
   }
 
   private fun teardownMediaSession() {
+    audioFocusHandler.removeCallbacksAndMessages(null)
     abandonAudioFocus()
     mediaSession?.release()
     mediaSession = null
@@ -144,12 +164,15 @@ class PaceOverlayService : Service() {
       val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         .setAudioAttributes(attrs)
         .setWillPauseWhenDucked(false)
+        .setOnAudioFocusChangeListener(audioFocusListener, audioFocusHandler)
         .build()
-      audioManager.requestAudioFocus(request)
+      val result = audioManager.requestAudioFocus(request)
       audioFocusRequest = request
+      Log.d("PaceOverlay", "requestAudioFocus result=$result (1=GRANTED,0=FAILED,2=DELAYED)")
     } else {
       @Suppress("DEPRECATION")
-      audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+      val result = audioManager.requestAudioFocus(audioFocusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+      Log.d("PaceOverlay", "requestAudioFocus(legacy) result=$result")
     }
   }
 
@@ -160,7 +183,7 @@ class PaceOverlayService : Service() {
       audioFocusRequest = null
     } else {
       @Suppress("DEPRECATION")
-      audioManager.abandonAudioFocus(null)
+      audioManager.abandonAudioFocus(audioFocusListener)
     }
   }
 

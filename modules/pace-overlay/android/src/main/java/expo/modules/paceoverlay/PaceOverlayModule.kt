@@ -1,5 +1,7 @@
 package expo.modules.paceoverlay
 
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
@@ -30,6 +32,26 @@ class PaceOverlayModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("PaceOverlay")
+
+    Events("onFeedMediaCommand")
+
+    // 2026-07-20 Pace Feed 전용 MediaSession(PaceFeedMediaSession.kt 참고) — PaceOverlayService의
+    // 세션과 별개, feed/index.tsx 화면이 떠 있는 동안만 존재. AirPods next/previous/play-pause를
+    // 여기서 받으면 "onFeedMediaCommand" JS 이벤트로 쏜다(useFeedRemoteControl.android.ts가 구독).
+    Function("startFeedMediaSession") {
+      appContext.reactContext?.let { context ->
+        PaceFeedMediaSession.onCommand = { action -> sendEvent("onFeedMediaCommand", mapOf("action" to action)) }
+        PaceFeedMediaSession.start(context)
+      }
+    }
+
+    Function("stopFeedMediaSession") {
+      PaceFeedMediaSession.stop()
+    }
+
+    Function("setFeedPlaybackState") { playing: Boolean ->
+      PaceFeedMediaSession.setPlaying(playing)
+    }
 
     // Android 6.0+는 SYSTEM_ALERT_WINDOW가 런타임 권한이 아니라 설정 화면 승인이 필요하다.
     Function("hasOverlayPermission") {
@@ -122,12 +144,38 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceAccessibilityService.isEnabled(context) } ?: false
     }
 
+    // 2026-07-19: 사용자 지시 — "설정 → 접근성 → 설치된 앱 → PACE" 3단 네비게이션 없이 PACE
+    // 항목 화면으로 최대한 바로 이동. Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS(API 34+)가
+    // 지원되면 컴포넌트를 지정해 PACE 상세 화면으로 직행하고, 미지원 기기에서는 기존 전체 접근성
+    // 목록으로 안전하게 폴백한다.
+    // ⚠️ 실기기(Android 13/One UI) 검증 중 발견: 미지원 기기에서 이 인텐트가 ActivityNotFoundException이
+    // 아니라 SecurityException(Permission Denial)을 던졌다 — 삼성 Settings가 인텐트를 내부
+    // 컴포넌트로 resolve는 하되 직접 시작은 거부하는 케이스. ActivityNotFoundException만 잡던
+    // catch가 이걸 놓쳐서 JS까지 에러가 그대로 튀어 올라가는 크래시였다(사용자가 실기기에서 직접
+    // 재현). RuntimeException으로 넓혀서 어떤 제조사가 어떤 식으로 거부하든 항상 폴백하게 고침.
+    // "ENABLE 탭 한 번"으로 완전히 끝내는 건 안드로이드 자체가 막아놓은 영역이라(앱이 자기
+    // 접근성 권한을 스스로 켜지 못하게 하는 보안장치) 여기서 더 줄일 수 없음 — 마지막 토글은
+    // 항상 사용자의 실제 탭이 있어야 한다.
     Function("requestAccessibilityPermission") {
       appContext.reactContext?.let { context ->
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+        val serviceComponent = ComponentName(context, PaceAccessibilityService::class.java)
+        val directIntent = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
           flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          putExtra(":settings:fragment_args_key", serviceComponent.flattenToString())
+          putExtra("extra_fragment_arg_key", serviceComponent.flattenToString())
         }
-        context.startActivity(intent)
+        try {
+          context.startActivity(directIntent)
+        } catch (e: RuntimeException) {
+          try {
+            val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+              flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(fallbackIntent)
+          } catch (fallbackError: RuntimeException) {
+            Log.e("PaceOverlay", "requestAccessibilityPermission: both direct and fallback intents failed", fallbackError)
+          }
+        }
       }
     }
 

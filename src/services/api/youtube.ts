@@ -111,9 +111,14 @@ async function fetchShortsViaProxy(query: string, pageToken: string | null): Pro
 // videoId만 긁는다. 재생은 여전히 공식 IFrame이 하므로 스트림 절도가 아님. 프로덕션 기본값 아님.
 async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' shorts')}`;
+  // 타임아웃(6s) — 시뮬레이터/제한 네트워크에서 응답이 안 오면 loadInitial이 isLoading에 영원히 갇혀
+  // dev 폴백까지 도달 못 하는 문제 방지(2026-07-19).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15' },
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
   if (!res.ok) throw new Error(`YT_SCRAPE_ERROR ${res.status}`);
   const html = await res.text();
   // videoId(11자)만 중복 제거해 추출 — 메타(제목/채널)는 스크래핑에선 생략(플레이어가 로드 시 표시).

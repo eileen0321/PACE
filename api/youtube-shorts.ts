@@ -56,6 +56,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       part: 'snippet',
       type: 'video',
       videoDuration: 'short',
+      videoEmbeddable: 'true', // 2026-07-19 버그 수정: 이게 없으면 임베드 막힌 영상도 섞여 들어와서
+      // IFrame 재생 시 즉시 onError → goNext()로 넘어가길 반복 — 실기기에서 "화면이 계속 까맣다"로
+      // 관찰됨(로그에서 4초 간격으로 플레이어 스크립트가 재로드되며 큐만 계속 진행되는 패턴 확인).
       q: query,
       maxResults: '25',
       regionCode: 'US',

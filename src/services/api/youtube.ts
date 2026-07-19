@@ -63,6 +63,7 @@ async function fetchShortsViaDataApi(query: string, pageToken: string | null): P
     part: 'snippet',
     type: 'video',
     videoDuration: 'short', // <4분
+    videoEmbeddable: 'true', // 임베드 막힌 영상은 IFrame 재생 시 즉시 에러 → 다음으로 스킵 반복(2026-07-19 수정)
     q: query,
     maxResults: '25',
     regionCode: 'US',

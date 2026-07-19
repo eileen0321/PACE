@@ -293,9 +293,10 @@ class PaceOverlayService : Service() {
     }
 
     // Play/Pause → Auto Mode 토글(기존 Auto Next 기능과 동일한 스위치, 별개 개념 아님) — 이미 검증된
-    // PaceAccessibilityService.startWatching/stopWatching 그대로 재사용.
+    // PaceAccessibilityService.startWatching/stopWatching 그대로 재사용. 2026-07-19: 45_000L은
+    // "스와이프 간격"이 아니라 "안전 타임아웃" — PaceAccessibilityService.kt 상단 주석 참고.
     fun setAutoMode(context: Context, enable: Boolean) {
-      if (enable) PaceAccessibilityService.startWatching(8_000L) else PaceAccessibilityService.stopWatching()
+      if (enable) PaceAccessibilityService.startWatching(45_000L) else PaceAccessibilityService.stopWatching()
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
       instance?.updateMediaSessionPlaybackState(playing = enable)
@@ -420,10 +421,21 @@ class PaceOverlayService : Service() {
   // pulsing dot + AUTO ON/OFF 배지) 시각 스타일을 순수 네이티브로 이식. 원본의 펼침형 어시스턴트
   // 패널(오늘 사용량/진행바/Sleep Timer/Daily Limit 사이클/Pause/End 버튼)까지는 이식하지 않았다 —
   // 그건 RN 트리를 이 창에 브릿지해야(두 번째 ReactRootView 인스턴스) 가능한 범위라 파일 상단
-  // 주석에 이미 POC 단계 보류 항목으로 명시돼 있다. 대신: 배지 탭 = 실제 Auto Mode 토글
-  // (companion setAutoMode 재사용 — Bluetooth Play/Pause 하드웨어 버튼과 동일한 진짜 동작, 가짜
-  // 버튼 아님), 알약 본문 탭 = Pace 앱을 포그라운드로 열어서 이미 존재하는 Focus 탭 전체 컨트롤로
-  // 안내 — 없는 패널을 흉내내지 않고 같은 목적(원격 제어 접근)을 실제 동작으로 달성한다.
+  // 주석에 이미 POC 단계 보류 항목으로 명시돼 있다. 배지 탭 = 실제 Auto Mode 토글(companion
+  // setAutoMode 재사용 — Bluetooth Play/Pause 하드웨어 버튼과 동일한 진짜 동작, 가짜 버튼 아님).
+  //
+  // ⚠️ 2026-07-19 실기기 검증 중 발견·수정한 버그: 처음엔 알약 본문 전체(bar)에도
+  // setOnClickListener { openPaceApp() }를 달아서 "본문 탭 = Pace 앱 열기"를 시도했는데, 사용자가
+  // 실제로 YouTube 위에서 AUTO 배지를 껐더니 "창이 작아지며 원래 앱(Pace)으로 돌아오고, 다시
+  // YouTube로 가면 오버레이가 사라지는" 심각한 오작동을 실제로 보고했다. 원인: autoBadge의
+  // setPadding(20, 10, ...)이 dp가 아니라 raw px였다 — 이 고밀도 기기에서 실제 터치 가능 영역이
+  // 몇 dp 수준으로 쪼그라들어, 배지를 노리고 탭해도 대부분 부모 bar에 떨어져 의도치 않게
+  // openPaceApp()이 발동했다(YouTube 화면 위에 떠 있는 오버레이라 "본문 탭"의 오폭 범위가 바로
+  // 실제 영상 위 터치와 겹친다 — RN 화면 안 UI였다면 이 정도로 위험하지 않았을 것). 고침: bar
+  // 자체의 클릭 리스너(openPaceApp)를 완전히 제거 — FLAG_NOT_TOUCH_MODAL 특성상 클릭 리스너가 없는
+  // 영역은 터치가 아래 앱(YouTube)으로 그대로 통과하므로, 배지를 빗맞혀도 이제 아무 일도 안 일어나고
+  // 원래 하려던 영상 조작(스크롤/탭)이 정상적으로 전달된다. 유일한 인터랙션은 배지 자체(아래
+  // applyAutoBadgeStyle의 padding을 dp로 교정)로 좁혔다.
   private fun showOverlay(remainingMinutes: Int) {
     if (overlayView != null) return
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -436,8 +448,6 @@ class PaceOverlayService : Service() {
         cornerRadius = 30f
         setColor(Color.parseColor("#E60C0D12")) // rgba(12,13,18,0.9) 근사 — (3) bg-[#0C0D12]/90
       }
-      isClickable = true
-      setOnClickListener { openPaceApp() }
     }
 
     val dot = View(this).apply {
@@ -493,19 +503,17 @@ class PaceOverlayService : Service() {
   private fun applyAutoBadgeStyle() {
     autoBadge?.apply {
       text = if (autoNextEnabled) "AUTO ON" else "AUTO OFF"
-      setPadding(20, 10, 20, 10)
+      // dp 스케일 패딩(density 곱) — 이전엔 raw px(20,10)라 고밀도 화면에서 실제 터치 영역이
+      // 몇 dp로 쪼그라들어 배지를 빗맞히기 쉬웠다(위 showOverlay 주석 참고). Android 권장 최소
+      // 터치 타깃(48dp)엔 못 미치지만, 알약 배지라는 시각적 크기 제약 안에서 최대한 넓힘.
+      val d = resources.displayMetrics.density
+      setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
       setTextColor(if (autoNextEnabled) Color.WHITE else Color.parseColor("#9CA3AF"))
       background = GradientDrawable().apply {
         cornerRadius = 100f
         setColor(if (autoNextEnabled) Color.parseColor("#5856D6") else Color.parseColor("#14FFFFFF"))
       }
     }
-  }
-
-  private fun openPaceApp() {
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
-    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-    startActivity(launchIntent)
   }
 
   private fun setRemainingText(remainingMinutes: Int) {

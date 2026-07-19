@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SupportedApps.PACKAGES(PaceAccessibilityService.kt)와 packageNames를 반드시 동기화 —
      XML이 Kotlin 상수를 읽을 방법이 없어 여기도 하드코딩(기존 모듈 컨벤션과 동일). -->
+<!-- 2026-07-19: canRetrieveWindowContent를 true로 켬 — PaceAccessibilityService의 실제 재생 위치
+     감지(rootInActiveWindow 트리 순회)에 필요. 새 런타임 권한이 추가되는 게 아니라 기존 접근성
+     권한 범위 안의 선언이다(사용자가 시스템 설정에서 켜는 단일 접근성 토글은 동일). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
     android:packageNames="com.google.android.youtube,com.instagram.android,com.zhiliaoapp.musically"
     android:description="@string/pace_accessibility_service_description" />

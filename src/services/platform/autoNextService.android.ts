@@ -12,7 +12,11 @@ import type { AutoNextService } from './types';
 // capabilities.ts가 이 플래그를 읽어 상위 UI에 노출 여부를 결정한다.
 const ENABLE_AUTO_NEXT = process.env.EXPO_PUBLIC_ENABLE_AUTO_NEXT === 'true';
 
-const SWIPE_INTERVAL_MS = 8_000;
+// 2026-07-19: 예전엔 "무조건 몇 초마다 스와이프"하는 고정 간격이었는데(8초 — 15~60초짜리 숏폼
+// 대부분을 중간에 잘라먹는 값), 이제 네이티브가 실제 재생 위치(YouTube Shorts SeekBar
+// content-desc, 실기기 실측 확인됨)를 우선 감지하고, 그 신호를 못 찾을 때만 쓰는 안전 타임아웃으로
+// 격하됐다(PaceAccessibilityService.kt 참고). 그래서 짧게 잡을 이유가 없어 45초로 상향.
+const SAFETY_TIMEOUT_MS = 45_000;
 
 let PaceOverlay: {
   hasAccessibilityPermission(): boolean;
@@ -49,7 +53,7 @@ export const autoNextService: AutoNextService = {
       PaceOverlay.requestAccessibilityPermission();
       return; // 사용자가 설정에서 권한을 켜고 돌아오면 상위 화면이 재시도해야 함
     }
-    await PaceOverlay.startAutoNextWatching(SWIPE_INTERVAL_MS);
+    await PaceOverlay.startAutoNextWatching(SAFETY_TIMEOUT_MS);
   },
 
   async stop() {

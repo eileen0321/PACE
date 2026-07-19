@@ -7,7 +7,7 @@ import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
-import { capabilities } from '../../services/platform';
+import { capabilities, overlayService } from '../../services/platform';
 import { useTranslation } from '../../services/i18n';
 import { requestNotificationPermission } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -48,9 +48,14 @@ export default function SettingsScreen() {
   const { settings, update } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const bluetooth = useBluetoothStore();
+  // 2026-07-20 실기기 감사 중 발견: "Platform Configuration" 카드의 READY 배지가 실제 오버레이
+  // 권한 상태와 무관하게 항상 켜져 있었다(Dev Client 안 붙었거나 사용자가 권한을 거부해도 계속
+  // READY라고 표시) — 실제 권한 상태로 교체.
+  const [overlayReady, setOverlayReady] = useState(false);
 
   useEffect(() => {
     bluetooth.refresh();
+    overlayService.hasOverlayPermission().then(setOverlayReady).catch(() => setOverlayReady(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -135,7 +140,11 @@ export default function SettingsScreen() {
                 <Text style={styles.rowTitle}>{Platform.OS === 'android' ? t('settings.overlayAssistant') : t('settings.pacePlayer')}</Text>
                 <Text style={styles.rowSubtitle}>{Platform.OS === 'android' ? t('settings.overlayAssistantDesc') : t('settings.pacePlayerDesc')}</Text>
               </View>
-              <View style={styles.readyTag}><Text style={styles.readyTagText}>{t('settings.ready')}</Text></View>
+              <View style={[styles.readyTag, !overlayReady && styles.statusTagOff]}>
+                <Text style={[styles.readyTagText, !overlayReady && styles.statusTagTextOff]}>
+                  {overlayReady ? t('settings.ready') : t('settings.permissionNeededShort')}
+                </Text>
+              </View>
             </View>
           </GlassSurface>
         </View>
@@ -195,13 +204,14 @@ export default function SettingsScreen() {
         <View>
           <Text style={styles.sectionLabel}>{t('settings.privacy')}</Text>
           <GlassSurface style={styles.card}>
+            {/* 2026-07-20 실기기 감사 중 발견: "Usage Analytics: ENABLED" 배지가 어떤 실제 기능과도
+                연결 안 된 상태였다 — 코드 전체에 서드파티/외부 분석(analytics) 수집이 아예 존재하지
+                않는데도(grep 결과 이 화면과 번역 문자열 말고는 "analytics" 언급 자체가 없음) 켜져
+                있다고 표시하고 있었다. "don't fake data" 원칙 위반이라 제거 — 로컬 데이터 행이
+                이미 실제로 저장되는 것(기기 로컬)을 정직하게 설명하고 있으므로 중복도 아님. */}
             <View style={styles.row}>
               <Text style={styles.rowTitle}>{t('settings.localData')}</Text>
               <Text style={styles.privacyValue}>{t('settings.storedSafely')}</Text>
-            </View>
-            <View style={[styles.row, styles.rowBordered]}>
-              <Text style={styles.rowTitle}>{t('settings.usageAnalytics')}</Text>
-              <View style={styles.statusTag}><Text style={styles.statusTagText}>ENABLED</Text></View>
             </View>
             <Pressable style={[styles.row, styles.rowBordered]}>
               <Text style={styles.rowTitle}>{t('settings.exportData')}</Text>

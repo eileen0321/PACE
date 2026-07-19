@@ -107,7 +107,14 @@ export default function PaceFeedScreen() {
 
       <SafeAreaView style={styles.uiLayer} edges={['top', 'bottom']} pointerEvents="box-none">
         <View style={styles.topBar} pointerEvents="box-none">
-          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.iconBtn}>
+          {/* 2026-07-20 실기기 감사 중 발견: 딥링크(pace://feed)로 바로 진입했을 때는 이 화면이
+              네비게이션 스택의 첫 화면이라 router.back()이 되돌아갈 곳이 없어 "GO_BACK not handled"
+              에러가 실제로 떴다(스크린샷으로 확인) — canGoBack()으로 방어. */}
+          <Pressable
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}
+            hitSlop={12}
+            style={styles.iconBtn}
+          >
             <Feather name="x" size={22} color="#FFFFFF" />
           </Pressable>
           <View style={styles.categoryPill}>

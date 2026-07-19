@@ -66,10 +66,18 @@ export type FetchFeedOptions = {
   perPage?: number;
 };
 
-/** Pace Feed를 가져온다. 키 없으면 DEV 샘플로 폴백(해당 카테고리로 필터). */
+/** Pace Feed를 가져온다. 키 없으면(__DEV__ 한정) DEV 샘플로 폴백(해당 카테고리로 필터). */
 export async function fetchPaceFeed(opts: FetchFeedOptions = {}): Promise<PaceVideo[]> {
   const category = opts.category ?? 'calm';
   if (!hasPexelsKey()) {
+    // 2026-07-20 실기기 감사 중 발견: 이 분기가 __DEV__ 가드 없이 키 부재만으로 DEV_SAMPLE_FEED(구글
+    // 데모 클립)를 반환하고 있었다 — constants/paceFeed.ts의 자체 주석("프로덕션에서는 실제 Pexels
+    // 피드가 이 자리를 대체한다")과 실제 동작이 어긋난 상태(youtube.ts의 동일 패턴은 이미 __DEV__로
+    // 감쌈). 프로덕션 빌드에서 키 설정 실수/만료가 있으면 진짜 사용자에게 데모 영상이 "Pace Feed"인
+    // 것처럼 보일 뻔했다.
+    if (!__DEV__) {
+      throw new Error('PEXELS_KEY_MISSING');
+    }
     const filtered = DEV_SAMPLE_FEED.filter((v) => v.category === category);
     return filtered.length ? filtered : DEV_SAMPLE_FEED;
   }

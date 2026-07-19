@@ -7,7 +7,7 @@ import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
-import { hasYouTubeKey } from '../../services/api/youtube';
+import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -35,7 +35,7 @@ export default function PaceFeedScreen() {
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
   const current = queue[0] ?? null;
-  const usingScrape = !hasYouTubeKey();
+  const usingScrape = !hasRealYouTubeSource();
   const playing = status === 'PLAYING' || status === 'READY';
 
   useEffect(() => {

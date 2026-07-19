@@ -3,12 +3,29 @@
 //
 // ⚠️ 여기서 하는 건 "영상 ID(메타) 리스트 확보"뿐이다. 실제 재생은 components/feed/YouTubeShortsPlayer가
 //    공식 IFrame Player API로 한다(합법). 스트림을 긁어오지 않는다.
-// 경로: (1) Data API v3(권장·합법) → (2) 없으면 스크래핑 폴백(그레이존, videoId만 파싱).
+// 경로: (1) 서버 프록시(api/youtube-shorts.ts, 프로덕션 기본) → (2) __DEV__ 전용 클라이언트 직접
+//       호출(로컬 개발 편의, 프록시 안 띄웠을 때만) → (3) 스크래핑 폴백(그레이존, videoId만 파싱).
+//
+// 2026-07-19 보안 수정(사용자 지적): EXPO_PUBLIC_YOUTUBE_API_KEY를 앱 번들에 직접 넣어 클라이언트가
+// googleapis.com을 바로 호출하던 방식은, 앱을 디컴파일하면 키가 그대로 노출돼 남이 우리 쿼터를
+// 훔쳐 쓸 수 있는 실제 리스크였다. 이제 프로덕션 경로는 api/youtube-shorts.ts(Vercel 서버리스
+// 함수, 진짜 키는 서버 환경변수에만 존재)를 거친다 — EXPO_PUBLIC_YOUTUBE_API_KEY는 로컬 __DEV__
+// 폴백에서만 쓰이므로 프로덕션 빌드 번들에는 실려도 무해하다(어차피 __DEV__ 분기라 실행 안 됨).
 import type { YouTubeShort } from '../../types/models';
+
+export const YOUTUBE_PROXY_URL = process.env.EXPO_PUBLIC_YOUTUBE_PROXY_URL || '';
+export function hasYouTubeProxy(): boolean {
+  return YOUTUBE_PROXY_URL.length > 0;
+}
 
 export const YOUTUBE_API_KEY = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY || '';
 export function hasYouTubeKey(): boolean {
   return YOUTUBE_API_KEY.length > 0;
+}
+
+/** UI에서 "실제 소스(프록시 또는 dev 직접호출) vs 스크래핑 폴백"을 구분할 때 쓴다. */
+export function hasRealYouTubeSource(): boolean {
+  return hasYouTubeProxy() || (__DEV__ && hasYouTubeKey());
 }
 
 const DATA_API = 'https://www.googleapis.com/youtube/v3';
@@ -80,8 +97,17 @@ async function fetchShortsViaDataApi(query: string, pageToken: string | null): P
   return { shorts, nextPageToken: search.nextPageToken ?? null };
 }
 
-// 스크래핑 폴백(그레이존): 키/쿼터 없을 때만. YouTube 검색결과 HTML의 ytInitialData에서 videoId만 긁는다.
-// 재생은 여전히 공식 IFrame이 하므로 스트림 절도가 아님. 프로덕션 기본값 아님.
+// 프로덕션 기본 경로: api/youtube-shorts.ts(Vercel 서버리스 함수)를 호출 — 진짜 키는 서버에만.
+async function fetchShortsViaProxy(query: string, pageToken: string | null): Promise<ShortsPage> {
+  const params = new URLSearchParams({ query });
+  if (pageToken) params.set('pageToken', pageToken);
+  const res = await fetch(`${YOUTUBE_PROXY_URL}/api/youtube-shorts?${params.toString()}`);
+  if (!res.ok) throw new Error(`YT_PROXY_ERROR ${res.status}`);
+  return (await res.json()) as ShortsPage;
+}
+
+// 스크래핑 폴백(그레이존): 프록시/키 둘 다 없을 때만. YouTube 검색결과 HTML의 ytInitialData에서
+// videoId만 긁는다. 재생은 여전히 공식 IFrame이 하므로 스트림 절도가 아님. 프로덕션 기본값 아님.
 async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' shorts')}`;
   const res = await fetch(url, {
@@ -100,10 +126,14 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   return { shorts, nextPageToken: null };
 }
 
-/** Shorts 한 페이지를 받는다. 키 있으면 Data API, 없으면 스크래핑 폴백. */
+/** Shorts 한 페이지를 받는다. 프록시 설정돼 있으면 프록시, __DEV__면 클라이언트 직접호출,
+ * 둘 다 없으면 스크래핑 폴백. */
 export async function fetchShortsPage(opts: { query?: string; pageToken?: string | null } = {}): Promise<ShortsPage> {
   const query = opts.query || DEFAULT_QUERY;
-  if (hasYouTubeKey()) {
+  if (hasYouTubeProxy()) {
+    return fetchShortsViaProxy(query, opts.pageToken ?? null);
+  }
+  if (__DEV__ && hasYouTubeKey()) {
     return fetchShortsViaDataApi(query, opts.pageToken ?? null);
   }
   return fetchShortsViaScrape(query);

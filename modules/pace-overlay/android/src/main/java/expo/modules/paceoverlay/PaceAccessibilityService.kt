@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.regex.Pattern
@@ -138,16 +139,21 @@ class PaceAccessibilityService : AccessibilityService() {
   }
 
   // Tier 1(실제 재생 위치) → 못 찾으면 Tier 2(안전 타임아웃) 순서로 스와이프 여부를 판단한다.
+  // 2026-07-19: 사용자가 "실제로 Tier 1이 발동하는지 Tier 2(타임아웃)만 도는 건 아닌지" 직접
+  // 확인을 요청 — 매 스와이프마다 어느 조건으로 발동했는지 logcat에 남긴다(adb logcat -s
+  // PaceAccessibility로 필터링).
   private fun checkPlaybackAndMaybeSwipe() {
     val now = SystemClock.elapsedRealtime()
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
+      Log.d("PaceAccessibility", "timing current=${currentSec}s total=${totalSec}s")
       val nearEnd = totalSec > 0 && currentSec >= totalSec - 1
       // 영상이 끝나고 다음(또는 반복) 영상으로 넘어가 재생 위치가 이전보다 확 줄어든 경우 —
       // 폴링 간격(500ms) 사이에 "끝나는 순간"을 놓쳤더라도 이걸로 뒤늦게 잡아낸다.
       val loopedBack = lastKnownCurrentSec > 0 && currentSec < lastKnownCurrentSec - 1
       if (nearEnd || loopedBack) {
+        Log.d("PaceAccessibility", "SWIPE tier=1 reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s")
         performSwipeUp()
         lastSwipeAtMs = now
         lastKnownCurrentSec = -1
@@ -158,6 +164,7 @@ class PaceAccessibilityService : AccessibilityService() {
     // Tier 2: 재생 위치 신호를 아예 못 찾았거나(광고, 노드 구조 변경, 다른 로케일), 신호는 있지만
     // 비정상적으로 오래 안 끝나는 경우 — 둘 다 이 안전 타임아웃 하나로 커버된다.
     if (now - lastSwipeAtMs >= safetyTimeoutMs) {
+      Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs}")
       performSwipeUp()
       lastSwipeAtMs = now
       lastKnownCurrentSec = -1

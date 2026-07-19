@@ -5,8 +5,11 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
-import { useSettingsStore } from '../../store/useSettingsStore';
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useStatsStore } from '../../store/useStatsStore';
+import { clearUserHistory } from '../../database/repositories/sessionsRepository';
 import { capabilities, overlayService } from '../../services/platform';
 import { useTranslation } from '../../services/i18n';
 import { requestNotificationPermission } from '../../services/notifications';
@@ -70,7 +73,21 @@ export default function SettingsScreen() {
   const name = (user?.name ?? user?.email?.split('@')[0] ?? t('settings.guestLabel')).trim();
   const initials = name.slice(0, 2).toUpperCase();
 
-  const confirmReset = () => { setShowResetConfirm(false); logout(); };
+  // 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #5) — 문구는 "모든 맞춤형 제한 및
+  // 카운터 초기화"를 약속하는데 실제로는 logout()만 호출해 로그아웃 화면으로 튕길 뿐, 설정도 사용
+  // 기록도 전혀 안 지워졌다(로컬 게스트라 재로그인하면 동일 데이터 그대로 복귀 — 사실상 무동작이었음).
+  // 진짜로 설정을 기본값으로 되돌리고 SQLite 사용 기록을 지운다. 로그아웃은 별개 동작이라(계정
+  // 화면에 이미 있음) 여기서는 하지 않는다.
+  const confirmReset = () => {
+    setShowResetConfirm(false);
+    update(DEFAULT_SETTINGS);
+    useDailyBonusStore.getState().resetToday().catch(() => {});
+    if (user?.id) {
+      clearUserHistory(user.id)
+        .then(() => useStatsStore.getState().refresh(user.id))
+        .catch(() => {});
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -97,6 +114,16 @@ export default function SettingsScreen() {
               <Feather name="chevron-right" size={14} color="#818CF8" />
             </Pressable>
           </GlassSurface>
+          {/* 2026-07-20 실기기 감사 중 발견: logout()을 호출하는 UI가 이 화면 어디에도 없었다 —
+              이전엔 "설정 초기화" 버튼 하나가 로그아웃까지 겸하고 있었는데(문구와 안 맞는 부작용),
+              그걸 정직한 데이터 초기화로 고치면서 로그아웃할 방법 자체가 사라질 뻔했다. 게스트는
+              로그아웃할 실제 계정이 없으므로 로그인된 사용자에게만 노출. */}
+          {!user?.isGuest && (
+            <Pressable style={styles.logoutRow} onPress={logout}>
+              <Feather name="log-out" size={14} color={colors.danger} />
+              <Text style={styles.logoutRowText}>{t('settings.logout')}</Text>
+            </Pressable>
+          )}
         </View>
 
         {/* 2. Session Defaults — Pace는 데모 로컬 state 대신 실제 useSettingsStore에 직결 */}
@@ -356,6 +383,8 @@ const styles = StyleSheet.create({
   profileEmail: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontFamily: typography.bodyFontFamilyMedium },
   manageSubBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   manageSubText: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8' },
+  logoutRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: spacing.sm, paddingVertical: spacing.sm },
+  logoutRowText: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.danger },
 
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
   notifRow: { paddingVertical: 18 },

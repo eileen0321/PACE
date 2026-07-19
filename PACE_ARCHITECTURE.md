@@ -2944,3 +2944,44 @@ ON" 배지가 화면에 표시. 둘 다 `MediaSessionService` 로그(`targetPack
 "Cannot update a component (ToastHost) while rendering a different component" 경고(dev 빌드에서
 빨간 에러 배너로 표시)가 뜨는 걸 실기기로 발견 — `useFeedRemoteControl.android.ts`의 리스너 콜백을
 `setTimeout(fn, 0)`으로 감싸 현재 렌더/마이크로태스크 밖에서 실행되게 해 해결.
+
+### ⚠️⚠️ 스토어 제출 전 필독 — 이 구현은 정책 위반 소지가 매우 높음(사용자 지적, 웹 검색으로 확정)
+위의 "실제 youtube.com 페이지로 직접 네비게이션" 방식은 **"검은 화면 버그가 실기기에서 실제로
+작동하는가"라는 엔지니어링 질문에는 답했지만, "이 방식을 그대로 스토어에 낼 수 있는가"에는
+답하지 못한다 — 답은 사실상 "아니오"에 가깝다:
+
+1. **Google Play 개발자 정책**: 본인이 소유하지 않은 웹사이트를 앱으로 감싸서(wrapping) 보여주는
+   것 자체가 명시적으로 금지된다. 지금 Pace Feed는 정확히 `youtube.com`을 WebView로 띄우고 그 위에
+   Pace 자체 컨트롤(재생/일시정지/이전/다음/Auto Mode 배지)을 얹은 형태라 이 조항에 정면으로 걸린다.
+2. **YouTube API Services 약관("Required Minimum Functionality")**: 플레이어를 오버레이/프레임으로
+   가리는 것, 표준 사용자 경험(자막·볼륨 등)을 축소하는 것을 금지한다. 이번 구현은 공식 IFrame
+   Player API조차 안 쓰고 진짜 페이지를 직접 조작하는 방식이라, 오히려 공식 API를 정상적으로 쓰는
+   것보다 더 회색지대에 가깝다 — YouTube가 2023년부터 WebView Media Integrity API를 도입해 막으려
+   했던 "비공식 재구현/래퍼"(Vanced류) 패턴과 사실상 같은 범주로 보일 위험이 크다.
+
+**결론**: 이건 이미 빌드 플래그(`EXPO_PUBLIC_ENABLE_AUTO_NEXT`)로 막아둔 Auto Next(접근성 스와이프)
+리스크와 같은 종류이거나 오히려 더 명확한 정책 위반 소지다. **실제 프로덕션/스토어 제출용으로
+그대로 쓰면 안 되고**, 다음 중 하나가 필요하다:
+- (a) 공식 YouTube IFrame Player API로 되돌리되 Media Integrity/Referer 요구사항을 정식으로
+  충족시키는 방법을 별도로 찾기(Android WebView Media Integrity API 앱 서명 검증 절차 등),
+- (b) 이 화면을 Auto Next처럼 빌드 플래그로 기본 비활성화하고 스토어 제출 전 정책 재검토,
+- (c) Pace Feed 자체를 YouTube가 아닌 완전히 자체 라이선스 콘텐츠(Pexels 등, 이미 iOS 경로로
+  존재하는 `usePlayerStore`/`pexels.ts`)로만 채우는 원래 설계로 되돌리기.
+오늘 밤 검증한 것은 "①②③ 기술적 가능성"이지 "④ 이대로 출시 가능함"이 아니다 — 다음 세션에서
+반드시 위 세 옵션 중 하나를 사용자와 함께 결정할 것.
+
+### 옵션 (a) 재시도 결과 — 여전히 안 됨(같은 밤, 추가 검증)
+정책 위험 때문에 사용자 지시로 공식 IFrame Embed API로 재시도했다. 이번엔 "Media Integrity 차단"이
+아니라 훨씬 흔한 Android WebView 버그("오디오는 재생되는데 비디오만 검은 화면", 웹 검색으로
+`react-native-webview` GitHub 이슈 다수 확인)일 가능성을 염두에 두고, 앞서 찾은 모든 수정을 한 번에
+적용해 재검증했다: `source` 객체 메모이제이션(리로드 방지) + `<meta name="referrer">` + `unMute()`/
+`setVolume(100)` + `androidLayerType="software"`(이 버그의 표준 해결책). **결과: 여전히
+`readyState=0, networkState=0, w=0, h=0, src=none`에서 20초 넘게 전혀 안 벗어남**(캐시 정리 후
+클린 상태로 재확인) — 심지어 흔한 버그 사례들과 달리 오디오 신호도 전혀 없었다(`dumpsys audio`에
+Pace의 실제 `AudioTrack` 없음, `AAudio` 타입 항목은 `PaceFeedMediaSession`의 포커스 요청 자체가
+만드는 것으로 판단— 실제 영상 오디오가 아님). 즉 "흔한 렌더링 버그"가 아니라 애초 가설대로 데이터
+자체가 전혀 안 옴 — **IFrame Embed API 경로는 이 기기/시점의 YouTube에서 확정적으로 막혀 있다.**
+`YouTubeShortsPlayer.tsx`는 실제 재생이 검증된 (a) 실제 페이지 네비게이션 버전으로 되돌려놓았다
+(정책 위험은 여전히 미해결 — 위 세 옵션 결정 필요). 다음 세션에서 IFrame을 또 재시도하기 전에
+Chrome 원격 디버거(chrome://inspect)로 실제 네트워크 요청/응답을 직접 봐야 진짜 원인이 나올 것 —
+adb 로그만으로는 이 이상 못 판다.

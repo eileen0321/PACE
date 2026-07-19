@@ -6,7 +6,9 @@ import { pullSettings, pushSettings } from '../services/sync/backendSync';
 import { useUserStore } from './useUserStore';
 import type { AppShieldTarget, AppSettingsOverride, UserSettings } from '../types/models';
 
-const DEFAULT_SETTINGS: UserSettings = {
+// 2026-07-20: Settings의 "설정 초기화" 버튼이 실제 기본값으로 되돌리도록 export(맥 세션 QA
+// QA_ISSUES_2026-07-18.md #5 — 이전엔 logout()만 호출하고 아무것도 초기화 안 됐음).
+export const DEFAULT_SETTINGS: UserSettings = {
   autoNext: true,
   sleepTimerMinutes: null,
   dailyLimitMinutes: 60,

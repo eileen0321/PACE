@@ -67,3 +67,12 @@ export async function getRecentOverlayEvents(userId: string, limit = 50): Promis
   );
   return rows.map((r) => ({ id: r.id, sessionId: r.session_id, eventType: r.event_type, detail: r.detail, createdAt: r.created_at }));
 }
+
+// 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #5) — Settings의 "설정 초기화"가
+// "모든 맞춤형 제한 및 카운터 초기화"를 약속하면서 실제로는 logout()만 호출하고 있었다(로컬 게스트라
+// 재로그인 시 동일 데이터로 그대로 복귀 — 사실상 아무것도 안 지워짐). 진짜로 사용 기록을 지운다.
+export async function clearUserHistory(userId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM viewing_sessions WHERE user_id = ?`, [userId]);
+  await db.runAsync(`DELETE FROM overlay_events WHERE user_id = ?`, [userId]);
+}

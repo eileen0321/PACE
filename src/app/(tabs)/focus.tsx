@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { useSettingsStore } from '../../store/useSettingsStore';
+import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
@@ -200,11 +200,16 @@ export default function FocusScreen() {
 
         {/* 3. Session Controls */}
         <View style={styles.controlsRow}>
+          {/* 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #7) — pause/play 아이콘과
+              "PAUSE"/"계속" 라벨이 붙어있었지만 실제로는 세션 일시정지가 아니라 Auto Next 설정을
+              토글하고 있었다(라벨-동작 불일치, 실기기로 재확인). 이 화면엔 애초에 "일시정지할 실제
+              재생"이 없어서(세션은 별도 화면인 overlay/index.tsx에서 진행됨) 라벨을 실제 동작에
+              맞게 정정 — 바인딩 자체는 그대로 두고 정직하게 표시. */}
           <Pressable
             onPress={() => update({ autoNext: !settings.autoNext })}
             style={[styles.controlBtn, settings.autoNext ? styles.controlBtnAmber : styles.controlBtnEmerald]}
           >
-            <Feather name={settings.autoNext ? 'pause' : 'play'} size={16} color={settings.autoNext ? colors.warning : colors.successLight} />
+            <Feather name="headphones" size={16} color={settings.autoNext ? colors.warning : colors.successLight} />
             <Text style={[styles.controlBtnText, { color: settings.autoNext ? colors.warning : colors.successLight }]}>
               {settings.autoNext ? t('focus.pause') : t('focus.continueLabel')}
             </Text>
@@ -231,15 +236,20 @@ export default function FocusScreen() {
         </View>
 
         {/* 5. Interventions & Shields */}
+        {/* 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #13) — "15분마다 작동"이
+            하드코딩 라벨이라 실제 breakIntervalMinutes(기본 20분, Settings에서 10/20/30분 등으로
+            변경 가능)와 어긋나 있었다. 게다가 여기서 토글을 켜면 실제 설정값과 무관하게 항상 15로
+            덮어써서 값이 흐트러졌다 — 라벨을 실제값으로 표시하고, 토글 ON 시에도 기본값(20)으로
+            통일해 최소한 다른 화면과 어긋나지 않게 정정. */}
         <View style={styles.card}>
           <View style={styles.interventionRow}>
             <View>
               <Text style={styles.interventionTitle}>{t('focus.breakReminder')}</Text>
-              <Text style={styles.interventionSub}>{t('focus.every15m')}</Text>
+              <Text style={styles.interventionSub}>{t('focus.everyNMinutes', { n: settings.breakIntervalMinutes || DEFAULT_SETTINGS.breakIntervalMinutes })}</Text>
             </View>
             <Switch
               value={settings.breakIntervalMinutes > 0}
-              onValueChange={(v) => update({ breakIntervalMinutes: v ? 15 : 0 })}
+              onValueChange={(v) => update({ breakIntervalMinutes: v ? DEFAULT_SETTINGS.breakIntervalMinutes : 0 })}
               trackColor={{ true: colors.primary, false: '#262626' }}
               thumbColor="#FFFFFF"
               ios_backgroundColor="#262626"

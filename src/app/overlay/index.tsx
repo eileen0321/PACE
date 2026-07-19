@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
 import { OverlayExpandedCard } from '../../components/overlays/shared/OverlayExpandedCard';
+import { PlatformMimicOverlay } from '../../components/overlays/PlatformMimicOverlay';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTimerStore } from '../../store/useTimerStore';
@@ -301,16 +302,14 @@ export default function OverlaySessionScreen() {
         )}
       </SafeAreaView>
 
-      {/* --- 개발용 시뮬레이터 콘텐츠(프로덕션에는 없음, 실제 숏폼 앱이 이 자리를 대체) --- */}
+      {/* --- 개발용 시뮬레이터 콘텐츠(프로덕션에는 없음, 실제 숏폼 앱이 이 자리를 대체) ---
+          healthy-shorts-assistant(3) ShortsPlayer.tsx의 플랫폼별(YouTube/Instagram/TikTok) 상단바
+          + 하단 메타데이터 + 우측 액션 레일을 이식(PlatformMimicOverlay 참고) — 중앙엔 카테고리
+          태그만 남기고 제목/설명/작성자는 하단 메타데이터로 옮겨서 중복 표시를 없앴다. */}
       <View style={styles.simContent}>
         <Text style={styles.simCategory}>{video.category}</Text>
-        <Text style={styles.simTitle}>{video.title}</Text>
-        <Text style={styles.simDesc}>{video.description}</Text>
-        <Text style={styles.simCreator}>{video.creator}</Text>
-        <View style={styles.simDots}>
-          <Feather name="more-horizontal" size={20} color="rgba(255,255,255,0.4)" />
-        </View>
       </View>
+      {platform && <PlatformMimicOverlay platform={platform} video={video} />}
 
       <View style={styles.devBadge}>
         <Text style={styles.devBadgeText}>{t('overlay.devSimulator')}</Text>
@@ -350,12 +349,8 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   lowTimeToastText: { color: '#000000', fontFamily: typography.bodyFontFamilyBold, fontSize: 12, flexShrink: 1 },
-  simContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.sm },
+  simContent: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   simCategory: { color: '#30D158', fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, backgroundColor: 'rgba(48,209,88,0.1)', borderWidth: 1, borderColor: 'rgba(48,209,88,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  simTitle: { color: '#FFFFFF', fontSize: 22, fontFamily: typography.bodyFontFamilyExtrabold, textAlign: 'center' },
-  simDesc: { color: '#9CA3AF', fontSize: 12, textAlign: 'center', lineHeight: 18 },
-  simCreator: { color: colors.textSecondary, fontSize: 11, fontFamily: typography.bodyFontFamilyBold, marginTop: spacing.sm },
-  simDots: { marginTop: spacing.md },
   devBadge: { position: 'absolute', bottom: spacing.lg, alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   devBadgeText: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 0.5 },
 });

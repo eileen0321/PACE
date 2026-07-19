@@ -23,7 +23,8 @@
 | 진짜 URL `youtube.com/embed/{id}` 로드 | ✅ error 152 사라짐, `<video>` 엘리먼트 정상 생성(paused:false, muted:true) |
 | **그 `<video>`가 실제로 재생되나?** | ❌ **readyState 0(HAVE_NOTHING)에서 못 벗어남** — YouTube가 임베드 스트림 src를 끝내 안 붙임 |
 | 시뮬레이터 자체의 영상 재생 능력 | ✅ 동일 WebView에 **일반 mp4를 물리면 readyState 4로 정상 자동재생** → 코덱/시뮬 문제 아님, YouTube가 임베드를 막는 것 |
-| **최종** | iOS 시뮬레이터에서는 YouTube 임베드 **실제 재생 검증 불가**. 실기기(FairPlay/실사용자 세션) 검증 필요. 실기기서도 안 되면 iOS Pace Feed는 대안(라이선스 콘텐츠)로 가야 함 |
+| **원본 페이지(`/shorts/{id}`, Android 방식)를 iOS에서 로드하면?** | ✅ **iOS 시뮬에서 실제로 재생됨**(2026-07-20 스크린샷 증거: "Rick Astley - Never Gonna Give You Up"이 자막까지 나오며 재생, 전체 YouTube UI 노출). 즉 iOS WebView가 YouTube를 못 트는 게 아니라, **"임베드"만 막히고 "원본 페이지"는 된다** — 그런데 원본 페이지는 ToS/심사 위반 |
+| **최종 결론** | iOS에서 YouTube는 **"합법(임베드)이면 재생 안 되고, 재생되면(원본페이지) 위반"** = 출시 가능한 조합이 없음. ⇒ iOS Pace Feed는 **아키텍처 문서 Plan B(Pexels/Pixabay 라이선스 세로 숏폼)로 전환**하는 것이 유일하게 합법이면서 재생·자동넘김이 자유로운 길. (실기기에서 임베드가 될 가능성은 낮음 — 임베드 차단은 서버측 정책이라 기기 무관) |
 
 ### 재현 로그(발췌)
 ```
@@ -39,10 +40,14 @@
   "되는" 유일한 경로는 Android가 쓰는 **원본 페이지 로드(원안 ①)뿐인데 그건 위반**이다.
 - 즉 iOS에서 "YouTube Shorts를 자체 피드로 정주행"은 **합법·기술 양립이 어려운 영역**임이 실측으로
   재확인됐다(문서의 기존 리스크 판정과 일치).
-- **결정 필요**: (A) 실기기에서 `/embed` 재생을 한번 더 검증(FairPlay/로그인 세션에서 붙을 여지) →
-  되면 진행, (B) 안 되면 iOS Pace Feed를 아키텍처 문서의 대안인 **Pexels/Pixabay 라이선스 세로
-  숏폼**(자체 `<Video>`, 재생·자동넘김 100% 자유)으로 전환. 코드에 `EXPO_PUBLIC_PEXELS_KEY`는
-  이미 있고 `usePlayerStore`/Pexels 경로가 폴백으로 남아 있음.
+- **권고(강함): iOS Pace Feed를 Pexels/Pixabay 라이선스 세로 숏폼으로 전환**. 근거: (1) 임베드는
+  재생이 안 붙고(readyState 0), 이 차단은 YouTube **서버측 정책**이라 실기기여도 결과가 같을
+  가능성이 큼 → "(A) 실기기서 임베드 재검증"은 기대값 낮음. (2) 원본페이지는 재생되지만 위반이라
+  스토어 제출 불가. (3) 아키텍처 문서가 이미 정한 Plan B이고, `EXPO_PUBLIC_PEXELS_KEY`가 `.env`에
+  이미 있으며 `usePlayerStore`/Pexels(`services/api/pexels.ts`) 경로가 코드에 폴백으로 남아 있어
+  전환 비용이 작다. 자체 `<Video>`(expo-video)라 재생·자동넘김·UI 100% 자유(위반 없음).
+- ⚠️ 이 전환은 `feed/index.tsx`(공유)와 큐 스토어를 건드리고 Android(YouTube 유지)와 겹치므로,
+  **Android 담당과 조율 후** iOS 소스만 Pexels로 가르는 게 안전(플랫폼 분기). 무단 대량 수정은 보류함.
 
 ## 3. 검증 중 발견한 실제 버그 (Feed 파이프라인)
 

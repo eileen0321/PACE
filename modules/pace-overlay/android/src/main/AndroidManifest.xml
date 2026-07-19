@@ -4,6 +4,8 @@
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- PaceTickReceiver가 Doze 중 알람 처리 동안 짧게(최대 10초) CPU를 붙잡아두는 데 필요 -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
   <!-- 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager)용 — 런타임 권한이 아니라
        설정 > 특별 앱 액세스 > 사용정보 접근에서 사용자가 직접 승인해야 하는 특수 권한 -->
   <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
@@ -17,6 +19,14 @@
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Pace digital-wellbeing session overlay" />
     </service>
+
+    <!-- 2026-07-19: 카운트다운 틱을 AlarmManager.setAndAllowWhileIdle()로 예약(PaceOverlayService.kt
+         참고) — Doze 유지보수 윈도우에서도, 심지어 프로세스가 죽은 뒤에도 시스템이 이 리시버를 깨워
+         PaceOverlayService(ACTION_TICK)를 재기동한다. exported=false — 우리 알람 PendingIntent만
+         트리거해야 하므로 외부에서 브로드캐스트로 직접 호출 불가하게 막는다. -->
+    <receiver
+      android:name="expo.modules.paceoverlay.PaceTickReceiver"
+      android:exported="false" />
 
     <!-- Auto Next 실제 스와이프(2026-07-18, PaceAccessibilityService.kt 주석 참고) — exported="true"는
          AccessibilityService의 필수 관례이고(시스템이 바인딩해야 함), android:permission이 시스템

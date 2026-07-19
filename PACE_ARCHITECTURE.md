@@ -2591,3 +2591,64 @@ Focus/Stats 탭의 "오늘 본 영상 수"로 새고 있었다. 정직하게 0�
 프레임 단위로 캡처하지는 못했다(ADB 탭 좌표로 실제 앱 UI를 정밀 조작하는 것 자체가 광고/추천
 알고리즘 때문에 반복 가능하지 않았음) — 대신 5회 연속 실측 데이터로 파싱 로직 자체를 오프라인
 검증하고, 30초+ 관찰 창에서 자연스러운 진행을 반복 확인하는 것으로 대체.
+
+---
+
+## `PaceOverlayService` Sleep/프로세스 킬 예외처리 강화 (2026-07-19)
+
+사용자 질문("android에서 pace-유투브-다른앱실행-유투브일때 오버레이 제대로 유지되? sleep등
+예외처리에 대해")에 답하려 코드를 직접 훑다가 세 가지 실질적 약점을 발견해 그대로 고쳤다.
+
+### 발견한 것
+1. **앱 전환 자체는 이미 견고함**: `foregroundPollRunnable`(1초 간격, `UsageStatsManager` 기반)이
+   Pace→YouTube→제3의 앱→YouTube 복귀를 매번 정확히 따라간다. JS 타이머가 아니라 네이티브
+   `Handler`라 백그라운드에서도 안 죽는다.
+2. **`tickRunnable`(카운트다운)은 포그라운드 앱이 뭔지 안 본다** — 세션이 열려있는 한 어떤 앱을
+   보고 있든 무조건 60초마다 깎인다("실제 시청 시간"이 아니라 "세션이 열린 벽시계 시간" 집계).
+   버그는 아니고 기존 설계 그대로지만, 사용자 질문과 직결돼 명시적으로 기록해둔다.
+3. **진짜 약점 3가지**(전부 수정):
+   - `ForegroundAppWatcher`/틱 계산에 예외처리가 전혀 없어 — 권한이 세션 도중 회수되는 등으로
+     여기서 예외가 나면 메인 스레드 `Runnable` 콜백이라 앱 프로세스 전체가 죽었다.
+   - `Handler.postDelayed` 기반 60초 틱은 Doze 유지보수 윈도우 밖에서 지연되거나, 프로세스가
+     죽으면(OEM 배터리 관리자 등) 완전히 멈춘다. `START_NOT_STICKY`라 자동 복구도 없었다.
+   - 카운트다운 상태(`remainingMinutes` 등)가 전부 인메모리라, 프로세스가 재시작돼도 이어갈 방법이
+     없었다.
+
+### 고친 것 (`modules/pace-overlay/android/.../PaceOverlayService.kt`, 새 `PaceTickReceiver.kt`)
+- **예외처리**: `foregroundPollRunnable`/`performTick`(구 `tickRunnable`)을 try/catch로 감싸 —
+  한 번의 실패가 폴링/틱 루프 자체를 멈추지 않고 다음 회차로 넘어간다.
+- **상태 영속화**: `persistState()`/`restoreStateFromPrefs()` 추가 — `remainingMinutes` 등을 매
+  틱마다 `SharedPreferences`(`PREFS_NAME`)에 저장. 프로세스가 재생성돼도 마지막 상태를 복구한다.
+- **AlarmManager 기반 틱**: `Handler.postDelayed` 재귀를 걷어내고
+  `AlarmManager.setAndAllowWhileIdle()`(`PaceTickReceiver` 경유)로 다음 틱을 예약 — Doze
+  유지보수 윈도우에서도 결국 깨어나고, 이 알람은 시스템에 등록되므로 **우리 프로세스가 죽어도
+  살아남는다**. `SCHEDULE_EXACT_ALARM` 같은 특수 권한이 필요한 `setExactAndAllowWhileIdle()`
+  대신 권한 불필요한 `setAndAllowWhileIdle()`을 선택 — "정확히 60.000초"가 아니라 "결국 이어간다"가
+  핵심이라 권한 요청 UX 없이 같은 강건성을 얻는다.
+
+### 실기기(에뮬레이터) 검증 — 그리고 검증 중 실제로 하나 더 발견
+`pace_test` 에뮬레이터에서 세션을 실제로 시작한 뒤 `run-as com.pace.app kill -9 <pid>`로 프로세스를
+죽여봤다(⚠️ `am force-stop`이 아니라 `kill -9`를 쓴 이유: force-stop은 알람까지 명시적으로
+취소해버려서 — 실제로 `dumpsys alarm`으로 확인 — 사용자가 설정에서 수동으로 끄는 경우만 재현하고,
+정작 걱정해야 할 "OS가 메모리 확보를 위해 백그라운드 프로세스를 죽이는" 시나리오와는 다르다).
+
+- `dumpsys alarm`으로 알람이 `force-stop` 전엔 살아있다가, `kill -9` 후에도 살아남는 것 직접 확인.
+- 킬 직후 오버레이 알약이 사라지는 것 확인(프로세스가 죽었으니 당연).
+- **여기서 진짜 버그 하나를 실측으로 잡았다**: 프로세스가 죽자 안드로이드의 `START_STICKY` 자체
+  복구 메커니즘이 알람보다 훨씬 먼저(로그 기준 약 1초 만에) `intent=null`로 서비스를 재시작시켰는데,
+  `onStartCommand`의 `when(intent?.action)`이 `null` 케이스를 처리하지 않고 있었다 — 그 결과
+  프로세스만 되살아나고 오버레이/폴링/알람 전부 안 돌아 재시작이 사실상 무의미했다(스크린샷으로
+  "재시작은 됐는데 오버레이가 안 뜨는 것"까지 직접 확인). `ACTION_TICK`과 같은 복구 로직(상태
+  복구+인프라 재구성)을 타되 틱 계산(시간 차감)은 하지 않는 `null` 분기를 추가해 수정 —
+  `restoreIfNeeded()` 공통 헬퍼로 통합.
+- 수정 후 동일 시나리오 재검증: `kill -9` → 로그에 `onStartCommand action=null` → 오버레이 알약이
+  킬 전 값 그대로("54m Left") 재표시 → `dumpsys alarm`으로 다음 틱 알람 재예약까지 확인 완료.
+
+### 남은 한계 (문서화, 미해결)
+- `force-stop`(사용자가 설정에서 수동으로 끔) 시나리오는 의도적으로 방어하지 않는다 — 안드로이드가
+  "완전히 끄라"는 사용자 의도를 존중해 알람까지 취소하는 게 맞는 동작이라 판단, 별도 우회 시도 안 함.
+- 기기 재부팅 후 복구는 다루지 않음(`BOOT_COMPLETED` 리시버 미구현) — 재부팅되면 세션 자체가
+  의미 없어지는 경우가 대부분이라 우선순위 낮음, 필요해지면 별도 작업.
+- `setAndAllowWhileIdle()`은 "정확히 60초"를 보장하지 않는다(Doze 유지보수 윈도우 안에서 소폭
+  지연 가능) — Daily Limit이 몇 분 늦게 걸릴 수는 있어도 영구히 안 걸리는 최악은 막았다는 정도로
+  이해할 것.

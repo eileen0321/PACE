@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -53,9 +54,17 @@ class PaceOverlayService : Service() {
   private var isPolling = false
   private val foregroundPollRunnable = object : Runnable {
     override fun run() {
-      val foregroundPackage = ForegroundAppWatcher.getForegroundPackage(applicationContext)
-      val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
-      overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+      // 2026-07-19 사용자 지적 반영: UsageStatsManager 호출에 예외처리가 전혀 없었다 — 권한이
+      // 세션 도중 회수되거나(사용자가 설정에서 끔) OEM 스킨의 이상 동작으로 여기서 던지면, 메인
+      // 스레드 Handler 콜백이라 앱 프로세스 전체가 죽는다. try/catch로 감싸 이번 폴은 실패해도
+      // 폴링 루프 자체(다음 postDelayed)는 계속 살아있게 한다.
+      try {
+        val foregroundPackage = ForegroundAppWatcher.getForegroundPackage(applicationContext)
+        val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
+        overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+      } catch (e: Exception) {
+        Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
+      }
       foregroundPollHandler.postDelayed(this, POLL_INTERVAL_MS)
     }
   }
@@ -63,27 +72,15 @@ class PaceOverlayService : Service() {
   // ⚠️ 실기기 검증 중 발견한 핵심 버그(2026-07-18): 남은시간 카운트다운을 원래 JS 쪽
   // (useTimerStore.tickMinute, setInterval)이 담당했는데, 사용자가 YouTube로 나가서 앱이
   // 백그라운드로 가면 이 JS setInterval 콜백이 아예 실행을 멈춘다(Bridgeless/Fabric 아키텍처에서
-  // 백그라운드 JS 타이머가 억제되는 것으로 추정 — 반면 바로 위 foregroundPollRunnable은 네이티브
-  // Handler 기반이라 똑같은 조건에서도 계속 정상 작동하는 걸 실기기로 직접 대조 확인했다). 그
-  // 결과 시간제어(Daily Limit) 기능 자체가 백그라운드에서 사실상 무력화되는 심각한 버그였다 —
-  // 오버레이 알약 텍스트가 멈추는 건 증상일 뿐, 진짜 문제는 한도를 넘겨도 세션이 절대 안
-  // 끝난다는 것. 그래서 카운트다운의 "권한"을 JS에서 이 서비스로 옮긴다 — foregroundPollRunnable과
-  // 똑같은 검증된 패턴(네이티브 Handler.postDelayed)을 그대로 재사용.
+  // 백그라운드 JS 타이머가 억제되는 것으로 추정). 그래서 카운트다운의 "권한"을 이 서비스로 옮겼다.
   //
-  // JS 쪽으로 만료를 실시간으로 밀어올리는 이벤트 브릿지(Expo Modules Events)는 시도했으나 이
-  // 버전의 Kotlin DSL에서 정확한 등록 문법을 확인 못 해 리스크가 컸다. 대신 "네이티브가 자기
-  // 완결적으로 차단을 집행"하는 더 단순하고 견고한 설계로 전환: 0에 도달하면 서비스 스스로 오버레이
-  // 제거 + 서비스 종료까지 다 하고(=사용자 눈엔 즉시 차단이 보임), SharedPreferences에 "expired"
-  // 플래그만 남긴다. JS는 그 다음 Pace로 돌아왔을 때(AppState 'active') 그 플래그를 읽어서 DB
-  // 세션 기록 + 알림만 뒤늦게(eventually-consistent) 처리 — 실시간 이벤트 배관 없이도 핵심 UX(차단)는
-  // 100% 네이티브가 보장한다.
-  // 2026-07-19: Daily Limit과 정확히 같은 이유로 Sleep Timer/Break Reminder/저시간(5분·1분)
-  // 경고/한도도달 알림도 전부 이 네이티브 tickRunnable로 옮긴다. 사용자 지적(정리하면): "타이머
-  // 자체는 플랫폼 공통 개념인데 왜 iOS/Android 구분에 매달리냐, 카운트다운이 실제로 동작하고
-  // 실제로 끄는 게 핵심이고 끄는 '방법'만 다른 것 아니냐" — 맞는 지적이라 Daily Limit에만 적용했던
-  // 네이티브-자기완결 패턴을 이 서비스가 담당하는 나머지 시간제한 기능 전부(Android 한정, iOS는애초에
-  // Screen Time이 이 문제 자체가 없음)에 동일하게 확장한다. -1 = "Sleep Timer 꺼짐"(0으로 하면
-  // "막 만료됨"과 구분이 안 돼서 별도 sentinel 사용).
+  // 2026-07-19 2차 보강(사용자 지적 — "Sleep 등 예외처리"): Handler.postDelayed 자체도 Doze
+  // 유지보수 윈도우 밖에서는 지연되거나, 프로세스가 OEM 배터리 관리자에 의해 죽으면 완전히
+  // 멈춘다(START_NOT_STICKY라 자동 재시작도 안 됐음). 두 가지로 보강:
+  //  1. AlarmManager.setAndAllowWhileIdle()(PaceTickReceiver 경유)로 틱 스케줄을 옮겨 Doze에서도
+  //     결국 깨어나게 한다 — 이 알람은 시스템에 등록되므로 우리 프로세스가 죽어도 살아남는다.
+  //  2. 매 틱마다(그리고 시작 시) 카운트다운 상태를 SharedPreferences에 저장 — 프로세스가 죽었다가
+  //     알람으로 다시 살아나도(onCreate부터 재시작) 마지막 상태를 복구해서 이어갈 수 있다.
   private var remainingMinutes = 0
   private var sleepTimerRemainingMinutes = -1
   private var breakIntervalMinutes = 0
@@ -91,50 +88,9 @@ class PaceOverlayService : Service() {
   private var notifyRemaining = true
   private var notifyLimit = true
   private var notifyBreak = true
-  private val tickHandler = Handler(Looper.getMainLooper())
-  private var isTicking = false
-  private val tickRunnable = object : Runnable {
-    override fun run() {
-      remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
-      if (sleepTimerRemainingMinutes > 0) {
-        sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
-      }
-      if (breakIntervalMinutes > 0) {
-        nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
-        if (nextBreakInMinutes <= 0) {
-          if (notifyBreak) {
-            sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "휴식 시간이에요", "잠깐 스트레칭하거나 심호흡을 해보세요.")
-          }
-          nextBreakInMinutes = breakIntervalMinutes
-        }
-      }
-      setRemainingText(remainingMinutes)
-      Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
-
-      if (notifyRemaining && (remainingMinutes == 5 || remainingMinutes == 1)) {
-        sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
-      }
-
-      // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
-      // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
-      // "Sleep Timer가 켜져 있었고 방금 만료됐다"로 판단 가능.
-      if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0) {
-        val reason = if (remainingMinutes <= 0) "daily_limit_reached" else "sleep_timer_expired"
-        markExpired(reason)
-        if (notifyLimit) {
-          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
-        }
-        stopForegroundAppPolling()
-        stopTicking()
-        removeOverlay()
-        teardownMediaSession()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        return
-      }
-      tickHandler.postDelayed(this, TICK_INTERVAL_MS)
-    }
-  }
+  // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
+  // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
+  private var infraReady = false
 
   // 2026-07-19: Bluetooth Hands-Free Control — 사용자 지시(Copilot 스펙 정리) 반영. 새 네이티브
   // 의존성(react-native-track-player 등) 없이 Android SDK 표준 android.media.session.MediaSession
@@ -231,19 +187,81 @@ class PaceOverlayService : Service() {
   }
 
   private fun sendAlertNotification(id: Int, title: String, body: String) {
-    ensureAlertChannel()
-    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(this, ALERT_CHANNEL_ID)
-    } else {
-      @Suppress("DEPRECATION") Notification.Builder(this)
+    try {
+      ensureAlertChannel()
+      val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Notification.Builder(this, ALERT_CHANNEL_ID)
+      } else {
+        @Suppress("DEPRECATION") Notification.Builder(this)
+      }
+      val notification = builder
+        .setContentTitle(title)
+        .setContentText(body)
+        .setSmallIcon(android.R.drawable.ic_menu_recent_history)
+        .setAutoCancel(true)
+        .build()
+      (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "sendAlertNotification failed (id=$id)", e)
     }
-    val notification = builder
-      .setContentTitle(title)
-      .setContentText(body)
-      .setSmallIcon(android.R.drawable.ic_menu_recent_history)
-      .setAutoCancel(true)
-      .build()
-    (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
+  }
+
+  // ── 상태 영속화(2026-07-19) ── 프로세스가 죽었다가 PaceTickReceiver의 알람으로 되살아나도
+  // 카운트다운을 이어갈 수 있도록, 매 틱/시작 시점의 상태를 SharedPreferences에 남긴다.
+  private fun persistState() {
+    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+      .putBoolean(PREF_SESSION_ACTIVE, true)
+      .putInt(PREF_REMAINING, remainingMinutes)
+      .putInt(PREF_SLEEP_TIMER, sleepTimerRemainingMinutes)
+      .putInt(PREF_BREAK_INTERVAL, breakIntervalMinutes)
+      .putInt(PREF_NEXT_BREAK_IN, nextBreakInMinutes)
+      .putBoolean(PREF_NOTIFY_REMAINING, notifyRemaining)
+      .putBoolean(PREF_NOTIFY_LIMIT, notifyLimit)
+      .putBoolean(PREF_NOTIFY_BREAK, notifyBreak)
+      .putBoolean(PREF_AUTO_NEXT_SESSION, autoNextEnabled)
+      .apply()
+  }
+
+  private fun restoreStateFromPrefs(): Boolean {
+    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    if (!prefs.getBoolean(PREF_SESSION_ACTIVE, false)) return false
+    remainingMinutes = prefs.getInt(PREF_REMAINING, 0)
+    sleepTimerRemainingMinutes = prefs.getInt(PREF_SLEEP_TIMER, -1)
+    breakIntervalMinutes = prefs.getInt(PREF_BREAK_INTERVAL, 0)
+    nextBreakInMinutes = prefs.getInt(PREF_NEXT_BREAK_IN, 0)
+    notifyRemaining = prefs.getBoolean(PREF_NOTIFY_REMAINING, true)
+    notifyLimit = prefs.getBoolean(PREF_NOTIFY_LIMIT, true)
+    notifyBreak = prefs.getBoolean(PREF_NOTIFY_BREAK, true)
+    autoNextEnabled = prefs.getBoolean(PREF_AUTO_NEXT_SESSION, false)
+    return true
+  }
+
+  private fun clearSessionActive() {
+    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+      .putBoolean(PREF_SESSION_ACTIVE, false)
+      .apply()
+  }
+
+  // 오버레이 창/포그라운드 알림/포그라운드 폴링/미디어세션 세팅 — ACTION_START(정상 시작)와
+  // ACTION_TICK(프로세스가 죽었다 알람으로 되살아난 경우, infraReady==false)이 공유하는 초기화
+  // 경로. 이미 세팅돼 있으면(같은 프로세스에서 이미 돌고 있던 정상 틱) 아무 것도 안 한다.
+  private fun ensureInfraReady() {
+    if (infraReady) return
+    startForeground(NOTIFICATION_ID, buildNotification())
+    showOverlay(remainingMinutes)
+    startForegroundAppPolling()
+    setupMediaSession()
+    infraReady = true
+  }
+
+  // ACTION_TICK과 intent==null(시스템 START_STICKY 재시작) 둘 다 "이 프로세스 인스턴스에서 아직
+  // 인프라를 안 세팅했으면 SharedPreferences에서 복구부터 하라"는 같은 요구를 가진다 — 중복 방지용
+  // 공통 헬퍼. 세션이 이미 끝난 뒤의 낡은 트리거면 false(호출부가 stopSelf 처리).
+  private fun restoreIfNeeded(): Boolean {
+    if (infraReady) return true
+    if (!restoreStateFromPrefs()) return false
+    ensureInfraReady()
+    return true
   }
 
   companion object {
@@ -254,6 +272,7 @@ class PaceOverlayService : Service() {
     private const val ACTION_START = "expo.modules.paceoverlay.START"
     private const val ACTION_UPDATE = "expo.modules.paceoverlay.UPDATE"
     private const val ACTION_STOP = "expo.modules.paceoverlay.STOP"
+    const val ACTION_TICK = "expo.modules.paceoverlay.TICK"
     private const val EXTRA_REMAINING = "remainingMinutes"
     private const val EXTRA_AUTO_NEXT = "autoNextEnabled"
     private const val EXTRA_SLEEP_TIMER_MINUTES = "sleepTimerMinutes"
@@ -265,6 +284,7 @@ class PaceOverlayService : Service() {
     private const val NOTIFICATION_ID_LOW_TIME = 4202
     private const val NOTIFICATION_ID_LIMIT_REACHED = 4203
     private const val NOTIFICATION_ID_BREAK_REMINDER = 4204
+    private const val TICK_ALARM_REQUEST_CODE = 4210
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.
@@ -272,6 +292,17 @@ class PaceOverlayService : Service() {
     const val PREF_EXPIRED = "expired"
     const val PREF_EXPIRE_REASON = "expire_reason"
     const val PREF_AUTO_MODE = "bt_auto_mode"
+    // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
+    // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
+    private const val PREF_SESSION_ACTIVE = "session_active"
+    private const val PREF_REMAINING = "session_remaining_minutes"
+    private const val PREF_SLEEP_TIMER = "session_sleep_timer_remaining"
+    private const val PREF_BREAK_INTERVAL = "session_break_interval_minutes"
+    private const val PREF_NEXT_BREAK_IN = "session_next_break_in_minutes"
+    private const val PREF_NOTIFY_REMAINING = "session_notify_remaining"
+    private const val PREF_NOTIFY_LIMIT = "session_notify_limit"
+    private const val PREF_NOTIFY_BREAK = "session_notify_break"
+    private const val PREF_AUTO_NEXT_SESSION = "session_auto_next_enabled"
 
     // Bluetooth Hands-Free(2026-07-19) — MediaSession 콜백(하드웨어 리모컨)과 PaceOverlayModule의
     // JS 바인딩(Focus 탭 인앱 버튼 탭) 둘 다 이 companion 함수를 호출한다 — 입력 소스만 다르고 실제
@@ -348,16 +379,50 @@ class PaceOverlayService : Service() {
     fun stop(context: Context) {
       context.startService(Intent(context, PaceOverlayService::class.java).apply { action = ACTION_STOP })
     }
+
+    // 2026-07-19: Handler.postDelayed 대신 AlarmManager.setAndAllowWhileIdle()로 다음 틱을 예약 —
+    // Doze 유지보수 윈도우에서도 결국 깨어나고, 이 알람 자체는 시스템에 등록되므로 우리 프로세스가
+    // 죽어도 살아남아 PaceTickReceiver→PaceOverlayService(ACTION_TICK)를 다시 깨운다.
+    fun scheduleNextTick(context: Context) {
+      val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+      val pendingIntent = tickPendingIntent(context)
+      val triggerAt = SystemClock.elapsedRealtime() + TICK_INTERVAL_MS
+      try {
+        alarmManager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pendingIntent)
+      } catch (e: Exception) {
+        Log.w("PaceOverlay", "scheduleNextTick failed", e)
+      }
+    }
+
+    fun cancelScheduledTick(context: Context) {
+      val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+      try {
+        alarmManager.cancel(tickPendingIntent(context))
+      } catch (e: Exception) {
+        Log.w("PaceOverlay", "cancelScheduledTick failed", e)
+      }
+    }
+
+    private fun tickPendingIntent(context: Context): PendingIntent {
+      val intent = Intent(context, PaceTickReceiver::class.java)
+      val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+      return PendingIntent.getBroadcast(context, TICK_ALARM_REQUEST_CODE, intent, flags)
+    }
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  override fun onCreate() {
+    super.onCreate()
+    instance = this
+  }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
       ACTION_START -> {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_EXPIRED, false).apply()
-        startForeground(NOTIFICATION_ID, buildNotification())
         remainingMinutes = intent.getIntExtra(EXTRA_REMAINING, 0)
         val sleepTimerMinutes = intent.getIntExtra(EXTRA_SLEEP_TIMER_MINUTES, 0)
         sleepTimerRemainingMinutes = if (sleepTimerMinutes > 0) sleepTimerMinutes else -1
@@ -367,41 +432,112 @@ class PaceOverlayService : Service() {
         notifyLimit = intent.getBooleanExtra(EXTRA_NOTIFY_LIMIT, true)
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
         autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
-        showOverlay(remainingMinutes)
-        startForegroundAppPolling()
-        startTicking()
-        setupMediaSession()
+        infraReady = false
+        ensureInfraReady()
+        persistState()
+        scheduleNextTick(this)
+      }
+      // 2026-07-19: 프로세스가 죽었다 PaceTickReceiver의 알람으로 되살아난 경우, infraReady가
+      // false(새 프로세스 인스턴스라 필드가 전부 기본값)이므로 SharedPreferences에서 상태를 복구한
+      // 다음 인프라를 다시 세팅한다 — 정상적으로 계속 돌던 중이었다면(같은 프로세스) 이 복구 분기는
+      // session_active가 이미 true+필드도 최신이라 그대로 통과, 중복 세팅 없이 틱 계산만 수행.
+      ACTION_TICK -> {
+        if (!restoreIfNeeded()) { stopSelf(); return START_NOT_STICKY }
+        performTick()
+      }
+      // ⚠️ 2026-07-19 실기기 검증 중 실제로 발견한 버그: 이 null 분기가 원래 없었다 — 프로세스가
+      // 죽으면(SIGKILL 등, force-stop이 아닌 일반 OOM성 kill) 시스템이 START_STICKY를 보고 즉시
+      // (알람보다 훨씬 먼저, 실측 ~1초) intent=null로 재시작을 걸어준다는 걸 로그로 처음 확인했다 —
+      // 이 경로를 안 챙기면 프로세스만 허무하게 되살아나고 오버레이/폴링/알람 전부 안 돌아 사실상
+      // 낭비되는 재시작이었다(실측: 재시작은 됐는데 오버레이가 다시 안 뜨는 걸로 확인). ACTION_TICK과
+      // 같은 복구 로직을 타되, performTick(틱 계산)은 하지 않는다 — 이건 "정기 틱"이 아니라 "그냥
+      // 죽었다 시스템이 살린 것"이므로 시간을 깎으면 안 된다. 대신 다음 틱 알람만 안전하게 재예약.
+      null -> {
+        if (restoreIfNeeded()) {
+          scheduleNextTick(this)
+        } else {
+          stopSelf()
+          return START_NOT_STICKY
+        }
       }
       // ACTION_UPDATE: JS(Extend Time 등)가 남은시간을 외부에서 조정했을 때만 씀 — 정상 카운트다운
-      // 자체는 이제 이 서비스가 스스로 하므로(tickRunnable), 여기선 값만 덮어쓰고 틱 스케줄은
+      // 자체는 이제 이 서비스가 스스로 하므로(performTick), 여기선 값만 덮어쓰고 틱 스케줄은
       // 건드리지 않는다(다음 틱까지 남은 시간이 리셋되지 않게).
       ACTION_UPDATE -> {
         remainingMinutes = intent.getIntExtra(EXTRA_REMAINING, 0)
         setRemainingText(remainingMinutes)
+        if (infraReady) persistState()
       }
       ACTION_STOP -> {
+        clearSessionActive()
+        cancelScheduledTick(this)
         stopForegroundAppPolling()
-        stopTicking()
         removeOverlay()
         teardownMediaSession()
+        infraReady = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+        return START_NOT_STICKY
       }
     }
-    // Foreground Service는 Auto Next가 켜져 있을 때만(=오버레이가 떠 있는 동안만) 구동 —
-    // 시스템이 죽이면 안 되지만 START_NOT_STICKY로 불필요한 재시작도 막는다.
-    return START_NOT_STICKY
+    // START_STICKY: 세션이 활성인 동안 시스템이 이 서비스를 죽이면 재시작을 시도해달라는 신호 —
+    // 다만 실제 복구의 주 경로는 AlarmManager(프로세스 생사와 무관하게 시스템에 등록됨)이고, 이건
+    // 보조 안전망이다. ACTION_STOP에서는 위에서 이미 START_NOT_STICKY로 개별 반환한다.
+    return START_STICKY
   }
 
-  private fun startTicking() {
-    if (isTicking) return
-    isTicking = true
-    tickHandler.postDelayed(tickRunnable, TICK_INTERVAL_MS)
-  }
+  // 2026-07-19: 기존 tickRunnable(Handler.postDelayed 콜백)의 로직을 그대로 옮기되, "다음 틱
+  // 예약"만 Handler 재귀 대신 scheduleNextTick(AlarmManager)으로 바꿨다. 예외처리 추가(사용자 지적) —
+  // 여기서 뭔가 던지면 예전엔 그대로 앱이 죽었다.
+  private fun performTick() {
+    try {
+      remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+      if (sleepTimerRemainingMinutes > 0) {
+        sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
+      }
+      if (breakIntervalMinutes > 0) {
+        nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
+        if (nextBreakInMinutes <= 0) {
+          if (notifyBreak) {
+            sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "휴식 시간이에요", "잠깐 스트레칭하거나 심호흡을 해보세요.")
+          }
+          nextBreakInMinutes = breakIntervalMinutes
+        }
+      }
+      setRemainingText(remainingMinutes)
+      persistState()
+      Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
 
-  private fun stopTicking() {
-    isTicking = false
-    tickHandler.removeCallbacks(tickRunnable)
+      if (notifyRemaining && (remainingMinutes == 5 || remainingMinutes == 1)) {
+        sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
+      }
+
+      // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
+      // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
+      // "Sleep Timer가 켜져 있었고 방금 만료됐다"로 판단 가능.
+      if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0) {
+        val reason = if (remainingMinutes <= 0) "daily_limit_reached" else "sleep_timer_expired"
+        markExpired(reason)
+        clearSessionActive()
+        if (notifyLimit) {
+          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
+        }
+        cancelScheduledTick(this)
+        stopForegroundAppPolling()
+        removeOverlay()
+        teardownMediaSession()
+        infraReady = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        return
+      }
+      scheduleNextTick(this)
+    } catch (e: Exception) {
+      // 틱 계산 자체가 실패해도 다음 틱 예약은 시도한다 — 한 번의 계산 실패로 카운트다운
+      // 자체가 영구히 멈추는 것(=Daily Limit 무력화)이 가장 나쁜 결과이기 때문.
+      Log.e("PaceOverlay", "performTick failed, rescheduling anyway", e)
+      scheduleNextTick(this)
+    }
   }
 
   private fun buildNotification(): Notification {
@@ -479,6 +615,7 @@ class PaceOverlayService : Service() {
         autoNextEnabled = !autoNextEnabled
         setAutoMode(applicationContext, autoNextEnabled)
         applyAutoBadgeStyle()
+        persistState()
       }
     }
     applyAutoBadgeStyle()
@@ -550,9 +687,10 @@ class PaceOverlayService : Service() {
 
   override fun onDestroy() {
     stopForegroundAppPolling()
-    stopTicking()
     removeOverlay()
     teardownMediaSession()
+    infraReady = false
+    if (instance === this) instance = null
     super.onDestroy()
   }
 }

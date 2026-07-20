@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import YoutubePlayer, { type YoutubeIframeRef } from 'react-native-youtube-iframe';
 
@@ -32,11 +32,16 @@ type Props = {
 export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress }: Props) {
   const { width, height } = useWindowDimensions();
   const playerRef = useRef<YoutubeIframeRef>(null);
+  const [ready, setReady] = useState(false);
 
-  // 재생 중에만 1초 간격으로 currentTime/duration을 읽어 진행률을 보고(영상 바뀌면 재설정).
+  // 영상 바뀌면 ready 리셋(다음 플레이어 onReady 대기).
+  useEffect(() => { setReady(false); }, [videoId]);
+
+  // ⚠️ getCurrentTime/getDuration은 YT.Player가 준비된 뒤(onReady)에만 호출해야 한다 — 그 전에
+  // 부르면 WebView 안에서 'player.getCurrentTime is not a function' 예외가 1초마다 뜬다(실기기
+  // 로그로 발견). ready일 때만 폴링.
   useEffect(() => {
-    if (!playing || !onProgress) return;
-    onProgress(0);
+    if (!ready || !onProgress) return;
     const iv = setInterval(async () => {
       try {
         const ref = playerRef.current;
@@ -46,7 +51,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       } catch {}
     }, 1000);
     return () => clearInterval(iv);
-  }, [playing, videoId, onProgress]);
+  }, [ready, onProgress]);
 
   return (
     <View style={styles.container}>
@@ -63,7 +68,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           mediaPlaybackRequiresUserAction: false,
           scrollEnabled: false,
         }}
-        onReady={() => onReady?.()}
+        onReady={() => { setReady(true); onReady?.(); }}
         onChangeState={(state: string) => { if (state === 'ended') onEnded(); }}
         onError={() => onError?.(-1)}
       />

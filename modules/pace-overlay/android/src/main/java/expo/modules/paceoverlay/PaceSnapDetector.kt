@@ -97,9 +97,12 @@ object PaceSnapDetector {
     val frame = ShortArray(FRAME_SIZE)
     var noiseFloor = 200.0 // 초기 추정치 — 조용한 프레임들로 서서히 적응
     var lastTriggerAt = 0L
+    var lastHeartbeatAt = 0L
+    var peakRmsSinceHeartbeat = 0.0
 
     try {
       recorder.startRecording()
+      Log.i(TAG, "recording started")
       while (running) {
         val read = recorder.read(frame, 0, FRAME_SIZE)
         if (read <= 0) continue
@@ -110,14 +113,22 @@ object PaceSnapDetector {
           sumSquares += s * s
         }
         val rms = sqrt(sumSquares / read)
+        if (rms > peakRmsSinceHeartbeat) peakRmsSinceHeartbeat = rms
 
         val now = System.currentTimeMillis()
+        // TEMP 튜닝용 로그(작업 끝나면 제거) — 1초마다 바닥/피크를 찍어 실제 임계값을 실측한다.
+        if (now - lastHeartbeatAt > 1000) {
+          Log.i(TAG, "heartbeat noiseFloor=$noiseFloor peakRms=$peakRmsSinceHeartbeat")
+          lastHeartbeatAt = now
+          peakRmsSinceHeartbeat = 0.0
+        }
         val isSpike = rms > noiseFloor * 6.0 && rms > 800.0
         val pastRefractory = now - lastTriggerAt > REFRACTORY_MS
 
         if (isSpike && pastRefractory) {
           val highMag = goertzelMagnitude(frame, HIGH_BAND_HZ, SAMPLE_RATE)
           val lowMag = goertzelMagnitude(frame, LOW_BAND_HZ, SAMPLE_RATE)
+          Log.i(TAG, "SPIKE rms=$rms noiseFloor=$noiseFloor highMag=$highMag lowMag=$lowMag passed=${highMag > lowMag * 1.2}")
           if (highMag > lowMag * 1.2) {
             lastTriggerAt = now
             onSnap()

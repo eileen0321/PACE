@@ -129,6 +129,14 @@ class PaceAccessibilityService : AccessibilityService() {
     fun goHome() {
       instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
     }
+
+    // 2026-07-20 실기기 검증 중 발견(사용자 지적 — 알약이 "됐다 안됐다" 함): PaceOverlayService의
+    // 알약 표시/숨김이 UsageStatsManager 1초 폴링(ForegroundAppWatcher)에만 의존했는데, 이 API는
+    // 구글 공식 문서 기준으로도 실시간 정확도를 보장하지 않는다 — 이벤트 기반인 이 서비스가 이미
+    // TYPE_WINDOW_STATE_CHANGED로 foreground 패키지를 즉시(폴링 지연 없이) 추적하고 있으므로
+    // (onAccessibilityEvent 참고) 접근성이 켜져 있으면 이 값을 우선 쓰게 노출한다. 접근성이
+    // 꺼져있으면(instance==null) null을 반환해 호출부가 기존 UsageStatsManager로 폴백하게 한다.
+    fun getCurrentForegroundPackage(): String? = instance?.currentForegroundPackage
   }
 
   override fun onServiceConnected() {

@@ -62,7 +62,12 @@ class PaceOverlayService : Service() {
       // 스레드 Handler 콜백이라 앱 프로세스 전체가 죽는다. try/catch로 감싸 이번 폴은 실패해도
       // 폴링 루프 자체(다음 postDelayed)는 계속 살아있게 한다.
       try {
-        val foregroundPackage = ForegroundAppWatcher.getForegroundPackage(applicationContext)
+        // 2026-07-20 실기기 검증 중 발견(알약이 "됐다 안됐다") — UsageStatsManager는 실시간 정확도를
+        // 보장 안 하는 폴링 API라 놓치는 경우가 있었다. 접근성이 켜져 있으면 이벤트 기반(즉시 반영,
+        // PaceAccessibilityService.getCurrentForegroundPackage)을 우선 쓰고, 꺼져있을 때만 기존
+        // UsageStatsManager로 폴백한다.
+        val foregroundPackage = PaceAccessibilityService.getCurrentForegroundPackage()
+          ?: ForegroundAppWatcher.getForegroundPackage(applicationContext)
         val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
       } catch (e: Exception) {
@@ -934,6 +939,7 @@ class PaceOverlayService : Service() {
     // 상태로 계속 도는 일이 없게 같이 정리 — 10분 타이머가 아직 안 끝났어도 취소.
     focusSessionHandler.removeCallbacks(focusSessionAutoStop)
     PaceAccessibilityService.stopWatching()
+    PaceSnapDetector.stop()
     infraReady = false
     if (instance === this) instance = null
     super.onDestroy()

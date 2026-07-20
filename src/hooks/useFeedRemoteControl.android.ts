@@ -22,6 +22,8 @@ type Callbacks = {
   onNext: () => void;
   onPrevious: () => void;
   onToggleAutoMode: () => void;
+  /** iOS 전용(고개짓 카메라 게이팅) — Android에선 무시. 공유 피드가 넘기므로 타입만 맞춘다. */
+  headDetectActive?: boolean;
 };
 
 export function useFeedRemoteControl(callbacks: Callbacks) {

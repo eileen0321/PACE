@@ -1,18 +1,24 @@
 import { useEffect, useRef } from 'react';
 import { requireNativeModule } from 'expo-modules-core';
 
-// iOS 전용 핸즈프리 "다음 영상" 트리거 (2026-07-20, 사용자 지시로 AirPods Bluetooth 방식에서 전환).
-// modules/pace-gesture(Expo Modules API 로컬 모듈, Swift)를 감싼다:
-//   · 핑거스냅 소리 → SoundAnalysis 내장 분류기(finger_snapping) → onSnap → onNext()
-//   · 고개짓(턱 끄덕임) → ARKit face tracking(TrueDepth 기기 전용) → onHeadNod → onNext()
-// ⚠️ 미링크/미빌드(prebuild 전, 시뮬레이터 등)에서도 앱이 죽지 않도록 require를 try/catch로 감싼다.
-// ⚠️ Metro가 iOS 빌드에서만 이 .ios.ts를 선택 — Android는 useFeedRemoteControl.android.ts(네이티브
-//    미디어세션) 사용. onPrevious/onToggleAutoMode는 제스처엔 매핑하지 않는다(화면 버튼 전용).
+// iOS 전용 핸즈프리 "다음 영상" 트리거 (2026-07-20).
+// modules/pace-gesture(Expo Modules API 로컬 모듈, Swift)를 감싼다.
+//
+// ── 방식 전환(2026-07-20): 핑거스냅 → 고개짓 ─────────────────────────────────────────────
+// 처음엔 핑거스냅 소리(SoundAnalysis)로 넘겼는데, Android 실사용에서 "쇼츠 오디오에 스냅 소리가
+// 묻혀 감지가 잘 안 됨"이 확인됐다. 그래서 iOS는 **ARKit 얼굴 트래킹(TrueDepth) 고개짓**으로 전환 —
+// 소리와 완전 무관(시각/깊이)이라 오디오 마스킹 문제가 원천적으로 없고, iPhone TrueDepth라 RGB 손
+// 인식보다 강건하며 새 의존성 0개다. 감지는 배터리를 위해 **headDetectActive**(피드가 "Focus Session
+// 켜짐 + 현재 영상 1/2지점 이후"로 계산)일 때만 켠다 — 카메라 상시 구동 방지. 고개짓 → onNext().
+// 스냅 리스너도 등록은 해두지만(감지기는 안 켬) 향후 AEC로 되살릴 여지만 남긴다.
+// ⚠️ Metro가 iOS 빌드에서만 이 .ios.ts를 선택. 미빌드/시뮬(TrueDepth 없음)에선 graceful 처리.
 
 type Callbacks = {
   onNext: () => void;
   onPrevious: () => void;
   onToggleAutoMode: () => void;
+  /** 고개짓 감지를 켤지 — 피드가 (Focus Session ON && 현재 영상 진행률 ≥ 0.5)로 계산해 넘긴다. */
+  headDetectActive?: boolean;
 };
 
 type GestureModule = {
@@ -25,36 +31,48 @@ type GestureModule = {
 export function useFeedRemoteControl(callbacks: Callbacks) {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks; // 매 렌더 최신 콜백 유지(stale closure 방지)
+  const modRef = useRef<GestureModule | null>(null);
+  const runningRef = useRef(false);
 
+  // 마운트: 네이티브 모듈 로드 + 이벤트 리스너 등록. 감지 start는 아래 headDetectActive effect가 제어.
+  // (로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀 requireNativeModule을 직접 쓴다. 마운트
+  //  시점 로드로 탑레벨 평가 타이밍 이슈 방지. 미빌드/시뮬에선 throw → graceful 비활성.)
   useEffect(() => {
-    // 로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀(index.ts 미해석) requireNativeModule을 직접
-    // 쓴다. 모듈-탑레벨이 아니라 마운트 시점에 로드 — Metro 캐시 재빌드 등으로 탑레벨 평가가 네이티브
-    // 등록 전에 튀는 것을 방지(검증 중 간헐적 '미링크' 발견). 미빌드/시뮬에선 throw하므로 try/catch.
     let mod: GestureModule | null = null;
     try {
       mod = requireNativeModule<GestureModule>('PaceGesture');
     } catch (e) {
-      console.warn('[useFeedRemoteControl] pace-gesture 네이티브 모듈 미링크 — 핸즈프리 제스처 비활성:', e);
+      console.warn('[useFeedRemoteControl] pace-gesture 네이티브 모듈 미링크 — 핸즈프리 비활성:', e);
       return;
     }
-    const subs: Array<{ remove: () => void }> = [];
-    try {
-      // 스펙(PACE_ARCHITECTURE.md 2026-07-20): 핑거스냅이 확정 기능. 고개짓(ARKit)은 "보류/사용자
-      // 결정 대기"라 기본 비활성 — 네이티브엔 구현돼 있어(mode 'head'/'both') 결정되면 바로 켤 수 있다.
-      // (참고: 문서는 고개짓에 vision-camera+MediaPipe를 가정했으나 iOS는 ARKit로 새 의존성 0개 구현함.)
-      mod.start('snap').catch((err) =>
-        console.warn('[useFeedRemoteControl] 제스처 start 실패:', err),
-      );
-      subs.push(mod.addListener('onSnap', () => cbRef.current.onNext()));
-      subs.push(mod.addListener('onHeadNod', () => cbRef.current.onNext()));
-      subs.push(mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)));
-    } catch (e) {
-      console.warn('[useFeedRemoteControl] 제스처 리스너 등록 실패:', e);
-    }
-    // 언마운트 시 반드시 정리 — 마이크/카메라/ARSession을 놓아준다(구 TrackPlayer 누수 대응).
+    modRef.current = mod;
+    const subs = [
+      mod.addListener('onHeadNod', () => cbRef.current.onNext()),
+      mod.addListener('onSnap', () => cbRef.current.onNext()),
+      mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)),
+    ];
     return () => {
       subs.forEach((s) => { try { s.remove(); } catch {} });
-      try { mod.stop(); } catch {}
+      try { mod?.stop(); } catch {}
+      modRef.current = null;
+      runningRef.current = false;
     };
   }, []);
+
+  // 고개짓 카메라 게이팅: headDetectActive가 켜지면 ARKit 감지 시작, 꺼지면 정지(배터리 절약).
+  useEffect(() => {
+    const mod = modRef.current;
+    if (!mod) return;
+    const active = !!callbacks.headDetectActive;
+    if (active && !runningRef.current) {
+      runningRef.current = true;
+      mod.start('head').catch((err) => {
+        runningRef.current = false;
+        console.warn('[useFeedRemoteControl] 고개짓 start 실패:', err);
+      });
+    } else if (!active && runningRef.current) {
+      runningRef.current = false;
+      try { mod.stop(); } catch {}
+    }
+  }, [callbacks.headDetectActive]);
 }

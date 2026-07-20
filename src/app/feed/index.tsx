@@ -34,9 +34,15 @@ export default function PaceFeedScreen() {
 
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
+  const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   const playing = status === 'PLAYING' || status === 'READY';
+
+  // iOS 고개짓(ARKit) 감지는 배터리를 위해 "Focus Session 켜짐 + 현재 영상 1/2 지점 이후"에만 켠다
+  // (2026-07-20 사용자 지시 — Android가 손짓 카메라를 1/2지점부터 켜는 것과 동일 취지). 스냅은 쇼츠
+  // 소리에 묻혀 신뢰도가 낮아 고개짓으로 전환. iOS는 TrueDepth라 소리 무관하게 강건.
+  const headDetectActive = isAutoMode && progress >= 0.5;
 
   useEffect(() => {
     loadInitial();
@@ -75,6 +81,7 @@ export default function PaceFeedScreen() {
 
   const goNext = () => {
     setStatus('PLAYING');
+    setProgress(0); // 다음 영상 → 진행률 리셋(고개짓 카메라 게이팅을 다시 1/2지점 대기로)
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
 
@@ -95,6 +102,7 @@ export default function PaceFeedScreen() {
     onNext: () => { goNext(); useToastStore.getState().show('⏭ Next Short'); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show('⏮ Previous Short'); } },
     onToggleAutoMode: toggleAutoMode,
+    headDetectActive, // iOS 고개짓 감지 ON 조건(Focus Session + 1/2지점 이후) — 배터리 게이팅
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
@@ -113,6 +121,7 @@ export default function PaceFeedScreen() {
         <YouTubeShortsPlayer
           videoId={current.videoId}
           playing={playing}
+          onProgress={setProgress}
           onEnded={onEnded}
           onError={() => goNext()} // 재생 불가한 영상(지역제한 등)은 건너뜀
         />

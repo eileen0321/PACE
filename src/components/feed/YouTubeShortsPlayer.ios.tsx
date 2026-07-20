@@ -1,5 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
-import YoutubePlayer from 'react-native-youtube-iframe';
+import YoutubePlayer, { type YoutubeIframeRef } from 'react-native-youtube-iframe';
 
 // ⚠️ 플랫폼 분리(2026-07-20): iOS 전용. 같은 폴더 YouTubeShortsPlayer.tsx는 Android 전용(원본페이지).
 // iOS는 공식 임베드(합법)로 간다.
@@ -24,14 +25,33 @@ type Props = {
   onEnded: () => void;
   onReady?: () => void;
   onError?: (code: number) => void;
+  /** 재생 진행률(0~1) 1초마다 보고 — 피드가 "영상 1/2지점부터 고개짓 카메라 ON" 배터리 게이팅에 사용. */
+  onProgress?: (fraction: number) => void;
 };
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError }: Props) {
+export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress }: Props) {
   const { width, height } = useWindowDimensions();
+  const playerRef = useRef<YoutubeIframeRef>(null);
+
+  // 재생 중에만 1초 간격으로 currentTime/duration을 읽어 진행률을 보고(영상 바뀌면 재설정).
+  useEffect(() => {
+    if (!playing || !onProgress) return;
+    onProgress(0);
+    const iv = setInterval(async () => {
+      try {
+        const ref = playerRef.current;
+        if (!ref) return;
+        const [cur, dur] = await Promise.all([ref.getCurrentTime(), ref.getDuration()]);
+        if (dur > 0) onProgress(Math.min(1, cur / dur));
+      } catch {}
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [playing, videoId, onProgress]);
 
   return (
     <View style={styles.container}>
       <YoutubePlayer
+        ref={playerRef}
         height={height}
         width={width}
         play={playing}

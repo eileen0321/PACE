@@ -143,7 +143,11 @@ object PaceSnapDetector {
           lastHeartbeatAt = now
           peakRmsSinceHeartbeat = 0.0
         }
-        val isSpike = rms > noiseFloor * 6.0 && rms > 800.0
+        // 2026-07-20 실기기 검증 중 발견: 노이즈 바닥이 에코캔슬링 덕에 80~150대로 안정됐는데도
+        // 사용자가 여러 번 스냅해도 이 문턱값(6배/800) 자체를 못 넘는 경우가 대부분이었다 — 실제
+        // 스냅 음량이 이 기준보다 조용했다는 뜻. 바닥이 이제 낮고 안정적이니 배수/절대값 둘 다
+        // 낮춰서 더 민감하게(오탐 여지는 늘지만, 지금은 아예 미탐이 훨씬 큰 문제).
+        val isSpike = rms > noiseFloor * 3.5 && rms > 400.0
         val pastRefractory = now - lastTriggerAt > REFRACTORY_MS
 
         if (isSpike && pastRefractory) {

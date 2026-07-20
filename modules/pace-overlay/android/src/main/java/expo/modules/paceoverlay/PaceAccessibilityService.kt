@@ -281,6 +281,17 @@ class PaceAccessibilityService : AccessibilityService() {
     val gesture = GestureDescription.Builder()
       .addStroke(GestureDescription.StrokeDescription(path, 0, 250))
       .build()
-    dispatchGesture(gesture, null, null)
+    // TEMP 진단용(작업 끝나면 정리) — dispatchGesture의 리턴값/완료 콜백을 지금까지 아예 안 보고
+    // 있었다. 사용자가 "Next Short 힌트만 뜨고 안 넘어간다"고 보고한 원인 후보(제스처가 시스템에
+    // 실제로 접수됐는지, 접수됐다면 끝까지 완료됐는지)를 실기기 로그로 직접 확인한다.
+    val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+      override fun onCompleted(gestureDescription: GestureDescription?) {
+        Log.i("PaceAccessibility", "gesture onCompleted")
+      }
+      override fun onCancelled(gestureDescription: GestureDescription?) {
+        Log.w("PaceAccessibility", "gesture onCancelled")
+      }
+    }, null)
+    Log.i("PaceAccessibility", "dispatchGesture accepted=$dispatched")
   }
 }

@@ -22,22 +22,21 @@ type GestureModule = {
   addListener(event: 'onSnap' | 'onHeadNod' | 'onError', listener: (payload: any) => void): { remove: () => void };
 };
 
-// 로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀(index.ts 미해석) requireNativeModule을 직접 쓴다.
-// 미빌드(prebuild 전)에선 throw하므로 try/catch로 감싸 앱이 죽지 않게 한다.
-let PaceGesture: GestureModule | null = null;
-try {
-  PaceGesture = requireNativeModule<GestureModule>('PaceGesture');
-} catch (e) {
-  console.warn('[useFeedRemoteControl] pace-gesture 네이티브 모듈 미링크 — 핸즈프리 제스처 비활성:', e);
-}
-
 export function useFeedRemoteControl(callbacks: Callbacks) {
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks; // 매 렌더 최신 콜백 유지(stale closure 방지)
 
   useEffect(() => {
-    if (!PaceGesture) return;
-    const mod = PaceGesture;
+    // 로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀(index.ts 미해석) requireNativeModule을 직접
+    // 쓴다. 모듈-탑레벨이 아니라 마운트 시점에 로드 — Metro 캐시 재빌드 등으로 탑레벨 평가가 네이티브
+    // 등록 전에 튀는 것을 방지(검증 중 간헐적 '미링크' 발견). 미빌드/시뮬에선 throw하므로 try/catch.
+    let mod: GestureModule | null = null;
+    try {
+      mod = requireNativeModule<GestureModule>('PaceGesture');
+    } catch (e) {
+      console.warn('[useFeedRemoteControl] pace-gesture 네이티브 모듈 미링크 — 핸즈프리 제스처 비활성:', e);
+      return;
+    }
     const subs: Array<{ remove: () => void }> = [];
     try {
       // 스펙(PACE_ARCHITECTURE.md 2026-07-20): 핑거스냅이 확정 기능. 고개짓(ARKit)은 "보류/사용자

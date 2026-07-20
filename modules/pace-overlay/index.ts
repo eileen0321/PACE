@@ -47,6 +47,21 @@ type PaceOverlayNativeModule = {
   startSnapDetection(): void;
   stopSnapDetection(): void;
   isSnapDetectionRunning(): boolean;
+  // Bluetooth Hands-Free Control(2026-07-19) + Focus Session 지속시간(2026-07-20) — 이 타입에
+  // 누락돼 있었다(bluetoothService.android.ts가 자체 로컬 타입으로 대신 선언해 씀). 실제 네이티브
+  // 등록은 PaceOverlayModule.kt 참고.
+  triggerSwipe(up: boolean): void;
+  getBluetoothState(): {
+    isConnected: boolean;
+    deviceName: string | null;
+    autoModeEnabled: boolean;
+    nextCount: number;
+    previousCount: number;
+    autoToggleCount: number;
+  };
+  setBluetoothAutoMode(enable: boolean): void;
+  setFocusSessionDurationMinutes(minutes: number): void;
+  getFocusSessionDurationMinutes(): number;
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

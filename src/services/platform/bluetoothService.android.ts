@@ -28,30 +28,61 @@ const EMPTY_STATE: BluetoothState = {
   autoToggleCount: 0,
 };
 
+// 네이티브 함수가 새로 추가된 직후(JS Fast Refresh는 됐는데 아직 네이티브 재빌드/재설치 전) PaceOverlay
+// 객체 자체는 존재해도 해당 메서드가 없어 "undefined is not a function"으로 던지는 경우가 실기기에서
+// 실제로 발생했다(2026-07-21, useBluetoothStore.refresh()의 Uncaught promise rejection으로 확인) —
+// `?.`는 PaceOverlay가 null/undefined일 때만 막아주고 메서드 자체가 없는 경우는 못 막는다. try/catch로
+// 감싸 항상 안전한 폴백값을 반환하도록 통일.
 export const bluetoothService: BluetoothService = {
   supportsHardwareRemote: PaceOverlay !== null,
 
   async getState() {
-    return PaceOverlay?.getBluetoothState() ?? EMPTY_STATE;
+    try {
+      return PaceOverlay?.getBluetoothState() ?? EMPTY_STATE;
+    } catch (e) {
+      console.warn('[bluetoothService.android] getState failed', e);
+      return EMPTY_STATE;
+    }
   },
 
   async next() {
-    PaceOverlay?.triggerSwipe(true);
+    try {
+      PaceOverlay?.triggerSwipe(true);
+    } catch (e) {
+      console.warn('[bluetoothService.android] next failed', e);
+    }
   },
 
   async previous() {
-    PaceOverlay?.triggerSwipe(false);
+    try {
+      PaceOverlay?.triggerSwipe(false);
+    } catch (e) {
+      console.warn('[bluetoothService.android] previous failed', e);
+    }
   },
 
   async toggleAutoMode(enable: boolean) {
-    PaceOverlay?.setBluetoothAutoMode(enable);
+    try {
+      PaceOverlay?.setBluetoothAutoMode(enable);
+    } catch (e) {
+      console.warn('[bluetoothService.android] toggleAutoMode failed', e);
+    }
   },
 
   async setFocusSessionDurationMinutes(minutes: number) {
-    PaceOverlay?.setFocusSessionDurationMinutes(minutes);
+    try {
+      PaceOverlay?.setFocusSessionDurationMinutes(minutes);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setFocusSessionDurationMinutes failed', e);
+    }
   },
 
   async getFocusSessionDurationMinutes() {
-    return PaceOverlay?.getFocusSessionDurationMinutes() ?? 10;
+    try {
+      return PaceOverlay?.getFocusSessionDurationMinutes() ?? 10;
+    } catch (e) {
+      console.warn('[bluetoothService.android] getFocusSessionDurationMinutes failed', e);
+      return 10;
+    }
   },
 };

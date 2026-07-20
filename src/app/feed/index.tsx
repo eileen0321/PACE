@@ -159,12 +159,17 @@ export default function PaceFeedScreen() {
 
         {current && (
           <View style={styles.bottom} pointerEvents="box-none">
-            <View style={[styles.autoModeBadge, isAutoMode ? styles.autoModeBadgeOn : styles.autoModeBadgeOff]}>
-              <Feather name="headphones" size={11} color={isAutoMode ? '#000000' : colors.textSecondary} />
+            {/* 탭하여 Focus Session on/off. 켜면 10분 자동넘김 + (영상 1/2지점부터) 고개짓 감지 ON. */}
+            <Pressable
+              onPress={toggleAutoMode}
+              hitSlop={8}
+              style={[styles.autoModeBadge, isAutoMode ? styles.autoModeBadgeOn : styles.autoModeBadgeOff]}
+            >
+              <Feather name={isAutoMode ? 'zap' : 'play'} size={11} color={isAutoMode ? '#000000' : colors.textSecondary} />
               <Text style={[styles.autoModeBadgeText, isAutoMode && styles.autoModeBadgeTextOn]}>
-                {isAutoMode ? 'Auto Mode ON' : 'Hands-Free Ready'}
+                {isAutoMode ? 'Focus Session ON' : 'Focus Session 시작'}
               </Text>
-            </View>
+            </Pressable>
             <Text style={styles.title} numberOfLines={2}>{current.title}</Text>
             {!!current.channelTitle && <Text style={styles.creator}>{current.channelTitle}</Text>}
             <View style={styles.controls}>

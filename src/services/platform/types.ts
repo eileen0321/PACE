@@ -91,6 +91,9 @@ export interface BluetoothService {
   next(): Promise<void>;
   previous(): Promise<void>;
   toggleAutoMode(enable: boolean): Promise<void>;
+  /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
+  setFocusSessionDurationMinutes(minutes: number): Promise<void>;
+  getFocusSessionDurationMinutes(): Promise<number>;
 }
 
 export interface FocusService {

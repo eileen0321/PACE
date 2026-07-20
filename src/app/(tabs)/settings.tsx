@@ -26,6 +26,8 @@ const LANGUAGE_OPTIONS: { value: UserSettings['language']; labelKey: 'settings.l
 const SLEEP_TIMER_OPTIONS = [15, 30, 45, 60, 0];
 const DAILY_LIMIT_OPTIONS = [30, 45, 60, 90, 120];
 const BREAK_OPTIONS = [10, 15, 20, 30, 0];
+// 2026-07-20 사용자 지시 — Focus Session(자동넘김) 지속 시간을 10분 하드코딩이 아니라 직접 고르게.
+const FOCUS_SESSION_DURATION_OPTIONS = [5, 10, 20, 30, 60];
 
 function cycle(options: number[], current: number): number {
   const idx = options.indexOf(current);
@@ -145,6 +147,13 @@ export default function SettingsScreen() {
               value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')} bordered
               onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
             />
+            {Platform.OS === 'android' && (
+              <DefaultRow
+                title={t('settings.focusSessionDuration')} desc={t('settings.focusSessionDurationDesc')}
+                value={`${bluetooth.focusSessionDurationMinutes}m`} bordered
+                onPress={() => bluetooth.setFocusSessionDurationMinutes(cycle(FOCUS_SESSION_DURATION_OPTIONS, bluetooth.focusSessionDurationMinutes))}
+              />
+            )}
           </GlassSurface>
         </View>
 

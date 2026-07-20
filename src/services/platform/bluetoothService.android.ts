@@ -9,6 +9,8 @@ let PaceOverlay: {
   triggerSwipe(up: boolean): void;
   getBluetoothState(): BluetoothState;
   setBluetoothAutoMode(enable: boolean): void;
+  setFocusSessionDurationMinutes(minutes: number): void;
+  getFocusSessionDurationMinutes(): number;
 } | null = null;
 
 try {
@@ -43,5 +45,13 @@ export const bluetoothService: BluetoothService = {
 
   async toggleAutoMode(enable: boolean) {
     PaceOverlay?.setBluetoothAutoMode(enable);
+  },
+
+  async setFocusSessionDurationMinutes(minutes: number) {
+    PaceOverlay?.setFocusSessionDurationMinutes(minutes);
+  },
+
+  async getFocusSessionDurationMinutes() {
+    return PaceOverlay?.getFocusSessionDurationMinutes() ?? 10;
   },
 };

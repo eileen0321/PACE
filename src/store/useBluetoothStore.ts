@@ -14,10 +14,13 @@ type BluetoothStoreState = {
   nextCount: number;
   previousCount: number;
   autoToggleCount: number;
+  /** Focus Session(자동넘김) 지속 시간(분) — 사용자가 직접 선택, 하드코딩 아님(2026-07-20 사용자 지시). */
+  focusSessionDurationMinutes: number;
   refresh: () => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
   toggleAutoMode: () => Promise<void>;
+  setFocusSessionDurationMinutes: (minutes: number) => Promise<void>;
 };
 
 export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
@@ -27,10 +30,14 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
   nextCount: 0,
   previousCount: 0,
   autoToggleCount: 0,
+  focusSessionDurationMinutes: 10,
 
   refresh: async () => {
-    const state = await bluetoothService.getState();
-    set(state);
+    const [state, focusSessionDurationMinutes] = await Promise.all([
+      bluetoothService.getState(),
+      bluetoothService.getFocusSessionDurationMinutes(),
+    ]);
+    set({ ...state, focusSessionDurationMinutes });
   },
 
   next: async () => {
@@ -51,5 +58,10 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
     set({ autoModeEnabled: next, autoToggleCount: get().autoToggleCount + 1 });
     // iOS는 네이티브 토스트가 없으므로(하드웨어 리모컨 미구현) 인앱 버튼 탭에서는 여기서 직접 표시.
     useToastStore.getState().show(next ? '🎧 Auto Mode Enabled' : '🎧 Auto Mode Disabled');
+  },
+
+  setFocusSessionDurationMinutes: async (minutes) => {
+    await bluetoothService.setFocusSessionDurationMinutes(minutes);
+    set({ focusSessionDurationMinutes: minutes });
   },
 }));

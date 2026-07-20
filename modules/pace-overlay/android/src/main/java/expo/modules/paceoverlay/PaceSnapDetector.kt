@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlin.math.cos
@@ -94,6 +96,25 @@ object PaceSnapDetector {
       return
     }
 
+    // 2026-07-20 사용자 지시(맥 세션의 iOS 에코캔슬링 성공 사례 전달받음) — 영상 소리가 마이크에
+    // 섞여 노이즈 바닥을 계속 올리던 문제(실기기 검증 9~10차에서 확인된 V1 한계)의 실제 해법.
+    // 안드로이드도 표준 오디오 이펙트로 동일한 걸 제공한다 — AcousticEchoCanceler가 "스피커로
+    // 나가는 소리 중 마이크로 되돌아온 성분"을 제거하고, NoiseSuppressor가 정상상태 배경 잡음을
+    // 추가로 깎는다. 둘 다 새 의존성 없이 android.media.audiofx 표준 API. 기기가 지원 안 하면
+    // (isAvailable()==false) 조용히 스킵 — 최악의 경우도 기존 V1 동작으로 그대로 폴백.
+    var aec: AcousticEchoCanceler? = null
+    var ns: NoiseSuppressor? = null
+    if (AcousticEchoCanceler.isAvailable()) {
+      aec = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
+      Log.i(TAG, "AcousticEchoCanceler enabled=${aec?.enabled}")
+    } else {
+      Log.w(TAG, "AcousticEchoCanceler not available on this device")
+    }
+    if (NoiseSuppressor.isAvailable()) {
+      ns = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
+      Log.i(TAG, "NoiseSuppressor enabled=${ns?.enabled}")
+    }
+
     val frame = ShortArray(FRAME_SIZE)
     var noiseFloor = 200.0 // 초기 추정치 — 조용한 프레임들로 서서히 적응
     var lastTriggerAt = 0L
@@ -142,6 +163,8 @@ object PaceSnapDetector {
       Log.e(TAG, "detection loop error", e)
     } finally {
       try { recorder.stop() } catch (_: Exception) {}
+      aec?.release()
+      ns?.release()
       recorder.release()
     }
   }

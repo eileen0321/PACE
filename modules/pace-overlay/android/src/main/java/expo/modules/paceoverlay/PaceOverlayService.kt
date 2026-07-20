@@ -364,18 +364,30 @@ class PaceOverlayService : Service() {
     }
 
     // 2026-07-20 Focus Session 리디자인(PACE_ARCHITECTURE.md 참고): "자동재생"을 무기한으로 도는
-    // 워처가 아니라, 사용자가 켠 시점부터 정확히 10분짜리 세션으로 제한한다 — Google Play 정책의
-    // "자율적 판단·실행 자동화 금지" 조항은 무기한 자율 동작을 문제 삼는 것이지, 사용자가 명시적으로
-    // 켠 뒤 정해진 시간 동안만 도는 것까지 금지하지 않는다("If Trigger X(세션 켜짐) occurs, perform
-    // Action Y(10분간 자동 진행)" — 결정적 규칙). 10분 뒤엔 네이티브가 스스로 꺼서 재확인 없이
-    // 무기한 지속되는 일이 없게 한다.
-    private const val FOCUS_SESSION_DURATION_MS = 10 * 60 * 1000L
+    // 워처가 아니라, 사용자가 켠 시점부터 정해진 시간으로 제한한다 — Google Play 정책의 "자율적
+    // 판단·실행 자동화 금지" 조항은 무기한 자율 동작을 문제 삼는 것이지, 사용자가 명시적으로 켠 뒤
+    // 정해진 시간 동안만 도는 것까지 금지하지 않는다("If Trigger X(세션 켜짐) occurs, perform
+    // Action Y(N분간 자동 진행)" — 결정적 규칙, N은 상수든 사용자가 고른 값이든 무방).
+    // 시간이 다 되면 네이티브가 스스로 꺼서 재확인 없이 무기한 지속되는 일이 없게 한다.
+    // ⚠️ 사용자 지시(2026-07-20): 10분을 하드코딩 상수로 박아두지 말고 사용자가 직접 시간을 고를 수
+    // 있게 — SharedPreferences에 저장된 값을 읽어 쓰고, 기본값만 10분(설정 안 한 최초 상태 대비).
+    private const val DEFAULT_FOCUS_SESSION_MINUTES = 10
+    const val PREF_FOCUS_SESSION_MINUTES = "focus_session_duration_minutes"
     private val focusSessionHandler = Handler(Looper.getMainLooper())
     private val focusSessionAutoStop = Runnable { instance?.let { setAutoMode(it.applicationContext, false) } }
 
-    // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 10분 세션 시작(그 안에서는
-    // PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 10분 뒤 자동 종료 — 그 전에 사용자가
-    // 직접 끄면 예약된 자동 종료도 같이 취소한다.
+    fun setFocusSessionDurationMinutes(context: Context, minutes: Int) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putInt(PREF_FOCUS_SESSION_MINUTES, minutes.coerceAtLeast(1)).apply()
+    }
+
+    fun getFocusSessionDurationMinutes(context: Context): Int =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getInt(PREF_FOCUS_SESSION_MINUTES, DEFAULT_FOCUS_SESSION_MINUTES)
+
+    // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 사용자가 설정한 시간만큼
+    // 세션 시작(그 안에서는 PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 시간이
+    // 다 되면 자동 종료 — 그 전에 사용자가 직접 끄면 예약된 자동 종료도 같이 취소한다.
     fun setAutoMode(context: Context, enable: Boolean) {
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       if (enable) {
@@ -385,7 +397,8 @@ class PaceOverlayService : Service() {
         // 위치 감지(위)와 핑거스냅(마이크)은 같은 Focus Session 안에서 나란히 도는 별개의 트리거라
         // 둘 다 여기서 같이 켜고 꺼야 한다.
         PaceSnapDetector.start(context) { triggerNext(context) }
-        focusSessionHandler.postDelayed(focusSessionAutoStop, FOCUS_SESSION_DURATION_MS)
+        val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
+        focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
       } else {
         PaceAccessibilityService.stopWatching()
         PaceSnapDetector.stop()
@@ -401,7 +414,7 @@ class PaceOverlayService : Service() {
         it.autoNextEnabled = enable
         it.applyAutoBadgeStyle()
       }
-      showToast(context, if (enable) "🎯 Focus Session Started (10m)" else "🎯 Focus Session Ended")
+      showToast(context, if (enable) "🎯 Focus Session Started (${getFocusSessionDurationMinutes(context)}m)" else "🎯 Focus Session Ended")
     }
 
     private fun bumpBluetoothCounter(context: Context, key: String) {

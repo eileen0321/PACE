@@ -203,6 +203,17 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.setAutoMode(context, enable) }
     }
 
+    // 2026-07-20 사용자 지시 — Focus Session 지속 시간을 10분 하드코딩이 아니라 사용자가 직접
+    // 고르게 한다(정책상으로도 문제없음, PACE_ARCHITECTURE.md 참고). 다음 setBluetoothAutoMode(true)
+    // 호출부터 반영된다 — 이미 도는 중인 세션의 예약된 자동 종료 시각은 안 바뀜.
+    Function("setFocusSessionDurationMinutes") { minutes: Int ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setFocusSessionDurationMinutes(context, minutes) }
+    }
+
+    Function("getFocusSessionDurationMinutes") {
+      appContext.reactContext?.let { context -> PaceOverlayService.getFocusSessionDurationMinutes(context) } ?: 10
+    }
+
     // Bluetooth Hands-Free Control(2026-07-19, Copilot 스펙 정리 반영) — 실제 스와이프/Auto Mode
     // 토글/토스트는 전부 PaceOverlayService의 MediaSession 콜백에서 네이티브가 자기 완결적으로
     // 처리한다(이벤트 브릿지 불필요, Daily Limit과 같은 설계 원칙). JS는 이 함수로 표시용 상태만

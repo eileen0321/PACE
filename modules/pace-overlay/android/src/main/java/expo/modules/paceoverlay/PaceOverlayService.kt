@@ -375,9 +375,15 @@ class PaceOverlayService : Service() {
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       if (enable) {
         PaceAccessibilityService.startWatching(45_000L)
+        // 2026-07-20 실기기 검증 중 발견: revert 과정에서 이 호출이 통째로 빠져 있었다 — 핑거스냅이
+        // "AUTO ON"과 완전히 끊어진 채 방치돼 있었음(권한 있어도 디텍터가 아예 안 켜짐). 실제 재생
+        // 위치 감지(위)와 핑거스냅(마이크)은 같은 Focus Session 안에서 나란히 도는 별개의 트리거라
+        // 둘 다 여기서 같이 켜고 꺼야 한다.
+        PaceSnapDetector.start(context) { triggerNext(context) }
         focusSessionHandler.postDelayed(focusSessionAutoStop, FOCUS_SESSION_DURATION_MS)
       } else {
         PaceAccessibilityService.stopWatching()
+        PaceSnapDetector.stop()
       }
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()

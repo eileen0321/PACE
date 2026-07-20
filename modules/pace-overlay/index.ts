@@ -32,6 +32,14 @@ type PaceOverlayNativeModule = {
   requestAccessibilityPermission(): void;
   startAutoNextWatching(intervalMs: number): Promise<void>;
   stopAutoNextWatching(): Promise<void>;
+  // Pace Feed(WebView 자체 재생) 전용 MediaSession — useFeedRemoteControl.android.ts 참고.
+  startFeedMediaSession(): void;
+  stopFeedMediaSession(): void;
+  setFeedPlaybackState(playing: boolean): void;
+  addListener(
+    event: 'onFeedMediaCommand',
+    listener: (payload: { action: string }) => void
+  ): { remove: () => void };
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

@@ -8,12 +8,9 @@ import { useEffect, useRef } from 'react';
 // 독립적인 MediaSession + AudioFocus를 잡고, 콜백을 "onFeedMediaCommand" 이벤트로 JS에 돌려준다.
 // ⚠️ 실기기로 "버튼이 진짜 온다"까지는 아직 미검증(MediaSession 자체는 8차에서 처음 구현) — 다음
 // 라운드에서 AirPods로 직접 눌러 확인 필요.
-let PaceOverlay: {
-  startFeedMediaSession(): void;
-  stopFeedMediaSession(): void;
-  setFeedPlaybackState(playing: boolean): void;
-  addListener(event: 'onFeedMediaCommand', listener: (payload: { action: string }) => void): { remove: () => void };
-} | null = null;
+import type { PaceOverlay as PaceOverlayType } from '../../modules/pace-overlay';
+
+let PaceOverlay: typeof PaceOverlayType | null = null;
 
 try {
   PaceOverlay = require('../../modules/pace-overlay').PaceOverlay;

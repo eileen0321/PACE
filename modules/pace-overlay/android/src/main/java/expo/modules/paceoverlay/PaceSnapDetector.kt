@@ -8,6 +8,8 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlin.math.cos
@@ -156,7 +158,13 @@ object PaceSnapDetector {
           Log.i(TAG, "SPIKE rms=$rms noiseFloor=$noiseFloor highMag=$highMag lowMag=$lowMag passed=${highMag > lowMag * 1.2}")
           if (highMag > lowMag * 1.2) {
             lastTriggerAt = now
-            onSnap()
+            // 2026-07-20 실기기 검증 중 발견(사용자 지적 — "한번 안되면 계속 안되고", "이벤트가
+            // 쌓였다가 한꺼번에 실행") — 이 감지 루프는 별도 백그라운드 Thread에서 돈다. 그런데
+            // onSnap() 체인 끝의 dispatchGesture()는 알약 탭(메인 스레드에서 호출, 실기기 검증으로
+            // accepted=true/onCompleted 정상 확인됨)과 달리 백그라운드 스레드에서 부르면 시스템이
+            // 큐에 쌓아두다 늦게/한꺼번에 처리하거나 아예 막히는 것으로 보인다 — 메인 Looper로
+            // 넘겨서 알약 탭과 동일한 스레드 조건으로 맞춘다.
+            Handler(Looper.getMainLooper()).post { onSnap() }
           }
         } else if (rms < noiseFloor * 3.0) {
           // 조용한 프레임일 때만 바닥을 천천히 갱신 — 스파이크 자체가 바닥을 오염시키지 않게.

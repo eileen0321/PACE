@@ -805,7 +805,12 @@ class PaceOverlayService : Service() {
       gravity = Gravity.CENTER
     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (36 * d).toInt() })
 
-    val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+    // ⚠️ 실기기 검증 중 발견(사용자 지적 — 버튼 줄이 가운데가 아니라 한쪽으로 치우쳐 보임): root가
+    // VERTICAL LinearLayout일 때 자식을 addView(view)로(LayoutParams 생략) 넣으면
+    // generateDefaultLayoutParams()가 WRAP_CONTENT가 아니라 MATCH_PARENT 너비를 준다 — buttonRow가
+    // 전체 폭을 차지하는데 자기 gravity는 기본값(START)이라 버튼 두 개가 한쪽 끝에 몰려버렸다.
+    // buttonRow 자체에 CENTER gravity를 명시해서 고친다.
+    val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
 
     buttonRow.addView(TextView(this).apply {
       text = "+${EXTEND_MINUTES}분"

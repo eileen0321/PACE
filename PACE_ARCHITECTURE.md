@@ -3124,6 +3124,27 @@ ScreenZen/Opal 등 실제 스크린타임/디지털 웰빙 앱들을 조사한 �
 iOS에는 전혀 적용 안 됨 — iOS에서 동일 기능을 하려면 `AVAudioEngine` 기반으로 별도 구현 필요.
 위 "Focus Session 리디자인"(용어/정책 방향)은 공유 개념이니 iOS UI도 맞춰가는 게 좋음.
 
+### Focus Session = 10분 제한 자동 진행 — 오독 정정 (2026-07-20)
+
+**중간에 잘못 짚은 부분 기록**: "Focus Session"을 "자동넘김 자체를 없애고 매번 사용자가 직접
+스와이프"로 잘못 해석해 `PaceAccessibilityService.kt`의 재생 위치 감지 워처(`startWatching`/
+`checkPlaybackAndMaybeSwipe` 등)를 통째로 삭제하고 커밋·푸시까지 했었다(`b9554d1`). 사용자가
+즉시 정정: "10분 설정하면 그 안에서는 자동으로 넘어가야 한다"는 뜻이었다 — 잘못 삭제한 커밋을
+`git revert`로 되돌리고(`f7e8918`), 아래처럼 다시 구현했다.
+
+**올바른 설계**: 자동넘김 자체는 유지하되, **무기한이 아니라 사용자가 켠 시점부터 정확히 10분으로
+제한**한다. `PaceOverlayService.setAutoMode()`에 `FOCUS_SESSION_DURATION_MS = 10분` 타이머 추가 —
+켜면 기존 `PaceAccessibilityService.startWatching()`(실제 재생 위치 기반 자동 스와이프)가 그대로
+시작되고 10분 뒤 네이티브가 스스로 꺼진다(재확인 없이 무기한 지속 안 됨). 사용자가 10분 전에 직접
+끄면 예약된 자동 종료도 같이 취소. 세션 자체가 완전히 끝날 때(`PaceOverlayService.onDestroy`)도
+같이 정리하도록 보강(기존에 빠져 있던 별개의 작은 갭 — 이번에 같이 고침).
+
+**정책 근거 재확인**: Google Play의 "자율적 판단·실행 자동화 금지" 조항은 무기한·경계 없는 자율
+동작을 문제 삼는 것이지, 사용자가 명시적으로 트리거(세션 on)한 뒤 정해진 시간 동안만 도는 것까지
+금지하지 않는다 — "If Trigger X(세션 켜짐) occurs, perform Action Y(10분간 자동 진행)"는 여전히
+결정적 규칙(deterministic, rule-based) 범주다. `assembleDebug` 빌드 성공, 실기기 설치 후 크래시
+없음 확인. UI 문구("AUTO ON/OFF" 배지 등)는 여전히 미정리 상태로 남아있음(다음 스코프).
+
 ### 턱톡(AirPods 가속도계) — 기각, 고개짓(전면 카메라)은 미착수 상태로 보류 (2026-07-20)
 
 사용자가 제안했던 "볼톡/턱톡"(AirPods `CMHeadphoneMotionManager` 가속도 데이터로 뺨 탭 감지)은

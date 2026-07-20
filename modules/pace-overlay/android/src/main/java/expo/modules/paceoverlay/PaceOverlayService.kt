@@ -358,15 +358,31 @@ class PaceOverlayService : Service() {
       showToast(context, "⏮ Previous Short")
     }
 
-    // Play/Pause → Auto Mode 토글(기존 Auto Next 기능과 동일한 스위치, 별개 개념 아님) — 이미 검증된
-    // PaceAccessibilityService.startWatching/stopWatching 그대로 재사용. 2026-07-19: 45_000L은
-    // "스와이프 간격"이 아니라 "안전 타임아웃" — PaceAccessibilityService.kt 상단 주석 참고.
+    // 2026-07-20 Focus Session 리디자인(PACE_ARCHITECTURE.md 참고): "자동재생"을 무기한으로 도는
+    // 워처가 아니라, 사용자가 켠 시점부터 정확히 10분짜리 세션으로 제한한다 — Google Play 정책의
+    // "자율적 판단·실행 자동화 금지" 조항은 무기한 자율 동작을 문제 삼는 것이지, 사용자가 명시적으로
+    // 켠 뒤 정해진 시간 동안만 도는 것까지 금지하지 않는다("If Trigger X(세션 켜짐) occurs, perform
+    // Action Y(10분간 자동 진행)" — 결정적 규칙). 10분 뒤엔 네이티브가 스스로 꺼서 재확인 없이
+    // 무기한 지속되는 일이 없게 한다.
+    private const val FOCUS_SESSION_DURATION_MS = 10 * 60 * 1000L
+    private val focusSessionHandler = Handler(Looper.getMainLooper())
+    private val focusSessionAutoStop = Runnable { instance?.let { setAutoMode(it.applicationContext, false) } }
+
+    // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 10분 세션 시작(그 안에서는
+    // PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 10분 뒤 자동 종료 — 그 전에 사용자가
+    // 직접 끄면 예약된 자동 종료도 같이 취소한다.
     fun setAutoMode(context: Context, enable: Boolean) {
-      if (enable) PaceAccessibilityService.startWatching(45_000L) else PaceAccessibilityService.stopWatching()
+      focusSessionHandler.removeCallbacks(focusSessionAutoStop)
+      if (enable) {
+        PaceAccessibilityService.startWatching(45_000L)
+        focusSessionHandler.postDelayed(focusSessionAutoStop, FOCUS_SESSION_DURATION_MS)
+      } else {
+        PaceAccessibilityService.stopWatching()
+      }
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
       instance?.updateMediaSessionPlaybackState(playing = enable)
-      showToast(context, if (enable) "🎧 Auto Mode Enabled" else "🎧 Auto Mode Disabled")
+      showToast(context, if (enable) "🎯 Focus Session Started (10m)" else "🎯 Focus Session Ended")
     }
 
     private fun bumpBluetoothCounter(context: Context, key: String) {
@@ -900,6 +916,10 @@ class PaceOverlayService : Service() {
     removeOverlay()
     removeBlockOverlay()
     teardownMediaSession()
+    // 세션 자체가 끝나면(한도 도달/사용자 종료 등) Focus Session이 켜져 있었더라도 워처가 orphan
+    // 상태로 계속 도는 일이 없게 같이 정리 — 10분 타이머가 아직 안 끝났어도 취소.
+    focusSessionHandler.removeCallbacks(focusSessionAutoStop)
+    PaceAccessibilityService.stopWatching()
     infraReady = false
     if (instance === this) instance = null
     super.onDestroy()

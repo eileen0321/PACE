@@ -266,7 +266,7 @@ export default function OverlaySessionScreen() {
                 useDailyBonusStore.getState().addMinutes(amount);
                 const newRemaining = useTimerStore.getState().addMinutes(amount);
                 overlayService.updateRemaining(newRemaining).catch(() => {});
-                useToastStore.getState().show(`+${amount}m added`);
+                useToastStore.getState().show(t('overlay.minutesAdded', { n: amount }));
               }}
             />
           </View>

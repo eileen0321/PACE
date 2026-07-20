@@ -291,6 +291,7 @@ export const translations = {
       controlsTitle: 'Pace Controls',
       devSimulator: 'DEV SIMULATOR — Native overlay not linked',
       tapForDetails: 'Tap for details',
+      minutesAdded: '+{{n}}m added',
       lowTimeWarningPlural: '⏰ Only {{n}} minutes left today! Take a deep breath.',
       lowTimeWarningSingular: '⏰ Only {{n}} minute left today! Take a deep breath.',
       notifLimitReachedTitle: 'Daily limit reached',
@@ -299,6 +300,23 @@ export const translations = {
       notifBreakReminderBody: 'Take a short stretch or breathing break before continuing.',
       notifAccessibilityNeededTitle: 'Hands-Free Shorts needs one tap',
       notifAccessibilityNeededBody: 'Tap here, then turn PACE on under Installed apps.',
+    },
+
+    // 2026-07-21 감사 발견 — iOS Pace Feed(feed/index.tsx)가 스캐폴드 단계라 t() 없이 하드코딩돼
+    // 있었고, 그중 하나는 같은 삼항연산자 안에서 en/ko가 섞여 있었다(언어 설정 무관하게 항상 혼용
+    // 표시). 전체를 번역 키로 배선.
+    feed: {
+      scrapeFallbackBanner: 'Scraping mode · set EXPO_PUBLIC_YOUTUBE_API_KEY for Data API',
+      focusSessionAutoEndedToast: '⏱ Focus Session ended (10 min elapsed)',
+      focusSessionStartedToast: '▶️ Focus Session started · auto-advance for 10 min',
+      focusSessionEndedToast: '⏹ Focus Session ended',
+      nextShortToast: '⏭ Next Short',
+      previousShortToast: '⏮ Previous Short',
+      focusSessionOnBadge: 'Focus Session ON',
+      focusSessionStartBadge: 'Start Focus Session',
+      loadingShorts: 'Loading Shorts…',
+      emptyQueueMessage: 'No Shorts to show.',
+      loadFailedMessage: 'Failed to load Shorts.',
     },
   },
 
@@ -573,6 +591,7 @@ export const translations = {
       controlsTitle: 'Pace Controls',
       devSimulator: 'DEV SIMULATOR — 실기기 오버레이 미연결',
       tapForDetails: '탭하면 상세 정보를 볼 수 있어요',
+      minutesAdded: '+{{n}}분 추가됨',
       lowTimeWarningPlural: '⏰ 오늘 {{n}}분 남았어요! 잠시 숨을 돌려볼까요.',
       lowTimeWarningSingular: '⏰ 오늘 {{n}}분 남았어요! 잠시 숨을 돌려볼까요.',
       notifLimitReachedTitle: '오늘의 한도에 도달했어요',
@@ -581,6 +600,20 @@ export const translations = {
       notifBreakReminderBody: '계속하기 전에 짧게 스트레칭하거나 숨을 골라보세요.',
       notifAccessibilityNeededTitle: '한 번만 탭하면 핸즈프리 완성',
       notifAccessibilityNeededBody: '여기를 탭한 다음, 설치된 앱에서 PACE를 켜주세요.',
+    },
+
+    feed: {
+      scrapeFallbackBanner: '스크래핑 모드 · EXPO_PUBLIC_YOUTUBE_API_KEY 설정 시 Data API',
+      focusSessionAutoEndedToast: '⏱ Focus Session 종료 (10분 경과)',
+      focusSessionStartedToast: '▶️ Focus Session 시작 · 10분간 자동 진행',
+      focusSessionEndedToast: '⏹ Focus Session 종료',
+      nextShortToast: '⏭ Next Short',
+      previousShortToast: '⏮ Previous Short',
+      focusSessionOnBadge: '포커스 세션 켜짐',
+      focusSessionStartBadge: '포커스 세션 시작',
+      loadingShorts: 'Shorts 불러오는 중…',
+      emptyQueueMessage: '표시할 Shorts가 없습니다.',
+      loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
     },
   },
 } as const;

@@ -8,12 +8,12 @@ import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
+import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
 // PACE_ARCHITECTURE.md "iOS Pace Feed 재정의" 참고 — 큐에서 1 재생, 끝나면(onEnded) advance()로 다음.
 // 재생은 공식 IFrame Player(합법). Pexels Pace Feed(usePlayerStore)는 코드베이스에 폴백 소스로 유지.
-// NOTE(i18n): 스캐폴드 단계라 리터럴 문자열 — feed.* 키 배선은 후속 작업.
 //
 // 2026-07-19: Bluetooth(AirPods) 리모컨 상태 머신 도입(사용자 지시, 상태 전이표 정리 반영).
 // PlayerStatus: IDLE(로딩 전) → READY(재생 대기) → PLAYING(시청 중) ↔ PAUSED.
@@ -23,6 +23,7 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
 
 export default function PaceFeedScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const queue = useShortsQueueStore((s) => s.queue);
   const isLoading = useShortsQueueStore((s) => s.isLoading);
@@ -80,11 +81,11 @@ export default function PaceFeedScreen() {
   // 직접 끄거나(토글) 백그라운드로 나가면(위 AppState effect) 더 일찍 종료된다.
   useEffect(() => {
     if (!isAutoMode) return;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setIsAutoMode(false);
-      useToastStore.getState().show('⏱ Focus Session 종료 (10분 경과)');
+      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast'));
     }, 10 * 60 * 1000);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [isAutoMode]);
 
   const goNext = () => {
@@ -100,15 +101,15 @@ export default function PaceFeedScreen() {
   const toggleAutoMode = () => {
     setIsAutoMode((prev) => {
       const next = !prev;
-      useToastStore.getState().show(next ? '▶️ Focus Session 시작 · 10분간 자동 진행' : '⏹ Focus Session 종료');
+      useToastStore.getState().show(next ? t('feed.focusSessionStartedToast') : t('feed.focusSessionEndedToast'));
       return next;
     });
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
   useFeedRemoteControl({
-    onNext: () => { goNext(); useToastStore.getState().show('⏭ Next Short'); },
-    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show('⏮ Previous Short'); } },
+    onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
+    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive, // iOS 고개짓 감지 ON 조건(Focus Session + 1/2지점 이후) — 배터리 게이팅
   });
@@ -159,7 +160,7 @@ export default function PaceFeedScreen() {
         {usingScrape && (
           <View style={styles.fallbackBanner}>
             <Feather name="alert-triangle" size={12} color={colors.warning} />
-            <Text style={styles.fallbackText}>스크래핑 모드 · EXPO_PUBLIC_YOUTUBE_API_KEY 설정 시 Data API</Text>
+            <Text style={styles.fallbackText}>{t('feed.scrapeFallbackBanner')}</Text>
           </View>
         )}
 
@@ -178,7 +179,7 @@ export default function PaceFeedScreen() {
             >
               <Feather name={isAutoMode ? 'zap' : 'play'} size={11} color={isAutoMode ? '#000000' : colors.textSecondary} />
               <Text style={[styles.autoModeBadgeText, isAutoMode && styles.autoModeBadgeTextOn]}>
-                {isAutoMode ? 'Focus Session ON' : 'Focus Session 시작'}
+                {isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}
               </Text>
             </Pressable>
             <Text style={styles.title} numberOfLines={2}>{current.title}</Text>
@@ -201,17 +202,17 @@ export default function PaceFeedScreen() {
       {isLoading && (
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.primary} />
-          <Text style={styles.stateText}>Shorts 불러오는 중…</Text>
+          <Text style={styles.stateText}>{t('feed.loadingShorts')}</Text>
         </View>
       )}
       {!isLoading && !current && (
         <View style={styles.centerState}>
           <Feather name="cloud-off" size={28} color={colors.textSecondary} />
           <Text style={styles.stateText}>
-            {error === 'EMPTY_FEED' ? '표시할 Shorts가 없습니다.' : 'Shorts를 불러오지 못했습니다.'}
+            {error === 'EMPTY_FEED' ? t('feed.emptyQueueMessage') : t('feed.loadFailedMessage')}
           </Text>
           <Pressable onPress={() => loadInitial()} style={styles.retryBtn}>
-            <Text style={styles.retryText}>다시 시도</Text>
+            <Text style={styles.retryText}>{t('paywall.retry')}</Text>
           </Pressable>
         </View>
       )}

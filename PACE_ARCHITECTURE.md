@@ -3263,3 +3263,71 @@ iOS에는 전혀 적용 안 됨 — iOS에서 동일 기능을 하려면 `AVAudi
 (Pexels/Pixabay 라이선스 콘텐츠) 쪽으로 가야 한다는 위 iOS 세션 권고와 같은 방향으로 수렴한다.
 추가 코드 작업(TikTok/Instagram용 WebView 컴포넌트 등)은 진행하지 않음 — 스크리닝 결과가 이미
 결론을 내려주므로 실제 구현 전에 먼저 사용자 확인 필요.
+
+### 전기능 야간 감사 3종 — 죽은 코드 / 유료·무료 전환 예외 처리 / 앱 언어별 문자열 (2026-07-21)
+
+사용자 지시("밤새 전기능 다 확인하라고 죽은 코드있나부터 유료 무료 전환 예외 처리, 앱 언어별 설정
+스트링등")로 Explore 에이전트 3개를 병렬로 띄워 코드베이스 전체를 감사했다. 세 감사 다 실제 버그를
+찾았고, 전부 우선순위 순으로 수정 완료했다.
+
+**1) 구독(유료/무료 전환) 예외 처리 — `useSubscriptionStore.ts`/`paywall/index.tsx`**
+- **가장 심각**: `reset()`(로그아웃)에 try/catch가 아예 없었다 — `Purchases.logOut()`이 실패하면
+  (오프라인 로그아웃 등 흔한 케이스) 메모리상 `isPremium`이 로그아웃 전 값(예: `true`)에 그대로
+  남았고, 바로 다음에 만들어지는 새 게스트/계정 세션이 그 stale한 프리미엄 상태를 그대로 물려받는
+  "잘못된 접근 허용" 버그였다. → `reset()` 시작 시 `isPremium: false`를 무조건 먼저 set한 뒤 RC
+  로그아웃을 시도(성공하면 진짜 값으로 다시 갱신)하도록 수정.
+- `applyCustomerInfo`에서 `AsyncStorage.setItem`을 `set({ isPremium })`보다 먼저 await하고
+  있었다 — 결제가 실제로 성공한 뒤에도 로컬 캐시 쓰기가(드물게) 실패하면 전체 함수가 reject돼
+  메모리상 `isPremium`이 영영 true로 안 바뀌는 "돈은 냈는데 잠금 안 풀림" 버그. → 진짜 상태(set)를
+  먼저 반영, 캐시 쓰기는 fire-and-forget으로 분리.
+- `init()`/`identify()`가 빈 `catch{}`라 실패해도 진단 불가능했다 — 로그 추가 + `initError` 상태
+  노출.
+- `restore()`가 `RC_KEY` 미설정 시에도 그냥 진행해 opaque한 네이티브 에러로 조용히 실패했다 —
+  `RC_NOT_CONFIGURED`를 명시적으로 던지도록 수정.
+- `paywall/index.tsx`: 구매 취소(`userCancelled`)와 실제 실패를 구분 안 하고 있었다(취소해도 에러
+  알림) — 취소는 조용히, 실패만 알림. 성공/복원 피드백이 전혀 없었다 — 알림 추가. `initError`일 때
+  "불러오는 중..."에서 무한 대기하던 것도 재시도 버튼이 있는 실패 UI로 교체.
+
+**2) 앱 언어별 문자열(i18n) — 하드코딩된 영어/한글 혼용 다수 발견**
+- `AccessibilityOnboardingSheet.tsx`: 전체가 `t()` 없이 하드코딩 — 언어 설정과 무관하게 항상
+  영어/한글이 섞여 나왔다(가장 심각한 케이스). 전체 문자열을 번역 키로 교체.
+- `focus.tsx`의 Hands-Free Control 카드 전체(`'Hands-Free Control'`/`'Unverified'`/`'Previous'`/
+  `'Next'`/`'Auto Mode'`), `handsFreeEnabledToast` 문구, `settings.tsx`의 Playback Controls
+  카드 전체(`'Playback Controls'`/`'Hands-Free Control'`/`'Connected Device'`/`'Play/Pause
+  Action'`/`'Toggle Auto Mode'`) — 전부 하드코딩이었다. 기존 `focus.connected`/`focus.notConnected`/
+  `settings.ready` 키를 재사용하고, 나머지는 새 키 추가.
+- `stats.tsx`: 요일 약어/전체 이름(`dayLetter`/`pickBestDay`)이 배열 리터럴로 하드코딩, `"{n}
+  Videos"`/`"{n}s / video"` 단위, Bluetooth Controls 섹션 전체(`'Next'`/`'Previous'`/`'Auto Mode
+  Toggles'`), `PLATFORM_LABELS`의 `'Other'` — 전부 번역 키로 교체. 요일 키는 `TranslationKey[]`
+  상수 배열(`DAY_ABBR_KEYS`/`DAY_NAME_KEYS`)로 인덱싱해 타입 안전성 유지.
+- `focus.timeToPauseBody`: `t('focus.timeToPauseBody', { n: 18 })`로 호출하고 있었는데 번역
+  문자열 자체엔 `{{n}}` 플레이스홀더가 없어(하드코딩된 `18`) 인터폴레이션 값이 조용히 버려지고
+  있었다 — en/ko 둘 다 `{{n}}`으로 수정.
+
+**3) 죽은 코드 — 전부 grep으로 호출부 0건 확인 후 제거**
+- Android PoC 2종(`PaceNotificationListenerService.kt`, `PaceMediaButtonReceiver.kt`) + 매니페스트
+  등록 삭제 — 둘 다 "대체 후보 실험"이라고 코드 주석에 명시된 채 실기기 검증 결과가 반영 안 된
+  상태로 남아 있었다(전자는 알림 접근 권한, 후자는 미디어 버튼 브로드캐스트 하이재킹 — 둘 다 실제
+  기능 연결 안 됨). `BIND_NOTIFICATION_LISTENER_SERVICE`/최우선순위 `MEDIA_BUTTON` 리시버 등록이
+  스토어 심사 리스크였는데 제거로 해소.
+- 앱별(per-app) Auto Next/Daily Limit override 기능 전체(`resolveAppSettings`,
+  `updateAppOverride`, `AppSettingsOverride` 타입, `UserSettings.perApp` 필드, SQLite
+  `per_app_json` 컬럼, 동기화 필드, i18n 키) — DB/동기화 배관까지 다 있었지만 UI 진입점이 끝까지
+  없었던 end-to-end 죽은 기능. 전부 제거.
+- `deleteAccount`(스토어 액션 + API 클라이언트) — UI 버튼 없음, 제거.
+- `useSessionStore`의 `pause`/`resume` 액션과 `'paused'` status — 도달 불가능(어떤 UI도 세션을
+  paused로 만들지 않음), 제거.
+- `useAutoNextStore.setCurrentApp` — 미사용 setter, 제거.
+- Repository 미사용 함수 4종: `getEntitlement`(subscriptionRepository), `loadSettingsMirror`
+  (settingsRepository), `getRecentOverlayEvents`(sessionsRepository), `getSessionEndReasons`
+  (statsRepository) — 전부 호출부 0건, 제거.
+- `cardShadow` 테마 토큰, `SUPPORTED_APP_PACKAGES` 상수 — 미사용, 제거.
+- 고아 플랫폼 서비스 스텁 4파일(`focusService.android/ios.ts`, `usageService.android/ios.ts`) +
+  배럴(`platform/index.ts`) 재수출 + 대응 타입(`AppUsage`, `UsageService`, `FocusService`
+  interface) — 아무 다운스트림 import도 없는 완전 고아 상태였다, 제거.
+- **의도적으로 남겨둠**: `usePlayerStore.ts`/`src/services/api/pexels.ts`/
+  `src/database/repositories/playlistRepository.ts`/`src/constants/paceFeed.ts` — 감사 결과 orphan
+  판정이지만 위 "Plan B(Pexels 피벗)" 방향 때문에 향후 재사용 예정, 삭제하지 않음.
+
+세 감사 전부 `npx tsc --noEmit` clean 확인. 안드로이드 디버그 APK 재빌드 후 실기기 크래시 없이
+설치 확인(아래 검증 라운드 참고).

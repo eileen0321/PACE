@@ -66,7 +66,7 @@ export default function FocusScreen() {
       setHasUsageAccessPermission(usageAccess);
       if (autoNextPermission && !hasAutoNextPermission && showAccessibilityOnboarding) {
         setShowAccessibilityOnboarding(false);
-        useToastStore.getState().show('✅ Hands-Free Shorts Enabled');
+        useToastStore.getState().show(`✅ ${t('focus.handsFreeEnabledToast')}`);
       }
       setHasAutoNextPermission(autoNextPermission);
     };
@@ -335,13 +335,13 @@ export default function FocusScreen() {
             리모컨 신호 자체는 Xcode/실기기가 없어 이번 라운드에서 검증 못 했음(정직하게 배지로 표시). */}
         {capabilities.supportsHandsFreeControl && (
         <View>
-          <Text style={styles.sectionLabel}>Hands-Free Control</Text>
+          <Text style={styles.sectionLabel}>{t('focus.handsFreeControlSection')}</Text>
           <View style={styles.handsFreeCard}>
             <View style={styles.handsFreeStatusRow}>
               <View style={styles.handsFreeStatusLeft}>
                 <Feather name="headphones" size={16} color={bluetooth.isConnected ? colors.successLight : colors.textSecondary} />
                 <Text style={styles.handsFreeStatusText}>
-                  {bluetooth.isConnected ? (bluetooth.deviceName ?? 'Connected') : 'Not Connected'}
+                  {bluetooth.isConnected ? (bluetooth.deviceName ?? t('focus.connected')) : t('focus.notConnected')}
                 </Text>
               </View>
               {/* healthy-shorts-assistant(3) 뱃지 필 스타일 이식 — connected/not connected 둘 다 표시.
@@ -353,12 +353,12 @@ export default function FocusScreen() {
                 <View style={[styles.connectionPill, bluetooth.isConnected ? styles.connectionPillOn : styles.connectionPillOff]}>
                   <View style={[styles.connectionPillDot, bluetooth.isConnected ? styles.connectionPillDotOn : styles.connectionPillDotOff]} />
                   <Text style={[styles.connectionPillText, bluetooth.isConnected ? styles.connectionPillTextOn : styles.connectionPillTextOff]}>
-                    {bluetooth.isConnected ? 'Connected' : 'Not Connected'}
+                    {bluetooth.isConnected ? t('focus.connected') : t('focus.notConnected')}
                   </Text>
                 </View>
                 {!capabilities.bluetoothHardwareVerified && (
                   <View style={styles.unverifiedBadge}>
-                    <Text style={styles.unverifiedBadgeText}>Unverified</Text>
+                    <Text style={styles.unverifiedBadgeText}>{t('focus.unverified')}</Text>
                   </View>
                 )}
               </View>
@@ -366,15 +366,15 @@ export default function FocusScreen() {
             <View style={styles.handsFreeButtonRow}>
               <Pressable onPress={() => bluetooth.previous()} style={styles.handsFreeBtn}>
                 <Feather name="skip-back" size={18} color={colors.textPrimary} />
-                <Text style={styles.handsFreeBtnLabel}>Previous</Text>
+                <Text style={styles.handsFreeBtnLabel}>{t('focus.previousBtn')}</Text>
               </Pressable>
               <Pressable onPress={() => bluetooth.next()} style={styles.handsFreeBtn}>
                 <Feather name="skip-forward" size={18} color={colors.textPrimary} />
-                <Text style={styles.handsFreeBtnLabel}>Next</Text>
+                <Text style={styles.handsFreeBtnLabel}>{t('focus.nextBtn')}</Text>
               </Pressable>
               <Pressable onPress={() => bluetooth.toggleAutoMode()} style={[styles.handsFreeBtn, bluetooth.autoModeEnabled && styles.handsFreeBtnActive]}>
                 <Feather name={bluetooth.autoModeEnabled ? 'pause' : 'play'} size={18} color={bluetooth.autoModeEnabled ? '#000000' : colors.textPrimary} />
-                <Text style={[styles.handsFreeBtnLabel, bluetooth.autoModeEnabled && styles.handsFreeBtnLabelActive]}>Auto Mode</Text>
+                <Text style={[styles.handsFreeBtnLabel, bluetooth.autoModeEnabled && styles.handsFreeBtnLabelActive]}>{t('focus.autoModeBtn')}</Text>
               </Pressable>
             </View>
           </View>

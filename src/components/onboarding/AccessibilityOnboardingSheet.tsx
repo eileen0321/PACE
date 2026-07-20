@@ -1,6 +1,7 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useTranslation } from '../../services/i18n';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 
 // 2026-07-19: 사용자 지시(Copilot UX 제안 정리, 축소 버전) — Android 접근성 권한을 아무 설명 없이
@@ -18,6 +19,7 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
   onDismiss: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
       <Pressable style={styles.backdrop} onPress={onDismiss} />
@@ -26,32 +28,32 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
         <View style={styles.iconWrap}>
           <Feather name="unlock" size={22} color={colors.primary} />
         </View>
-        <Text style={styles.title}>Hands-Free Shorts</Text>
-        <Text style={styles.body}>PACE uses Accessibility permission to auto-advance Shorts for you.</Text>
+        <Text style={styles.title}>{t('focus.a11ySheetTitle')}</Text>
+        <Text style={styles.body}>{t('focus.a11ySheetBody')}</Text>
 
         <View style={styles.benefitRow}>
           <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>Auto Next</Text>
+          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitAutoNext')}</Text>
         </View>
         <View style={styles.benefitRow}>
           <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>Bluetooth / AirPods Control</Text>
+          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitBluetooth')}</Text>
         </View>
         <View style={styles.benefitRow}>
           <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>Hands-Free Mode</Text>
+          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitHandsFree')}</Text>
         </View>
 
         <View style={styles.pathBox}>
-          <Text style={styles.pathLabel}>다음 화면에서</Text>
-          <Text style={styles.pathText}>설치된 앱 → PACE → 사용함(ON)</Text>
+          <Text style={styles.pathLabel}>{t('focus.a11ySheetPathLabel')}</Text>
+          <Text style={styles.pathText}>{t('focus.a11ySheetPathText')}</Text>
         </View>
 
         <Pressable onPress={onEnable} style={styles.enableBtn}>
-          <Text style={styles.enableBtnText}>Enable Access</Text>
+          <Text style={styles.enableBtnText}>{t('focus.a11ySheetEnable')}</Text>
         </Pressable>
         <Pressable onPress={onDismiss} style={styles.laterBtn}>
-          <Text style={styles.laterBtnText}>Not Now</Text>
+          <Text style={styles.laterBtnText}>{t('focus.a11ySheetNotNow')}</Text>
         </Pressable>
       </View>
     </Modal>

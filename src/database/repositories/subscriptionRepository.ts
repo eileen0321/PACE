@@ -14,13 +14,6 @@ export async function saveEntitlement(userId: string, subscription: Subscription
   );
 }
 
-export async function getEntitlement(userId: string): Promise<Subscription | null> {
-  const db = await getDb();
-  const row = await db.getFirstAsync<any>(`SELECT * FROM subscriptions WHERE user_id = ?`, [userId]);
-  if (!row) return null;
-  return { plan: row.plan, status: row.status, expiresAt: row.renewal_date };
-}
-
 export async function clearEntitlement(userId: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM subscriptions WHERE user_id = ?`, [userId]);

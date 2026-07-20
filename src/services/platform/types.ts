@@ -4,17 +4,6 @@
 
 import type { SessionEndStatus } from '../../types/models';
 
-export type AppUsage = {
-  appId: string;
-  minutes: number;
-};
-
-export interface UsageService {
-  readonly capability: 'full' | 'unavailable';
-  getTodayUsageMinutes(): Promise<number>;
-  getAppUsage(): Promise<AppUsage[]>;
-}
-
 export interface AutoNextService {
   /** iOS는 항상 false — 상위 UI가 이 값으로 토글 자체를 숨긴다. */
   readonly supportsAutoNext: boolean;
@@ -94,12 +83,6 @@ export interface BluetoothService {
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;
-}
-
-export interface FocusService {
-  requestAuthorization(): Promise<boolean>;
-  setDailyLimit(minutes: number): Promise<void>;
-  isBlocked(): Promise<boolean>;
 }
 
 // iOS 전략 확정(2026-07-18, PACE_ARCHITECTURE.md 참고): iOS는 실제 숏폼을 오버레이/자동넘김할 수

@@ -10,7 +10,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { capabilities } from '../../services/platform';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
-import { useTranslation } from '../../services/i18n';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
@@ -133,7 +133,7 @@ export default function StatsScreen() {
                 return (
                   <View key={p.app} style={styles.barRow}>
                     <View style={styles.barHeaderRow}>
-                      <Text style={styles.barLabel}>{PLATFORM_LABELS[p.app] ?? p.app}</Text>
+                      <Text style={styles.barLabel}>{PLATFORM_LABELS[p.app] ?? (p.app === 'other' ? t('stats.platformOther') : p.app)}</Text>
                       <Text style={styles.barPct}>{pct}%</Text>
                     </View>
                     <View style={styles.barTrack}>
@@ -150,8 +150,8 @@ export default function StatsScreen() {
         <View>
           <Text style={styles.sectionTitle}>{t('stats.todaysBehavior')}</Text>
           <GlassSurface style={styles.divideCard}>
-            <BehaviorRow title={t('stats.videosWatchedToday')} subtitle={t('stats.totalShortsPlayed')} value={`${todayEntry?.totalVideos ?? 0} Videos`} />
-            <BehaviorRow title={t('stats.averageDuration')} subtitle={t('stats.timeSpentPerVideo')} value={`${todayAverageDurationSeconds}s / video`} />
+            <BehaviorRow title={t('stats.videosWatchedToday')} subtitle={t('stats.totalShortsPlayed')} value={t('stats.videosCount', { n: todayEntry?.totalVideos ?? 0 })} />
+            <BehaviorRow title={t('stats.averageDuration')} subtitle={t('stats.timeSpentPerVideo')} value={t('stats.secondsPerVideo', { n: todayAverageDurationSeconds })} />
             <BehaviorRow title={t('stats.longestSession')} subtitle={t('stats.maxUninterrupted')} value={`${longestSessionMinutes}m`} valueColor={colors.primary} last />
           </GlassSurface>
         </View>
@@ -181,7 +181,7 @@ export default function StatsScreen() {
                   return (
                     <View key={d.date} style={styles.dayRow}>
                       <View style={styles.dayRowLeft}>
-                        <Text style={styles.dayLabel}>{dayLetter(d.date)}</Text>
+                        <Text style={styles.dayLabel}>{t(DAY_ABBR_KEYS[new Date(d.date + 'T00:00:00').getDay()])}</Text>
                         <View style={styles.dayTrack}>
                           <View style={[styles.dayFill, { width: `${pct}%` }, isOver && styles.dayFillOver]} />
                           <View style={styles.goalMarker} />
@@ -204,7 +204,7 @@ export default function StatsScreen() {
           <LinearGradient colors={['rgba(16,185,129,0.1)', 'rgba(88,86,214,0.05)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.bestDayCard}>
             <View>
               <Text style={styles.bestDayLabel}>{t('stats.bestDay')}</Text>
-              <Text style={styles.bestDayTitle}>{bestDay.dayName}</Text>
+              <Text style={styles.bestDayTitle}>{t(DAY_NAME_KEYS[bestDay.dayOfWeek])}</Text>
               <Text style={styles.bestDaySub}>{bestDay.minutes}{t('home.minUnit')}</Text>
             </View>
             <View style={styles.bestDayIconWrap}>
@@ -220,18 +220,18 @@ export default function StatsScreen() {
             아님 — "몇 % 세션이 Hands-Free였는지"는 세션별 기록이 없어 정직하게 뺐다). */}
         {capabilities.supportsHandsFreeControl && (bluetooth.nextCount + bluetooth.previousCount + bluetooth.autoToggleCount) > 0 && (
           <View>
-            <Text style={styles.sectionTitle}>Bluetooth Controls</Text>
+            <Text style={styles.sectionTitle}>{t('stats.bluetoothControls')}</Text>
             <GlassSurface style={styles.card}>
               <View style={styles.behaviorRow}>
-                <Text style={styles.behaviorTitle}>Next</Text>
+                <Text style={styles.behaviorTitle}>{t('stats.next')}</Text>
                 <Text style={styles.behaviorValue}>{bluetooth.nextCount}</Text>
               </View>
               <View style={[styles.behaviorRow, styles.behaviorRowBordered]}>
-                <Text style={styles.behaviorTitle}>Previous</Text>
+                <Text style={styles.behaviorTitle}>{t('stats.previous')}</Text>
                 <Text style={styles.behaviorValue}>{bluetooth.previousCount}</Text>
               </View>
               <View style={[styles.behaviorRow, styles.behaviorRowBordered]}>
-                <Text style={styles.behaviorTitle}>Auto Mode Toggles</Text>
+                <Text style={styles.behaviorTitle}>{t('stats.autoModeToggles')}</Text>
                 <Text style={styles.behaviorValue}>{bluetooth.autoToggleCount}</Text>
               </View>
             </GlassSurface>
@@ -242,17 +242,16 @@ export default function StatsScreen() {
   );
 }
 
-const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube Shorts', instagram: 'Instagram Reels', tiktok: 'TikTok', other: 'Other' };
+// YouTube/Instagram/TikTok은 고유명사라 로케일과 무관하게 그대로 둔다 — 'other'만 실제 번역 대상.
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube Shorts', instagram: 'Instagram Reels', tiktok: 'TikTok' };
+
+const DAY_ABBR_KEYS: TranslationKey[] = ['stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat'];
+const DAY_NAME_KEYS: TranslationKey[] = ['stats.dayNameSun', 'stats.dayNameMon', 'stats.dayNameTue', 'stats.dayNameWed', 'stats.dayNameThu', 'stats.dayNameFri', 'stats.dayNameSat'];
 
 function formatHours(totalMinutes: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function dayLetter(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00');
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
 }
 
 function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {
@@ -269,12 +268,11 @@ function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {
   return streak;
 }
 
-function pickBestDay(weeklyStats: DailyStats[], limitMinutes: number): { dayName: string; minutes: number } | null {
+function pickBestDay(weeklyStats: DailyStats[], limitMinutes: number): { dayOfWeek: number; minutes: number } | null {
   const candidates = weeklyStats.filter((d) => d.totalMinutes > 0 && d.totalMinutes <= limitMinutes);
   if (candidates.length === 0) return null;
   const best = candidates.reduce((a, b) => (b.totalMinutes > a.totalMinutes ? b : a));
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return { dayName: dayNames[new Date(best.date + 'T00:00:00').getDay()], minutes: best.totalMinutes };
+  return { dayOfWeek: new Date(best.date + 'T00:00:00').getDay(), minutes: best.totalMinutes };
 }
 
 function BehaviorRow({ title, subtitle, value, valueColor, last }: { title: string; subtitle: string; value: string; valueColor?: string; last?: boolean }) {

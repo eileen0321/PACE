@@ -41,7 +41,7 @@ export async function pushUnsyncedSessions(userId: string): Promise<void> {
 
 const SETTINGS_SYNC_FIELDS = [
   'autoNext', 'sleepTimerMinutes', 'dailyLimitMinutes', 'breakIntervalMinutes',
-  'preSessionBreathing', 'appShields', 'perApp', 'theme', 'language',
+  'preSessionBreathing', 'appShields', 'theme', 'language',
 ] as const;
 
 export async function pushSettings(settings: UserSettings): Promise<void> {

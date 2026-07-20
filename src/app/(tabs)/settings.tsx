@@ -216,21 +216,21 @@ export default function SettingsScreen() {
         {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
         {capabilities.supportsHandsFreeControl && (
         <View>
-          <Text style={styles.sectionLabel}>Playback Controls</Text>
+          <Text style={styles.sectionLabel}>{t('settings.playbackControls')}</Text>
           <GlassSurface style={styles.card}>
             <View style={styles.row}>
-              <Text style={styles.rowTitle}>Hands-Free Control</Text>
+              <Text style={styles.rowTitle}>{t('settings.handsFreeControl')}</Text>
               <View style={styles.statusTag}>
-                <Text style={styles.statusTagText}>{capabilities.bluetoothHardwareVerified ? 'READY' : 'BETA'}</Text>
+                <Text style={styles.statusTagText}>{capabilities.bluetoothHardwareVerified ? t('settings.ready') : 'BETA'}</Text>
               </View>
             </View>
             <View style={[styles.row, styles.rowBordered]}>
-              <Text style={styles.rowTitle}>Connected Device</Text>
-              <Text style={styles.privacyValue}>{bluetooth.isConnected ? (bluetooth.deviceName ?? 'Connected') : 'Not Connected'}</Text>
+              <Text style={styles.rowTitle}>{t('settings.connectedDevice')}</Text>
+              <Text style={styles.privacyValue}>{bluetooth.isConnected ? (bluetooth.deviceName ?? t('focus.connected')) : t('focus.notConnected')}</Text>
             </View>
             <View style={[styles.row, styles.rowBordered]}>
-              <Text style={styles.rowTitle}>Play/Pause Action</Text>
-              <Text style={styles.privacyValue}>Toggle Auto Mode</Text>
+              <Text style={styles.rowTitle}>{t('settings.playPauseAction')}</Text>
+              <Text style={styles.privacyValue}>{t('settings.toggleAutoMode')}</Text>
             </View>
           </GlassSurface>
         </View>

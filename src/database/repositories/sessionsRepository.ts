@@ -1,5 +1,5 @@
 import { getDb } from '../db';
-import type { OverlayEvent, OverlayEventType, SessionEndStatus, ViewingSession } from '../../types/models';
+import type { OverlayEventType, SessionEndStatus, ViewingSession } from '../../types/models';
 
 // 세션 CRUD 전용 — 집계/통계 쿼리는 statsRepository.ts로 분리(외부 리뷰 반영: "Store는 DB를 모르고
 // Repository만 안다"는 계층 분리 원칙에 따라, Repository 내부도 쓰기(sessions)/읽기집계(stats)로 나눔).
@@ -57,15 +57,6 @@ export async function logOverlayEvent(userId: string, sessionId: string | null, 
     `INSERT INTO overlay_events (id, user_id, session_id, event_type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
     [id, userId, sessionId, eventType, detail ?? null, new Date().toISOString()]
   );
-}
-
-export async function getRecentOverlayEvents(userId: string, limit = 50): Promise<OverlayEvent[]> {
-  const db = await getDb();
-  const rows = await db.getAllAsync<any>(
-    `SELECT * FROM overlay_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
-    [userId, limit]
-  );
-  return rows.map((r) => ({ id: r.id, sessionId: r.session_id, eventType: r.event_type, detail: r.detail, createdAt: r.created_at }));
 }
 
 // 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #5) — Settings의 "설정 초기화"가

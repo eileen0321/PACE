@@ -80,15 +80,3 @@ export async function getPreviousWeekStats(userId: string): Promise<DailyStats[]
     longestSessionSeconds: r.longest ?? 0,
   }));
 }
-
-// 외부 리뷰 반영: viewing_sessions.status 기반 — 세션이 왜 끝났는지 분포(정상종료/한도도달/수면타이머/수동중지).
-export async function getSessionEndReasons(userId: string): Promise<Record<string, number>> {
-  const db = await getDb();
-  const rows = await db.getAllAsync<{ status: string | null; count: number }>(
-    `SELECT status, COUNT(*) as count FROM viewing_sessions
-     WHERE user_id = ? AND status IS NOT NULL AND started_at >= date('now', '-6 days', 'localtime')
-     GROUP BY status`,
-    [userId]
-  );
-  return Object.fromEntries(rows.map((r) => [r.status ?? 'unknown', r.count]));
-}

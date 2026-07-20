@@ -24,7 +24,6 @@ type UserState = {
   signInWithApple: () => Promise<{ cancelled?: true }>;
   loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
-  deleteAccount: () => Promise<void>;
 };
 
 function toUser(result: { userId: string; email: string | null; name: string | null }, isGuest: boolean, provider: User['provider'] = 'google'): User {
@@ -139,15 +138,6 @@ export const useUserStore = create<UserState>((set, get) => ({
     await AsyncStorage.multiRemove(USER_SCOPED_KEYS);
     set({ user: null, isLoggedIn: false, isGuest: false });
     useSubscriptionStore.getState().reset().catch(() => {}); // RC 익명 ID로 리셋
-    await get().loginAsGuest();
-  },
-
-  deleteAccount: async () => {
-    await authApi.deleteAccount();
-    await clearToken();
-    await AsyncStorage.multiRemove(USER_SCOPED_KEYS);
-    set({ user: null, isLoggedIn: false, isGuest: false });
-    useSubscriptionStore.getState().reset().catch(() => {});
     await get().loginAsGuest();
   },
 }));

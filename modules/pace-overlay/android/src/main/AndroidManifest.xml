@@ -47,28 +47,5 @@
         android:name="android.accessibilityservice"
         android:resource="@xml/accessibility_service_config" />
     </service>
-
-    <!-- 2026-07-19 PoC(PaceNotificationListenerService.kt 참고) — Accessibility 대체 후보 실험.
-         알림 접근 권한(설정 > 특별 앱 액세스 > 알림 액세스)은 접근성과 별개의 단일 토글이라
-         사용자가 또 한 번 수동으로 켜야 한다. -->
-    <service
-      android:name="expo.modules.paceoverlay.PaceNotificationListenerService"
-      android:exported="true"
-      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-      <intent-filter>
-        <action android:name="android.service.notification.NotificationListenerService" />
-      </intent-filter>
-    </service>
-
-    <!-- 2026-07-19 PoC(PaceMediaButtonReceiver.kt 참고) — ACTION_MEDIA_BUTTON 우선순위 하이재킹
-         실험. Android 8.0+에서 암시적 브로드캐스트 매니페스트 등록 제한 때문에 이 등록 자체가
-         무효화될 가능성을 실기기로 확인하는 중. -->
-    <receiver
-      android:name="expo.modules.paceoverlay.PaceMediaButtonReceiver"
-      android:exported="true">
-      <intent-filter android:priority="2147483647">
-        <action android:name="android.intent.action.MEDIA_BUTTON" />
-      </intent-filter>
-    </receiver>
   </application>
 </manifest>

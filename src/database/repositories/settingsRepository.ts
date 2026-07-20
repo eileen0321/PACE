@@ -7,12 +7,12 @@ import type { UserSettings } from '../../types/models';
 export async function saveSettingsMirror(userId: string, settings: UserSettings): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `INSERT INTO user_settings (user_id, auto_next, sleep_timer_min, daily_limit_min, break_interval_min, pre_session_breathing, app_shields_json, per_app_json, theme, language, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, auto_next, sleep_timer_min, daily_limit_min, break_interval_min, pre_session_breathing, app_shields_json, theme, language, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        auto_next=excluded.auto_next, sleep_timer_min=excluded.sleep_timer_min, daily_limit_min=excluded.daily_limit_min,
        break_interval_min=excluded.break_interval_min, pre_session_breathing=excluded.pre_session_breathing,
-       app_shields_json=excluded.app_shields_json, per_app_json=excluded.per_app_json, theme=excluded.theme,
+       app_shields_json=excluded.app_shields_json, theme=excluded.theme,
        language=excluded.language, updated_at=excluded.updated_at`,
     [
       userId,
@@ -22,41 +22,9 @@ export async function saveSettingsMirror(userId: string, settings: UserSettings)
       settings.breakIntervalMinutes,
       settings.preSessionBreathing ? 1 : 0,
       JSON.stringify(settings.appShields),
-      JSON.stringify(settings.perApp),
       settings.theme,
       settings.language,
       new Date().toISOString(),
     ]
   );
-}
-
-export async function loadSettingsMirror(userId: string): Promise<UserSettings | null> {
-  const db = await getDb();
-  const row = await db.getFirstAsync<any>(`SELECT * FROM user_settings WHERE user_id = ?`, [userId]);
-  if (!row) return null;
-  return {
-    autoNext: !!row.auto_next,
-    sleepTimerMinutes: row.sleep_timer_min,
-    dailyLimitMinutes: row.daily_limit_min,
-    breakIntervalMinutes: row.break_interval_min,
-    preSessionBreathing: !!row.pre_session_breathing,
-    appShields: row.app_shields_json ? JSON.parse(row.app_shields_json) : { youtube: true, instagram: true, tiktok: false },
-    perApp: row.per_app_json ? JSON.parse(row.per_app_json) : {
-      youtube: { autoNext: null, dailyLimitMinutes: null },
-      instagram: { autoNext: null, dailyLimitMinutes: null },
-      tiktok: { autoNext: null, dailyLimitMinutes: null },
-    },
-    theme: row.theme,
-    language: row.language ?? 'system',
-    // 2026-07-18: notifyRemaining/notifyLimit/notifyBreak가 UserSettings에 새로 추가됐는데 이
-    // 미러 테이블엔 아직 컬럼이 없다(이 repository는 주석대로 현재 활성 read 경로가 아니라
-    // AsyncStorage 진실원천을 그대로 따라가지 못함) — 스키마 마이그레이션 전까지는 기본 활성값으로
-    // 채워 타입만 맞춘다. 실제 알림 on/off는 useSettingsStore(AsyncStorage)가 진실원천.
-    notifyRemaining: true,
-    notifyLimit: true,
-    notifyBreak: true,
-    // 2026-07-19: hardBlockMode도 같은 이유로 미러 테이블에 컬럼이 없다 — 기본값(false, 침해적
-    // 동작이라 안전한 기본값)으로 채운다. 실제 값은 useSettingsStore(AsyncStorage)가 진실원천.
-    hardBlockMode: false,
-  };
 }

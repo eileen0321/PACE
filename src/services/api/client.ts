@@ -78,7 +78,6 @@ export const authApi = {
   loginAsGuest: (deviceId: string) =>
     request<AuthResult>('/auth/guest', { method: 'POST', body: { deviceId }, auth: false }),
   refresh: () => request<{ token: string }>('/auth/refresh', { method: 'POST' }),
-  deleteAccount: () => request<void>('/auth/account', { method: 'DELETE' }),
 };
 
 export type SessionSyncItem = {
@@ -105,7 +104,6 @@ export type SettingsPayload = {
   breakIntervalMinutes: number;
   preSessionBreathing: boolean;
   appShields: Record<string, unknown>;
-  perApp: Record<string, unknown>;
   theme: string;
   language: string;
 };

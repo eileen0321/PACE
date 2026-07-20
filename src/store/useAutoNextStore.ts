@@ -10,7 +10,6 @@ type AutoNextState = {
   currentApp: string | null;
   start: (app: string | null) => void;
   stop: () => void;
-  setCurrentApp: (app: string | null) => void;
 };
 
 export const useAutoNextStore = create<AutoNextState>((set) => ({
@@ -30,6 +29,4 @@ export const useAutoNextStore = create<AutoNextState>((set) => ({
     set({ isRunning: false, currentApp: null });
     if (autoNextService.supportsAutoNext) autoNextService.stop().catch(() => {});
   },
-
-  setCurrentApp: (app) => set({ currentApp: app }),
 }));

@@ -15,7 +15,7 @@ export default function PaywallScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
-  const { offerings, purchase, restore } = useSubscriptionStore();
+  const { offerings, purchase, restore, init, initError, isReady } = useSubscriptionStore();
 
   const blockIfNotSignedIn = (): boolean => {
     const notSignedIn = !user || user.isGuest || !user.email;
@@ -28,9 +28,37 @@ export default function PaywallScreen() {
     return notSignedIn;
   };
 
+  // 2026-07-21 감사 발견 3건 반영:
+  // (1) 구매 취소(userCancelled)는 실패가 아니므로 에러 알림을 안 띄운다 — 사용자가 그냥 마음을
+  //     바꾼 것뿐인데 무서운 에러 팝업이 뜨는 건 잘못된 피드백이었다.
+  // (2) 실제 실패/성공 둘 다 이전엔 피드백이 전혀 없었다(성공 시 아무 반응 없음) — 번역 키 추가해서
+  //     명확히 알려준다.
   const onPurchase = (pkg: (typeof offerings)[number]) => {
     if (blockIfNotSignedIn()) return;
-    purchase(pkg).catch((e) => Alert.alert(t('paywall.title'), e?.message ?? String(e)));
+    purchase(pkg)
+      .then(() => Alert.alert(t('paywall.purchaseSuccessTitle'), t('paywall.purchaseSuccessMessage')))
+      .catch((e: { userCancelled?: boolean | null; message?: string } | undefined) => {
+        if (e?.userCancelled) return;
+        Alert.alert(t('paywall.title'), e?.message ?? String(e));
+      });
+  };
+
+  const onRestore = () => {
+    if (blockIfNotSignedIn()) return;
+    restore()
+      .then(() => {
+        const hasPremiumNow = useSubscriptionStore.getState().isPremium;
+        Alert.alert(
+          t('paywall.restoreSuccessTitle'),
+          hasPremiumNow ? t('paywall.restoreSuccessMessage') : t('paywall.restoreNothingFound')
+        );
+      })
+      .catch((e: { message?: string } | undefined) => {
+        // 2026-07-21 감사 발견: RC_KEY 미설정 시 restore()가 이제 명시적으로 RC_NOT_CONFIGURED를
+        // 던진다 — 예전엔 여기까지 와서 완전히 조용히 사라졌다(버튼 눌러도 아무 반응 없음).
+        const msg = e?.message === 'RC_NOT_CONFIGURED' ? t('paywall.notConfigured') : t('paywall.restoreFailed');
+        Alert.alert(t('paywall.title'), msg);
+      });
   };
 
   return (
@@ -51,12 +79,23 @@ export default function PaywallScreen() {
             <Text style={styles.packagePrice}>{item.product.priceString}</Text>
           </Pressable>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>{t('paywall.loadingOfferings')}</Text>}
+        ListEmptyComponent={
+          // 2026-07-21 감사 발견 — init()이 실패하면(오프라인 등) 예전엔 "불러오는 중..."에서
+          // 영원히 멈췄다(기존 QA #6). initError일 때는 재시도 버튼이 있는 실패 상태를 보여준다.
+          initError ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>{t('paywall.loadFailedTitle')}</Text>
+              <Text style={styles.empty}>{t('paywall.loadFailedMessage')}</Text>
+              <Pressable style={styles.retryBtn} onPress={() => init()}>
+                <Text style={styles.retryText}>{t('paywall.retry')}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Text style={styles.empty}>{isReady ? t('paywall.loadFailedMessage') : t('paywall.loadingOfferings')}</Text>
+          )
+        }
         ListFooterComponent={
-          <Pressable
-            style={styles.restoreBtn}
-            onPress={() => { if (!blockIfNotSignedIn()) restore().catch(() => {}); }}
-          >
+          <Pressable style={styles.restoreBtn} onPress={onRestore}>
             <Text style={styles.restoreText}>{t('paywall.restore')}</Text>
           </Pressable>
         }
@@ -74,6 +113,10 @@ const styles = StyleSheet.create({
   packageTitle: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   packagePrice: { color: colors.textSecondary, marginTop: 4 },
   empty: { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.lg },
+  emptyState: { alignItems: 'center', gap: spacing.sm, marginTop: spacing.lg, paddingHorizontal: spacing.lg },
+  emptyTitle: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold, fontSize: 15 },
+  retryBtn: { marginTop: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, backgroundColor: colors.card, borderRadius: radius.pill },
+  retryText: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
   restoreBtn: { paddingVertical: spacing.md, alignItems: 'center' },
   restoreText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
 });

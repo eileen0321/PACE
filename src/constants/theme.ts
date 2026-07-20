@@ -91,18 +91,6 @@ export const typography = {
   regular: '400' as const,
 };
 
-// healthy-shorts-assistant(1) 리서치 결과: 모든 카드가 테두리(border-[#E5E5EA]) + 아주 옅은
-// shadow-xs를 항상 함께 쓴다 — Pace 카드들은 지금까지 border만 있고 shadow가 전혀 없었다(이것도
-// "밋밋해 보인다"는 인상의 원인). "No 3D/No Neumorphism" 원칙과 충돌하지 않는 선(옅은 1px급
-// soft shadow, 입체감이 아니라 미세한 부양감만)에서 카드 공통 그림자 토큰화.
-export const cardShadow = {
-  shadowColor: '#000000',
-  shadowOffset: { width: 0, height: 1 },
-  shadowOpacity: 0.04,
-  shadowRadius: 3,
-  elevation: 1,
-} as const;
-
 // 오버레이 바/확장 카드처럼 정해진 배경이 아니라 임의의 영상 콘텐츠 위에 떠 있는 요소용 —
 // healthy-shorts-assistant(1)의 오버레이 그림자(0 24px 60px -15px rgba(0,0,0,0.85))에 대응.
 export const floatingShadow = {

@@ -37,7 +37,10 @@ export default function PaceFeedScreen() {
   const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
-  const playing = status === 'PLAYING' || status === 'READY';
+  // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
+  // 경로를 타 무음 자동재생이 걸릴 여지가 생긴다(status IDLE→READY 레이스로 첫 렌더가 play=false면
+  // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
+  const playing = current != null && status !== 'PAUSED';
 
   // iOS 고개짓(ARKit) 감지는 배터리를 위해 "Focus Session 켜짐 + 현재 영상 1/2 지점 이후"에만 켠다
   // (2026-07-20 사용자 지시 — Android가 손짓 카메라를 1/2지점부터 켜는 것과 동일 취지). 스냅은 쇼츠
@@ -48,6 +51,11 @@ export default function PaceFeedScreen() {
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 2026-07-21 기기 디버깅: 까만화면이 "큐 0개"인지 vs "WebView 재생 실패"인지 로그로 가른다.
+  useEffect(() => {
+    console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
+  }, [queue.length, current?.videoId, usingScrape, isLoading, error]);
 
   // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS).
   useEffect(() => {

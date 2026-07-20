@@ -74,9 +74,9 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           mediaPlaybackRequiresUserAction: false,
           scrollEnabled: false,
         }}
-        onReady={() => { setReady(true); onReady?.(); }}
-        onChangeState={(state: string) => { if (state === 'ended') onEnded(); }}
-        onError={() => onError?.(-1)}
+        onReady={() => { console.log('[YTPlayer] ✅ ready', videoId); setReady(true); onReady?.(); }}
+        onChangeState={(state: string) => { console.log('[YTPlayer] state=', state, videoId); if (state === 'ended') onEnded(); }}
+        onError={(e: string) => { console.log('[YTPlayer] ❌ ERROR', e, videoId); onError?.(-1); }}
       />
     </View>
   );

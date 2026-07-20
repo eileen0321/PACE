@@ -30,9 +30,15 @@ type Props = {
 };
 
 export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress }: Props) {
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const playerRef = useRef<YoutubeIframeRef>(null);
   const [ready, setReady] = useState(false);
+
+  // 2026-07-21 실기기/시뮬에서 발견: YouTube IFrame 임베드는 **항상 16:9**로 렌더된다(세로 영상도
+  // 임베드 안에선 16:9 프레임에 필러박스). height=화면전체로 주면 영상이 위쪽 16:9 띠에만 뜨고 아래가
+  // 전부 검정 → 사용자에겐 "까만 화면"으로 보였다. 그래서 플레이어 높이를 16:9로 명시하고 검은 배경
+  // 정중앙에 세로 정렬(의도된 레터박스). YouTube 임베드 정책상 진짜 풀블리드 9:16은 불가.
+  const playerHeight = Math.round((width * 9) / 16);
 
   // 영상 바뀌면 ready 리셋(다음 플레이어 onReady 대기).
   useEffect(() => { setReady(false); }, [videoId]);
@@ -57,7 +63,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
     <View style={styles.container}>
       <YoutubePlayer
         ref={playerRef}
-        height={height}
+        height={playerHeight}
         width={width}
         play={playing}
         mute
@@ -77,5 +83,5 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000', overflow: 'hidden' },
+  container: { flex: 1, backgroundColor: '#000000', overflow: 'hidden', justifyContent: 'center' },
 });

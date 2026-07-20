@@ -26,14 +26,14 @@ public class PaceGestureModule: Module {
     Events("onSnap", "onHeadNod", "onError")
 
     // mode: "snap" | "head" | "both" — 어떤 감지기를 켤지.
+    // 2026-07-21: 핑거스냅(마이크) 경로 영구 비활성. 쇼츠 오디오에 스냅이 묻혀 신뢰도가 낮았고(Android
+    // 실사용 확인), 무엇보다 "마이크 권한 팝업"이 사용자 경험을 해쳐(Android는 이미 제거) iOS도 고개짓
+    // (카메라/ARKit)만 쓴다. mode 값과 무관하게 head만 켠다 — startSnap()은 호출하지 않으므로 마이크는
+    // 절대 요청되지 않는다(NSMicrophoneUsageDescription도 app.json에서 제거). SnapDetector 코드는
+    // 향후 AEC로 되살릴 여지만 남겨 dormant 상태로 둔다.
     AsyncFunction("start") { (mode: String, promise: Promise) in
       DispatchQueue.main.async {
-        if mode == "snap" || mode == "both" {
-          self.startSnap()
-        }
-        if mode == "head" || mode == "both" {
-          self.startHead()
-        }
+        self.startHead()
         promise.resolve(nil)
       }
     }

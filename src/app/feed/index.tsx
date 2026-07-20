@@ -155,7 +155,10 @@ export default function PaceFeedScreen() {
           </View>
         )}
 
-        <View style={{ flex: 1 }} />
+        {/* 2026-07-21 실기기 발견: 이 가운데 spacer가 기본 pointerEvents=auto라 화면 중앙 탭을
+            가로채 뒤의 YouTube WebView로 안 넘어갔다(→ "탭해도 재생 안 됨"). none으로 통과시켜
+            iOS 첫탭 재생(자동재생 차단 우회)이 실제로 먹히게 한다. */}
+        <View style={{ flex: 1 }} pointerEvents="none" />
 
         {current && (
           <View style={styles.bottom} pointerEvents="box-none">

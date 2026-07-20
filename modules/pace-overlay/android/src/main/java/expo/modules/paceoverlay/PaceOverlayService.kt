@@ -358,16 +358,15 @@ class PaceOverlayService : Service() {
       showToast(context, "⏮ Previous Short")
     }
 
-    // Play/Pause → Focus Session 토글(2026-07-20 리디자인 — 예전 이름 "Auto Mode"는 자율 스와이프
-    // 워처를 켜고 끄는 스위치였으나 그 워처 자체를 정책상 삭제했다, PaceAccessibilityService.kt 참고).
-    // 이제 이 토글이 켜는 건 핑거스냅 감지뿐 — 세션이 켜져 있는 동안에만 마이크를 열고, "다음"은
-    // 그 안에서도 항상 사용자가 직접 트리거한다(스냅/알약/Bluetooth 전부 동일한 swipeOnce 경로).
+    // Play/Pause → Auto Mode 토글(기존 Auto Next 기능과 동일한 스위치, 별개 개념 아님) — 이미 검증된
+    // PaceAccessibilityService.startWatching/stopWatching 그대로 재사용. 2026-07-19: 45_000L은
+    // "스와이프 간격"이 아니라 "안전 타임아웃" — PaceAccessibilityService.kt 상단 주석 참고.
     fun setAutoMode(context: Context, enable: Boolean) {
-      if (enable) PaceSnapDetector.start(context) { triggerNext(context) } else PaceSnapDetector.stop()
+      if (enable) PaceAccessibilityService.startWatching(45_000L) else PaceAccessibilityService.stopWatching()
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
       instance?.updateMediaSessionPlaybackState(playing = enable)
-      showToast(context, if (enable) "🎯 Focus Session Started" else "🎯 Focus Session Ended")
+      showToast(context, if (enable) "🎧 Auto Mode Enabled" else "🎧 Auto Mode Disabled")
     }
 
     private fun bumpBluetoothCounter(context: Context, key: String) {

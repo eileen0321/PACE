@@ -30,6 +30,8 @@ type PaceOverlayNativeModule = {
   // EXPO_PUBLIC_ENABLE_AUTO_NEXT 빌드에서만 상위 UI/서비스가 이 함수들을 호출한다.
   hasAccessibilityPermission(): boolean;
   requestAccessibilityPermission(): void;
+  startAutoNextWatching(intervalMs: number): Promise<void>;
+  stopAutoNextWatching(): Promise<void>;
   // Pace Feed(WebView 자체 재생) 전용 MediaSession — useFeedRemoteControl.android.ts 참고.
   startFeedMediaSession(): void;
   stopFeedMediaSession(): void;

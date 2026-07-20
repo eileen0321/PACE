@@ -156,6 +156,7 @@ export default function OverlaySessionScreen() {
     // 차단) 기존 로직을 그대로 유지.
     const tickInterval = setInterval(() => {
       if (!hasSessionStartedRef.current) return; // 세션 시작 비동기 처리가 아직 안 끝났으면 스킵(0 오판 방지)
+      const before = useTimerStore.getState(); // tick 전 스냅샷 — 종료 사유 판정용(아래 참고)
       useTimerStore.getState().tickMinute();
       if (Platform.OS === 'android') return;
       const fresh = useTimerStore.getState();
@@ -172,7 +173,10 @@ export default function OverlaySessionScreen() {
 
       if (!hasAutoEndedRef.current && (fresh.remainingMinutes <= 0 || fresh.sleepTimerRemainingMinutes === 0)) {
         hasAutoEndedRef.current = true;
-        endReasonRef.current = fresh.remainingMinutes <= 0 ? 'daily_limit_reached' : 'sleep_timer_expired';
+        // tickMinute()이 endSession()으로 remaining을 0으로 리셋한 뒤라 fresh만 보면 수면타이머 만료도
+        // 'daily_limit_reached'로 오판된다(감사 발견). tick 전 스냅샷(before)으로 판정 — daily limit이
+        // 이번 tick에 0에 도달(before.remaining<=1)하면 daily, 아니면 수면타이머 만료.
+        endReasonRef.current = before.remainingMinutes <= 1 ? 'daily_limit_reached' : 'sleep_timer_expired';
         if (endReasonRef.current === 'daily_limit_reached') notifyLimitReached().catch(() => {});
         router.back();
       }

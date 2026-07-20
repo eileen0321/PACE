@@ -40,6 +40,13 @@ type PaceOverlayNativeModule = {
     event: 'onFeedMediaCommand',
     listener: (payload: { action: string }) => void
   ): { remove: () => void };
+  // 핑거스냅 Hands-Free Next(2026-07-20, Focus Session 전용) — RECORD_AUDIO는 일반 dangerous 런타임
+  // 권한이라 표준 시스템 다이얼로그로 요청한다(hasOverlayPermission류의 "설정 화면" 이동과는 다름).
+  hasRecordAudioPermission(): boolean;
+  requestRecordAudioPermission(): Promise<{ status: string; granted: boolean }>;
+  startSnapDetection(): void;
+  stopSnapDetection(): void;
+  isSnapDetectionRunning(): boolean;
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

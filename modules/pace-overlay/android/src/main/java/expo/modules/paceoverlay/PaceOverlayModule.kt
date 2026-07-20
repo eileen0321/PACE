@@ -10,8 +10,11 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import android.Manifest
+import expo.modules.interfaces.permissions.Permissions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.Promise
 
 // Expo Modules API(2026 기준 권장 패턴 — 구식 NativeModules+@ReactMethod 대신) 로컬 모듈.
 // JS 쪽 바인딩은 modules/pace-overlay/index.ts, 상위 서비스 인터페이스는
@@ -216,6 +219,33 @@ class PaceOverlayModule : Module() {
         "previousCount" to (prefs?.getInt("bt_previous_count", 0) ?: 0),
         "autoToggleCount" to (prefs?.getInt("bt_auto_toggle_count", 0) ?: 0)
       )
+    }
+
+    // 2026-07-20 핑거스냅 Hands-Free Next(Focus Session 전용, PACE_ARCHITECTURE.md 참고) — RECORD_AUDIO는
+    // 일반 dangerous 런타임 권한이라 시스템 다이얼로그가 필요. Expo Modules API의 permissions 헬퍼로
+    // 표준 요청 플로우를 그대로 쓴다(hasOverlayPermission류의 "설정 화면" 특수 권한과는 다른 경로).
+    Function("hasRecordAudioPermission") {
+      appContext.reactContext?.let { context -> PaceSnapDetector.hasPermission(context) } ?: false
+    }
+
+    AsyncFunction("requestRecordAudioPermission") { promise: Promise ->
+      Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.RECORD_AUDIO)
+    }
+
+    // Focus Session이 켜져 있는 동안에만 호출된다 — 앱 시작부터 상시 청취가 아님(사용자 지시).
+    // 스냅 감지 시 알약/Bluetooth와 동일한 triggerNext(swipeOnce + 카운터 + 토스트)를 그대로 재사용.
+    Function("startSnapDetection") {
+      appContext.reactContext?.let { context ->
+        PaceSnapDetector.start(context) { PaceOverlayService.triggerNext(context) }
+      }
+    }
+
+    Function("stopSnapDetection") {
+      PaceSnapDetector.stop()
+    }
+
+    Function("isSnapDetectionRunning") {
+      PaceSnapDetector.isRunning()
     }
   }
 }

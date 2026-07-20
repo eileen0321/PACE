@@ -3083,6 +3083,88 @@ ScreenZen/Opal 등 실제 스크린타임/디지털 웰빙 앱들을 조사한 �
   더 뚜렷하다. → 알약 버튼을 기본 유지할지, AUTO 토글만 남기고 Next/Prev는 빼는 게 제품
   방향성에 더 맞을지는 다음 세션에서 사용자와 논의 필요.
 
+### ⚠️ "Focus Session" 리디자인 확정 — Auto Next/자동재생 표현·로직 전면 폐기 (2026-07-20, 사용자 지시)
+
+**결정**: "자동재생/Auto Next" 개념(앱이 영상 위치를 스스로 감시하다 자율적으로 스와이프)을 UI
+문구뿐 아니라 **동작 자체에서 제거**한다. 대신:
+- **Focus Session**: 사용자가 직접 on/off하는 10분 세션(타이머는 순수 세션 경계 — 자동 스와이프
+  트리거가 아님).
+- 세션 중 "다음"은 **항상 사용자가 직접 명령**(핑거스냅/알약 탭/Bluetooth 버튼 등) — 앱이 영상
+  종료를 스스로 감지해서 자율적으로 넘기는 경로는 전부 제거.
+- 근거: 앞서 찾은 Google Play 정책 문구("자율적 판단·실행 자동화 금지, 사람이 직접 트리거하는
+  결정적 동작은 허용")를 가장 안전한 방향으로 완전히 만족시킴 — "언제 넘길지"를 판단하는 주체가
+  100% 사용자가 되므로 회색지대 자체가 사라진다.
+- 영향 범위: `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 플래그/`autoNextService.*`/`PaceAccessibilityService`의
+  위치-폴링-자동스와이프 경로, `focus.tsx`의 "AUTO ON/OFF" 배지, `translations.ts`의 `focus.pause`/
+  `focus.continueLabel`("Auto Next: On/Off") 등 — 전부 "Focus Session" 용어/직접 트리거 방식으로
+  교체 예정(진행 중, 이 세션에서 순차 커밋).
+
+### 핑거스냅(마이크) Hands-Free Next — 구현 중 (2026-07-20)
+
+사용자 제안: Bluetooth 라우팅 불가 문제의 대안으로, **손가락 스냅 소리를 마이크로 감지**해 다음
+영상으로 넘기는 기능. Focus Session이 켜져 있을 때만 동작(앱 시작부터 상시 청취 아님).
+
+**조사 결과**: 안드로이드는 서드파티 앱에 진짜 저전력 상시대기 하드웨어 경로(`SoundTrigger`/
+`AlwaysOnHotwordDetector`)를 안 열어준다 — `VoiceInteractionService`(시스템 어시스턴트 역할)
+전용. 그래서 "배터리 거의 안 쓰는 상시 대기"는 Pace 같은 일반 앱에 애초에 불가능한 옵션 — 대신
+**Focus Session 켜져 있는 구간에만** `AudioRecord`를 열어 스코프를 최소화했다.
+
+**구현**(`modules/pace-overlay/android/.../PaceSnapDetector.kt`, 신규): FFT 없이 저렴한 방식으로
+20ms 프레임마다 RMS 에너지를 계산 → 조용한 구간으로 적응하는 노이즈 바닥 대비 스파이크(6배 이상)
+감지 → 2-bin Goertzel로 중고역(~2.5kHz) vs 저역(~500Hz) 에너지 비율을 확인해 목소리/저음과
+구분 → 450ms refractory로 중복 트리거 방지. 감지되면 알약/Bluetooth와 동일한
+`PaceOverlayService.triggerNext()`(swipeOnce + 카운터 + 토스트)를 그대로 호출.
+`RECORD_AUDIO`(일반 dangerous 런타임 권한, Expo `Permissions.askForPermissionsWithPermissionsManager`
+로 요청) + `FOREGROUND_SERVICE_MICROPHONE` 추가, `PaceOverlayService`의 foregroundServiceType에
+`microphone` 추가(Android 14+ FGS 마이크 사용 신고 요건). `assembleDebug` 빌드 성공, 실기기 설치
+완료 — ⚠️ 아직 V1: 임계값은 초기 추정치라 실사용 오탐/미탐 튜닝 필요, JS 쪽 Focus Session UI 연결도
+진행 중.
+
+**iOS 참고(맥 세션에 전달)**: 이 구현은 완전히 안드로이드 전용 네이티브(Kotlin `AudioRecord`)라
+iOS에는 전혀 적용 안 됨 — iOS에서 동일 기능을 하려면 `AVAudioEngine` 기반으로 별도 구현 필요.
+위 "Focus Session 리디자인"(용어/정책 방향)은 공유 개념이니 iOS UI도 맞춰가는 게 좋음.
+
+### 턱톡(AirPods 가속도계) — 기각, 고개짓(전면 카메라)은 미착수 상태로 보류 (2026-07-20)
+
+사용자가 제안했던 "볼톡/턱톡"(AirPods `CMHeadphoneMotionManager` 가속도 데이터로 뺨 탭 감지)은
+**기각**했다 — iOS 전용인 데다(안드로이드에 대응 API 없음) iOS 안에서도 AirPods Pro/Max/3세대만
+지원(기본 1/2세대·갤럭시 버즈 등은 이 데이터 자체가 안 나옴), 이중으로 좁은 기능이라 사용자가
+직접 판단해 배제함.
+
+대안으로 "고개짓(전면 카메라로 짧은 순간의 끄덕임만 캐치)"이 논의됐다 — 이어폰 종류/유무 무관하게
+두 플랫폼 다 되는 진짜 크로스플랫폼 기능이라는 방향성은 타당하나, **아직 코드 착수 전**이다.
+`react-native-vision-camera` + MediaPipe/ML Kit 얼굴 랜드마크 프레임 프로세서라는 새 무거운 네이티브
+의존성이 필요해 지금 만든 핑거스냅(순수 오디오 DSP, 새 의존성 0개)보다 훨씬 큰 작업이고, "영상
+종료 임박을 감지해서 카메라를 자동으로 켠다"는 아이디어는 방금 위에서 폐기한 "자율 판단" 패턴을
+다시 들여오는 것이라 Focus Session 설계 방향과 충돌한다 — 켠다면 스냅과 동일하게 "세션 켜진 동안
+계속 켜둠" 모델이어야 하고, 그러면 배터리 비용이 스냅보다 확실히 크다. 사용자 확인 후 착수 여부
+결정 예정, 아직 시작 안 함.
+
+### react-native-youtube-iframe 안드로이드 재테스트 결과 — iOS와 다르게 여전히 막힘 (2026-07-20)
+
+맥 세션이 iOS의 Referer 차단을 `react-native-youtube-iframe`(플레이어 HTML을 실제 호스팅 URL에서
+로드)으로 우회했다는 소식(커밋 `d92c24e`/`c29f73d`)을 받고, 같은 라이브러리가 안드로이드의 IFrame
+차단도 같이 풀어주는지 실기기로 재검증했다(8차에서 "WebView Media Integrity API 차단"으로 추정했던
+바로 그 문제 — html-string 로딩 방식이 원인이었을 가능성이 있어 재확인할 가치가 있었음).
+
+**결과: 안드로이드는 여전히 안 됨 — 단, 증상이 예전과 다르다.**
+- 플레이어 셸은 정상 로드됨(`onReady` 콜백 정상 수신, 실제 영상 제목/채널/썸네일 메타데이터까지
+  정확히 뜸) — 8차 때의 "완전 블랙, readyState=0, 메타데이터도 전혀 없음"보다는 진전.
+- 그런데 실제 재생은 "다음에서 보기: YouTube"(Watch on YouTube) 카드에서 멈춘다 — 임베드 소스
+  피드의 라이브 방송뿐 아니라, **항상 임베드 허용되는 기준 테스트 영상(Big Buck Bunny,
+  `aqz-KE-bpKQ`)조차 동일하게 막힘** — 이게 결정적이다: 특정 영상의 "임베드 비허용" 설정 문제가
+  아니라 안드로이드 환경 자체가 계속 차단되고 있다는 뜻.
+- `onReady` 이후 `onChangeState`/`onError` 콜백이 **단 한 번도 안 옴**(로그 계측으로 확인) — iOS는
+  최소한 `onReady`에서 `playing=true` 상태까지는 도달했는데(사용자 탭만 있으면 재생), 안드로이드는
+  그 단계 자체에 못 감.
+
+**결론**: iOS를 고친 것과 같은 fix(실제 호스팅 URL에서 플레이어 로드)가 안드로이드에서는 다른/더
+근본적인 차단에 막힌다 — 8차의 "WebView Media Integrity API" 가설과 일치하는 결과(라이브러리를
+바꿔도 안 풀리는 걸 보면 html-string 로딩 방식이 원인이 아니었다는 뜻). 실험 코드는 커밋 안 하고
+기존 원본페이지 네비게이션 버전으로 되돌려놓음(`git checkout`). 더 깊이 파려면 Chrome 원격
+디버거(`chrome://inspect`)로 실제 네트워크 응답을 봐야 하는데, 오늘 밤 범위 밖 — 안드로이드는
+당분간 원본페이지 방식(정책 위반 리스크 있음, 위 섹션 참고) 유지.
+
 ### Instagram Reels / TikTok WebView 가능성 — 사용자 지시 확인 (2026-07-20)
 
 이전부터 요청받았던("웹뷰로 인스타 틱톡도 가능한지") 항목. Chrome으로 실제 페이지 접근성만 빠르게

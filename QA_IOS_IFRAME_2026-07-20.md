@@ -7,6 +7,31 @@
 
 ---
 
+## ‼️ 2026-07-20 최종 정정 (아래 초기 결론 일부를 뒤집음 — 이걸 먼저 읽을 것)
+
+**초기 결론("합법 임베드는 iOS에서 재생 불가 → Pexels로 전환")은 틀렸다.** 원인은 내 구현이
+잘못됐던 것: (a) `new YT.Player`를 `loadHTMLString`으로 심으니 WKWebView가 origin을 opaque로 잡아
+error 152, (b) `/embed` URI를 직접 로드하니 WKWebView가 Referer를 안 보내(WebKit #169846) YouTube가
+스트림 거부(readyState 0). nocookie/Referer 헤더로도 안 됨.
+
+**해법(구현·검증·커밋 완료, `d92c24e`)**: `react-native-youtube-iframe` 라이브러리 사용. 이 라이브러리는
+플레이어 HTML을 **실제 호스팅 URL에서 로드**해 origin/Referer를 확보 → Referer 문제를 우회한다.
+- ✅ **iOS 시뮬에서 YouTube 영상이 로드·표시되고 `onReady` 정상 수신**(error 152 없음). 즉 **합법
+  임베드로 iOS에서 YouTube가 뜬다** — 사용자가 원하던 "iframe으로 유튜브" 가 iOS에서 성립함.
+- ⚠️ **단, iOS는 제스처 없는 (무음)자동재생을 차단**해서 `play=true`여도 영상이 "재생버튼" 상태로 멈춘다
+  (플랫폼 한계, 라이브러리/코드 문제 아님 — `onReady playing=true` 확인). **사용자가 영상을 한 번
+  탭하면 재생**되고, 같은 WebView에서 `loadVideoById`로 다음 영상을 이어재생하므로 **첫 탭 이후
+  auto-next는 hands-free 가능성이 높다**(무탭 시뮬에선 첫 탭 이후 동작을 검증 못 함 → 실기기 확인 필요).
+- ⚠️ **VEVO/일부 뮤비(dQw4w9WgXcQ 등)는 "다음에서 보기: YouTube" 오버레이로 인라인 재생 불가** — 실제
+  Shorts는 대부분 인라인 임베드 가능하나, 소스에서 임베드 불가 영상은 걸러야 함. dev 폴백을 인라인
+  가능 영상(Big Buck Bunny 등)으로 교체함.
+
+**따라서 아래 §1·§2의 "Pexels로 전환" 권고는 철회.** iframe(공식 임베드, 라이브러리) 경로로 iOS를
+간다. 남은 실기기 확인 항목: (1) 첫 탭 후 auto-next 연속 재생, (2) 무음/유음 정책, (3) 실제 Shorts
+소스(프록시)에서 임베드 불가 영상 필터링.
+
+---
+
 ## 0. 무엇을 했나
 - 기존 `YouTubeShortsPlayer.tsx`(2026-07-20 재작성분)는 **`youtube.com/shorts/{id}` 원본 페이지를
   그대로 WebView에 로드**하는 방식(= PACE_ARCHITECTURE.md의 "원안 ①"). 이는 YouTube 약관 +

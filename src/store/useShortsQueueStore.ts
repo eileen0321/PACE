@@ -61,13 +61,29 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       const rawWatched = await AsyncStorage.getItem(WATCHED_KEY).catch(() => null);
       const watchedIds: string[] = rawWatched ? JSON.parse(rawWatched) : [];
 
-      const page = await fetchShortsPage({});
-      const queue = dedupeAppend([], page.shorts, watchedIds);
+      let page = await fetchShortsPage({});
+      let queue = dedupeAppend([], page.shorts, watchedIds);
+      let token = page.nextPageToken;
+      // hasMore는 nextPageToken이 "실제로 있을 때"만 true — 프록시가 필드를 생략하면 undefined인데,
+      // `undefined !== null`은 true라 refill이 page1을 무한 재fetch하던 버그(감사 발견) 방지: !!token.
+      let hasMore = !!token;
+
+      // 첫 페이지가 전부 watched로 걸러지면(감사 발견: 피드 영구 공백) EMPTY로 끝내지 말고 다음
+      // 페이지로 계속 받아 신선한 Shorts가 나올 때까지 페이지네이션(최대 5페이지 — 무한루프 방지).
+      let guard = 0;
+      while (queue.length === 0 && hasMore && guard < 5) {
+        guard += 1;
+        page = await fetchShortsPage({ pageToken: token });
+        queue = dedupeAppend([], page.shorts, watchedIds);
+        token = page.nextPageToken;
+        hasMore = !!token;
+      }
+
       if (queue.length === 0) {
-        set({ isLoading: false, error: 'EMPTY_FEED', watchedIds });
+        set({ isLoading: false, error: 'EMPTY_FEED', watchedIds, nextPageToken: token, hasMore });
         return;
       }
-      set({ queue, watchedIds, nextPageToken: page.nextPageToken, hasMore: page.nextPageToken !== null, isLoading: false });
+      set({ queue, watchedIds, nextPageToken: token, hasMore, isLoading: false });
     } catch (e) {
       set({ isLoading: false, error: e instanceof Error ? e.message : 'YT_ERROR' });
     }
@@ -78,7 +94,9 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
     const { queue, watchedIds, history } = get();
     if (queue.length === 0) return;
     const finished = queue[0];
-    const nextWatched = [...watchedIds, finished.videoId].slice(-MAX_WATCHED);
+    // Set으로 중복 제거(감사 발견: goToPrevious로 되돌린 영상을 다시 advance하면 watchedIds에 중복
+    // 누적돼 MAX_WATCHED 캡이 실질적으로 줄던 문제).
+    const nextWatched = Array.from(new Set([...watchedIds, finished.videoId])).slice(-MAX_WATCHED);
     const nextQueue = queue.slice(1); // ← 보여준 건 리스트에서 삭제
     const nextHistory = [...history, finished].slice(-MAX_WATCHED);
     set({ queue: nextQueue, watchedIds: nextWatched, history: nextHistory });
@@ -106,7 +124,7 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
     try {
       const page = await fetchShortsPage({ pageToken: nextPageToken });
       const merged = dedupeAppend(queue, page.shorts, watchedIds);
-      set({ queue: merged, nextPageToken: page.nextPageToken, hasMore: page.nextPageToken !== null, isRefilling: false });
+      set({ queue: merged, nextPageToken: page.nextPageToken, hasMore: !!page.nextPageToken, isRefilling: false });
     } catch {
       set({ isRefilling: false });
     }

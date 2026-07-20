@@ -6,7 +6,6 @@ import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
 import { OverlayExpandedCard } from '../../components/overlays/shared/OverlayExpandedCard';
 import { PlatformMimicOverlay } from '../../components/overlays/PlatformMimicOverlay';
-import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTimerStore } from '../../store/useTimerStore';
 import { useUserStore } from '../../store/useUserStore';
@@ -17,7 +16,7 @@ import { useToastStore } from '../../store/useToastStore';
 import { overlayService, autoNextService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
-import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
+import { notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { SUPPORTED_APPS } from '../../constants/supportedApps';
@@ -68,7 +67,6 @@ export default function OverlaySessionScreen() {
   const [expanded, setExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [videoIndex, setVideoIndex] = useState(0);
-  const [showAccessibilityOnboarding, setShowAccessibilityOnboarding] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const endReasonRef = useRef<SessionEndStatus>('manual_stop');
   const sessionStartedAtMsRef = useRef<number | null>(null);
@@ -97,19 +95,15 @@ export default function OverlaySessionScreen() {
         breakIntervalMinutes: settings.breakIntervalMinutes,
       });
       hasSessionStartedRef.current = true;
-      // 2026-07-19: 사용자 지시(Copilot UX 제안 정리, 축소 버전) — 예전엔 여기서 바로
-      // autoNextRuntime.start(null)을 불렀는데, 그 안의 autoNextService.start()가 권한 미부여 시
-      // 아무 설명 없이 시스템 접근성 설정으로 튕겨버렸다("실기기 검증 중 발견한 버그: 반복적으로
-      // 접근성 설정 화면으로 실수 이동"의 근본 원인). 이제 미리 권한을 확인해서, 이미 있으면 그대로
-      // 시작하고 없으면 AccessibilityOnboardingSheet로 먼저 설명한 뒤에만 리다이렉트한다.
+      // 2026-07-20 Focus Session 리디자인 — 세션을 시작하자마자 권한이 없다고 온보딩 팝업을 끼워
+      // 넣지 않는다(사용자 지적: "핸즈프리 팝업이 세션 시작을 막는 것처럼 보인다"). 접근성은 이제
+      // 핸즈프리 자동넘김이라는 보조 기능에만 필요하고, 실제 앱 보기(launchPlatformApp) 자체와는
+      // 무관하다 — 권한이 있으면 조용히 자동넘김을 시작하고, 없으면 그냥 시작 안 할 뿐 팝업으로
+      // 끼어들지 않는다. 온보딩 시트는 사용자가 실제로 핸즈프리 컨트롤(알약 AUTO 배지, Focus 탭
+      // 가드 행)을 직접 탭할 때만 그 자리에서 뜬다.
       if (settings.autoNext) {
         autoNextService.hasPermission().then((granted) => {
-          if (granted) {
-            autoNextRuntime.start(null);
-          } else {
-            setShowAccessibilityOnboarding(true);
-            notifyAccessibilityNeeded().catch(() => {});
-          }
+          if (granted) autoNextRuntime.start(null);
         });
       }
       // Android 실기기에서 native 모듈이 링크돼 있으면 시스템 오버레이도 함께 띄운다(미링크 시 no-op).
@@ -228,29 +222,13 @@ export default function OverlaySessionScreen() {
         router.back();
       }).catch(() => {});
     };
-    // 2026-07-19: 접근성 설정 화면에 다녀온 뒤 복귀 감지(Copilot UX 제안 정리, 축소 버전 "4단계
-    // 앱 복귀 감지") — 이미 위에서 쓰던 AppState 'active' 리스너에 합류시켰다(리스너 두 개 둘 이유
-    // 없음). AccessibilityOnboardingSheet가 떠 있는 상태로 돌아왔을 때만 권한을 재확인해서, 켜져
-    // 있으면 시트를 닫고 그제서야 Auto Next를 시작 + 토스트로 확인해준다.
-    const checkAccessibilityReturn = () => {
-      if (!showAccessibilityOnboarding) return;
-      autoNextService.hasPermission().then((granted) => {
-        if (!granted) return;
-        setShowAccessibilityOnboarding(false);
-        autoNextRuntime.start(null);
-        useToastStore.getState().show('✅ Hands-Free Shorts Enabled');
-      });
-    };
     consumeIfExpired(); // 화면이 이미 백그라운드 만료 이후 다시 마운트되는 경우 대비
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        consumeIfExpired();
-        checkAccessibilityReturn();
-      }
+      if (state === 'active') consumeIfExpired();
     });
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAccessibilityOnboarding]);
+  }, []);
 
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —
   // 여기서는 dev 시뮬레이터에서 데모 영상이 끝나면 다음 영상으로 넘어가는 흉내만 낸다.
@@ -329,16 +307,6 @@ export default function OverlaySessionScreen() {
       <View style={styles.devBadge}>
         <Text style={styles.devBadgeText}>{t('overlay.devSimulator')}</Text>
       </View>
-
-      <AccessibilityOnboardingSheet
-        visible={showAccessibilityOnboarding}
-        // 2026-07-19: 여기서 showAccessibilityOnboarding을 false로 안 만든다 — 아래 AppState
-        // 'active' 리스너(checkAccessibilityReturn)가 "시트가 아직 대기 중인지"를 이 값으로 판단해서
-        // 설정에서 돌아왔을 때 권한을 재확인한다. 미리 꺼버리면 복귀 감지 자체가 동작을 안 한다.
-        // 시스템 설정으로 화면 전환되는 순간 어차피 이 Modal은 실제로 안 보임(앱이 백그라운드).
-        onEnable={() => autoNextService.requestPermission()}
-        onDismiss={() => setShowAccessibilityOnboarding(false)}
-      />
     </View>
   );
 }

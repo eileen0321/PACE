@@ -136,9 +136,11 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
 // HTML을 제대로 못 받는 경우가 많음), IFrame 플레이어+큐 순차재생 "메커니즘"을 검증할 수 있게 안정적인
 // 공개·임베드 가능 영상 ID 몇 개를 큐에 넣는다. 프로덕션에선 절대 도달 안 함(프록시/키/스크래핑 성공 시 미사용).
 const DEV_FALLBACK_SHORTS: YouTubeShort[] = [
-  { videoId: 'dQw4w9WgXcQ', title: '[DEV] Sample 1', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg' },
-  { videoId: 'jNQXAC9IVRw', title: '[DEV] Sample 2', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg' },
-  { videoId: 'aqz-KE-bpKQ', title: '[DEV] Sample 3', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg' },
+  // ⚠️ 인라인 임베드 허용 영상만. VEVO/일부 뮤비(dQw4w9WgXcQ 등)는 "다음에서 보기: YouTube" 오버레이로
+  // 인라인 재생이 막혀 폴백에서 제외. Big Buck Bunny 등 CC/오픈 콘텐츠는 인라인 재생·자동재생 OK.
+  { videoId: 'aqz-KE-bpKQ', title: '[DEV] Big Buck Bunny', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/aqz-KE-bpKQ/hqdefault.jpg' },
+  { videoId: 'jNQXAC9IVRw', title: '[DEV] Me at the zoo', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg' },
+  { videoId: 'ScMzIvxBSi4', title: '[DEV] Elephants Dream', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/ScMzIvxBSi4/hqdefault.jpg' },
 ];
 
 /** Shorts 한 페이지를 받는다. 프록시 설정돼 있으면 프록시, __DEV__면 클라이언트 직접호출,

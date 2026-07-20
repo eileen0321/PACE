@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -19,32 +19,10 @@ import { getTodayUsageMinutes } from '../../database/repositories/statsRepositor
 import { notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
-import { SUPPORTED_APPS } from '../../constants/supportedApps';
+import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
 import type { AppShieldTarget, SessionEndStatus } from '../../types/models';
-
-// Android: 선택한 플랫폼 앱을 실제로 연다(공식 딥링크 스킴 → 실패 시 웹 폴백) — "제품 전략 피벗"의
-// "Start → App Picker → 선택 앱 실행" 흐름 중 앱 실행 부분. iOS는 Pace Player 방향이 POC 검증 전이라
-// (PACE_ARCHITECTURE.md "iOS Pace Player 성립 가능성 검증" 참고) 아직 아무 것도 하지 않는다 —
-// 여기서 실제 앱을 열지 않고 이 dev 시뮬레이터 화면을 그대로 보여주는 것이 검증 전 상태에 대한
-// 정직한 표현이다(가짜 Player UI를 미리 만들지 않음).
-async function launchPlatformApp(platform: AppShieldTarget | undefined) {
-  if (Platform.OS !== 'android' || !platform) return;
-  const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
-  if (!app) return;
-  // 2026-07-18 실기기 검증 중 발견한 실버그: YouTube는 `vnd.youtube://`(커스텀 스킴)로 열면 앱이
-  // 설치돼 있을 때 항상 "성공"으로 catch를 안 타서, Shorts 전용 URL인 webFallback
-  // (m.youtube.com/shorts)이 영영 안 쓰이고 매번 YouTube 홈 탭만 열렸다("Shorts 카드를 눌렀는데
-  // YouTube 홈이 뜬다"는 사용자 지적으로 발견). https Shorts URL은 Android App Links로 앱이 설치돼
-  // 있으면 네이티브 앱의 Shorts 탭으로, 안 돼있으면 브라우저로 자동 라우팅되므로 —
-  // 커스텀 스킴 우선순위를 뒤집어 App Link(webFallback)를 먼저 시도.
-  try {
-    await Linking.openURL(app.webFallback);
-  } catch {
-    await Linking.openURL(app.androidScheme).catch(() => {});
-  }
-}
 
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 

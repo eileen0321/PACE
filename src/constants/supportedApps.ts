@@ -1,3 +1,6 @@
+import { Linking, Platform } from 'react-native';
+import type { AppShieldTarget } from '../types/models';
+
 // 세션 시작/오버레이 자동 표시가 실제로 감시하는 MVP 지원 앱 — PACE_ARCHITECTURE.md "제품 전략
 // 피벗" 참고. `constants/apps.ts`의 SHORT_FORM_APPS(5개, Focus 탭 Shield 토글용 카탈로그)와는
 // 별개 — 이 목록은 좁은 MVP 범위(YouTube Shorts + Instagram Reels만)이고, Focus 탭 Shield는
@@ -23,3 +26,25 @@ export const SUPPORTED_APPS = {
 } as const;
 
 export const SUPPORTED_APP_PACKAGES: readonly string[] = Object.values(SUPPORTED_APPS).flatMap((app) => [...app.packageNames]);
+
+// 2026-07-20 실기기 검증 중 발견: 이 함수를 세션 시작 useEffect 안(DB 조회 2번 + Connecting 애니메이션
+// 이후)에서 부르면, 원래 탭 제스처로부터 너무 늦게 호출돼 안드로이드의 백그라운드 액티비티 시작
+// 제한(BAL) 유예 시간을 넘겨 Linking.openURL이 조용히 막힌다(예외도 없이 그냥 아무 일도 안 일어남 —
+// 대신 Pace 자신의 /overlay 화면이 dev 시뮬레이터 콘텐츠를 보여준 채로 남아있어 "유튜브가 까맣게
+// 멈췄다"로 오인하기 쉽다). 탭 제스처와 최대한 가깝게(Home 화면 탭 핸들러) 호출해야 한다.
+export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
+  if (Platform.OS !== 'android' || !platform) return;
+  const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
+  if (!app) return;
+  // 2026-07-18 실기기 검증 중 발견한 실버그: YouTube는 `vnd.youtube://`(커스텀 스킴)로 열면 앱이
+  // 설치돼 있을 때 항상 "성공"으로 catch를 안 타서, Shorts 전용 URL인 webFallback
+  // (m.youtube.com/shorts)이 영영 안 쓰이고 매번 YouTube 홈 탭만 열렸다("Shorts 카드를 눌렀는데
+  // YouTube 홈이 뜬다"는 사용자 지적으로 발견). https Shorts URL은 Android App Links로 앱이 설치돼
+  // 있으면 네이티브 앱의 Shorts 탭으로, 안 돼있으면 브라우저로 자동 라우팅되므로 —
+  // 커스텀 스킴 우선순위를 뒤집어 App Link(webFallback)를 먼저 시도.
+  try {
+    await Linking.openURL(app.webFallback);
+  } catch {
+    await Linking.openURL(app.androidScheme).catch(() => {});
+  }
+}

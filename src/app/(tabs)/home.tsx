@@ -17,6 +17,7 @@ import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboard
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
+import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
 
@@ -75,6 +76,11 @@ export default function HomeScreen() {
   // 애니메이션을 먼저 보여준다(App.tsx triggerConnectingSequence). 애니메이션이 끝나면
   // handleConnectingComplete가 실제 라우팅을 수행.
   const startSession = useCallback((platform: AppShieldTarget) => {
+    // 2026-07-20 실기기 검증 중 발견: 예전엔 /overlay 화면이 마운트된 뒤(DB 조회 2번 + Connecting
+    // 애니메이션 이후)에야 launchPlatformApp을 불렀는데, 그러면 원래 탭 제스처로부터 너무 늦어져
+    // 안드로이드 백그라운드 액티비티 시작 제한에 조용히 막혔다(예외 없음 — 그냥 실행이 안 됨).
+    // 탭과 최대한 가까운 지금 시점에 바로 부른다.
+    launchPlatformApp(platform).catch(() => {});
     setConnectingPlatform(platform);
   }, []);
 

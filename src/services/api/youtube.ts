@@ -110,19 +110,32 @@ async function fetchShortsViaProxy(query: string, pageToken: string | null): Pro
 // 스크래핑 폴백(그레이존): 프록시/키 둘 다 없을 때만. YouTube 검색결과 HTML의 ytInitialData에서
 // videoId만 긁는다. 재생은 여전히 공식 IFrame이 하므로 스트림 절도가 아님. 프로덕션 기본값 아님.
 async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' shorts')}`;
-  // 타임아웃(6s) — 시뮬레이터/제한 네트워크에서 응답이 안 오면 loadInitial이 isLoading에 영원히 갇혀
-  // dev 폴백까지 도달 못 하는 문제 방지(2026-07-19).
+  // 2026-07-21 실기기 디버깅으로 재작성. 기존 구현은 **iPhone User-Agent**를 보내
+  // YouTube가 m.youtube.com **동의(consent) 페이지**로 리다이렉트 → HTML에 videoId가 0개라
+  // 항상 dev 폴백(가로 영상)만 떴다("이거 쇼츠 아닌데"의 원인). 고친 3가지:
+  //   1) 데스크톱 UA → m.youtube 리다이렉트 회피(데스크톱 results 페이지를 그대로 받음)
+  //   2) 동의 우회 쿠키(SOCS/CONSENT) → "before you continue" 벽 통과
+  //   3) &sp=EgIYAQ%3D%3D → 검색 필터를 **Shorts 전용**으로 고정 → 가로 영상 혼입 방지(세로 Shorts만)
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIYAQ%3D%3D`;
+  // 타임아웃(6s) — 제한 네트워크에서 응답이 안 오면 loadInitial이 isLoading에 갇혀 폴백까지 도달 못 함(방지).
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      Cookie: 'SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCZW4gACgB; CONSENT=YES+1',
+    },
     signal: controller.signal,
   }).finally(() => clearTimeout(timer));
   if (!res.ok) throw new Error(`YT_SCRAPE_ERROR ${res.status}`);
   const html = await res.text();
-  // videoId(11자)만 중복 제거해 추출 — 메타(제목/채널)는 스크래핑에선 생략(플레이어가 로드 시 표시).
-  const ids = Array.from(new Set(Array.from(html.matchAll(/"videoId":"([\w-]{11})"/g)).map((m) => m[1])));
+  // Shorts만 추출: shortsLockupViewModel 블록에 딸린 videoId를 우선 잡아 가로영상 videoId 혼입 방지.
+  // (블록당 videoId가 근처에 나옴 — 필터 페이지라 대부분 shortsLockup임.) 구조가 바뀌어 0이면
+  // 페이지 전체 videoId로 폴백.
+  const scoped = Array.from(html.matchAll(/shortsLockupViewModel[\s\S]{0,600}?"videoId":"([\w-]{11})"/g)).map((m) => m[1]);
+  const broad = Array.from(html.matchAll(/"videoId":"([\w-]{11})"/g)).map((m) => m[1]);
+  const ids = Array.from(new Set(scoped.length ? scoped : broad));
   const shorts: YouTubeShort[] = ids.slice(0, 20).map((id) => ({
     videoId: id,
     title: 'YouTube Short',

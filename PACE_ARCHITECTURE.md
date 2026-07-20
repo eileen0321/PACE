@@ -3099,6 +3099,36 @@ ScreenZen/Opal 등 실제 스크린타임/디지털 웰빙 앱들을 조사한 �
   `focus.continueLabel`("Auto Next: On/Off") 등 — 전부 "Focus Session" 용어/직접 트리거 방식으로
   교체 예정(진행 중, 이 세션에서 순차 커밋).
 
+### ✅ 자율 자동넘김 워처 삭제 완료 — Focus Session 리디자인 핵심 조치 실행 (2026-07-20)
+
+위 결정을 실제로 구현했다. **`PaceAccessibilityService.kt`에서 위치-폴링 자동스와이프 메커니즘을
+통째로 삭제**: `pollRunnable`, `checkPlaybackAndMaybeSwipe`(Tier1/Tier2 판정), `readCachedOrSearchTiming`/
+`findPlaybackTimingNode`(SeekBar content-desc 트리 탐색), `parseTiming`(한국어/콜론 포맷 파서),
+`startWatching`/`stopWatching`, 관련 상태 필드(`isWatching`/`safetyTimeoutMs`/`lastKnownCurrentSec`/
+`cachedTimingNode`/`currentForegroundPackage`) 전부 제거 — git 히스토리에 원본 남아있어 필요하면
+복원 가능. **남은 건 `swipeOnce(up)` 하나뿐**: 알약 탭/Bluetooth 버튼/핑거스냅이 전부 이 단발성
+함수 하나로 수렴한다 — "언제 넘길지"를 판단하는 주체가 100% 사용자가 됐다.
+
+연쇄 수정: `PaceOverlayModule.kt`에서 `startAutoNextWatching`/`stopAutoNextWatching`(이제 존재하지
+않는 네이티브 함수를 부르던 JS 브릿지) 제거. `PaceOverlayService.setAutoMode()`(Bluetooth
+Play/Pause 콜백)는 예전엔 이 워처를 켜고 끄는 스위치였는데, 이제 **핑거스냅 감지(`PaceSnapDetector`)를
+켜고 끄는 스위치로 재배선** — 토스트도 "Auto Mode"→"Focus Session Started/Ended"로 변경.
+`autoNextService.android.ts`는 접근성 권한 확인/요청 창구로 범위가 줄었고(`start()`/`stop()`는
+호출부(`useAutoNextStore`) 인터페이스 유지를 위해 의도적 no-op — 아래 남은 작업 참고),
+`modules/pace-overlay/index.ts` 타입에서도 삭제된 함수 제거. `npx tsc --noEmit` 클린, Gradle
+`assembleDebug` 빌드 성공, 실기기 설치 후 크래시 없음 확인.
+
+**⚠️ 아직 안 끝난 것(다음 세션 스코프)**: 이번 조치는 "위험한 동작 삭제"까지만 완료했고, 아래는
+아직 착수 전:
+- `focus.tsx`의 "AUTO ON/OFF" 배지·문구, `translations.ts`의 `focus.pause`/`focus.continueLabel`
+  ("Auto Next: On/Off") 등 **UI 문구는 아직 그대로** — 동작은 이미 바뀌었는데 문구가 옛날 그대로라
+  사용자에게 혼란을 줄 수 있음(예: "AUTO ON"이 이제 실제로는 "핑거스냅 세션 켜짐"을 뜻함).
+- 10분 Focus Session 타이머 UI(온/오프 + 카운트다운) 자체는 아직 없음 — 지금은 `settings.autoNext`
+  토글이 그 역할을 임시로 대신하고 있으나 "10분"이라는 세션 경계 개념은 미구현.
+- `useAutoNextStore`/`overlay/index.tsx`의 `autoNextRuntime.start/stop` 호출부, `settings.autoNext`
+  필드, `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 플래그명 자체는 정리 안 하고 그대로 둠(no-op로만 무해화) —
+  이름이 이제 실제 의미와 안 맞아 다음 세션에서 정리 대상.
+
 ### 핑거스냅(마이크) Hands-Free Next — 구현 중 (2026-07-20)
 
 사용자 제안: Bluetooth 라우팅 불가 문제의 대안으로, **손가락 스냅 소리를 마이크로 감지**해 다음

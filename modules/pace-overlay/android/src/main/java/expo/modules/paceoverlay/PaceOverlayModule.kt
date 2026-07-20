@@ -182,14 +182,6 @@ class PaceOverlayModule : Module() {
       }
     }
 
-    AsyncFunction("startAutoNextWatching") { intervalMs: Int ->
-      PaceAccessibilityService.startWatching(intervalMs.toLong())
-    }
-
-    AsyncFunction("stopAutoNextWatching") {
-      PaceAccessibilityService.stopWatching()
-    }
-
     // Bluetooth 리모컨 버튼뿐 아니라 Focus 탭 등 인앱 Next/Previous 버튼 탭에서도 같은 스와이프를
     // 쓸 수 있도록 노출(2026-07-19) — MediaSession 콜백(PaceOverlayService)이 부르는 것과 동일한
     // PaceAccessibilityService.swipeOnce()를 JS에서도 직접 호출 가능하게 한다.

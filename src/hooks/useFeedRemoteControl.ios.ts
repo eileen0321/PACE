@@ -1,22 +1,13 @@
 import { useEffect, useRef } from 'react';
-import TrackPlayer, { Capability, Event, useTrackPlayerEvents } from 'react-native-track-player';
+import { requireNativeModule } from 'expo-modules-core';
 
-let playerReady = false;
-
-async function ensurePlayerSetup() {
-  if (playerReady) return;
-  try {
-    await TrackPlayer.setupPlayer();
-    await TrackPlayer.updateOptions({
-      capabilities: [Capability.SkipToNext, Capability.SkipToPrevious, Capability.Play, Capability.Pause],
-    });
-    playerReady = true;
-  } catch (e) {
-    console.warn('[useFeedRemoteControl] TrackPlayer 셋업 실패 — Bluetooth 리모컨 비활성화:', e);
-  }
-}
-
-const REMOTE_EVENTS = [Event.RemoteNext, Event.RemotePrevious, Event.RemotePlay, Event.RemotePause];
+// iOS 전용 핸즈프리 "다음 영상" 트리거 (2026-07-20, 사용자 지시로 AirPods Bluetooth 방식에서 전환).
+// modules/pace-gesture(Expo Modules API 로컬 모듈, Swift)를 감싼다:
+//   · 핑거스냅 소리 → SoundAnalysis 내장 분류기(finger_snapping) → onSnap → onNext()
+//   · 고개짓(턱 끄덕임) → ARKit face tracking(TrueDepth 기기 전용) → onHeadNod → onNext()
+// ⚠️ 미링크/미빌드(prebuild 전, 시뮬레이터 등)에서도 앱이 죽지 않도록 require를 try/catch로 감싼다.
+// ⚠️ Metro가 iOS 빌드에서만 이 .ios.ts를 선택 — Android는 useFeedRemoteControl.android.ts(네이티브
+//    미디어세션) 사용. onPrevious/onToggleAutoMode는 제스처엔 매핑하지 않는다(화면 버튼 전용).
 
 type Callbacks = {
   onNext: () => void;
@@ -24,28 +15,47 @@ type Callbacks = {
   onToggleAutoMode: () => void;
 };
 
-// iOS 전용(2026-07-19, 사용자 지시) — AirPods 등 Bluetooth 리모컨의 Next/Previous/Play-Pause를
-// react-native-track-player의 MPRemoteCommandCenter 브릿지로 수신해 콜백에 매핑한다. 실제 오디오는
-// 이 TrackPlayer가 재생하지 않는다(WebView 안 YouTube IFrame이 소리를 낸다) — 리모컨 이벤트를
-// 가로채기 위한 "가상 세션"만 연다. Play/Pause는 영상 자체의 재생/정지가 아니라 Auto Mode 토글로
-// 매핑(상태 머신 규칙 C) — 손대지 않고 다음 영상으로 넘어갈지 여부를 이어폰으로 제어.
-// ⚠️ 이 파일은 Metro가 iOS 빌드에서만 선택(.ios.ts) — Android는 useFeedRemoteControl.android.ts
-// (no-op)를 써서 react-native-track-player를 아예 참조하지 않는다(과거 react-native-webview 미링크
-// 크래시 사례와 같은 위험을 원천 차단).
-// ⚠️ 미검증: 이 리포에는 Mac/Xcode가 없어 실기기 iOS 빌드로 확인 못 했다 — react-native-track-player
-// 자체는 Android 네이티브에도 재링크 전(2026-07-19 시점)이라, 다음에 Android를 네이티브 재빌드할 때
-// (`expo prebuild`/`expo run:android`) 이 의존성이 자동링크되면서 문제가 없는지도 별도 확인 필요.
+type GestureModule = {
+  start(mode: 'snap' | 'head' | 'both'): Promise<void>;
+  stop(): void;
+  isHeadGestureSupported(): boolean;
+  addListener(event: 'onSnap' | 'onHeadNod' | 'onError', listener: (payload: any) => void): { remove: () => void };
+};
+
+// 로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀(index.ts 미해석) requireNativeModule을 직접 쓴다.
+// 미빌드(prebuild 전)에선 throw하므로 try/catch로 감싸 앱이 죽지 않게 한다.
+let PaceGesture: GestureModule | null = null;
+try {
+  PaceGesture = requireNativeModule<GestureModule>('PaceGesture');
+} catch (e) {
+  console.warn('[useFeedRemoteControl] pace-gesture 네이티브 모듈 미링크 — 핸즈프리 제스처 비활성:', e);
+}
+
 export function useFeedRemoteControl(callbacks: Callbacks) {
-  const callbacksRef = useRef(callbacks);
-  callbacksRef.current = callbacks; // 매 렌더 최신 콜백 유지 — stale closure 방지
+  const cbRef = useRef(callbacks);
+  cbRef.current = callbacks; // 매 렌더 최신 콜백 유지(stale closure 방지)
 
   useEffect(() => {
-    ensurePlayerSetup();
+    if (!PaceGesture) return;
+    const mod = PaceGesture;
+    const subs: Array<{ remove: () => void }> = [];
+    try {
+      // 스펙(PACE_ARCHITECTURE.md 2026-07-20): 핑거스냅이 확정 기능. 고개짓(ARKit)은 "보류/사용자
+      // 결정 대기"라 기본 비활성 — 네이티브엔 구현돼 있어(mode 'head'/'both') 결정되면 바로 켤 수 있다.
+      // (참고: 문서는 고개짓에 vision-camera+MediaPipe를 가정했으나 iOS는 ARKit로 새 의존성 0개 구현함.)
+      mod.start('snap').catch((err) =>
+        console.warn('[useFeedRemoteControl] 제스처 start 실패:', err),
+      );
+      subs.push(mod.addListener('onSnap', () => cbRef.current.onNext()));
+      subs.push(mod.addListener('onHeadNod', () => cbRef.current.onNext()));
+      subs.push(mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)));
+    } catch (e) {
+      console.warn('[useFeedRemoteControl] 제스처 리스너 등록 실패:', e);
+    }
+    // 언마운트 시 반드시 정리 — 마이크/카메라/ARSession을 놓아준다(구 TrackPlayer 누수 대응).
+    return () => {
+      subs.forEach((s) => { try { s.remove(); } catch {} });
+      try { mod.stop(); } catch {}
+    };
   }, []);
-
-  useTrackPlayerEvents(REMOTE_EVENTS, (event) => {
-    if (event.type === Event.RemoteNext) callbacksRef.current.onNext();
-    else if (event.type === Event.RemotePrevious) callbacksRef.current.onPrevious();
-    else if (event.type === Event.RemotePlay || event.type === Event.RemotePause) callbacksRef.current.onToggleAutoMode();
-  });
 }

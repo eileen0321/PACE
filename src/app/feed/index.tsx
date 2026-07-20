@@ -60,6 +60,19 @@ export default function PaceFeedScreen() {
     return () => sub.remove();
   }, []);
 
+  // Focus Session = 10분 제한 자동 진행(2026-07-20 사용자 지시, PACE_ARCHITECTURE.md "Focus Session =
+  // 10분 제한 자동 진행"). Auto Mode(정주행)를 켠 시점부터 정확히 10분 뒤 자동으로 끈다 — 무기한
+  // 지속을 막아 "사람이 세션을 켠다"는 결정적 트리거 안에서만 자동 진행되게 한다. 사용자가 10분 전에
+  // 직접 끄거나(토글) 백그라운드로 나가면(위 AppState effect) 더 일찍 종료된다.
+  useEffect(() => {
+    if (!isAutoMode) return;
+    const t = setTimeout(() => {
+      setIsAutoMode(false);
+      useToastStore.getState().show('⏱ Focus Session 종료 (10분 경과)');
+    }, 10 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, [isAutoMode]);
+
   const goNext = () => {
     setStatus('PLAYING');
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
@@ -72,7 +85,7 @@ export default function PaceFeedScreen() {
   const toggleAutoMode = () => {
     setIsAutoMode((prev) => {
       const next = !prev;
-      useToastStore.getState().show(next ? '🎧 Auto Mode Enabled' : '🎧 Auto Mode Disabled');
+      useToastStore.getState().show(next ? '▶️ Focus Session 시작 · 10분간 자동 진행' : '⏹ Focus Session 종료');
       return next;
     });
   };

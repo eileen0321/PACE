@@ -44,7 +44,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           scrollEnabled: false,
         }}
         onReady={() => onReady?.()}
-        onChangeState={(state) => { if (state === 'ended') onEnded(); }}
+        onChangeState={(state: string) => { if (state === 'ended') onEnded(); }}
         onError={() => onError?.(-1)}
       />
     </View>

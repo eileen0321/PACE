@@ -381,7 +381,15 @@ class PaceOverlayService : Service() {
       }
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
-      instance?.updateMediaSessionPlaybackState(playing = enable)
+      instance?.let {
+        it.updateMediaSessionPlaybackState(playing = enable)
+        // 2026-07-20 실기기 검증 중 발견: 알약 배지 탭 경로는 자기가 직접 autoNextEnabled를 바꾸고
+        // applyAutoBadgeStyle()도 불렀지만, 10분 자동 종료 타이머처럼 setAutoMode를 "밖에서" 부르는
+        // 경로는 이 동기화를 안 태워서 배지가 "AUTO ON"에 멈춰 있었다(토스트는 정상, 배지만 거짓말).
+        // 모든 호출 경로가 여길 한 번은 거치므로 여기서 통일해 동기화한다.
+        it.autoNextEnabled = enable
+        it.applyAutoBadgeStyle()
+      }
       showToast(context, if (enable) "🎯 Focus Session Started (10m)" else "🎯 Focus Session Ended")
     }
 
@@ -705,9 +713,9 @@ class PaceOverlayService : Service() {
       setTypeface(typeface, android.graphics.Typeface.BOLD)
       isClickable = true
       setOnClickListener {
-        autoNextEnabled = !autoNextEnabled
-        setAutoMode(applicationContext, autoNextEnabled)
-        applyAutoBadgeStyle()
+        // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해
+        // 일괄 처리한다(위 companion setAutoMode 참고) — 여기서 중복으로 안 건드림.
+        setAutoMode(applicationContext, !autoNextEnabled)
         persistState()
       }
     }

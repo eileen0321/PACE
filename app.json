@@ -10,9 +10,8 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pace.app",
-      "icon": "./assets/ios-icon.png",
       "infoPlist": {
-        "NSCameraUsageDescription": "Pace uses the front camera to detect a head nod so you can advance videos hands-free."
+        "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free."
       }
     },
     "android": {

@@ -14,8 +14,16 @@ import type { TranslationKey } from '../../services/i18n';
 // Motion 기반 웹 애니메이션을 react-native-reanimated의 entering/exiting 레이아웃 애니메이션으로
 // 대체. 원본 3슬라이드(도파민 차단막/Auto Next/블루투스) 내용은 그대로 가져오되, "Hands-Free"라는
 // 이름을 Auto Next와 블루투스 둘 다에 재사용하면 Settings의 실제 "Hands-Free Control"(블루투스
-// 리모컨) 기능과 헷갈린다는 이전 세션 결정에 따라 2번 슬라이드는 "Continuous Playback"으로 이름을
-// 분리했다.
+// 리모컨) 기능과 헷갈린다는 이전 세션 결정에 따라 2번 슬라이드는 원래 "Continuous Playback"으로
+// 이름을 분리했었다.
+//
+// 2026-07-21 밤 감사 발견(사용자 지적: "가이드 페이지 현재 구현에 따라 바꿨어?") — 그런데 실제
+// 앱 전체(Focus 탭/feed 화면 배지/Settings의 "Focus Session Duration")는 이 기능을 전부 "Focus
+// Session"이라고 부르고 있었다 — 온보딩만 "Continuous Playback"이라는 다른 이름을 써서 실제
+// 화면과 안 맞았다. 2번 슬라이드 이름을 "Focus Session"으로 다시 맞추고, 설명도 "무기한 자동재생"
+// 이 아니라 "정해둔 시간만큼만 진행되고 스스로 멈춘다"는 실제 동작(포커스 세션 리디자인 참고)을
+// 반영하도록 수정. 3번 슬라이드에는 이날 밤 추가된 "두 번째 실행부터는 앱이 곧바로 영상 피드로
+// 들어간다"는 새 런치 플로우도 한 줄 추가(PACE_ARCHITECTURE.md "런치 플로우 단순화" 참고).
 const SLIDE_THEME = {
   shield: { accent: '#818CF8', icon: 'shield' as const },
   autopilot: { accent: '#34D399', icon: 'repeat' as const },

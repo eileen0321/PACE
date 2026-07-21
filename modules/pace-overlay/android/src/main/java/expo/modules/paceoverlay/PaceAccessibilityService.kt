@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -195,6 +196,25 @@ class PaceAccessibilityService : AccessibilityService() {
     }
   }
 
+  // 2026-07-21 밤 감사 발견 — rootInActiveWindow는 "지금 입력 포커스를 가진 창"만 반환한다.
+  // 스플릿스크린/멀티윈도우에서 감시 대상 앱(YouTube 등)이 화면엔 보이지만 포커스가 다른 창에
+  // 있으면(예: 사용자가 방금 반대편 창을 탭함) 이 값이 대상 앱이 아닌 다른 창의 루트를 반환해
+  // 재생 위치 텍스트를 영원히 못 찾는다 — Tier 1이 조용히 죽고 Tier 2(45초 타임아웃)만 도는 것과
+  // 같은 부류의 버그(activeAppWindowBounds와 동일 원인). windows 목록에서 대상 패키지의 창을 직접
+  // 찾아 그 루트를 우선 쓰고, 못 찾으면(단일 창 등 기존과 동일한 상황) rootInActiveWindow로 폴백.
+  private fun trackedAppRootNode(): AccessibilityNodeInfo? {
+    try {
+      for (window in windows) {
+        val root = window.root ?: continue
+        val pkg = root.packageName?.toString()
+        if (pkg != null && SupportedApps.PACKAGES.contains(pkg)) return root
+      }
+    } catch (e: Exception) {
+      Log.w("PaceAccessibility", "trackedAppRootNode lookup failed, falling back to rootInActiveWindow", e)
+    }
+    return rootInActiveWindow
+  }
+
   // 캐시된 노드가 있으면 refresh()로 그 하나만 저렴하게 재검증(트리 워크 없음) — 유효하면 바로
   // 파싱해서 반환. 캐시가 없거나 무효화됐을 때만 전체 트리를 재탐색하고, 찾으면 다시 캐싱한다.
   private fun readCachedOrSearchTiming(): Pair<Int, Int>? {
@@ -208,7 +228,7 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       cachedTimingNode = null // 새 영상으로 넘어가 뷰가 리사이클되는 등 무효화된 캐시는 버림
     }
-    val found = findPlaybackTimingNode(rootInActiveWindow) ?: return null
+    val found = findPlaybackTimingNode(trackedAppRootNode()) ?: return null
     cachedTimingNode = found
     val desc = found.contentDescription?.toString() ?: return null
     return parseTiming(desc)
@@ -249,30 +269,53 @@ class PaceAccessibilityService : AccessibilityService() {
     return null
   }
 
+  // 2026-07-21 밤 사용자 지적("유튭 화면 작아졌을 때") — 이전엔 resources.displayMetrics(기기
+  // 전체 화면 크기)로 스와이프 좌표를 계산해서, 대상 앱이 항상 전체화면이라고 가정하고 있었다.
+  // 스플릿스크린/멀티윈도우/PIP처럼 실제 창이 화면 일부만 차지하면 좌표가 창 밖으로 나가거나
+  // (허공에 스와이프, 아무 반응 없음) 스플릿스크린의 옆 앱을 잘못 건드릴 수 있었다 — 실기기
+  // 재현은 아직(스플릿스크린을 직접 만들어 로그로 검증 필요) 코드 리뷰로 발견. windows 목록에서
+  // 감시 대상 앱(SupportedApps.PACKAGES)이 실제로 차지한 창 경계를 찾아 그 안에서만 좌표를
+  // 계산하도록 수정 — 못 찾으면(단일 창 전체화면 등 기존과 동일한 상황) 기존처럼 전체 화면
+  // 크기로 안전하게 폴백한다.
+  private fun activeAppWindowBounds(): Rect {
+    val rect = Rect()
+    try {
+      for (window in windows) {
+        val root = window.root ?: continue
+        val pkg = root.packageName?.toString()
+        if (pkg != null && SupportedApps.PACKAGES.contains(pkg)) {
+          window.getBoundsInScreen(rect)
+          if (!rect.isEmpty) return rect
+        }
+      }
+    } catch (e: Exception) {
+      Log.w("PaceAccessibility", "activeAppWindowBounds lookup failed, falling back to full screen", e)
+    }
+    val metrics = resources.displayMetrics
+    rect.set(0, 0, metrics.widthPixels, metrics.heightPixels)
+    return rect
+  }
+
   private fun performSwipeUp() {
     // dispatchGesture는 API 24(N)+ 전용. accessibility_service_config.xml의 canPerformGestures도
     // API 24+에서만 의미가 있다 — 앱 전체 minSdk가 그보다 낮으면 이 경로는 자연히 no-op.
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-    val metrics = resources.displayMetrics
-    val width = metrics.widthPixels
-    val height = metrics.heightPixels
-    // 숏폼 피드 표준 제스처: 화면 하단 3/4 지점에서 위쪽 1/4 지점으로 빠르게 스와이프(다음 영상).
+    val bounds = activeAppWindowBounds()
+    // 숏폼 피드 표준 제스처: 창 하단 3/4 지점에서 위쪽 1/4 지점으로 빠르게 스와이프(다음 영상).
     val path = Path().apply {
-      moveTo(width / 2f, height * 0.75f)
-      lineTo(width / 2f, height * 0.25f)
+      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.75f)
+      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.25f)
     }
     dispatchSwipe(path)
   }
 
-  // Bluetooth Previous 전용(2026-07-19) — performSwipeUp의 역방향(화면 상단→하단, 이전 영상).
+  // Bluetooth Previous 전용(2026-07-19) — performSwipeUp의 역방향(창 상단→하단, 이전 영상).
   private fun performSwipeDown() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-    val metrics = resources.displayMetrics
-    val width = metrics.widthPixels
-    val height = metrics.heightPixels
+    val bounds = activeAppWindowBounds()
     val path = Path().apply {
-      moveTo(width / 2f, height * 0.25f)
-      lineTo(width / 2f, height * 0.75f)
+      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.25f)
+      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.75f)
     }
     dispatchSwipe(path)
   }

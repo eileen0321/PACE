@@ -4,10 +4,14 @@
 <!-- 2026-07-19: canRetrieveWindowContent를 true로 켬 — PaceAccessibilityService의 실제 재생 위치
      감지(rootInActiveWindow 트리 순회)에 필요. 새 런타임 권한이 추가되는 게 아니라 기존 접근성
      권한 범위 안의 선언이다(사용자가 시스템 설정에서 켜는 단일 접근성 토글은 동일). -->
+<!-- 2026-07-21 밤: flagRetrieveInteractiveWindows 추가 — activeAppWindowBounds()가 스플릿스크린/
+     멀티윈도우일 때 대상 앱의 실제 창 경계를 읽으려면 getWindows()가 실제 데이터를 반환해야
+     하는데, 이 플래그 없이는 항상 빈 리스트만 온다(canRetrieveWindowContent와는 별개 플래그).
+     이것도 새 런타임 권한이 아니라 기존 접근성 토글 범위 안의 선언. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -231,6 +231,19 @@ export default function OverlaySessionScreen() {
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.overlayLayer} edges={['top']}>
+        {/* 2026-07-21 밤 사용자 지시(PACE_ARCHITECTURE.md "런치 플로우 단순화") — 콜드 스타트가
+            이제 탭 대신 바로 이 화면으로 오므로, Home/Focus/Stats/Settings에 접근할 경로가 이
+            화면 자체에 있어야 한다. 오른쪽 위 앱 아이콘 → 탭 네비게이션으로 이동(세션 자체는
+            네이티브 오버레이/YouTube에서 계속 진행 중이므로 세션을 끊지 않음). */}
+        <Pressable
+          onPress={() => router.push('/(tabs)/home')}
+          hitSlop={10}
+          style={styles.appIconBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('overlay.openApp')}
+        >
+          <Text style={styles.appIconBtnText}>P</Text>
+        </Pressable>
         <OverlayBar
           remainingMinutes={timer.remainingMinutes}
           autoNextEnabled={settings.autoNext}
@@ -292,6 +305,19 @@ export default function OverlaySessionScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F0F' },
   overlayLayer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
+  appIconBtn: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.md,
+    zIndex: 11,
+    width: 32,
+    height: 32,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appIconBtnText: { color: '#FFFFFF', fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold },
   expandedWrap: { marginHorizontal: spacing.md, marginTop: spacing.sm },
   // healthy-shorts-assistant(1)에 새로 추가된 "5분/1분 남음" 저시간 경고 토스트 이식 — 오버레이의
   // 상시 상태(하지 말 것 원칙)가 아니라 일회성 넛지라 "하단 플레이어 컨트롤 금지" 원칙과 무관.

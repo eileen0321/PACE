@@ -746,6 +746,29 @@ class PaceOverlayService : Service() {
     applyAutoBadgeStyle()
     bar.addView(autoBadge)
 
+    // 2026-07-21 밤 사용자 지시(PACE_ARCHITECTURE.md "런치 플로우 단순화") — 콜드 스타트가
+    // 이제 탭 대신 곧바로 세션(Overlay+YouTube)으로 가므로, 실사용 중 대부분의 시간(YouTube가
+    // 전경, Pace Activity는 백그라운드) 유일하게 항상 보이는 이 알약에 앱으로 돌아가는 경로가
+    // 있어야 Home/Focus/Stats/Settings에 접근 가능하다 — JS 쪽 overlay/index.tsx에도 같은
+    // 목적의 앱 아이콘 버튼이 있지만 그건 Pace Activity가 전경일 때만(거의 항상 YouTube에
+    // 가려짐) 보이므로 실질적으로 이 네이티브 버튼이 진짜 진입점이다. getLaunchIntentForPackage
+    // 사용 — 이 모듈이 호스트 앱의 MainActivity 클래스에 직접 의존하지 않도록.
+    val appBtn = TextView(this).apply {
+      text = "P"
+      textSize = 12f
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      isClickable = true
+      setOnClickListener {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        launchIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        launchIntent?.let { startActivity(it) }
+      }
+    }
+    applyPillButtonStyle(appBtn)
+    bar.addView(appBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      leftMargin = (10 * resources.displayMetrics.density).toInt()
+    })
+
     overlayView = bar
 
     val params = WindowManager.LayoutParams(

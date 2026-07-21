@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -92,14 +92,21 @@ export default function HomeScreen() {
   const handleConnectingComplete = useCallback(() => {
     const platform = connectingPlatform;
     setConnectingPlatform(null);
-    if (platform) router.push({ pathname: '/overlay', params: { platform } });
+    if (!platform) return;
+    // 2026-07-22 감사수정(App Review 블로커): iOS의 /overlay는 가짜 유튜브 "DEV SIMULATOR" 목업이라
+    // 그대로 심사에 내면 반려(2.2 데모/4.3 사칭)된다. iOS에선 실제 인앱 재생 화면(Pace Feed)으로 보낸다.
+    // Android는 오버레이-어시스턴트 모델 그대로 유지.
+    if (Platform.OS === 'ios') { router.push('/feed'); return; }
+    router.push({ pathname: '/overlay', params: { platform } });
   }, [connectingPlatform, router]);
 
-  // "YouTube"(그냥 열기) 카드 전용 — Pace 세션/오버레이/한도 집행을 전혀 거치지 않고 그냥 앱만 연다.
-  // 한도 도달 여부와도 무관(추적 자체가 없으므로 막을 근거가 없음).
+  // "YouTube"(그냥 열기) 카드 — Android는 Pace 추적 없이 유튜브 앱만 연다. iOS엔 "타 앱 위 오버레이"가
+  // 없으므로(그리고 launchPlatformApp이 non-Android no-op이라 버튼이 죽어 있었음 — 감사발견) 인앱
+  // Pace Feed로 보낸다.
   const openPlainYoutube = useCallback(() => {
+    if (Platform.OS === 'ios') { router.push('/feed'); return; }
     launchPlatformApp('youtube').catch(() => {});
-  }, []);
+  }, [router]);
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     if (isLimitReached) {

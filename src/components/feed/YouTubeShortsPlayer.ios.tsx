@@ -49,8 +49,14 @@ const INJECTED_JS = `
     }
     window.pacePlay = function () { v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
-    v.muted = true; // 실기기 무음 자동재생 허용 조건
+    v.muted = true; // 실기기 무음 자동재생 허용 조건(iOS는 제스처 없는 자동재생은 무음만 허용)
     v.play().catch(function () {}); // 찾는 즉시 재생 시도
+    // 2026-07-22 감사수정: 무음으로 시작하되, 첫 사용자 탭(제스처) 때 소리를 켠다 — 스냅 AEC/볼륨키의
+    // 전제가 "영상 소리"라 무음이면 기능 전체가 무의미했다. 제스처가 있으므로 unmute 재생이 허용됨.
+    var unmuted = false;
+    function unmuteOnce() { if (unmuted) return; unmuted = true; v.muted = false; v.play().catch(function () {}); }
+    document.addEventListener('touchend', unmuteOnce, true);
+    document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
     v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
     v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });

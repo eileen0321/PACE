@@ -5,7 +5,7 @@ import type { AppShieldTarget, DailyStats } from '../../types/models';
 export async function getTodayUsageMinutes(userId: string): Promise<number> {
   const db = await getDb();
   const row = await db.getFirstAsync<{ total: number | null }>(
-    `SELECT SUM(duration_seconds) as total FROM viewing_sessions WHERE user_id = ? AND date(started_at) = date('now', 'localtime')`,
+    `SELECT SUM(duration_seconds) as total FROM viewing_sessions WHERE user_id = ? AND date(started_at, 'localtime') = date('now', 'localtime')`,
     [userId]
   );
   return Math.floor((row?.total ?? 0) / 60);
@@ -19,7 +19,7 @@ export async function getTodayUsageByApp(userId: string): Promise<{ app: AppShie
   const rows = await db.getAllAsync<{ platform_app: string | null; minutes: number }>(
     `SELECT platform_app, SUM(duration_seconds) / 60 as minutes
      FROM viewing_sessions
-     WHERE user_id = ? AND date(started_at) = date('now', 'localtime') AND platform_app IS NOT NULL
+     WHERE user_id = ? AND date(started_at, 'localtime') = date('now', 'localtime') AND platform_app IS NOT NULL
      GROUP BY platform_app`,
     [userId]
   );
@@ -29,13 +29,13 @@ export async function getTodayUsageByApp(userId: string): Promise<{ app: AppShie
 export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
-    `SELECT date(started_at) as date,
+    `SELECT date(started_at, 'localtime') as date,
             SUM(duration_seconds) / 60 as total_minutes,
             SUM(videos_watched) as total_videos,
             MAX(duration_seconds) as longest
      FROM viewing_sessions
-     WHERE user_id = ? AND started_at >= date('now', '-6 days', 'localtime')
-     GROUP BY date(started_at)
+     WHERE user_id = ? AND date(started_at, 'localtime') >= date('now', '-6 days', 'localtime')
+     GROUP BY date(started_at, 'localtime')
      ORDER BY date ASC`,
     [userId]
   );
@@ -52,13 +52,13 @@ export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
 export async function getPreviousWeekStats(userId: string): Promise<DailyStats[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
-    `SELECT date(started_at) as date,
+    `SELECT date(started_at, 'localtime') as date,
             SUM(duration_seconds) / 60 as total_minutes,
             SUM(videos_watched) as total_videos,
             MAX(duration_seconds) as longest
      FROM viewing_sessions
-     WHERE user_id = ? AND started_at >= date('now', '-13 days', 'localtime') AND started_at < date('now', '-6 days', 'localtime')
-     GROUP BY date(started_at)
+     WHERE user_id = ? AND date(started_at, 'localtime') >= date('now', '-13 days', 'localtime') AND date(started_at, 'localtime') < date('now', '-6 days', 'localtime')
+     GROUP BY date(started_at, 'localtime')
      ORDER BY date ASC`,
     [userId]
   );

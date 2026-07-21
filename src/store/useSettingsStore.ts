@@ -49,8 +49,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.settings);
       if (raw) {
-        const saved = JSON.parse(raw);
-        set({ settings: { ...DEFAULT_SETTINGS, ...saved } });
+        // 2026-07-22 감사수정: JSON.parse가 손상된 블롭에 throw하면 load()가 reject → 부팅에서 await하면
+        // unhandled rejection + DEFAULT 폴백 안 됨. parse만 별도 try/catch로 감싸 손상 시 기본값 유지.
+        try {
+          const saved = JSON.parse(raw);
+          set({ settings: { ...DEFAULT_SETTINGS, ...saved } });
+        } catch {
+          set({ settings: DEFAULT_SETTINGS });
+        }
       }
     } finally {
       set({ isLoaded: true });

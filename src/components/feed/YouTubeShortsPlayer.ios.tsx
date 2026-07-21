@@ -121,12 +121,9 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
         }}
         // 깨끗한 iPhone Safari UA — 기본 WebView UA는 유튜브가 임베드/웹뷰로 감지해 "앱에서 보기"로 막는다.
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-        onLoadStart={() => console.log('[WV] loadStart', source.uri)}
-        onLoadEnd={() => console.log('[WV] loadEnd', source.uri)}
-        onError={(e) => console.log('[WV] ❌ onError', JSON.stringify(e.nativeEvent))}
-        onHttpError={(e) => console.log('[WV] ❌ httpError', e.nativeEvent?.statusCode, e.nativeEvent?.url)}
-        onContentProcessDidTerminate={() => { console.log('[WV] ⚠️ content process terminated → reload'); webRef.current?.reload(); }}
-        onNavigationStateChange={(s) => console.log('[WV] nav', s.url?.slice(0, 60), 'loading=', s.loading)}
+        onError={(e) => console.warn('[WV] onError', e.nativeEvent?.code, String(e.nativeEvent?.description).slice(0, 60))}
+        onHttpError={(e) => console.warn('[WV] httpError', e.nativeEvent?.statusCode)}
+        onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
           let msg: { type?: string; code?: number; value?: number } = {};
           try {
@@ -134,7 +131,6 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           } catch {
             return;
           }
-          if (msg.type !== 'progress') console.log('[WV] msg', msg.type, msg.code ?? ''); // progress는 스팸이라 제외
           if (msg.type === 'ready') {
             setReady(true);
             onReady?.();

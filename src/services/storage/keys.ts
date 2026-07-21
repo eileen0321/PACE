@@ -9,6 +9,9 @@ export const STORAGE_KEYS = {
   premiumIsPremium: 'pace_premium_is_premium',
   premiumExpiresAt: 'pace_premium_expires_at',
   bluetoothOnboardingSeen: 'pace_bluetooth_onboarding_seen',
+  // 2026-07-21 런치 플로우: 온보딩 1회 완료 플래그. index.tsx가 이 값으로 "첫 실행=온보딩 /
+  // 이후=바로 세션"을 분기. (Android 커밋 3c2cafb가 참조하면서 키 정의를 빠뜨려 tsc가 깨져 있던 것 보강.)
+  onboardingCompleted: 'pace_onboarding_completed',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

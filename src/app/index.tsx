@@ -40,5 +40,8 @@ export default function RootIndex() {
   if (target === null) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   if (target === 'onboarding') return <Redirect href="/onboarding" />;
   if (Platform.OS === 'android') return <Redirect href={{ pathname: '/overlay', params: { platform: 'youtube' } }} />;
-  return <Redirect href="/(tabs)/home" />;
+  // iOS: 온보딩을 이미 겪은(=두 번째 실행부터) 콜드 스타트는 곧바로 세션 화면(Pace Feed WebView)으로.
+  // (2026-07-21 "런치 플로우 단순화" — Android는 /overlay, iOS는 /feed. 맥 세션이 넣기로 한 iOS 분기.)
+  // 탭(Home/Focus/Stats/Settings)은 유지 — /feed 우상단 "P" 앱 아이콘 버튼으로 언제든 복귀.
+  return <Redirect href="/feed" />;
 }

@@ -1,23 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
-import YoutubePlayer, { type YoutubeIframeRef } from 'react-native-youtube-iframe';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { WebView } from 'react-native-webview';
 
-// ⚠️ 플랫폼 분리(2026-07-20): iOS 전용. 같은 폴더 YouTubeShortsPlayer.tsx는 Android 전용(원본페이지).
-// iOS는 공식 임베드(합법)로 간다.
+// iOS 전용 Shorts 플레이어 (2026-07-21 사용자 지시: "IFrame 포기, 웹뷰로 다시 전환").
 //
-// ── 왜 react-native-youtube-iframe인가 (2026-07-20 iOS 실검증 + 웹리서치) ───────────────────────
-// 직접 IFrame/embed(new YT.Player를 loadHTMLString으로, 또는 /embed URI 직접 로드)는 iOS WKWebView에서
-// **재생이 안 붙는다**(error 152 또는 <video> readyState 0). 근본 원인은 WKWebView가 cross-origin
-// 요청에 **HTTP Referer를 안 보내는 WebKit 버그(#169846)** — YouTube가 Referer로 임베드를 검증하므로
-// 스트림을 거부한다. nocookie 도메인·Referer 헤더로도 해결 안 됨(후속 스트림 요청의 Referer까지 strip).
-// react-native-youtube-iframe은 플레이어 HTML을 **실제 호스팅 URL(DEFAULT_BASE_URL)** 에서 로드해
-// origin/Referer를 확보 → 이 문제를 우회한다. iOS 실검증: onReady 정상 수신, 영상 프레임 표시됨(152 없음).
+// 배경: react-native-youtube-iframe(공식 IFrame 임베드)은 재생은 되지만 임베드가 **항상 16:9**라
+// 세로 쇼츠가 필러박스돼 화면 가운데 조각으로만 보였다(진짜 9:16 풀블리드 불가 — 임베드 정책 한계).
+// 사용자가 "유튜브 앱처럼 전체화면"을 원해 → Android(.tsx)와 동일하게 **실제 youtube.com/shorts/ID
+// 페이지를 WebView로 직접 로드**하는 방식으로 전환. 페이지 자체 레이아웃이라 9:16 풀블리드가 나온다.
 //
-// ⚠️ 남은 iOS 제약(플랫폼 한계, 라이브러리 문제 아님): iOS는 **사용자 제스처 없는 자동재생을 차단**해
-// (무음이어도) 영상이 재생버튼 상태로 멈춘다(play prop=true여도). 사용자가 영상을 한 번 탭하면 재생되고,
-// 같은 WebView에서 loadVideoById로 다음 영상을 이어재생하므로 첫 탭 이후 auto-next는 hands-free 가능성이
-// 높다(무탭 시뮬레이터에서 첫 탭 이후 동작은 실기기 검증 필요). mute는 자동재생 시도 성공률을 위해 유지.
-// TODO(제품): 첫 진입 시 "탭해서 시작" 오버레이 or 첫 영상만 사용자 탭 유도.
+// 트레이드오프(알고 가는 것):
+//  - 비로그인 상태(특히 시뮬레이터)에서는 유튜브가 "앱에서 보기(Watch on YouTube)" 인터스티셜을 띄워
+//    작게 보일 수 있다. 로그인된 실기기에서는 전체화면 재생(다른 세션이 Android에서 readyState=4 확인).
+//  - JS 플레이어 제어 API가 없다 → "다음 영상"은 IFrame API가 아니라 외부 입력(볼륨/BT 리모컨)이 부모
+//    피드의 advance()를 호출 → videoId가 바뀌면 이 WebView가 새 URL로 네비게이션(=다음 재생). (사용자
+//    지시 (2)(3): 에어팟/버즈 볼륨, 다이소 BT 리모컨 → 다음. 입력 처리는 useFeedRemoteControl/볼륨
+//    관찰 모듈, 이 컴포넌트는 videoId 변화에 반응만 한다.)
+//  - 종료 감지: 실제 <video>의 currentTime을 폴링해 nearEnd/loopedBack(쇼츠 무한루프 되감김)을 판정.
 
 type Props = {
   videoId: string;
@@ -25,63 +24,94 @@ type Props = {
   onEnded: () => void;
   onReady?: () => void;
   onError?: (code: number) => void;
-  /** 재생 진행률(0~1) 1초마다 보고 — 피드가 "영상 1/2지점부터 고개짓 카메라 ON" 배터리 게이팅에 사용. */
+  /** 재생 진행률(0~1) — 피드의 고개짓 카메라 배터리 게이팅용. */
   onProgress?: (fraction: number) => void;
 };
 
+// youtube.com/shorts 페이지의 실제 <video>에 붙어 ready/ended/progress를 RN으로 보내고 play/pause 전역함수 노출.
+const INJECTED_JS = `
+(function () {
+  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  var reportedReady = false, reportedEnded = false, lastT = -1;
+  function attach(n) {
+    var v = document.querySelector('video');
+    if (!v) { if (n > 0) setTimeout(function () { attach(n - 1); }, 300); return; }
+    window.pacePlay = function () { v.play().catch(function () {}); };
+    window.pacePause = function () { v.pause(); };
+    v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
+    v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
+    v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
+    if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
+    setInterval(function () {
+      if (!v.duration || isNaN(v.duration)) return;
+      var t = v.currentTime;
+      if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
+      if (reportedEnded) return;
+      var nearEnd = t >= v.duration - 0.5;
+      var loopedBack = lastT > 1 && t < lastT - 1;
+      if (nearEnd || loopedBack) { reportedEnded = true; send({ type: 'ended' }); return; }
+      lastT = t;
+    }, 500);
+  }
+  attach(15);
+})();
+true;
+`;
+
 export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress }: Props) {
-  const { width } = useWindowDimensions();
-  const playerRef = useRef<YoutubeIframeRef>(null);
+  const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  const source = useMemo(() => ({ uri: `https://www.youtube.com/shorts/${videoId}` }), [videoId]);
 
-  // 2026-07-21 실기기/시뮬에서 발견: YouTube IFrame 임베드는 **항상 16:9**로 렌더된다(세로 영상도
-  // 임베드 안에선 16:9 프레임에 필러박스). height=화면전체로 주면 영상이 위쪽 16:9 띠에만 뜨고 아래가
-  // 전부 검정 → 사용자에겐 "까만 화면"으로 보였다. 그래서 플레이어 높이를 16:9로 명시하고 검은 배경
-  // 정중앙에 세로 정렬(의도된 레터박스). YouTube 임베드 정책상 진짜 풀블리드 9:16은 불가.
-  const playerHeight = Math.round((width * 9) / 16);
-
-  // 영상 바뀌면 ready 리셋(다음 플레이어 onReady 대기).
+  // videoId가 바뀌면(다음 영상) 새 페이지 로드 → ready 리셋.
   useEffect(() => { setReady(false); }, [videoId]);
 
-  // ⚠️ getCurrentTime/getDuration은 YT.Player가 준비된 뒤(onReady)에만 호출해야 한다 — 그 전에
-  // 부르면 WebView 안에서 'player.getCurrentTime is not a function' 예외가 1초마다 뜬다(실기기
-  // 로그로 발견). ready일 때만 폴링.
+  // 재생/일시정지 반영.
   useEffect(() => {
-    if (!ready || !onProgress) return;
-    const iv = setInterval(async () => {
-      try {
-        const ref = playerRef.current;
-        if (!ref) return;
-        const [cur, dur] = await Promise.all([ref.getCurrentTime(), ref.getDuration()]);
-        if (dur > 0) onProgress(Math.min(1, cur / dur));
-      } catch {}
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [ready, onProgress]);
+    if (!ready) return;
+    webRef.current?.injectJavaScript(
+      `${playing ? 'window.pacePlay && window.pacePlay()' : 'window.pacePause && window.pacePause()'}; true;`
+    );
+  }, [ready, playing]);
 
   return (
     <View style={styles.container}>
-      <YoutubePlayer
-        ref={playerRef}
-        height={playerHeight}
-        width={width}
-        play={playing}
-        mute
-        videoId={videoId}
-        initialPlayerParams={{ controls: false, modestbranding: true, rel: false, loop: false, preventFullScreen: true }}
-        webViewProps={{
-          allowsInlineMediaPlayback: true,
-          mediaPlaybackRequiresUserAction: false,
-          scrollEnabled: false,
+      <WebView
+        ref={webRef}
+        source={source}
+        injectedJavaScript={INJECTED_JS}
+        style={styles.web}
+        javaScriptEnabled
+        domStorageEnabled
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        scrollEnabled={false}
+        // 깨끗한 iPhone Safari UA — 기본 WebView UA는 유튜브가 임베드/웹뷰로 감지해 "앱에서 보기"로 막는다.
+        userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+        onMessage={(e) => {
+          let msg: { type?: string; code?: number; value?: number } = {};
+          try {
+            msg = JSON.parse(e.nativeEvent.data);
+          } catch {
+            return;
+          }
+          if (msg.type === 'ready') {
+            setReady(true);
+            onReady?.();
+          } else if (msg.type === 'ended') {
+            onEnded();
+          } else if (msg.type === 'progress') {
+            if (typeof msg.value === 'number') onProgress?.(msg.value);
+          } else if (msg.type === 'error') {
+            onError?.(msg.code ?? -1);
+          }
         }}
-        onReady={() => { console.log('[YTPlayer] ✅ ready', videoId); setReady(true); onReady?.(); }}
-        onChangeState={(state: string) => { console.log('[YTPlayer] state=', state, videoId); if (state === 'ended') onEnded(); }}
-        onError={(e: string) => { console.log('[YTPlayer] ❌ ERROR', e, videoId); onError?.(-1); }}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000', overflow: 'hidden', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: '#000000' },
+  web: { flex: 1, backgroundColor: '#000000' },
 });

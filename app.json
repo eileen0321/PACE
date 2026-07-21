@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pace.app",
+      "icon": "./assets/ios-icon.png",
       "infoPlist": {
         "NSCameraUsageDescription": "Pace uses the front camera to detect a head nod so you can advance videos hands-free."
       }
@@ -36,7 +37,19 @@
       ],
       "expo-sqlite",
       "expo-status-bar",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/android-icon-foreground.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#E6F4FE",
+          "dark": {
+            "image": "./assets/android-icon-foreground.png",
+            "backgroundColor": "#0B1220"
+          }
+        }
+      ],
       "@react-native-google-signin/google-signin",
       "expo-localization",
       "expo-font",

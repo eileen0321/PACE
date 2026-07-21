@@ -7,6 +7,7 @@ import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
+import { useVolumeNext } from '../../hooks/useVolumeNext';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -118,7 +119,15 @@ export default function PaceFeedScreen() {
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
-    headDetectActive, // iOS 고개짓 감지 ON 조건(Focus Session + 1/2지점 이후) — 배터리 게이팅
+    headDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
+  });
+
+  // 2026-07-22 감사 수정: 볼륨키(에어팟/버즈/다이소 BT 리모컨) → 다음 Short 훅이 추가됐지만 어느
+  // 화면에도 연결돼 있지 않아 기능이 죽어 있었다. 여기 피드에 연결 — Focus Session 동안만 볼륨버튼을
+  // "다음"으로 쓴다(그 외엔 정상 볼륨조절 유지). Android/시뮬은 no-op.
+  useVolumeNext({
+    enabled: isAutoMode,
+    onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면

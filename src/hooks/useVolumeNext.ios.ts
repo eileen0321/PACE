@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { requireNativeModule } from 'expo-modules-core';
 
 // iOS 볼륨 버튼(에어팟/버즈/다이소 BT 리모컨) → "다음 Short" (2026-07-21 사용자 지시 (2)(3)).
 // modules/pace-volumekey(AVAudioSession.outputVolume KVO)를 감싼다. Metro가 iOS에서만 이 .ios.ts 선택.
@@ -19,7 +20,9 @@ export function useVolumeNext({ enabled, onNext }: { enabled: boolean; onNext: (
     if (!enabled) return;
     let mod: VolumeModule | null = null;
     try {
-      mod = require('../../modules/pace-volumekey').PaceVolumeKey as VolumeModule;
+      // ⚠️ 로컬 Expo 모듈은 상대경로 require('../../modules/..')가 Metro에서 해석 안 돼(감사 발견,
+      // gesture 훅과 동일 버그) → requireNativeModule로 네이티브 모듈을 직접 로드해야 링크된다.
+      mod = requireNativeModule<VolumeModule>('PaceVolumeKey');
     } catch (e) {
       console.warn('[volumekey] ❌ 네이티브 모듈 미링크 — Dev Client 재빌드 필요(볼륨키 비활성):', String(e));
       return;

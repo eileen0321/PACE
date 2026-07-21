@@ -236,13 +236,15 @@ export default function PaceFeedScreen() {
         )}
       </SafeAreaView>
 
-      {isLoading && (
+      {(isLoading || (isRefilling && !current)) && (
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.primary} />
           <Text style={styles.stateText}>{t('feed.loadingShorts')}</Text>
         </View>
       )}
-      {!isLoading && !current && (
+      {/* 2026-07-22 감사수정: isRefilling 중엔 current가 잠깐 null이어도 에러화면 대신 위 스피너를 보인다
+          (스킵이 refill보다 빨라 큐가 순간적으로 빌 때 "로드 실패"가 번쩍이던 문제). */}
+      {!isLoading && !isRefilling && !current && (
         <View style={styles.centerState}>
           <Feather name="cloud-off" size={28} color={colors.textSecondary} />
           <Text style={styles.stateText}>

@@ -49,8 +49,14 @@ const INJECTED_JS = `
     }
     window.pacePlay = function () { v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
-    v.muted = true; // 실기기 무음 자동재생 허용 조건
+    v.muted = true; // 실기기 무음 자동재생 허용 조건(iOS는 제스처 없는 자동재생은 무음만 허용)
     v.play().catch(function () {}); // 찾는 즉시 재생 시도
+    // 2026-07-22 감사수정: 무음으로 시작하되, 첫 사용자 탭(제스처) 때 소리를 켠다 — 스냅 AEC/볼륨키의
+    // 전제가 "영상 소리"라 무음이면 기능 전체가 무의미했다. 제스처가 있으므로 unmute 재생이 허용됨.
+    var unmuted = false;
+    function unmuteOnce() { if (unmuted) return; unmuted = true; v.muted = false; v.play().catch(function () {}); }
+    document.addEventListener('touchend', unmuteOnce, true);
+    document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
     v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
     v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
@@ -121,12 +127,9 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
         }}
         // 깨끗한 iPhone Safari UA — 기본 WebView UA는 유튜브가 임베드/웹뷰로 감지해 "앱에서 보기"로 막는다.
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-        onLoadStart={() => console.log('[WV] loadStart', source.uri)}
-        onLoadEnd={() => console.log('[WV] loadEnd', source.uri)}
-        onError={(e) => console.log('[WV] ❌ onError', JSON.stringify(e.nativeEvent))}
-        onHttpError={(e) => console.log('[WV] ❌ httpError', e.nativeEvent?.statusCode, e.nativeEvent?.url)}
-        onContentProcessDidTerminate={() => { console.log('[WV] ⚠️ content process terminated → reload'); webRef.current?.reload(); }}
-        onNavigationStateChange={(s) => console.log('[WV] nav', s.url?.slice(0, 60), 'loading=', s.loading)}
+        onError={(e) => console.warn('[WV] onError', e.nativeEvent?.code, String(e.nativeEvent?.description).slice(0, 60))}
+        onHttpError={(e) => console.warn('[WV] httpError', e.nativeEvent?.statusCode)}
+        onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
           let msg: { type?: string; code?: number; value?: number } = {};
           try {
@@ -134,7 +137,6 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           } catch {
             return;
           }
-          if (msg.type !== 'progress') console.log('[WV] msg', msg.type, msg.code ?? ''); // progress는 스팸이라 제외
           if (msg.type === 'ready') {
             setReady(true);
             onReady?.();

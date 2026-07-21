@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.pace.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free."
-      }
+      },
+      "icon": "./assets/ios-icon.png"
     },
     "android": {
       "package": "com.pace.app",

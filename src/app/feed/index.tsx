@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -102,6 +102,25 @@ export default function PaceFeedScreen() {
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
 
+  // 2026-07-22 death-spiral 방지: 실기기에서 다수 영상이 login/consent 벽으로 재생 실패(onError/novideo)하면
+  // onError→goNext가 큐를 통째로 순삭하며 무한 스킵→까만화면이 될 수 있다. 연속 실패를 세서 임계(6)를
+  // 넘으면 스킵을 멈추고 에러 상태로 전환(사용자에게 재시도 UI). 재생이 실제로 되면(onProgress>0) 리셋.
+  const errorStreakRef = useRef(0);
+  const [feedBlocked, setFeedBlocked] = useState(false);
+  const handlePlayerError = () => {
+    errorStreakRef.current += 1;
+    if (errorStreakRef.current >= 6) {
+      setFeedBlocked(true); // 연속 6회 실패 → 스킵 중단
+      return;
+    }
+    goNext();
+  };
+  const handleProgress = (p: number) => {
+    if (p > 0 && errorStreakRef.current !== 0) errorStreakRef.current = 0; // 실제 재생되면 스트릭 리셋
+    setProgress(p);
+  };
+  const retryFeed = () => { errorStreakRef.current = 0; setFeedBlocked(false); loadInitial(); };
+
   const goPrevious = () => {
     if (goToPrevious()) setStatus('PLAYING');
   };
@@ -142,13 +161,13 @@ export default function PaceFeedScreen() {
 
   return (
     <View style={styles.container}>
-      {current && (
+      {current && !feedBlocked && (
         <YouTubeShortsPlayer
           videoId={current.videoId}
           playing={playing}
-          onProgress={setProgress}
+          onProgress={handleProgress}
           onEnded={onEnded}
-          onError={() => goNext()} // 재생 불가한 영상(지역제한 등)은 건너뜀
+          onError={handlePlayerError} // 재생 불가 영상 스킵 — 단 연속 실패는 가드가 잡음(death-spiral 방지)
         />
       )}
 
@@ -230,6 +249,16 @@ export default function PaceFeedScreen() {
             {error === 'EMPTY_FEED' ? t('feed.emptyQueueMessage') : t('feed.loadFailedMessage')}
           </Text>
           <Pressable onPress={() => loadInitial()} style={styles.retryBtn}>
+            <Text style={styles.retryText}>{t('paywall.retry')}</Text>
+          </Pressable>
+        </View>
+      )}
+      {/* 2026-07-22: 연속 재생실패 6회 → 무한 스킵(까만화면) 대신 여기서 멈추고 재시도 UI 노출. */}
+      {feedBlocked && (
+        <View style={styles.centerState}>
+          <Feather name="alert-triangle" size={28} color={colors.warning} />
+          <Text style={styles.stateText}>{t('feed.loadFailedMessage')}</Text>
+          <Pressable onPress={retryFeed} style={styles.retryBtn}>
             <Text style={styles.retryText}>{t('paywall.retry')}</Text>
           </Pressable>
         </View>

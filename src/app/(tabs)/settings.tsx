@@ -3,9 +3,10 @@ import { Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, Style
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as StoreReview from 'expo-store-review';
+// ⚠️ 2026-07-22 감사 수정: expo-file-system/sharing/store-review를 top-level import하면, 이 네이티브
+// 모듈들이 없는 빌드(=아직 재빌드 안 한 기기)에서 requireNativeModule이 모듈 로드 시점에 throw →
+// settings.tsx가 default export를 못 해 탭 전체가 먹통(까만화면)이 됐다. 실제로 쓰는 핸들러 안에서만
+// lazy require하도록 바꿔, 모듈이 없어도 화면은 정상 뜨고 해당 기능만 graceful하게 실패하게 한다.
 import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
@@ -154,6 +155,8 @@ export default function SettingsScreen() {
         getWeeklyStats(user.id),
       ]);
       const payload = { exportedAt: new Date().toISOString(), settings, weeklyStats, sessions };
+      const { File, Paths } = require('expo-file-system'); // lazy: 미링크 빌드에서 화면 죽지 않게
+      const Sharing = require('expo-sharing');
       const file = new File(Paths.cache, `pace-export-${Date.now()}.json`);
       file.create();
       file.write(JSON.stringify(payload, null, 2));
@@ -177,6 +180,7 @@ export default function SettingsScreen() {
 
   const handleRateApp = async () => {
     try {
+      const StoreReview = require('expo-store-review'); // lazy: 미링크 빌드에서 화면 죽지 않게
       const available = await StoreReview.isAvailableAsync();
       if (available) await StoreReview.requestReview();
       else Alert.alert(t('settings.rateApp'), t('settings.rateAppUnavailable'));

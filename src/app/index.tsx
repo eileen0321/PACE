@@ -40,8 +40,9 @@ export default function RootIndex() {
   if (target === null) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   if (target === 'onboarding') return <Redirect href="/onboarding" />;
   if (Platform.OS === 'android') return <Redirect href={{ pathname: '/overlay', params: { platform: 'youtube' } }} />;
-  // iOS: 온보딩을 이미 겪은(=두 번째 실행부터) 콜드 스타트는 곧바로 세션 화면(Pace Feed WebView)으로.
-  // (2026-07-21 "런치 플로우 단순화" — Android는 /overlay, iOS는 /feed. 맥 세션이 넣기로 한 iOS 분기.)
-  // 탭(Home/Focus/Stats/Settings)은 유지 — /feed 우상단 "P" 앱 아이콘 버튼으로 언제든 복귀.
-  return <Redirect href="/feed" />;
+  // iOS: 콜드 스타트는 **홈(네이티브 앱)**으로 — 유튜브 피드로 자동 진입하지 않는다. (2026-07-22 사용자
+  // 지시, App Review 리스크 완화) 앱을 켜면 심사자가 유튜브가 아니라 네이티브 집중/홈 화면을 먼저 보게
+  // 되고, Pace Feed(유튜브 웹뷰)는 사용자가 직접 눌러야만(집중 탭 → Open Pace Feed) 로드된다 →
+  // "유튜브 클라이언트"가 아니라 "부가기능"으로 확실히 보여 4.2/5.2.2 대응에 유리. Android는 기존 유지.
+  return <Redirect href="/(tabs)/home" />;
 }

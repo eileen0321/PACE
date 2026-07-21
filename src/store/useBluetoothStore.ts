@@ -54,10 +54,20 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
 
   toggleAutoMode: async () => {
     const next = !get().autoModeEnabled;
+    // 2026-07-21 밤 감사 발견 — 이 토글이 켜지면 네이티브에서 핑거스냅(PaceSnapDetector, RECORD_AUDIO
+    // 필요)도 함께 시작되는데, 그 권한을 요청하는 JS 코드가 어디에도 없어 대부분의 실기기에서
+    // 조용히 아무 반응도 없었다(네이티브가 권한 없으면 안전하게 no-op하도록만 방어돼 있었을 뿐).
+    // 이 인앱 버튼이 "핸즈프리를 켜는" 유일한 JS 도달 경로라 여기서 먼저 물어본다 — 실제 스와이프
+    // (알약 탭/블루투스 리모컨)는 100% 네이티브라 JS가 가로챌 수 없지만, 한 번이라도 이 경로로
+    // 권한을 받아두면 이후 알약/리모컨 경로에서도 계속 동작한다.
+    if (next) {
+      const hasPermission = await bluetoothService.hasRecordAudioPermission();
+      if (!hasPermission) await bluetoothService.requestRecordAudioPermission().catch(() => false);
+    }
     await bluetoothService.toggleAutoMode(next);
     set({ autoModeEnabled: next, autoToggleCount: get().autoToggleCount + 1 });
     // iOS는 네이티브 토스트가 없으므로(하드웨어 리모컨 미구현) 인앱 버튼 탭에서는 여기서 직접 표시.
-    useToastStore.getState().show(next ? '🎧 Auto Mode Enabled' : '🎧 Auto Mode Disabled');
+    useToastStore.getState().show(next ? '🎧 Focus Session Enabled' : '🎧 Focus Session Disabled');
   },
 
   setFocusSessionDurationMinutes: async (minutes) => {

@@ -33,6 +33,20 @@ if (ENABLE_AUTO_NEXT) {
   }
 }
 
+// 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT=false로 빌드해도 알약 탭/블루투스 리모컨은
+// 코틀린에서 직접 setAutoMode를 불러 이 JS 플래그를 완전히 우회했다("스토어 빌드에선 꺼짐"이
+// 실제로는 보장 안 됨). 앱 부팅 시(_layout.tsx) 이 값을 네이티브에 넘겨 setAutoMode(true) 자체를
+// 어느 경로로 불려도 막는다 — ENABLE_AUTO_NEXT가 false여도 반드시 호출해야(값 false로) 이전 빌드가
+// 남겨둔 SharedPreferences의 stale true 값을 덮어쓴다.
+export function syncAutoNextBuildFlag(): void {
+  try {
+    const mod = require('../../../modules/pace-overlay').PaceOverlay;
+    mod?.setBuildAutoNextEnabled(ENABLE_AUTO_NEXT);
+  } catch (e) {
+    console.warn('[autoNextService.android] syncAutoNextBuildFlag failed', e);
+  }
+}
+
 export const autoNextService: AutoNextService = {
   supportsAutoNext: ENABLE_AUTO_NEXT && PaceOverlay !== null,
 
@@ -47,7 +61,7 @@ export const autoNextService: AutoNextService = {
   },
 
   async start() {
-    if (!ENABLE_AUTO_NEXT) throw new Error('Auto Next is disabled in this build (EXPO_PUBLIC_ENABLE_AUTO_NEXT=false)');
+    if (!ENABLE_AUTO_NEXT) throw new Error('Focus Session hands-free advancing is disabled in this build (EXPO_PUBLIC_ENABLE_AUTO_NEXT=false)');
     if (!PaceOverlay) return;
     if (!PaceOverlay.hasAccessibilityPermission()) {
       PaceOverlay.requestAccessibilityPermission();

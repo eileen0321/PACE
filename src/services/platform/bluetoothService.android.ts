@@ -11,6 +11,8 @@ let PaceOverlay: {
   setBluetoothAutoMode(enable: boolean): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
+  hasRecordAudioPermission(): boolean;
+  requestRecordAudioPermission(): Promise<{ status: string; granted: boolean }>;
 } | null = null;
 
 try {
@@ -83,6 +85,25 @@ export const bluetoothService: BluetoothService = {
     } catch (e) {
       console.warn('[bluetoothService.android] getFocusSessionDurationMinutes failed', e);
       return 10;
+    }
+  },
+
+  async hasRecordAudioPermission() {
+    try {
+      return PaceOverlay?.hasRecordAudioPermission() ?? false;
+    } catch (e) {
+      console.warn('[bluetoothService.android] hasRecordAudioPermission failed', e);
+      return false;
+    }
+  },
+
+  async requestRecordAudioPermission() {
+    try {
+      const result = await PaceOverlay?.requestRecordAudioPermission();
+      return result?.granted ?? false;
+    } catch (e) {
+      console.warn('[bluetoothService.android] requestRecordAudioPermission failed', e);
+      return false;
     }
   },
 };

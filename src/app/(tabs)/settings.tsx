@@ -1,22 +1,39 @@
 import { useEffect, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as StoreReview from 'expo-store-review';
 import { useUserStore } from '../../store/useUserStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useStatsStore } from '../../store/useStatsStore';
-import { clearUserHistory } from '../../database/repositories/sessionsRepository';
+import { clearUserHistory, getAllSessionsForExport } from '../../database/repositories/sessionsRepository';
+import { getWeeklyStats } from '../../database/repositories/statsRepository';
 import { capabilities, overlayService } from '../../services/platform';
-import { useTranslation } from '../../services/i18n';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { requestNotificationPermission } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
+
+// 2026-07-21 밤 감사 발견 — 실제 모니터링되는 지원 이메일이 없어(백엔드/도메인 미확정) 앱 전체가
+// 이미 쓰는 게스트 이메일 폴백 도메인(guest@pace.app)과 통일된 자리표시자를 쓴다. 출시 전 실제
+// 수신함으로 교체 필수 — 지금은 버튼이 죽어있는 것보다 우선 연결해두고 나중에 주소만 바꾸면 됨.
+const SUPPORT_EMAIL = 'support@pace.app';
+
+const FAQ_KEYS: [TranslationKey, TranslationKey][] = [
+  ['settings.faqQ1', 'settings.faqA1'],
+  ['settings.faqQ2', 'settings.faqA2'],
+  ['settings.faqQ3', 'settings.faqA3'],
+  ['settings.faqQ4', 'settings.faqA4'],
+  ['settings.faqQ5', 'settings.faqA5'],
+];
 
 const LANGUAGE_OPTIONS: { value: UserSettings['language']; labelKey: 'settings.languageSystem' | 'settings.languageEnglish' | 'settings.languageKorean' }[] = [
   { value: 'system', labelKey: 'settings.languageSystem' },
@@ -52,6 +69,7 @@ export default function SettingsScreen() {
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const { settings, update } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
   // 2026-07-20 실기기 감사 중 발견: "Platform Configuration" 카드의 READY 배지가 실제 오버레이
   // 권한 상태와 무관하게 항상 켜져 있었다(Dev Client 안 붙었거나 사용자가 권한을 거부해도 계속
@@ -88,6 +106,48 @@ export default function SettingsScreen() {
       clearUserHistory(user.id)
         .then(() => useStatsStore.getState().refresh(user.id))
         .catch(() => {});
+    }
+  };
+
+  // 2026-07-21 밤 감사 발견 — Export Data 행이 onPress 자체가 없어 완전히 죽어있었다. Privacy
+  // 섹션이 "기기 로컬에만 저장"을 명시하는 이상, 그 로컬 데이터를 실제로 꺼내볼 수 있어야 문구와
+  // 동작이 일치한다 — 세션 이력 전체 + 주간 통계 + 현재 설정을 JSON으로 묶어 공유시트로 내보낸다.
+  const handleExportData = async () => {
+    if (!user?.id) return;
+    try {
+      const [sessions, weeklyStats] = await Promise.all([
+        getAllSessionsForExport(user.id),
+        getWeeklyStats(user.id),
+      ]);
+      const payload = { exportedAt: new Date().toISOString(), settings, weeklyStats, sessions };
+      const file = new File(Paths.cache, `pace-export-${Date.now()}.json`);
+      file.create();
+      file.write(JSON.stringify(payload, null, 2));
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
+      } else {
+        Alert.alert(t('settings.exportData'), file.uri);
+      }
+    } catch (e) {
+      console.warn('[settings] export failed', e);
+      Alert.alert(t('settings.exportData'), t('settings.exportFailed'));
+    }
+  };
+
+  const handleSendFeedback = () => {
+    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Pace Feedback')}`).catch(() => {
+      Alert.alert(t('settings.sendFeedback'), t('settings.feedbackFailed'));
+    });
+  };
+
+  const handleRateApp = async () => {
+    try {
+      const available = await StoreReview.isAvailableAsync();
+      if (available) await StoreReview.requestReview();
+      else Alert.alert(t('settings.rateApp'), t('settings.rateAppUnavailable'));
+    } catch (e) {
+      console.warn('[settings] rate app failed', e);
     }
   };
 
@@ -147,13 +207,17 @@ export default function SettingsScreen() {
               value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')} bordered
               onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
             />
-            {Platform.OS === 'android' && (
-              <DefaultRow
-                title={t('settings.focusSessionDuration')} desc={t('settings.focusSessionDurationDesc')}
-                value={`${bluetooth.focusSessionDurationMinutes}m`} bordered
-                onPress={() => bluetooth.setFocusSessionDurationMinutes(cycle(FOCUS_SESSION_DURATION_OPTIONS, bluetooth.focusSessionDurationMinutes))}
-              />
-            )}
+            <DefaultRow
+              title={t('settings.focusSessionDuration')} desc={t('settings.focusSessionDurationDesc')}
+              value={`${settings.focusSessionDurationMinutes}m`} bordered
+              onPress={() => {
+                const next = cycle(FOCUS_SESSION_DURATION_OPTIONS, settings.focusSessionDurationMinutes);
+                update({ focusSessionDurationMinutes: next });
+                // Android만 실제 효과 있음(네이티브 Kotlin 자동 종료 타이머가 이 미러 값을 직접
+                // 읽음) — iOS는 bluetoothService.ios.ts에서 no-op이라 안전하게 무시됨.
+                if (Platform.OS === 'android') bluetooth.setFocusSessionDurationMinutes(next);
+              }}
+            />
           </GlassSurface>
         </View>
 
@@ -249,7 +313,7 @@ export default function SettingsScreen() {
               <Text style={styles.rowTitle}>{t('settings.localData')}</Text>
               <Text style={styles.privacyValue}>{t('settings.storedSafely')}</Text>
             </View>
-            <Pressable style={[styles.row, styles.rowBordered]}>
+            <Pressable style={[styles.row, styles.rowBordered]} onPress={handleExportData}>
               <Text style={styles.rowTitle}>{t('settings.exportData')}</Text>
               <Feather name="chevron-right" size={16} color={colors.textSecondary} />
             </Pressable>
@@ -278,9 +342,9 @@ export default function SettingsScreen() {
           <Text style={styles.sectionLabel}>{t('settings.support')}</Text>
           <GlassSurface style={styles.card}>
             <ChevronRow title={t('settings.replayGuide')} onPress={() => router.push('/onboarding')} />
-            <ChevronRow title={t('settings.helpCenter')} bordered />
-            <ChevronRow title={t('settings.sendFeedback')} bordered />
-            <ChevronRow title={t('settings.rateApp')} bordered />
+            <ChevronRow title={t('settings.helpCenter')} bordered onPress={() => setShowHelpCenter(true)} />
+            <ChevronRow title={t('settings.sendFeedback')} bordered onPress={handleSendFeedback} />
+            <ChevronRow title={t('settings.rateApp')} bordered onPress={handleRateApp} />
             <View style={[styles.row, styles.rowLast]}>
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>
               <Text style={styles.versionValue}>1.0.0</Text>
@@ -316,6 +380,30 @@ export default function SettingsScreen() {
                 <Text style={styles.modalPrimaryBtnText}>{t('settings.resetNow')}</Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 2026-07-21 밤 감사 발견 — Help Center 행이 onPress 자체가 없어 완전히 죽어있었다. 백엔드/CMS가
+          없어 외부 지원 페이지로 연결할 수 없으므로, 핵심 기능 FAQ를 앱 안에 직접 담아 최소한의
+          실질적 도움을 준다. */}
+      <Modal visible={showHelpCenter} transparent animationType="slide" onRequestClose={() => setShowHelpCenter(false)}>
+        <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
+          <View style={[styles.modalCard, styles.helpCard]}>
+            <View style={styles.helpHeaderRow}>
+              <Text style={styles.modalTitle}>{t('settings.helpCenterTitle')}</Text>
+              <Pressable onPress={() => setShowHelpCenter(false)} hitSlop={10}>
+                <Feather name="x" size={20} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+            <ScrollView style={styles.helpScroll} showsVerticalScrollIndicator={false}>
+              {FAQ_KEYS.map(([qKey, aKey], i) => (
+                <View key={i} style={styles.helpItem}>
+                  <Text style={styles.helpQuestion}>{t(qKey)}</Text>
+                  <Text style={styles.helpAnswer}>{t(aKey)}</Text>
+                </View>
+              ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -437,4 +525,11 @@ const styles = StyleSheet.create({
   modalSecondaryBtnText: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary, textTransform: 'uppercase' },
   modalDangerBtn: { flex: 1, backgroundColor: 'rgba(239,68,68,0.8)', borderRadius: radius.button, paddingVertical: spacing.sm + 4, alignItems: 'center' },
   modalPrimaryBtnText: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF', letterSpacing: 0.5, textTransform: 'uppercase' },
+
+  helpCard: { maxWidth: 400, maxHeight: '75%', alignItems: 'stretch', borderColor: colors.borderSubtle },
+  helpHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  helpScroll: { width: '100%' },
+  helpItem: { paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.borderSubtle, gap: 4 },
+  helpQuestion: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  helpAnswer: { fontSize: 12, color: colors.textSecondary, lineHeight: 18 },
 });

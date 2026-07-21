@@ -9,6 +9,7 @@ import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -32,6 +33,7 @@ export default function PaceFeedScreen() {
   const loadInitial = useShortsQueueStore((s) => s.loadInitial);
   const advance = useShortsQueueStore((s) => s.advance);
   const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
+  const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
 
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
@@ -77,18 +79,21 @@ export default function PaceFeedScreen() {
     return () => sub.remove();
   }, []);
 
-  // Focus Session = 10분 제한 자동 진행(2026-07-20 사용자 지시, PACE_ARCHITECTURE.md "Focus Session =
-  // 10분 제한 자동 진행"). Auto Mode(정주행)를 켠 시점부터 정확히 10분 뒤 자동으로 끈다 — 무기한
-  // 지속을 막아 "사람이 세션을 켠다"는 결정적 트리거 안에서만 자동 진행되게 한다. 사용자가 10분 전에
-  // 직접 끄거나(토글) 백그라운드로 나가면(위 AppState effect) 더 일찍 종료된다.
+  // Focus Session = 시간 제한 자동 진행(2026-07-20 사용자 지시, PACE_ARCHITECTURE.md "Focus Session =
+  // 10분 제한 자동 진행"). Auto Mode(정주행)를 켠 시점부터 정확히 설정된 시간 뒤 자동으로 끈다 —
+  // 무기한 지속을 막아 "사람이 세션을 켠다"는 결정적 트리거 안에서만 자동 진행되게 한다. 사용자가
+  // 시간이 다 되기 전 직접 끄거나(토글) 백그라운드로 나가면(위 AppState effect) 더 일찍 종료된다.
+  // 2026-07-21 밤 감사 발견 — 이 지속시간이 Android는 Settings에서 직접 고를 수 있었는데(5~60분)
+  // iOS는 10분 하드코딩이었다. useSettingsStore.settings.focusSessionDurationMinutes로 공용화 —
+  // Android는 같은 값을 네이티브 미러에도 반영(설정 화면 참고), iOS는 이 값을 그대로 JS 타이머에 쓴다.
   useEffect(() => {
     if (!isAutoMode) return;
     const timer = setTimeout(() => {
       setIsAutoMode(false);
-      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast'));
-    }, 10 * 60 * 1000);
+      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
+    }, focusSessionDurationMinutes * 60 * 1000);
     return () => clearTimeout(timer);
-  }, [isAutoMode]);
+  }, [isAutoMode, focusSessionDurationMinutes]);
 
   const goNext = () => {
     setStatus('PLAYING');
@@ -103,7 +108,7 @@ export default function PaceFeedScreen() {
   const toggleAutoMode = () => {
     setIsAutoMode((prev) => {
       const next = !prev;
-      useToastStore.getState().show(next ? t('feed.focusSessionStartedToast') : t('feed.focusSessionEndedToast'));
+      useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
       return next;
     });
   };

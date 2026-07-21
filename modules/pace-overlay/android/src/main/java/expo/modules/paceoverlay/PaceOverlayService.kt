@@ -385,10 +385,34 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getInt(PREF_FOCUS_SESSION_MINUTES, DEFAULT_FOCUS_SESSION_MINUTES)
 
+    // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT(스토어 제출용 킬스위치)는 JS 전용
+    // 빌드타임 플래그라 JS의 startAutoNextWatching()/stopAutoNextWatching() 호출부만 막았다. 그런데
+    // 알약 탭(triggerNext/triggerPrevious → setAutoMode)과 블루투스 하드웨어 리모컨(MediaSession
+    // 콜백 → 이 함수)은 JS를 전혀 거치지 않고 코틀린에서 직접 setAutoMode(true)를 부른다 — 즉
+    // "스토어 빌드에선 자동 스와이프 꺼짐"이 실제로는 보장되지 않았다. 앱 부팅 시 JS가 같은 env var
+    // 값으로 이 플래그를 한 번 설정(PaceOverlayModule.setBuildAutoNextEnabled)하면, 그 이후 어떤
+    // 경로로 setAutoMode(true)가 불려도 여기서 실제로 막는다 — 단일 진입점이라 모든 경로를 커버.
+    // 기본값은 안전한 쪽(false)으로 — JS가 아직 값을 안 넣은 극초반 레이스에도 자동 스와이프가
+    // 조용히 켜지는 일이 없게 한다.
+    private const val PREF_BUILD_AUTO_NEXT_ENABLED = "build_auto_next_enabled"
+
+    fun setBuildAutoNextEnabled(context: Context, enabled: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_BUILD_AUTO_NEXT_ENABLED, enabled).apply()
+    }
+
+    fun isBuildAutoNextEnabled(context: Context): Boolean =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(PREF_BUILD_AUTO_NEXT_ENABLED, false)
+
     // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 사용자가 설정한 시간만큼
     // 세션 시작(그 안에서는 PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 시간이
     // 다 되면 자동 종료 — 그 전에 사용자가 직접 끄면 예약된 자동 종료도 같이 취소한다.
     fun setAutoMode(context: Context, enable: Boolean) {
+      if (enable && !isBuildAutoNextEnabled(context)) {
+        Log.w("PaceOverlayService", "setAutoMode(true) blocked — build flag EXPO_PUBLIC_ENABLE_AUTO_NEXT is off")
+        return
+      }
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       if (enable) {
         PaceAccessibilityService.startWatching(45_000L)
@@ -925,7 +949,9 @@ class PaceOverlayService : Service() {
 
   private fun applyAutoBadgeStyle() {
     autoBadge?.apply {
-      text = if (autoNextEnabled) "AUTO ON" else "AUTO OFF"
+      // 2026-07-21 밤 사용자 지시 — "Auto"/"자동" 브랜딩을 UI에서 완전히 제거. 이 배지는 Focus
+      // Session이 지금 실제로 도는지(런타임 상태)를 보여준다.
+      text = if (autoNextEnabled) "SESSION ON" else "SESSION OFF"
       // dp 스케일 패딩(density 곱) — 이전엔 raw px(20,10)라 고밀도 화면에서 실제 터치 영역이
       // 몇 dp로 쪼그라들어 배지를 빗맞히기 쉬웠다(위 showOverlay 주석 참고). Android 권장 최소
       // 터치 타깃(48dp)엔 못 미치지만, 알약 배지라는 시각적 크기 제약 안에서 최대한 넓힘.

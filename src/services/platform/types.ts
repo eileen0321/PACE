@@ -83,6 +83,15 @@ export interface BluetoothService {
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;
+  /**
+   * 2026-07-21 밤 감사 발견 — 핑거스냅(PaceSnapDetector)이 모든 Focus Session 시작 경로에 연결돼
+   * 있는데 RECORD_AUDIO 런타임 권한을 요청하는 JS 코드가 전무했다. 네이티브는 이미 권한 없으면
+   * 조용히 no-op하도록 방어돼 있어(PaceSnapDetector.start()의 hasPermission 체크) 크래시는 안 나지만,
+   * 사용자에게 권한을 물어본 적 자체가 없어 대부분의 실기기에서 핑거스냅이 영원히 죽어있었다.
+   * Android=실제 시스템 권한 다이얼로그. iOS=no-op(핑거스냅 기능 자체가 없음, 항상 true 반환).
+   */
+  hasRecordAudioPermission(): Promise<boolean>;
+  requestRecordAudioPermission(): Promise<boolean>;
 }
 
 // iOS 전략 확정(2026-07-18, PACE_ARCHITECTURE.md 참고): iOS는 실제 숏폼을 오버레이/자동넘김할 수

@@ -31,6 +31,11 @@ object PaceSnapDetector {
   // 스냅은 저역(목소리/쿵 소리)보다 중고역 비중이 뚜렷이 커서 이 비율로 걸러낸다(정밀 분류 아님, 1차 필터).
   private const val HIGH_BAND_HZ = 2500.0
   private const val LOW_BAND_HZ = 500.0
+  // 2026-07-21 밤 웹 리서치 근거 — 목소리(유성음)의 전형적 ZCR은 낮고(대략 0.02~0.10), 스냅/박수 같은
+  // 임펄스성 브로드밴드 소음은 뚜렷이 높다. "미탐이 오탐보다 훨씬 큰 문제"라는 기존 원칙(코멘트 참고)에
+  // 따라 보수적으로(낮게) 잡아 진짜 스냅을 걸러내는 부작용을 최소화 — 실기기 로그(SPIKE 라인의 zcr=)로
+  // 실측 후 필요하면 올릴 것.
+  private const val MIN_ZCR = 0.08
 
   @Volatile private var running = false
   private var thread: Thread? = null
@@ -68,6 +73,20 @@ object PaceSnapDetector {
       q1 = q0
     }
     return sqrt(q1 * q1 + q2 * q2 - q1 * q2 * coeff)
+  }
+
+  // 2026-07-21 밤 감사 발견(웹 리서치: 스냅/박수 같은 임펄스성 브로드밴드 소음은 목소리·음악보다
+  // zero-crossing rate가 훨씬 높다 — 표준 음성구간감지(VAD) 문헌에서 확립된 특징). 기존 하이/로우
+  // 대역 에너지 비율(Goertzel) 하나만으로는 "큰 소리 + 고음 위주"인 다른 소리(예: 그릇 부딪히는
+  // 소리, 일부 자음)도 통과시킬 여지가 있었다 — ZCR을 세 번째 독립 신호로 추가해 오탐을 줄인다.
+  // 순수 함수라 실기기 없이도 로직 검증 가능(부호 전환 횟수 / 전체 샘플 수).
+  private fun zeroCrossingRate(samples: ShortArray): Double {
+    if (samples.size < 2) return 0.0
+    var crossings = 0
+    for (i in 1 until samples.size) {
+      if ((samples[i - 1] >= 0) != (samples[i] >= 0)) crossings++
+    }
+    return crossings.toDouble() / samples.size
   }
 
   private fun runDetectionLoop(onSnap: () -> Unit) {
@@ -155,8 +174,14 @@ object PaceSnapDetector {
         if (isSpike && pastRefractory) {
           val highMag = goertzelMagnitude(frame, HIGH_BAND_HZ, SAMPLE_RATE)
           val lowMag = goertzelMagnitude(frame, LOW_BAND_HZ, SAMPLE_RATE)
-          Log.i(TAG, "SPIKE rms=$rms noiseFloor=$noiseFloor highMag=$highMag lowMag=$lowMag passed=${highMag > lowMag * 1.2}")
-          if (highMag > lowMag * 1.2) {
+          val zcr = zeroCrossingRate(frame)
+          val freqPassed = highMag > lowMag * 1.2
+          // 웹 리서치 근거(VAD 문헌): 임펄스성 브로드밴드 소음(스냅/박수)은 ZCR이 목소리/음악보다
+          // 뚜렷이 높다. MIN_ZCR은 초기 추정치 — 아래 로그로 실기기 실측 후 튜닝 대상.
+          val zcrPassed = zcr > MIN_ZCR
+          val passed = freqPassed && zcrPassed
+          Log.i(TAG, "SPIKE rms=$rms noiseFloor=$noiseFloor highMag=$highMag lowMag=$lowMag zcr=$zcr passed=$passed (freq=$freqPassed zcr=$zcrPassed)")
+          if (passed) {
             lastTriggerAt = now
             // 2026-07-20 실기기 검증 중 발견(사용자 지적 — "한번 안되면 계속 안되고", "이벤트가
             // 쌓였다가 한꺼번에 실행") — 이 감지 루프는 별도 백그라운드 Thread에서 돈다. 그런데

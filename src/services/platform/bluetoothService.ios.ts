@@ -26,4 +26,6 @@ export const bluetoothService: BluetoothService = {
   async toggleAutoMode() {},
   async setFocusSessionDurationMinutes() {},
   async getFocusSessionDurationMinutes() { return 10; },
+  async hasRecordAudioPermission() { return true; },
+  async requestRecordAudioPermission() { return true; },
 };

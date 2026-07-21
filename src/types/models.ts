@@ -43,6 +43,13 @@ export type UserSettings = {
    * Settings에서 명시적으로 켜야만 동작(제품 결정: 침해감이 큰 동작이라 기본값 ON은 안 함).
    */
   hardBlockMode: boolean;
+  /**
+   * 2026-07-21 밤 감사 발견 — Android는 이 값을 설정 가능(bluetoothService의 네이티브 미러 경유)했지만
+   * iOS(feed/index.tsx)는 10분 하드코딩이었고 설정 UI 자체가 없었다. 공용 JS 소스오브트루스로 승격 —
+   * Android는 여기서 update() 후 별도로 bluetoothService.setFocusSessionDurationMinutes()를 호출해
+   * 네이티브 SharedPreferences 미러도 함께 갱신한다(Kotlin의 자동 종료 타이머가 그 값을 직접 읽으므로).
+   */
+  focusSessionDurationMinutes: number;
 };
 
 export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'manual_stop';

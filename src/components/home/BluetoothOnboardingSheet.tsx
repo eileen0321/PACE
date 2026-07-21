@@ -34,7 +34,7 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         </View>
         <View style={styles.actionRow}>
           <Feather name="play" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionLabel}>Play / Pause <Text style={styles.actionArrow}>→</Text> Toggle Auto Mode</Text>
+          <Text style={styles.actionLabel}>Play / Pause <Text style={styles.actionArrow}>→</Text> Toggle Focus Session</Text>
         </View>
 
         <Pressable onPress={onEnable} style={styles.enableBtn}>

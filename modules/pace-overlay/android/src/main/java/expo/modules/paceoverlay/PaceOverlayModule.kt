@@ -214,6 +214,14 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.getFocusSessionDurationMinutes(context) } ?: 10
     }
 
+    // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 빌드 플래그라 알약 탭/블루투스
+    // 리모컨(둘 다 코틀린에서 직접 setAutoMode를 부름)을 전혀 못 막았다. 앱 부팅 시 이 값을 네이티브에
+    // 한 번 전달해두면 setAutoMode(true)가 어느 경로로 불려도 실제로 막힌다(PaceOverlayService.
+    // setBuildAutoNextEnabled/isBuildAutoNextEnabled 참고). _layout.tsx가 부팅 시 1회 호출.
+    Function("setBuildAutoNextEnabled") { enabled: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setBuildAutoNextEnabled(context, enabled) }
+    }
+
     // Bluetooth Hands-Free Control(2026-07-19, Copilot 스펙 정리 반영) — 실제 스와이프/Auto Mode
     // 토글/토스트는 전부 PaceOverlayService의 MediaSession 콜백에서 네이티브가 자기 완결적으로
     // 처리한다(이벤트 브릿지 불필요, Daily Limit과 같은 설계 원칙). JS는 이 함수로 표시용 상태만

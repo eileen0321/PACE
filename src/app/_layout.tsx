@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import { autoNextService } from '../services/platform';
+import { autoNextService, syncAutoNextBuildFlag } from '../services/platform';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
@@ -65,6 +65,10 @@ export default function RootLayout() {
     })();
     initSubscription();
     loadDailyBonus();
+    // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
+    // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
+    // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
+    syncAutoNextBuildFlag();
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
 
   // 실기기(Galaxy Note20, 시스템 라이트 모드)에서 하단 내비게이션 바 영역이 흰색으로 보였던 진짜

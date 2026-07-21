@@ -43,10 +43,12 @@ export default function PaceFeedScreen() {
   // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
   const playing = current != null && status !== 'PAUSED';
 
-  // iOS 고개짓(ARKit) 감지는 배터리를 위해 "Focus Session 켜짐 + 현재 영상 1/2 지점 이후"에만 켠다
-  // (2026-07-20 사용자 지시 — Android가 손짓 카메라를 1/2지점부터 켜는 것과 동일 취지). 스냅은 쇼츠
-  // 소리에 묻혀 신뢰도가 낮아 고개짓으로 전환. iOS는 TrueDepth라 소리 무관하게 강건.
-  const headDetectActive = isAutoMode && progress >= 0.5;
+  // 2026-07-21: 고개짓이 "안 된다"는 실기기 리포트 디버깅 — 기존엔 배터리용으로 progress>=0.5(영상
+  // 절반 이후)에만 카메라를 켰는데, 그러면 전반부에 끄덕여도 카메라가 꺼져 있어 무반응이었다. 우선
+  // Focus Session ON이면 바로 감지하도록 절반 게이팅을 제거(원인 격리 + UX상 언제든 끄덕여 스킵).
+  // 배터리 재게이팅이 필요하면 나중에 되살린다. progress는 진단로그용으로만 유지.
+  const headDetectActive = isAutoMode;
+  void progress;
 
   useEffect(() => {
     loadInitial();
@@ -150,11 +152,13 @@ export default function PaceFeedScreen() {
           </Pressable>
           <View style={styles.categoryPill}>
             <Feather name="youtube" size={13} color="#FF4444" />
-            <Text style={styles.categoryText}>Pace Feed · Shorts</Text>
+            <Text style={styles.categoryText}>Pace Feed · Shorts · {queue.length}{isRefilling ? '+' : ''}</Text>
           </View>
-          <View style={styles.countPill}>
-            <Text style={styles.countText}>{queue.length}{isRefilling ? '+' : ''}</Text>
-          </View>
+          {/* 2026-07-21 사용자 지시: 유투브 웹뷰 우상단에 작은 "P" 앱 아이콘 → 탭하면 Pace 앱(Home 탭)으로
+              복귀(세션은 백그라운드 유지). Android는 overlay/index.tsx에 같은 P 아이콘을 넣었고, iOS는 이 /feed에. */}
+          <Pressable onPress={() => router.replace('/(tabs)/home')} hitSlop={12} style={styles.appIconBtn}>
+            <Text style={styles.appIconText}>P</Text>
+          </Pressable>
         </View>
 
         {usingScrape && (
@@ -232,8 +236,9 @@ const styles = StyleSheet.create({
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: 'rgba(0,0,0,0.45)' },
   categoryPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 },
   categoryText: { color: '#FFFFFF', fontSize: 11, fontFamily: typography.bodyFontFamilyBold },
-  countPill: { minWidth: 36, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 },
-  countText: { color: '#FFFFFF', fontSize: 11, fontFamily: typography.monoFontFamily },
+  // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
+  appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  appIconText: { color: '#FFFFFF', fontSize: 18, fontFamily: typography.displayFontFamily },
   fallbackBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', marginTop: spacing.sm, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   fallbackText: { color: colors.textSecondary, fontSize: 10, fontFamily: typography.bodyFontFamilyMedium },
   bottom: { paddingBottom: spacing.md, gap: spacing.xs },

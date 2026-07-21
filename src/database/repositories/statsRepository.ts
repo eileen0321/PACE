@@ -11,20 +11,9 @@ export async function getTodayUsageMinutes(userId: string): Promise<number> {
   return Math.floor((row?.total ?? 0) / 60);
 }
 
-export async function getTodayVideoStats(userId: string): Promise<{ videosWatched: number; averageDurationSeconds: number }> {
-  const db = await getDb();
-  const row = await db.getFirstAsync<{ videos: number | null; avgDuration: number | null }>(
-    `SELECT SUM(videos_watched) as videos,
-            CASE WHEN SUM(videos_watched) > 0 THEN SUM(duration_seconds) / SUM(videos_watched) ELSE 0 END as avgDuration
-     FROM viewing_sessions WHERE user_id = ? AND date(started_at) = date('now', 'localtime')`,
-    [userId]
-  );
-  return { videosWatched: row?.videos ?? 0, averageDurationSeconds: Math.round(row?.avgDuration ?? 0) };
-}
-
 // 외부 리뷰 반영(2026-07-17): "YouTube 40m / Instagram 10m / TikTok 5m" 형태의 앱별 사용량 분석.
-// viewing_sessions.platform_app을 GROUP BY — 네이티브 Auto Next/Usage 모듈이 platform_app을 채우기
-// 전까지는 빈 배열을 반환한다.
+// viewing_sessions.platform_app을 GROUP BY — overlay/index.tsx의 startSession()이 실제 platform_app을
+// 기록하면서 실사용 데이터로 채워진다(과거엔 항상 null이라 늘 빈 배열이었음, 이제는 아님).
 export async function getTodayUsageByApp(userId: string): Promise<{ app: AppShieldTarget | 'other'; minutes: number }[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ platform_app: string | null; minutes: number }>(

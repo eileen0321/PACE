@@ -44,7 +44,7 @@ import type { DailyStats } from '../../types/models';
 export default function StatsScreen() {
   const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
-  const { weeklyStats, platformBreakdown, todayAverageDurationSeconds, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
+  const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
 
@@ -150,8 +150,10 @@ export default function StatsScreen() {
         <View>
           <Text style={styles.sectionTitle}>{t('stats.todaysBehavior')}</Text>
           <GlassSurface style={styles.divideCard}>
-            <BehaviorRow title={t('stats.videosWatchedToday')} subtitle={t('stats.totalShortsPlayed')} value={t('stats.videosCount', { n: todayEntry?.totalVideos ?? 0 })} />
-            <BehaviorRow title={t('stats.averageDuration')} subtitle={t('stats.timeSpentPerVideo')} value={t('stats.secondsPerVideo', { n: todayAverageDurationSeconds })} />
+            {/* 2026-07-22 사용자 지시: "오늘 본 영상 수"/"평균 시청 시간"은 videos_watched가 항상
+                0으로 기록되는(제3자 앱 내부를 관찰할 방법이 없어 정직하게 0으로 남겨둔) 값에 기대고
+                있어 구조적으로 절대 측정 불가능 — 제거. Longest Session은 duration_seconds 기반이라
+                실제로 측정됨(getTodayVideoStats 자체도 store/repository에서 삭제). */}
             <BehaviorRow title={t('stats.longestSession')} subtitle={t('stats.maxUninterrupted')} value={`${longestSessionMinutes}m`} valueColor={colors.primary} last />
           </GlassSurface>
         </View>
@@ -243,7 +245,7 @@ export default function StatsScreen() {
 }
 
 // YouTube/Instagram/TikTok은 고유명사라 로케일과 무관하게 그대로 둔다 — 'other'만 실제 번역 대상.
-const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube Shorts', instagram: 'Instagram Reels', tiktok: 'TikTok' };
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube', instagram: 'Instagram Reels', tiktok: 'TikTok' };
 
 const DAY_ABBR_KEYS: TranslationKey[] = ['stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat'];
 const DAY_NAME_KEYS: TranslationKey[] = ['stats.dayNameSun', 'stats.dayNameMon', 'stats.dayNameTue', 'stats.dayNameWed', 'stats.dayNameThu', 'stats.dayNameFri', 'stats.dayNameSat'];

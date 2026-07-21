@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getTodayUsageByApp, getTodayUsageMinutes, getTodayVideoStats, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
+import { getTodayUsageByApp, getTodayUsageMinutes, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
 import { useSettingsStore } from './useSettingsStore';
 import type { AppShieldTarget, DailyStats } from '../types/models';
 
@@ -16,8 +16,6 @@ function computeFocusScore(weeklyStats: DailyStats[], dailyLimitMinutes: number)
 
 type StatsState = {
   todayUsageMinutes: number;
-  todayVideosWatched: number;
-  todayAverageDurationSeconds: number;
   weeklyStats: DailyStats[];
   // overlay/index.tsx가 이제 실제 platform_app을 기록하면서 실사용 데이터로 채워짐(과거엔 항상
   // null이라 늘 빈 배열이었음) — PACE_ARCHITECTURE.md "비주얼 아이덴티티 전면 개편" 참고.
@@ -31,8 +29,6 @@ type StatsState = {
 
 export const useStatsStore = create<StatsState>((set) => ({
   todayUsageMinutes: 0,
-  todayVideosWatched: 0,
-  todayAverageDurationSeconds: 0,
   weeklyStats: [],
   platformBreakdown: [],
   previousWeekTotalMinutes: null,
@@ -42,9 +38,8 @@ export const useStatsStore = create<StatsState>((set) => ({
   refresh: async (userId) => {
     set({ isLoading: true });
     try {
-      const [today, videoStats, weekly, platformBreakdown, previousWeek] = await Promise.all([
+      const [today, weekly, platformBreakdown, previousWeek] = await Promise.all([
         getTodayUsageMinutes(userId),
-        getTodayVideoStats(userId),
         getWeeklyStats(userId),
         getTodayUsageByApp(userId),
         getPreviousWeekStats(userId),
@@ -53,8 +48,6 @@ export const useStatsStore = create<StatsState>((set) => ({
       const previousWeekTotalMinutes = previousWeek.length ? previousWeek.reduce((acc, d) => acc + d.totalMinutes, 0) : null;
       set({
         todayUsageMinutes: today,
-        todayVideosWatched: videoStats.videosWatched,
-        todayAverageDurationSeconds: videoStats.averageDurationSeconds,
         weeklyStats: weekly,
         platformBreakdown,
         previousWeekTotalMinutes,

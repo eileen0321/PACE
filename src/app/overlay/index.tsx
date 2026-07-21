@@ -54,6 +54,14 @@ export default function OverlaySessionScreen() {
   // 이 ref로 "startSession()이 실제로 호출됐는지"를 별도로 추적한다.
   const hasSessionStartedRef = useRef(false);
 
+  // 2026-07-22 실기기 검증 중 발견 — 세션이 콜드 스타트로 곧장 이 화면부터 시작된 경우(탭 화면을
+  // 거치지 않아 네비게이션 히스토리가 비어있음) router.back()이 "GO_BACK 처리 안 됨" 개발자 경고를
+  // 내며 아무 데도 이동하지 못했다. 뒤로 갈 화면이 있으면 back, 없으면 Home으로 교체 이동.
+  const exitOverlay = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)/home');
+  };
+
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
@@ -150,7 +158,7 @@ export default function OverlaySessionScreen() {
         // 이번 tick에 0에 도달(before.remaining<=1)하면 daily, 아니면 수면타이머 만료.
         endReasonRef.current = before.remainingMinutes <= 1 ? 'daily_limit_reached' : 'sleep_timer_expired';
         if (endReasonRef.current === 'daily_limit_reached') notifyLimitReached().catch(() => {});
-        router.back();
+        exitOverlay();
       }
     }, 60_000);
 
@@ -185,7 +193,7 @@ export default function OverlaySessionScreen() {
   // 서비스가 멈추는" 차단 + 저시간/한도도달/Break Reminder 알림 발송까지 전부 이제 네이티브
   // (PaceOverlayService.tickRunnable)가 자기 완결적으로 즉시 수행한다(PaceOverlayService.kt 주석
   // 참고) — 알림은 이미 발송됐으므로 여기서 또 쏘지 않는다. 이 effect는 그 네이티브 차단이 실제로
-  // 있었는지 사후 확인해 JS 쪽 뒷정리(DB 세션 기록/router.back())만 뒤늦게 완료하는 역할 — Pace가
+  // 있었는지 사후 확인해 JS 쪽 뒷정리(DB 세션 기록/exitOverlay())만 뒤늦게 완료하는 역할 — Pace가
   // 다시 포그라운드로 돌아올 때마다(AppState 'active') consumeExpired()로 사유를 1회 소비한다.
   useEffect(() => {
     const consumeIfExpired = () => {
@@ -197,7 +205,7 @@ export default function OverlaySessionScreen() {
         useTimerStore.setState(
           reason === 'sleep_timer_expired' ? { sleepTimerRemainingMinutes: 0 } : { remainingMinutes: 0 }
         );
-        router.back();
+        exitOverlay();
       }).catch(() => {});
     };
     consumeIfExpired(); // 화면이 이미 백그라운드 만료 이후 다시 마운트되는 경우 대비
@@ -223,7 +231,7 @@ export default function OverlaySessionScreen() {
   const onStop = () => {
     endReasonRef.current = 'manual_stop';
     timer.endSession();
-    router.back();
+    exitOverlay();
   };
 
   const video = CURATED_VIDEOS[videoIndex];

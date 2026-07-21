@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,13 +12,15 @@ import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useToastStore } from '../../store/useToastStore';
 import { clearUserHistory, getAllSessionsForExport } from '../../database/repositories/sessionsRepository';
 import { getWeeklyStats } from '../../database/repositories/statsRepository';
-import { capabilities, overlayService } from '../../services/platform';
+import { capabilities, overlayService, autoNextService } from '../../services/platform';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
-import { requestNotificationPermission } from '../../services/notifications';
+import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
+import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
 
@@ -68,19 +70,51 @@ export default function SettingsScreen() {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const { settings, update } = useSettingsStore();
+  const { todayUsageMinutes } = useStatsStore();
+  const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
   // 2026-07-20 실기기 감사 중 발견: "Platform Configuration" 카드의 READY 배지가 실제 오버레이
   // 권한 상태와 무관하게 항상 켜져 있었다(Dev Client 안 붙었거나 사용자가 권한을 거부해도 계속
-  // READY라고 표시) — 실제 권한 상태로 교체.
+  // READY라고 표시) — 실제 권한 상태로 교체. overlayReady는 Platform Configuration 배지와
+  // 아래 Session Status/Android Guard Services 카드의 오버레이 상태 행이 공유(동일 권한이라
+  // 별도 state로 이중 폴링할 필요 없음).
   const [overlayReady, setOverlayReady] = useState(false);
+  const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
+  const [hasAutoNextPermission, setHasAutoNextPermission] = useState(false);
+  const [showAccessibilityOnboarding, setShowAccessibilityOnboarding] = useState(false);
 
+  // 2026-07-22 사용자 지시 — Focus 탭의 "Session Status"/"Android Guard Services" 카드를 이 화면으로
+  // 이전(포커스 탭에서 중복 삭제 지시에 준해 정리). 원래 focus.tsx에 있던 권한 폴링 로직 그대로
+  // 이식 — 마운트 시 1회 + AppState 'active'(다른 화면에서 권한 부여하고 돌아올 때)마다 재조회.
   useEffect(() => {
     bluetooth.refresh();
-    overlayService.hasOverlayPermission().then(setOverlayReady).catch(() => setOverlayReady(false));
+    let cancelled = false;
+    const check = async () => {
+      const [overlay, usageAccess, autoNextPermission] = await Promise.all([
+        overlayService.hasOverlayPermission(),
+        overlayService.hasForegroundDetectionPermission(),
+        capabilities.supportsAutoNext ? autoNextService.hasPermission() : Promise.resolve(false),
+      ]);
+      if (cancelled) return;
+      setOverlayReady(overlay);
+      setHasUsageAccessPermission(usageAccess);
+      if (autoNextPermission && !hasAutoNextPermission && showAccessibilityOnboarding) {
+        setShowAccessibilityOnboarding(false);
+        useToastStore.getState().show(`✅ ${t('focus.handsFreeEnabledToast')}`);
+      }
+      setHasAutoNextPermission(autoNextPermission);
+    };
+    check();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') check();
+    });
+    return () => { cancelled = true; sub.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [showAccessibilityOnboarding]);
+
+  const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + bonusMinutes - todayUsageMinutes);
 
   // 2026-07-18: 알림 토글은 이전엔 화면 로컬 state라 탭을 벗어나면 항상 기본값으로 리셋되고 실제
   // 알림 발송 여부(services/notifications)에도 전혀 반영되지 않았다 — useSettingsStore에 직결해
@@ -249,6 +283,87 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
+        {/* 4.5 Session Status (2026-07-22 사용자 지시로 Focus 탭에서 이전) */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('focus.sessionStatus')}</Text>
+          <GlassSurface style={[styles.card, styles.singleCard]} intensity={20}>
+            <View style={styles.statusTopRow}>
+              <Text style={styles.statusTitle}>{t('focus.sessionActive')}</Text>
+              <View style={styles.pulsePill}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.pulsePillText}>{settings.autoNext ? t('focus.on') : t('focus.off')}</Text>
+              </View>
+            </View>
+            <View style={[styles.statusRow, styles.statusRowBordered]}>
+              <Text style={styles.statusRowLabel}>{t('focus.remainingTime')}</Text>
+              <Text style={styles.statusRowValueMono}>{remainingMinutes}m {t('focus.remaining')}</Text>
+            </View>
+            <View style={styles.statusRow}>
+              <Text style={styles.statusRowLabel}>{t('focus.sleepTimer')}</Text>
+              <Text style={styles.statusRowValueMonoPrimary}>{settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.disabled')}</Text>
+            </View>
+          </GlassSurface>
+        </View>
+
+        {/* 4.6 Android Guard Services (Android 전용, 2026-07-22 사용자 지시로 Focus 탭에서 이전) */}
+        {Platform.OS === 'android' && (
+          <View>
+            <Text style={styles.sectionLabel}>{t('focus.androidGuardServices')}</Text>
+            <View style={[styles.card, styles.singleCard]}>
+              <Pressable style={styles.guardRow} onPress={() => !overlayReady && overlayService.requestOverlayPermission()}>
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.overlayStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.overlayStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !overlayReady && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !overlayReady && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !overlayReady && styles.pulsePillTextWarning]}>
+                    {overlayReady ? t('focus.connected') : t('focus.notConnected')}
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                style={[styles.guardRow, styles.guardRowBordered]}
+                onPress={() => !hasUsageAccessPermission && overlayService.requestForegroundDetectionPermission()}
+              >
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.accessibilityStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.accessibilityStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !hasUsageAccessPermission && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasUsageAccessPermission && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasUsageAccessPermission && styles.pulsePillTextWarning]}>
+                    {hasUsageAccessPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                  </Text>
+                </View>
+              </Pressable>
+              {/* Auto Next 실제 스와이프 — EXPO_PUBLIC_ENABLE_AUTO_NEXT=true 빌드에서만 노출(2026-07-18,
+                  Play 스토어 정책 결정 전까지 스토어 빌드에서는 항상 숨김). */}
+              {capabilities.supportsAutoNext && (
+                <Pressable
+                  style={[styles.guardRow, styles.guardRowBordered]}
+                  onPress={() => {
+                    if (hasAutoNextPermission) return;
+                    setShowAccessibilityOnboarding(true);
+                    notifyAccessibilityNeeded().catch(() => {});
+                  }}
+                >
+                  <View style={styles.guardLeft}>
+                    <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>
+                    <Text style={styles.guardDesc}>{t('focus.autoNextAccessibilityStatusDesc')}</Text>
+                  </View>
+                  <View style={[styles.pulsePill, !hasAutoNextPermission && styles.pulsePillWarning]}>
+                    <View style={[styles.pulseDot, !hasAutoNextPermission && styles.pulseDotWarning]} />
+                    <Text style={[styles.pulsePillText, !hasAutoNextPermission && styles.pulsePillTextWarning]}>
+                      {hasAutoNextPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* 5. Notifications */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.notifications')}</Text>
@@ -407,6 +522,12 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+
+      <AccessibilityOnboardingSheet
+        visible={showAccessibilityOnboarding}
+        onEnable={() => autoNextService.requestPermission()}
+        onDismiss={() => setShowAccessibilityOnboarding(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -502,6 +623,26 @@ const styles = StyleSheet.create({
   platformRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   readyTag: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.1)', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 4 },
   readyTagText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.5, textTransform: 'uppercase' },
+
+  // Session Status / Android Guard Services (2026-07-22 Focus 탭에서 이전, focus.tsx 원본 스타일 그대로)
+  statusTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  statusTitleSm: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  pulsePill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 4 },
+  pulseDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.successLight },
+  pulsePillText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.5, textTransform: 'uppercase' },
+  pulsePillWarning: { backgroundColor: 'rgba(245,158,11,0.1)', borderColor: 'rgba(245,158,11,0.2)' },
+  pulseDotWarning: { backgroundColor: colors.warning },
+  pulsePillTextWarning: { color: colors.warning },
+  statusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6 },
+  statusRowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle },
+  statusRowLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },
+  statusRowValueMono: { fontSize: 12, fontFamily: typography.monoFontFamilyBold, color: colors.textPrimary },
+  statusRowValueMonoPrimary: { fontSize: 12, fontFamily: typography.monoFontFamilyBold, color: colors.primary },
+  guardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 4 },
+  guardRowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle, marginTop: spacing.xs, paddingTop: spacing.sm },
+  guardLeft: { flex: 1, paddingRight: spacing.sm },
+  guardDesc: { fontSize: 10, color: colors.textSecondary, marginTop: 2 },
 
   languageRow: { flexDirection: 'row', gap: spacing.sm },
   languageChip: { flex: 1, paddingVertical: spacing.sm, borderRadius: radius.chip, backgroundColor: 'rgba(255,255,255,0.03)', alignItems: 'center' },

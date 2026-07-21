@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -23,8 +23,6 @@ import { colors, layout, radius, spacing, typography } from '../../constants/the
 import type { AppShieldTarget } from '../../types/models';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
-const INSTAGRAM_COVER = require('../../../assets/covers/instagram.jpg');
-const TIKTOK_COVER = require('../../../assets/covers/tiktok.jpg');
 
 // healthy-shorts-assistant(2) App.tsx의 Home 탭(다크 리스킨)을 토씨 하나 안 틀리고 그대로 이식
 // (App.tsx:280-399, 사용자 명시적 지시). 3개 플랫폼 카드는 세로 풀와이드 스택(App.tsx:342
@@ -97,6 +95,12 @@ export default function HomeScreen() {
     if (platform) router.push({ pathname: '/overlay', params: { platform } });
   }, [connectingPlatform, router]);
 
+  // "YouTube"(그냥 열기) 카드 전용 — Pace 세션/오버레이/한도 집행을 전혀 거치지 않고 그냥 앱만 연다.
+  // 한도 도달 여부와도 무관(추적 자체가 없으므로 막을 근거가 없음).
+  const openPlainYoutube = useCallback(() => {
+    launchPlatformApp('youtube').catch(() => {});
+  }, []);
+
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     if (isLimitReached) {
       setDismissedLimitReached(false);
@@ -123,13 +127,12 @@ export default function HomeScreen() {
   // 상태줄에서 전면에 노출하지 않는다(스토어 심사 리스크 + 타겟 연령대엔 "자동 조작 앱"보다 "프리미엄
   // 집중 관리 앱" 인상이 낫다는 판단). 플랫폼별 상태문구 대신 실제 세션 상태 기반 Active/Available
   // 2단만 사용 — 원본 App.tsx의 statusAutoNext/statusShield 문구는 더 이상 이식하지 않음.
-  const PLATFORM_CARDS: { id: AppShieldTarget; title: string; badge: string; cover: ImageSourcePropType; gradientFrom: string }[] = [
-    { id: 'youtube', title: 'YouTube Shorts', badge: 'SHORTS', cover: YOUTUBE_COVER, gradientFrom: 'rgba(220,38,38,0.35)' },
-    { id: 'instagram', title: 'Instagram Reels', badge: 'REELS', cover: INSTAGRAM_COVER, gradientFrom: 'rgba(219,39,119,0.35)' },
-    { id: 'tiktok', title: 'TikTok Video Loop', badge: 'LOOPS', cover: TIKTOK_COVER, gradientFrom: 'rgba(13,148,136,0.35)' },
-  ];
-  const PLATFORM_SHORT_NAME: Record<AppShieldTarget, string> = { youtube: 'YouTube', instagram: 'Instagram', tiktok: 'TikTok' };
-  const connectingCard = PLATFORM_CARDS.find((p) => p.id === connectingPlatform);
+  // 2026-07-22 사용자 지시 — Instagram/TikTok Auto Next가 구조적으로 정밀 감지 불가능(SeekBar
+  // content-desc에 재생 위치 텍스트 자체가 없음, 실기기로 확인 — 45초 고정 타임아웃만 가능)하다고
+  // 판단해 "YouTube Only"로 MVP 방향 확정. Instagram/TikTok 카드는 완전히 제거하고, 대신 YouTube를
+  // "그냥 열기"(추적/차단 없음) vs "PACE와 함께"(기존 세션 추적+오버레이+한도 집행) 두 모드로 분리 —
+  // Pace의 핵심 가치(한도 집행)가 필요 없는 사용자도 존재할 수 있다는 판단.
+  const connectingCard = connectingPlatform ? { title: 'YouTube with PACE' } : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -144,24 +147,31 @@ export default function HomeScreen() {
           </View>
         </View>
         <View style={styles.platformStack}>
-          {PLATFORM_CARDS.map((p) => (
-            <PlatformPickerCard
-              key={p.id}
-              title={p.title}
-              badge={p.badge}
-              statusText={
-                activeSessionPlatform === p.id
-                  ? 'Active'
-                  : isBluetoothConnected
-                    ? '🎧 Hands-Free Ready'
-                    : 'Available'
-              }
-              cover={p.cover}
-              gradientFrom={p.gradientFrom}
-              onPress={() => onSelectPlatform(p.id)}
-              isActive={activeSessionPlatform === p.id}
-            />
-          ))}
+          <PlatformPickerCard
+            key="youtube-plain"
+            title="YouTube"
+            badge="OPEN"
+            statusText="▶ No tracking, just watch"
+            cover={YOUTUBE_COVER}
+            gradientFrom="rgba(220,38,38,0.35)"
+            onPress={openPlainYoutube}
+          />
+          <PlatformPickerCard
+            key="youtube-pace"
+            title="YouTube with PACE"
+            badge="GUARDED"
+            statusText={
+              activeSessionPlatform === 'youtube'
+                ? 'Active'
+                : isBluetoothConnected
+                  ? '🎧 Hands-Free Ready'
+                  : '▶ Tracks time & enforces limits'
+            }
+            cover={YOUTUBE_COVER}
+            gradientFrom="rgba(88,86,214,0.35)"
+            onPress={() => onSelectPlatform('youtube')}
+            isActive={activeSessionPlatform === 'youtube'}
+          />
         </View>
 
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>
@@ -176,7 +186,7 @@ export default function HomeScreen() {
 
       <ConnectingOverlay
         visible={connectingPlatform !== null}
-        platformName={connectingPlatform ? PLATFORM_SHORT_NAME[connectingPlatform] : ''}
+        platformName={connectingPlatform ? 'YouTube' : ''}
         platformFullTitle={connectingCard?.title ?? ''}
         onComplete={handleConnectingComplete}
       />

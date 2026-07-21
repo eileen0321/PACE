@@ -26,14 +26,14 @@ public class PaceGestureModule: Module {
     Events("onSnap", "onHeadNod", "onError")
 
     // mode: "snap" | "head" | "both" — 어떤 감지기를 켤지.
-    // 2026-07-21: 핑거스냅(마이크) 경로 영구 비활성. 쇼츠 오디오에 스냅이 묻혀 신뢰도가 낮았고(Android
-    // 실사용 확인), 무엇보다 "마이크 권한 팝업"이 사용자 경험을 해쳐(Android는 이미 제거) iOS도 고개짓
-    // (카메라/ARKit)만 쓴다. mode 값과 무관하게 head만 켠다 — startSnap()은 호출하지 않으므로 마이크는
-    // 절대 요청되지 않는다(NSMicrophoneUsageDescription도 app.json에서 제거). SnapDetector 코드는
-    // 향후 AEC로 되살릴 여지만 남겨 dormant 상태로 둔다.
+    // 2026-07-21(2차): 핑거스냅 재활성 (사용자 지시 "핑거스냅도 제대로"). 예전에 "쇼츠 소리에 스냅이
+    // 묻힌다"고 껐지만, Android가 AcousticEchoCanceler로 해결한 것처럼 iOS도 **Voice Processing 내장
+    // AEC**(setVoiceProcessingEnabled)로 스피커→마이크 에코(=재생 중인 쇼츠 소리)를 상쇄해 스냅만
+    // 남긴다(SnapDetector.begin 참고). 마이크 권한은 snap/both일 때만 요청.
     AsyncFunction("start") { (mode: String, promise: Promise) in
       DispatchQueue.main.async {
-        self.startHead()
+        if mode == "snap" || mode == "both" { self.startSnap() }
+        if mode == "head" || mode == "both" { self.startHead() }
         promise.resolve(nil)
       }
     }
@@ -117,15 +117,28 @@ private final class SnapDetector: NSObject, SNResultsObserving {
       try session.setActive(true)
 
       let input = audioEngine.inputNode
-      let format = input.outputFormat(forBus: 0)
+      // ⭐ Apple 내장 AEC(Voice Processing) — "쇼츠 소리에 스냅이 묻힌다"를 해결하는 핵심.
+      // 스피커로 나가는 재생음이 마이크로 되돌아온 에코 성분을 하드웨어/DSP로 제거해, 마이크 탭에는
+      // 재생음이 빠지고 스냅 같은 근접 소리만 남는다(Android AcousticEchoCanceler 대응, WWDC19/23).
+      // ⚠️ 엔진이 '정지' 상태일 때 켜야 하고(여기서는 prepare/start 전이라 OK), 켜면 입출력 노드가
+      // 함께 VP 모드로 전환된다. 실패해도(구형/미지원) 치명적이지 않으므로 AEC 없이 계속 진행.
+      if #available(iOS 13.0, *) {
+        do { try input.setVoiceProcessingEnabled(true) }
+        catch { onError("voice processing(AEC) 활성 실패 — AEC 없이 진행: \(error.localizedDescription)") }
+      }
+
+      let format = input.outputFormat(forBus: 0) // VP 활성 이후의 실제 입력 포맷(모노로 바뀔 수 있음)
       let analyzer = SNAudioStreamAnalyzer(format: format)
       self.analyzer = analyzer
 
       let request = try SNClassifySoundRequest(classifierIdentifier: .version1)
       // 짧은 창으로 순간적 스냅을 잘 잡도록(기본 1.5s → 0.5s). windowDuration/overlapFactor는 iOS 15+.
+      // windowDuration 0.5s = 응답성/정확도 균형(Apple 권장), overlapFactor 0.75 = 창을 촘촘히 겹쳐
+      // 순간적 스냅이 어느 한 창의 중앙 근처에 반드시 잡히게(0.5보다 놓침 감소). Focus Session 중에만
+      // 도는 기능이라 늘어난 연산은 감수. (웹 리서치: overlap↑ = 정확도↑·연산↑.)
       if #available(iOS 15.0, *) {
         request.windowDuration = CMTimeMakeWithSeconds(0.5, preferredTimescale: 48_000)
-        request.overlapFactor = 0.5
+        request.overlapFactor = 0.75
       }
       try analyzer.add(request, withObserver: self)
 
@@ -151,8 +164,9 @@ private final class SnapDetector: NSObject, SNResultsObserving {
   func request(_ request: SNRequest, didProduce result: SNResult) {
     guard let result = result as? SNClassificationResult,
           let top = result.classification(forIdentifier: "finger_snapping") else { return }
-    // 신뢰도 임계 — 오탐 방지. JS에서 confidence를 받아 추가 필터 가능.
-    guard top.confidence > 0.7 else { return }
+    // 신뢰도 임계 — 오탐 방지. AEC로 재생음이 빠져 신호가 깨끗해진 만큼 0.7→0.65로 약간 민감하게
+    // (Android가 "lower snap sensitivity threshold" 한 방향과 동일). 실기기 오탐/미탐 보고 튜닝.
+    guard top.confidence > 0.65 else { return }
     let now = CFAbsoluteTimeGetCurrent()
     guard now - lastFire > 0.8 else { return } // 디바운스(연속 스냅 1회로)
     lastFire = now

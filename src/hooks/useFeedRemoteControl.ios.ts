@@ -59,16 +59,19 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 고개짓 카메라 게이팅: headDetectActive가 켜지면 ARKit 감지 시작, 꺼지면 정지(배터리 절약).
+  // 감지 게이팅: active면 핑거스냅(마이크+AEC) 시작, 꺼지면 정지. Focus Session 동안만 켜져 게이팅됨.
+  // 2026-07-21(2차): 고개짓(ARKit)은 실기기에서 잘 안 돼 제외(사용자 지시) → 스냅 단일. 스냅은
+  // Voice Processing AEC로 쇼츠 소리 마스킹을 해결해 재생 중에도 잡힌다. (headDetectActive 이름은
+  // 공유 피드 계약 유지를 위해 그대로 두되 의미는 "핸즈프리 감지 ON"으로 쓴다.)
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('head').catch((err) => {
+      mod.start('snap').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 고개짓 start 실패:', err);
+        console.warn('[useFeedRemoteControl] 스냅 start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

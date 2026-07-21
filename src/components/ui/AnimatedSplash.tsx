@@ -1,0 +1,156 @@
+import { useEffect } from 'react';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  Easing,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { colors, radius, typography } from '../../constants/theme';
+
+const ICON = require('../../../assets/splash-icon.png');
+const DURATION_MS = 2400;
+
+// healthy-shorts-assistant(4) Splash.tsx 이식(사용자 명시적 지시, 2026-07-21) — Framer Motion의
+// spring/shimmer/tracking-in 애니메이션을 react-native-reanimated로 재구현. expo-splash-screen의
+// 정적 네이티브 스플래시(assets/splash-icon.png, app.json 설정)가 폰트 로딩까지만 담당하고, 그
+// 직후 이 컴포넌트가 이어받아 애니메이션 브랜딩을 보여준 뒤 스스로 사라진다(_layout.tsx에서 최상단
+// Stack 위에 절대배치로 마운트).
+export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
+  const iconScale = useSharedValue(0.8);
+  const iconOpacity = useSharedValue(0);
+  const shimmerX = useSharedValue(-1);
+  const textOpacity = useSharedValue(0);
+  const textY = useSharedValue(10);
+  const barX = useSharedValue(-1);
+
+  useEffect(() => {
+    iconScale.value = withDelay(150, withSpring(1, { stiffness: 160, damping: 22 }));
+    iconOpacity.value = withDelay(150, withTiming(1, { duration: 300 }));
+    shimmerX.value = withRepeat(withTiming(1, { duration: 2200, easing: Easing.linear }), -1, false);
+    textOpacity.value = withDelay(400, withTiming(1, { duration: 700 }));
+    textY.value = withDelay(400, withTiming(0, { duration: 700 }));
+    barX.value = withRepeat(withSequence(withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
+
+    const timer = setTimeout(onComplete, DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [barX, iconOpacity, iconScale, onComplete, shimmerX, textOpacity, textY]);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: iconOpacity.value,
+    transform: [{ scale: iconScale.value }],
+  }));
+  const shimmerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: shimmerX.value * 130 }, { rotate: '20deg' }],
+  }));
+  const textStyle = useAnimatedStyle(() => ({
+    opacity: textOpacity.value,
+    transform: [{ translateY: textY.value }],
+  }));
+  const barStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: `${barX.value * 100}%` }],
+  }));
+
+  return (
+    <Animated.View exiting={FadeOut.duration(400)} style={styles.container}>
+      <View style={styles.glow} />
+      <View style={styles.spacer} />
+
+      <View style={styles.brandBlock}>
+        <Animated.View style={[styles.iconWrap, iconStyle]}>
+          <Image source={ICON} style={styles.icon} />
+          <Animated.View style={[styles.shimmer, shimmerStyle]} />
+        </Animated.View>
+
+        <Animated.View style={textStyle}>
+          <Text style={styles.title}>PACE</Text>
+          <Text style={styles.subtitle}>Dopamine Loop Guard</Text>
+        </Animated.View>
+      </View>
+
+      <View style={styles.barTrack}>
+        <Animated.View style={[styles.barFill, barStyle]}>
+          <LinearGradient
+            colors={['transparent', colors.primary, 'transparent']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+      </View>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 110,
+    backgroundColor: '#060709',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 64,
+  },
+  glow: {
+    position: 'absolute',
+    top: '38%',
+    width: 256,
+    height: 256,
+    borderRadius: 128,
+    backgroundColor: `${colors.primary}26`,
+  },
+  spacer: { flex: 0.6 },
+  brandBlock: { alignItems: 'center', gap: 24 },
+  iconWrap: {
+    width: 112,
+    height: 112,
+    borderRadius: 32,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  icon: { width: '100%', height: '100%' },
+  shimmer: {
+    position: 'absolute',
+    top: -40,
+    bottom: -40,
+    width: 40,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  title: {
+    fontSize: 30,
+    fontFamily: typography.bodyFontFamilyExtrabold,
+    color: colors.textPrimary,
+    letterSpacing: 10,
+    textAlign: 'center',
+    marginLeft: 10,
+  },
+  subtitle: {
+    fontSize: 10,
+    fontFamily: typography.bodyFontFamilyExtrabold,
+    color: '#818CF8',
+    letterSpacing: 3,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    marginTop: 8,
+    opacity: 0.6,
+  },
+  barTrack: {
+    width: 160,
+    height: 4,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    overflow: 'hidden',
+  },
+  barFill: { width: '50%', height: '100%' },
+});

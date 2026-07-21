@@ -277,7 +277,8 @@ export default function SettingsScreen() {
         <View>
           <Text style={styles.sectionLabel}>{t('settings.support')}</Text>
           <GlassSurface style={styles.card}>
-            <ChevronRow title={t('settings.helpCenter')} />
+            <ChevronRow title={t('settings.replayGuide')} onPress={() => router.push('/onboarding')} />
+            <ChevronRow title={t('settings.helpCenter')} bordered />
             <ChevronRow title={t('settings.sendFeedback')} bordered />
             <ChevronRow title={t('settings.rateApp')} bordered />
             <View style={[styles.row, styles.rowLast]}>
@@ -361,12 +362,12 @@ function NotifRow({ title, desc, value, onChange, bordered }: { title: string; d
   );
 }
 
-function ChevronRow({ title, bordered }: { title: string; bordered?: boolean }) {
+function ChevronRow({ title, bordered, onPress }: { title: string; bordered?: boolean; onPress?: () => void }) {
   return (
-    <View style={[styles.row, bordered && styles.rowBordered]}>
+    <Pressable style={[styles.row, bordered && styles.rowBordered]} onPress={onPress}>
       <Text style={styles.rowTitle}>{title}</Text>
       <Feather name="chevron-right" size={16} color={colors.textSecondary} />
-    </View>
+    </Pressable>
   );
 }
 

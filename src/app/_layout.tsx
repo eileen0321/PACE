@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { Platform, Text } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -18,6 +18,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
 import { ToastHost } from '../components/ui/ToastHost';
+import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 
 const queryClient = new QueryClient();
 
@@ -96,6 +97,12 @@ export default function RootLayout() {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
 
+  // 2026-07-21: expo-splash-screen(네이티브, 정적)은 폰트 로딩 동안만 담당 — 그 직후 이
+  // JS 애니메이션 스플래시(AnimatedSplash)가 이어받아 브랜딩 애니메이션을 보여준 뒤 스스로
+  // 사라진다. Stack 콘텐츠는 이미 그 아래에서 마운트돼 있으니(라우팅 자체는 지연되지 않음)
+  // 순수하게 시각적 브랜딩 레이어일 뿐이다.
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
+
   if (!fontsLoaded) return null;
 
   return (
@@ -117,6 +124,7 @@ export default function RootLayout() {
             <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />
           </Stack>
           <ToastHost />
+          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -59,14 +59,19 @@ export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
 
   return (
     <Animated.View exiting={FadeOut.duration(400)} style={styles.container}>
-      <View style={styles.glow} />
       <View style={styles.spacer} />
 
       <View style={styles.brandBlock}>
-        <Animated.View style={[styles.iconWrap, iconStyle]}>
-          <Image source={ICON} style={styles.icon} />
-          <Animated.View style={[styles.shimmer, shimmerStyle]} />
-        </Animated.View>
+        {/* 2026-07-22 수정: 원본 의도는 "원 안 중앙에 아이콘". 기존엔 glow가 top:38% 절대위치로 화면
+            위에 떠 있고 아이콘은 flex로 아래에 있어 둘이 따로 놀았다 → glow를 아이콘 뒤 중앙에 겹쳐
+            아이콘을 감싸는 오라로 만든다. */}
+        <View style={styles.iconArea}>
+          <View style={styles.glow} />
+          <Animated.View style={[styles.iconWrap, iconStyle]}>
+            <Image source={ICON} style={styles.icon} />
+            <Animated.View style={[styles.shimmer, shimmerStyle]} />
+          </Animated.View>
+        </View>
 
         <Animated.View style={textStyle}>
           <Text style={styles.title}>PACE</Text>
@@ -101,9 +106,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 64,
   },
+  // 아이콘(112)을 감싸는 256 원 오라. iconArea가 256 정사각 + 중앙정렬이라 glow는 그 영역을 꽉 채운
+  // 원이 되고 iconWrap이 정중앙에 온다 → "원 안 중앙 아이콘".
+  iconArea: { width: 256, height: 256, alignItems: 'center', justifyContent: 'center' },
   glow: {
     position: 'absolute',
-    top: '38%',
     width: 256,
     height: 256,
     borderRadius: 128,

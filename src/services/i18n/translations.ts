@@ -13,13 +13,23 @@ export const translations = {
     tabs: { home: 'Home', stats: 'Insights', focus: 'Focus', settings: 'Settings' },
 
     home: {
-      // 원본 App.tsx Home 탭 + Header는 translations를 아예 안 써서(하드코딩 영어 고정,
-      // components/ui/AppHeader.tsx·home.tsx 주석 참고) greeting/todaySession/choosePlatform 등
-      // 관련 키는 여기 없음 — youtubeShorts 등 브랜드명 키만 Stats/Settings 탭에서 재사용됨.
+      // 2026-07-18: Home 탭 전체를 한국어로 억지 번역했다가 고정폭 카드/그리드가 실제로
+      // 오버플로우된 적이 있어(실기기 확인) 그때는 통째로 하드코딩 영어로 되돌렸다 — 그런데 그건
+      // "Today Session"/"Complete"/큰 숫자/인사말까지 전부 한 번에 번역해서 생긴 문제였지, 한국어
+      // 자체가 문제는 아니었다. 2026-07-22 사용자 지적 — 앱의 기존 원칙(브랜드명/짧은 기능명은
+      // 영문 유지, 나머지는 자연스러운 한국어)을 Home에도 그대로 적용해야지 "안 되면 전부 포기"는
+      // 아니다. 그래서 이번엔 좁은 범위만: 섹션 헤더 3개(choosePlatform/tapToStart/quickControls)
+      // 만 번역 키로 추가 — 상태문구(Active/Available)는 Settings 탭의 active 키도 이미 한국어에서
+      // "Active"로 영문 유지하는 기존 관례를 그대로 따라 손대지 않음. 큰 숫자/인사말/카드 내부
+      // 레이아웃(SessionHeroCard/PlatformPickerCard/QuickControlsGrid/AppHeader)은 오버플로우를
+      // 실제로 일으켰던 부분이라 이번에도 건드리지 않음 — 실기기 확인 후 필요하면 후속 작업.
       youtubeShorts: 'YouTube Shorts',
       instagramReels: 'Instagram Reels',
       tiktokVideoLoop: 'TikTok Video Loop',
       minUnit: 'min',
+      choosePlatform: 'Choose Platform',
+      tapToStart: 'Tap to Start',
+      quickControls: 'Quick Controls',
     },
 
     stats: {
@@ -350,6 +360,9 @@ export const translations = {
       instagramReels: 'Instagram Reels',
       tiktokVideoLoop: 'TikTok Video Loop',
       minUnit: '분',
+      choosePlatform: '플랫폼 선택',
+      tapToStart: '탭하여 시작',
+      quickControls: '빠른 설정',
     },
 
     stats: {

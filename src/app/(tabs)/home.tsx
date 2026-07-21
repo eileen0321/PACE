@@ -17,6 +17,7 @@ import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboard
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
+import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
@@ -31,11 +32,17 @@ const TIKTOK_COVER = require('../../../assets/covers/tiktok.jpg');
 // UsageHero/StartShortsButton/StatsGrid는 이 화면에서 완전히 대체됐다. 플랫폼 카드 탭 →
 // /overlay로 실제 세션 시작 + platform 파라미터 전달(오버레이 화면이 Android에서 실제 앱 실행까지
 // 담당, overlay/index.tsx 참고).
-// 중요: App.tsx Home 탭 전체(App.tsx:278-457)는 translations 딕셔너리를 전혀 안 쓴다 — 섹션
-// 타이틀/플랫폼명/상태문구 전부 하드코딩 영어이고 한국어 locale이어도 안 바뀐다(Focus/Settings/
-// Stats 탭만 실제로 번역됨). 이전에 이 화면 전체를 t()로 잘못 번역했더니 한국어 문자열이 원본보다
-// 길어서 고정폭 카드/그리드를 넘치는 오버플로우가 실제로 발생했다 — 그래서 원본처럼 항상 영어로 고정.
+// 2026-07-18: 이 화면 전체를 t()로 통째로 번역했다가 한국어 문자열이 영어보다 길어서 고정폭
+// 카드/그리드를 넘치는 오버플로우가 실제로 발생한 적이 있다 — "Today Session"/"Complete"/큰 숫자/
+// 인사말까지 한 번에 다 번역한 게 원인이었다(SessionHeroCard/PlatformPickerCard/QuickControlsGrid/
+// AppHeader 내부). 2026-07-22 사용자 지적 — 그렇다고 전체를 영문 고정해버리는 건 앱의 기존 원칙
+// (브랜드명/짧은 기능명은 영문 유지, 나머지는 자연스러운 한국어 — translations.ts 상단 참고)과
+// 안 맞다. 이번엔 좁게: 이 파일 자체의 섹션 헤더 3개(Choose Platform/Tap to Start/Quick Controls)
+// 만 t()로 번역 — 오버플로우를 실제로 냈던 하위 컴포넌트들(SessionHeroCard 등)과 상태문구
+// (Active/Available — Settings 탭의 같은 성격 문구도 한국어에서 영문 유지하는 기존 관례를 따름)는
+// 이번에도 그대로 둔다.
 export default function HomeScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
@@ -131,9 +138,9 @@ export default function HomeScreen() {
         <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} />
 
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Choose Platform</Text>
+          <Text style={styles.sectionTitle}>{t('home.choosePlatform')}</Text>
           <View style={styles.tapBadge}>
-            <Text style={styles.tapBadgeText}>Tap to Start</Text>
+            <Text style={styles.tapBadgeText}>{t('home.tapToStart')}</Text>
           </View>
         </View>
         <View style={styles.platformStack}>
@@ -157,7 +164,7 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>Quick Controls</Text>
+        <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>
         <QuickControlsGrid />
       </ScrollView>
 

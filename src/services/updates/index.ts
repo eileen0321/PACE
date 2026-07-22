@@ -1,4 +1,9 @@
-import * as Updates from 'expo-updates';
+// 2026-07-22 감사수정(iOS 회귀): 이전엔 `import * as Updates from 'expo-updates'`(런타임 import)라,
+// 이 네이티브 모듈이 아직 빌드에 없는 바이너리(재빌드 전 기기/시뮬)에서 이 파일을 import하는 순간
+// (=_layout.tsx가 checkAndForceUpdate를 import) 'Cannot find native module ExpoUpdates' throw →
+// ErrorBoundary undefined로 앱 전체가 크래시했다. 타입만 import(런타임 erased)하고, 실제 모듈은
+// 함수 안에서 lazy require + try/catch로 로드해 네이티브가 없으면 조용히 스킵한다.
+import type * as UpdatesNS from 'expo-updates';
 import { useTimerStore } from '../../store/useTimerStore';
 import { usePlayerStore } from '../../store/usePlayerStore';
 
@@ -59,7 +64,17 @@ function isUserMidSession(): boolean {
  * 상태 콜백(선택).
  */
 export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePhase) => void): Promise<ForceUpdateResult> {
-  if (__DEV__ || !Updates.isEnabled) {
+  if (__DEV__) {
+    return { status: 'skipped-dev' };
+  }
+  // lazy load — 네이티브 모듈 미링크(재빌드 전) 빌드에서 크래시 대신 조용히 스킵.
+  let Updates: typeof UpdatesNS;
+  try {
+    Updates = require('expo-updates');
+  } catch {
+    return { status: 'skipped-dev' };
+  }
+  if (!Updates.isEnabled) {
     return { status: 'skipped-dev' };
   }
   if (checkInFlight) {
@@ -89,7 +104,7 @@ export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePha
   lastCheckAtMs = now;
   try {
     onPhaseChange?.('checking');
-    let check: Updates.UpdateCheckResult;
+    let check: UpdatesNS.UpdateCheckResult;
     try {
       check = await Updates.checkForUpdateAsync();
     } catch (error) {

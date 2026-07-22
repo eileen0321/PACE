@@ -11,7 +11,6 @@ import { useVolumeNext } from '../../hooks/useVolumeNext';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { useTimerStore } from '../../store/useTimerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -36,13 +35,12 @@ export default function PaceFeedScreen() {
   const advance = useShortsQueueStore((s) => s.advance);
   const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
   const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
-  // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 시각 + 세션 남은 시간을
-  // 상단에 순수 JS로 노출한다(Android 오버레이의 남은시간 표시와 대응). 세션 미활성이면 시계만.
-  const isSessionActive = useTimerStore((s) => s.isSessionActive);
-  const remainingMinutes = useTimerStore((s) => s.remainingMinutes);
-
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
+  // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
+  // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
+  // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
+  const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
   const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
@@ -100,13 +98,20 @@ export default function PaceFeedScreen() {
   // iOS는 10분 하드코딩이었다. useSettingsStore.settings.focusSessionDurationMinutes로 공용화 —
   // Android는 같은 값을 네이티브 미러에도 반영(설정 화면 참고), iOS는 이 값을 그대로 JS 타이머에 쓴다.
   useEffect(() => {
-    if (!isAutoMode) return;
+    if (!isAutoMode) {
+      setSessionEndsAt(null);
+      return;
+    }
+    setSessionEndsAt(Date.now() + focusSessionDurationMinutes * 60 * 1000); // 상태바 남은시간 계산 기준
     const timer = setTimeout(() => {
       setIsAutoMode(false);
       useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
     }, focusSessionDurationMinutes * 60 * 1000);
     return () => clearTimeout(timer);
   }, [isAutoMode, focusSessionDurationMinutes]);
+
+  // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
+  const sessionRemainingMin = sessionEndsAt != null ? Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000)) : null;
 
   const goNext = () => {
     setStatus('PLAYING');
@@ -211,12 +216,12 @@ export default function PaceFeedScreen() {
           <View style={styles.statusPill}>
             <Feather name="clock" size={12} color="#FFFFFF" />
             <Text style={styles.statusText}>{clock}</Text>
-            {isSessionActive && (
+            {sessionRemainingMin != null && (
               <>
                 <View style={styles.statusDivider} />
-                <Feather name="watch" size={11} color={remainingMinutes <= 5 ? colors.warning : '#FFFFFF'} />
-                <Text style={[styles.statusText, remainingMinutes <= 5 && { color: colors.warning }]}>
-                  {remainingMinutes}
+                <Feather name="watch" size={11} color={sessionRemainingMin <= 5 ? colors.warning : '#FFFFFF'} />
+                <Text style={[styles.statusText, sessionRemainingMin <= 5 && { color: colors.warning }]}>
+                  {sessionRemainingMin}
                   {t('home.minUnit')}
                 </Text>
               </>

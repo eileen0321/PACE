@@ -167,10 +167,10 @@ export default function StatsScreen() {
         {/* 4-A. FLIP MODE — 오늘 내려놓은 시간(쉬는시간) + 적립 크레딧 (스펙 §4-A, 2026-07-23부터 양쪽 플랫폼 계측) */}
         {putDownSeconds > 0 && (
           <View>
-            <Text style={styles.sectionTitle}>쉬는 시간</Text>
+            <Text style={styles.sectionTitle}>{t('stats.restTime')}</Text>
             <GlassSurface style={styles.divideCard}>
-              <BehaviorRow title="오늘 내려놓은 시간" subtitle="폰을 엎어둔 채 쉰 시간" value={formatMinSec(putDownSeconds)} valueColor={colors.successLight} />
-              <BehaviorRow title="적립 크레딧" subtitle="쉬는 시간 1분당 1 크레딧" value={`${flipCredits}`} valueColor={colors.primary} last />
+              <BehaviorRow title={t('stats.restTimeToday')} subtitle={t('stats.restTimeSub')} value={formatMinSec(putDownSeconds)} valueColor={colors.successLight} />
+              <BehaviorRow title={t('stats.restCredits')} subtitle={t('stats.restCreditsSub')} value={`${flipCredits}`} valueColor={colors.primary} last />
             </GlassSurface>
           </View>
         )}

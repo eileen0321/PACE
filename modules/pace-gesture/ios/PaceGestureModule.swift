@@ -57,12 +57,29 @@ public class PaceGestureModule: Module {
     }
   }
 
+  // 2026-07-23 사용자 지시 — 핑거스냅(AVAudioSession .playAndRecord + Voice Processing)이 블루투스
+  // 리모컨의 오디오 세션과 충돌할 수 있다는 QA 지적(볼륨키 모듈과 category 다툼, 재생 ducking/reroute
+  // 가능성) 반영: 블루투스 오디오 출력이 이미 연결돼 있으면 핑거스냅을 아예 켜지 않는다 — 리모컨이
+  // 이미 같은 역할(다음 넘김)을 하므로 상호 배타적으로 둔다. Android(PaceOverlayService.kt
+  // isBluetoothAudioConnected)와 동일한 결정, 이쪽은 AVAudioSession.currentRoute로 판단.
+  // ⚠️ 실기기(Xcode) 미검증 — Mac 세션에서 실기기로 빌드/확인 필요.
+  private func isBluetoothAudioConnected() -> Bool {
+    let bluetoothPortTypes: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
+    return AVAudioSession.sharedInstance().currentRoute.outputs.contains {
+      bluetoothPortTypes.contains($0.portType)
+    }
+  }
+
   private func startSnap() {
     guard #available(iOS 13.0, *) else {
       sendEvent("onError", ["kind": "snap", "message": "SoundAnalysis requires iOS 13+"])
       return
     }
     if snapDetector != nil { return }
+    if isBluetoothAudioConnected() {
+      sendEvent("onError", ["kind": "snap", "message": "Bluetooth audio connected — snap detection skipped, use the remote instead"])
+      return
+    }
     let d = SnapDetector(
       onSnap: { [weak self] conf in self?.sendEvent("onSnap", ["confidence": conf]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "snap", "message": msg]) }

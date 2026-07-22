@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.session.MediaSession
@@ -405,6 +406,18 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getBoolean(PREF_BUILD_AUTO_NEXT_ENABLED, false)
 
+    // 2026-07-23 사용자 지시 — 핑거스냅(마이크, AudioRecord)과 블루투스 리모컨이 같은 오디오
+    // 세션을 두고 충돌할 수 있다는 QA 지적(C섹션) 반영: 블루투스 오디오 출력이 연결돼 있으면
+    // 리모컨이 이미 같은 역할(다음 넘김)을 하므로 핑거스냅을 아예 켜지 않는다 — 상호 배타적으로.
+    // PaceOverlayModule.getConnectedBluetoothAudioDevice()와 동일한 검사(BLUETOOTH_CONNECT 런타임
+    // 권한 불필요, AudioManager.getDevices()만으로 충분)를 여기 companion에도 둔다.
+    private fun isBluetoothAudioConnected(context: Context): Boolean {
+      val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+      return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+      }
+    }
+
     // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 사용자가 설정한 시간만큼
     // 세션 시작(그 안에서는 PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 시간이
     // 다 되면 자동 종료 — 그 전에 사용자가 직접 끄면 예약된 자동 종료도 같이 취소한다.
@@ -419,8 +432,12 @@ class PaceOverlayService : Service() {
         // 2026-07-20 실기기 검증 중 발견: revert 과정에서 이 호출이 통째로 빠져 있었다 — 핑거스냅이
         // "AUTO ON"과 완전히 끊어진 채 방치돼 있었음(권한 있어도 디텍터가 아예 안 켜짐). 실제 재생
         // 위치 감지(위)와 핑거스냅(마이크)은 같은 Focus Session 안에서 나란히 도는 별개의 트리거라
-        // 둘 다 여기서 같이 켜고 꺼야 한다.
-        PaceSnapDetector.start(context) { triggerNext(context) }
+        // 둘 다 여기서 같이 켜고 꺼야 한다. 단, 블루투스가 연결돼 있으면 위 사유로 스냅은 건너뛴다.
+        if (isBluetoothAudioConnected(context)) {
+          Log.d("PaceOverlayService", "PaceSnapDetector skipped — Bluetooth audio device connected, remote already covers next-swipe")
+        } else {
+          PaceSnapDetector.start(context) { triggerNext(context) }
+        }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
         focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
       } else {

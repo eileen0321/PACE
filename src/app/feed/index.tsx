@@ -46,11 +46,11 @@ export default function PaceFeedScreen() {
   // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
   const playing = current != null && status !== 'PAUSED';
 
-  // 2026-07-21: 고개짓이 "안 된다"는 실기기 리포트 디버깅 — 기존엔 배터리용으로 progress>=0.5(영상
-  // 절반 이후)에만 카메라를 켰는데, 그러면 전반부에 끄덕여도 카메라가 꺼져 있어 무반응이었다. 우선
-  // Focus Session ON이면 바로 감지하도록 절반 게이팅을 제거(원인 격리 + UX상 언제든 끄덕여 스킵).
-  // 배터리 재게이팅이 필요하면 나중에 되살린다. progress는 진단로그용으로만 유지.
-  const headDetectActive = isAutoMode;
+  // 2026-07-23 사용자 지시: 고개짓(ARKit 전면카메라 head-nod)을 "비현실적"으로 판단해 제거 —
+  // 항상 false로 두어 gesture 카메라가 절대 안 켜지게 한다(pace-gesture 모듈 자체는 다른 세션 영역이라
+  // 유지, 여기 피드에서 활성화만 끔). "다음 넘김"은 화면 탭/볼륨키/BT 리모컨으로 충분.
+  // (md "턱톡 기각·고개짓 보류" 섹션의 우려 — 카메라 자동ON이 Focus Session 설계와 충돌·배터리 — 와도 일치.)
+  const headDetectActive = false;
   void progress;
 
   useEffect(() => {
@@ -219,8 +219,9 @@ export default function PaceFeedScreen() {
                 {isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}
               </Text>
             </Pressable>
-            <Text style={styles.title} numberOfLines={2}>{current.title}</Text>
-            {!!current.channelTitle && <Text style={styles.creator}>{current.channelTitle}</Text>}
+            {/* 2026-07-23 사용자 지시(하단 미디어 겹침 수정): 제목/채널은 유투브 웹뷰가 이미 표시하므로
+                Pace에선 제거(중복+겹침 원인). 컨트롤은 왼쪽·위로 올려 유투브 자체 UI(우측 액션/바닥
+                메타·다음영상바)와 안 겹치게 한다. */}
             <View style={styles.controls}>
               <Pressable onPress={goPrevious} hitSlop={10} style={styles.ctrlBtn}>
                 <Feather name="skip-back" size={20} color="#FFFFFF" />
@@ -286,7 +287,8 @@ const styles = StyleSheet.create({
   appIconText: { color: '#FFFFFF', fontSize: 18, fontFamily: typography.displayFontFamily },
   fallbackBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', marginTop: spacing.sm, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   fallbackText: { color: colors.textSecondary, fontSize: 10, fontFamily: typography.bodyFontFamilyMedium },
-  bottom: { paddingBottom: spacing.md, gap: spacing.xs },
+  // 2026-07-23: 유투브 웹뷰 자체 하단 UI(메타/다음영상 미리보기 바)와 안 겹치게 크게 띄우고 좌측 정렬.
+  bottom: { paddingBottom: 110, alignItems: 'flex-start', gap: spacing.sm },
   autoModeBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4, marginBottom: spacing.xs },
   autoModeBadgeOn: { backgroundColor: colors.successLight },
   autoModeBadgeOff: { backgroundColor: 'rgba(255,255,255,0.12)' },
@@ -294,7 +296,7 @@ const styles = StyleSheet.create({
   autoModeBadgeTextOn: { color: '#000000' },
   title: { color: '#FFFFFF', fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold },
   creator: { color: colors.textSecondary, fontSize: 12, fontFamily: typography.bodyFontFamilyBold },
-  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl, marginTop: spacing.md },
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: spacing.md },
   ctrlBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.12)' },
   ctrlBtnMain: { width: 60, height: 60, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: '#FFFFFF' },
   centerState: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: '#000000' },

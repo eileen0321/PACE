@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.regex.Pattern
@@ -42,6 +43,7 @@ class PaceAccessibilityService : AccessibilityService() {
   private var currentForegroundPackage: String? = null
   private var lastKnownCurrentSec = -1
   private var lastSwipeAtMs = 0L
+  private var lastVolumeKeySwipeAtMs = 0L
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
   // 재생 화면에 부하가 걸릴 수 있다는 지적 — 한 번 찾은 SeekBar 노드를 캐싱해서, 다음 폴링부터는
   // node.refresh()로 그 노드 하나만 저렴하게 재검증(유효하면 재사용, 무효화됐으면 그때만 전체
@@ -66,6 +68,8 @@ class PaceAccessibilityService : AccessibilityService() {
     // 후신이지만 이제 주 로직이 아니다. 8초는 대부분의 숏폼을 중간에 잘라먹는 값이라 45초로 올림 —
     // 실시간 감지가 정상 동작하는 한 이 값이 실제로 발동하는 일은 드물다.
     private const val DEFAULT_SAFETY_TIMEOUT_MS = 45_000L
+    // 물리 볼륨 버튼 1회 입력의 반복 ACTION_DOWN을 하나로 묶는 불응 구간(onKeyEvent 참고).
+    private const val VOLUME_KEY_DEBOUNCE_MS = 500L
     // 한국어 로케일 실측: "0분 5초 중 0분 2초"(현재 중 전체). 콜론 포맷("0:05 / 0:15")도 방어적으로
     // 같이 시도 — YouTube 앱 버전/기기 로케일이 다르면 문구가 바뀔 수 있다.
     private val KOREAN_TIME_PATTERN = Pattern.compile("(\\d+)분\\s*(\\d+)초\\s*중\\s*(\\d+)분\\s*(\\d+)초")
@@ -152,6 +156,49 @@ class PaceAccessibilityService : AccessibilityService() {
     if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
       currentForegroundPackage = event.packageName?.toString()
     }
+  }
+
+  // 2026-07-23 — "블루투스는 볼륨받아서 다음재생으로 넘기기로 했잖아" 대응. 실제 블루투스 리모컨
+  // 미디어 버튼은 재생 중인 YouTube가 오디오 포커스를 쥐고 있는 한 OS가 Pace로 절대 전달하지
+  // 않는다(B22, 이미 확정된 한계) — iOS PaceVolumeKeyModule.swift와 동일하게 "물리 볼륨 버튼"을
+  // 대리 신호로 쓴다. accessibility_service_config.xml에 flagRequestFilterKeyEvents를 추가해야
+  // 이 콜백이 온다.
+  //
+  // ⚠️ 사용자 지적(2026-07-23) — 이 접근성 서비스의 스토어 심사용 명분은 "수면감지"(누운자세 감지 후
+  // 수면 상태 감지하여 앱 종료)다. 같은 서비스로 볼륨키까지 가로채면 심사관이 보기엔 서비스 목적이
+  // 하나가 아니게 돼 "접근성 목적이 아닌 남용"으로 리젝될 위험이 커진다 — 위 Auto Next 스와이프와
+  // 정확히 같은 리스크(37번째 줄 주석 참고). 그래서 이 기능도 같은 완화 전략을 그대로 적용한다:
+  // isWatching(=EXPO_PUBLIC_ENABLE_AUTO_NEXT 빌드 플래그로 게이팅된 "Hands-Free" 토글, 참고
+  // autoNextService.android.ts)이 꺼져 있으면 무조건 false를 반환해 시스템 기본 볼륨 동작을 그대로
+  // 통과시킨다 — 즉 실제 스토어 제출 빌드에서는 이 코드가 있어도 하이재킹이 발동하지 않는다.
+  // 켜져 있어도 감시 대상 앱(SupportedApps.PACKAGES)이 포그라운드일 때만 소비하므로, 전화/음악 등
+  // 무관한 앱에서는 볼륨 버튼이 평소와 똑같이 동작한다.
+  override fun onKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+      return false
+    }
+    if (!isWatching || !SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+      return false
+    }
+    // ACTION_DOWN에서만 처리 — ACTION_UP까지 같이 소비하면 한 번의 물리 입력이 두 번 카운트될 위험.
+    if (event.action != KeyEvent.ACTION_DOWN) {
+      return true // DOWN에서 이미 소비하기로 했으니 대응하는 UP도 시스템에 전달되지 않게 계속 삼킴.
+    }
+    val now = SystemClock.elapsedRealtime()
+    // 물리 버튼 한 번 누름이 안드로이드 볼륨 스텝 특성상 반복 ACTION_DOWN을 짧은 간격으로 여러 번
+    // 낼 수 있어(길게 누르고 있을 때 특히) 최소 500ms 불응 구간을 둔다 — 위 pollRunnable의
+    // POLL_INTERVAL_MS와 동일한 감으로 잡은 값.
+    if (now - lastVolumeKeySwipeAtMs < VOLUME_KEY_DEBOUNCE_MS) {
+      return true
+    }
+    lastVolumeKeySwipeAtMs = now
+    Log.i("PaceAccessibility", "onKeyEvent volume-key-next keyCode=${event.keyCode} pkg=$currentForegroundPackage")
+    // 방향 구분 없이 둘 다 "다음"으로 취급 — 사용자가 명시한 요구가 "볼륨받아서 다음재생으로
+    // 넘기기"였지 별도 이전/다음 구분이 아니었다. 오디오 자체는 iOS 쪽과 동일하게 실제로 변하지
+    // 않아야 하므로(return true로 시스템 볼륨 변경 자체를 여기서 막음) 영상 시청 중 볼륨이 실수로
+    // 튀는 부작용도 없다.
+    performSwipeUp()
+    return true
   }
 
   override fun onInterrupt() {}

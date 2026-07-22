@@ -8,10 +8,16 @@
      멀티윈도우일 때 대상 앱의 실제 창 경계를 읽으려면 getWindows()가 실제 데이터를 반환해야
      하는데, 이 플래그 없이는 항상 빈 리스트만 온다(canRetrieveWindowContent와는 별개 플래그).
      이것도 새 런타임 권한이 아니라 기존 접근성 토글 범위 안의 선언. -->
+<!-- 2026-07-23 사용자 지시 — 블루투스 리모컨(AirPods 등)이 실제 유튜브 재생 중엔 OS 정책상 Pace로
+     절대 안 온다는 게 이미 확인된 상태(QA_ANDROID_LIFECYCLE_2026-07-22.md B22). iOS가 쓰는
+     "물리 볼륨 버튼을 다음넘김으로" 방식을 Android도 채택하기로 결정 — flagRequestFilterKeyEvents를
+     추가해야 PaceAccessibilityService.onKeyEvent()가 시스템 전역 볼륨 키 이벤트를 받을 수 있다
+     (packageNames 필터는 AccessibilityEvent에만 적용되고 onKeyEvent는 이 필터와 무관하게 항상
+     전역으로 옴 — Kotlin 쪽에서 현재 포그라운드 앱을 직접 확인해 대상 앱일 때만 소비한다). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagRequestFilterKeyEvents"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"

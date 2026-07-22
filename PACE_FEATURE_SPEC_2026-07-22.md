@@ -178,13 +178,37 @@ iOS는 현재 `/feed`(인앱 WebView)로 라우팅(2026-07-22 App Review 대응,
 Pace 자신의 React 트리 안에 있으므로). 다음 라운드에 `app/feed/index.tsx`에 작은 상태 표시줄
 컴포넌트 추가로 구현 가능 — 우선순위 정해주시면 바로 착수.
 
-### 4-G. 블루투스 볼륨 기반 "다음" 시나리오
+### 4-G. 블루투스 볼륨 기반 "다음" 시나리오 — ✅ 구현 완료(2026-07-23)
 
-❓ **사장님 결정 필요**: `QA_ANDROID_LIFECYCLE_2026-07-22.md` Bluetooth 섹션에서 이미 확인된 대로,
-Android는 실제 유튜브 재생 중 하드웨어 미디어버튼이 OS 정책상 Pace로 안 옴(B22, 우회 불가). 남은
-현실적 옵션은 "물리 볼륨 버튼을 다음으로 쓰기"(iOS `PaceVolumeKeyModule.swift`가 이미 이 방식,
-Android는 미구현) — 근데 이건 사용자가 실제 영상 소리 볼륨도 같이 바뀌는 부작용이 있어 UX
-트레이드오프 결정이 필요함. 어느 쪽으로 갈지 방향 정해주시면 그에 맞춰 스펙 구체화.
+**결정**: 사장님 확정 지시("블루투스는 볼륨받아서 다음재생으로 넘기기로 했잖아") — Android도 iOS
+`PaceVolumeKeyModule.swift`와 동일하게 물리 볼륨 버튼을 다음-넘김 대리 신호로 채택. 실제 영상 볼륨은
+안 바뀌게 이벤트 자체를 소비(consume)하는 방식이라 위에서 우려했던 "영상 소리도 같이 바뀌는 부작용"은
+발생하지 않음(아래 구현 참고).
+
+**구현**:
+- `modules/pace-overlay/android/src/main/res/xml/accessibility_service_config.xml` —
+  `android:accessibilityFlags`에 `flagRequestFilterKeyEvents` 추가(시스템 전역 하드웨어 키 이벤트를
+  받으려면 필수 — `packageNames` 필터는 `AccessibilityEvent`에만 적용되고 `onKeyEvent`는 이 필터와
+  무관하게 항상 전역으로 들어옴).
+- `PaceAccessibilityService.kt` — `onKeyEvent(event: KeyEvent): Boolean` 오버라이드 신규 추가.
+  `KEYCODE_VOLUME_UP`/`DOWN`의 `ACTION_DOWN`만 처리(방향 구분 없이 둘 다 "다음"), 기존
+  `performSwipeUp()`(스와이프 스와이프 로직 재사용, 새 스와이프 코드 없음) 호출, 500ms 불응 구간으로
+  길게 누름 시 중복 트리거 방지. `return true`로 이벤트를 소비해 시스템 볼륨 자체는 변하지 않음(iOS
+  구현의 "볼륨을 baseline으로 조용히 되돌리는" 효과와 동일한 결과, 다른 메커니즘으로 달성).
+
+**⚠️ Play 스토어 심사 리스크 — 사장님 지적(2026-07-23) 반영**: "수면감지를 위해 쓴다는거였잖아
+심사통과는" — 이 접근성 서비스의 스토어 심사용 명분은 §1-B 수면 감지 하나였는데, 같은 서비스로
+볼륨키까지 가로채면 심사관 입장에서 서비스 목적이 여러 개로 보여 "접근성 목적이 아닌 남용"으로 리젝될
+위험이 커짐(기존 Auto Next 스와이프와 동일 부류 리스크, `PaceAccessibilityService.kt` 20번째 줄
+주석 참고). **완화**: 볼륨키 넘김은 새 게이트를 따로 만들지 않고 기존 `isWatching` 상태에 얹었다 —
+이 값은 `PaceOverlayService.setAutoMode(true)`를 거쳐야만 true가 되고, 그 함수는 이미 2026-07-21에
+감사된 단일 진입점 `isBuildAutoNextEnabled()`로 게이팅돼 있어(모든 호출 경로 — JS/알약 탭/블루투스
+리모컨 — 를 커버) `EXPO_PUBLIC_ENABLE_AUTO_NEXT=false`인 실제 스토어 제출 빌드에서는 볼륨키
+하이재킹도 자동으로 비활성. 즉 **스토어 제출 빌드는 접근성 서비스를 수면감지 용도로만 정직하게
+쓸 수 있고, 볼륨키/Auto Next는 별도 직접배포(APK) 빌드에서만 켜지는 구조를 그대로 유지**.
+
+**검증**: `npx expo prebuild --platform android --clean` + `gradlew assembleDebug`로 네이티브
+재빌드 진행 중 — 결과는 이 문서 하단에 추가 기록 예정.
 
 ---
 

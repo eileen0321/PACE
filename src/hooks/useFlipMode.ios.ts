@@ -57,7 +57,14 @@ export function useFlipMode({ enabled }: { enabled: boolean }) {
     const appSub = AppState.addEventListener('change', (next) => {
       if (next === 'background') {
         // background: CoreMotion이 멈추므로 관찰만 중단. 정산하지 않음(flipStartMs 유지 → 복귀 시 브리징).
+        // ⚠️ 실기기 레이스: 폰을 엎으면 iOS가 화면을 빨리 꺼 2s 디바운스 확정 전에 background로 갈 수
+        //    있다. 이때 이미 진행 중(isFaceDown)이 아니고 "지금 물리적으로 엎어져 있으면"(physicalFaceDown
+        //    =true) 그 순간부터 쉼을 시작한다 — 안 그러면 화면 끄고 엎어둔 시간이 통째로 누락된다.
         if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
+        if (!useFlipStore.getState().isFaceDown && mod?.physicalFaceDown() === true) {
+          console.log('[flip] 📵 background 진입 시 엎어져 있음 → 쉬는시간 시작(디바운스 레이스 보정)');
+          onFaceDown();
+        }
         try { mod?.stop(); } catch {}
       } else if (next === 'active') {
         startMotion();

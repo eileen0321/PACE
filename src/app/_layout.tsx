@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from 'react';
-import { Platform, Text } from 'react-native';
+import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -19,6 +19,8 @@ import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
 import { ToastHost } from '../components/ui/ToastHost';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
+import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
+import { colors, typography } from '../constants/theme';
 
 const queryClient = new QueryClient();
 
@@ -97,6 +99,26 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
+  // 2026-07-22 사용자 지시 — OTA(무선 업데이트) "강제 푸쉬". 콜드스타트 + 포그라운드 복귀마다
+  // 체크(services/updates 참고 — dev 클라이언트/네트워크 실패/다운로드 실패는 전부 조용히 스킵,
+  // 절대 사용자를 막지 않는다). 다운로드/재시작 단계에서만 짧게 블로킹 화면을 보여줘 갑자기
+  // 화면이 리로드되는 것처럼 보이지 않게 한다(진행 상태 없이 순간 리로드되면 크래시처럼 보임).
+  const [updatePhase, setUpdatePhase] = useState<ForceUpdatePhase | null>(null);
+  useEffect(() => {
+    const runCheck = () => {
+      checkAndForceUpdate((phase) => setUpdatePhase(phase)).finally(() => {
+        // 'reloading' 단계에서 성공했으면 곧 앱 자체가 재시작되므로 이 setState는 의미 없어진다 —
+        // 실패(스킵/에러)로 끝난 경우에만 블로킹 화면을 원래대로 되돌린다.
+        setUpdatePhase(null);
+      });
+    };
+    runCheck();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') runCheck();
+    });
+    return () => sub.remove();
+  }, []);
+
   const onLayoutRootView = useCallback(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
@@ -129,8 +151,36 @@ export default function RootLayout() {
           </Stack>
           <ToastHost />
           {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
+          {(updatePhase === 'downloading' || updatePhase === 'reloading') && (
+            <View style={styles.updateOverlay} pointerEvents="auto">
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.updateText}>
+                {updatePhase === 'downloading' ? '새 업데이트를 받는 중...' : '적용하는 중...'}
+              </Text>
+            </View>
+          )}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  updateOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 200,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  updateText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontFamily: typography.bodyFontFamilyBold,
+  },
+});

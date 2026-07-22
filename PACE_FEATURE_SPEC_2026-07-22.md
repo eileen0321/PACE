@@ -194,10 +194,67 @@ Android는 미구현) — 근데 이건 사용자가 실제 영상 소리 볼륨
 - Flip Mode UI/Stats 반영(네이티브 트리거 완성 후)
 - 수면 감지 UI(네이티브 트리거 완성 후)
 - Android 오버레이 불투명도 조절(네이티브)
-- OTA(강제 업데이트) — `expo-updates` 패키지 자체가 **미설치**(package.json에 없음). EAS 프로젝트
-  연동이 필요해 계정/설정 작업 — ❓ 사장님 확인 필요(이번 주 출시에 필수인지 여부부터 결정)
 - 서버 연동(구독/사용자 정보) — `QA_ANDROID_LIFECYCLE_2026-07-22.md`/`QA_FULL_REVIEW_2026-07-22.md`에
   이미 최우선 블로커로 기록됨(백엔드 미배포, RC 키 없음) — 중복 집계 방지, 그쪽 문서가 최신 소스
+
+---
+
+## 6. OTA(무선 업데이트) + 강제 푸쉬 — ✅ 구현 완료
+
+**리서치 근거**: [EAS Update 공식 문서](https://docs.expo.dev/eas-update/getting-started/),
+[expo-updates SDK 레퍼런스](https://docs.expo.dev/versions/latest/sdk/updates/). 기본값
+(`checkAutomatically: ON_LOAD`)은 앱이 백그라운드에서 조용히 업데이트를 받아 **다음 콜드스타트**
+때만 반영한다 — 지금 세션은 계속 구버전으로 남는다. "강제 푸쉬"의 의미(받으면 즉시 반영)에 안
+맞아서 `NEVER`로 자동 체크를 끄고 직접 제어하는 방식을 택함.
+
+**한 것**:
+1. `eas init --non-interactive`로 EAS 프로젝트 생성/연결 — `@strides7/Pace`
+   (`https://expo.dev/accounts/strides7/projects/Pace`), projectId
+   `6d080d0f-1fc1-4241-a4ca-97c5c79d8656`. `eas whoami`로 이미 `strides7`/`comfortstride7@gmail.com`
+   계정 로그인 확인된 상태에서 진행.
+2. `npx expo install expo-updates` — SDK 57 호환 버전(`~57.0.8`) 설치.
+3. `eas update:configure`로 app.json에 `updates.url`/`runtimeVersion(policy: appVersion)` 자동 설정.
+4. `app.json`의 `plugins`에 `"expo-updates"` 추가(옵션 없음 — 플러그인 타입 자체가
+   `ConfigPlugin<void>`), `updates.checkAutomatically: "NEVER"`로 자동 백그라운드 반영을 끔.
+5. **`src/services/updates/index.ts`**(신규) — `checkAndForceUpdate(onPhaseChange?)`:
+   - 정상: 업데이트 없음 → `{status:'no-update'}`. 업데이트 있음 → 다운로드 → `reloadAsync()`로
+     즉시 강제 재시작.
+   - 비정상(전부 throw 없이 조용히 처리, 앱을 절대 막지 않음): dev 클라이언트/Expo Go에서는
+     `__DEV__`/`Updates.isEnabled` 가드로 스킵(`ERR_NOT_AVAILABLE_IN_DEV_CLIENT` 회피) · 네트워크
+     없어 체크 자체가 실패(`check-failed`) · 업데이트는 있는데 다운로드 실패(`download-failed`,
+     다음 포그라운드 복귀 때 재시도 — expo-updates 자체가 원자적 다운로드/스왑 보장이라 부분
+     다운로드가 다음 실행을 안 깨뜨림) · 1분 이내 재체크는 스로틀링(`skipped-throttled`, 서버
+     부담 방지).
+6. **`src/app/_layout.tsx`** — 콜드스타트 1회 + `AppState` 'active'(포그라운드 복귀)마다
+   `checkAndForceUpdate` 호출. 다운로드/재시작 단계에서만 짧은 블로킹 화면("새 업데이트를 받는
+   중.../적용하는 중...") — 갑자기 화면이 리로드되면 크래시처럼 보이는 걸 방지. 체크만 하고
+   업데이트가 없는(가장 흔한) 경우엔 화면에 아무 것도 안 뜨고 즉시 사라짐.
+7. **세션 가드 추가**(2026-07-22 밤, `qa/apps/pace/FINDINGS.md` OTA-1 지적 반영) — 리로드 직전에
+   `useTimerStore.isSessionActive`(Android 오버레이 세션) 또는 `usePlayerStore.isPlaying`(Pace
+   Feed 재생) 중 하나라도 켜져 있으면 리로드를 미루고 `hasPendingDownloadedUpdate`로 기억,
+   다음 포그라운드 복귀 때 가드가 풀려 있으면 재다운로드 없이 바로 반영. 이미 검사관이 발견해준
+   버그를 즉시 수정한 것 — 원래 코드는 세션 중이어도 그냥 강제 리로드해서 인메모리 상태를
+   전부 날렸었음.
+
+**실기기/에뮬 검증 결과**:
+- `expo prebuild --clean` + gradle 네이티브 빌드 성공(17분51초), `pace_test` 에뮬레이터에 설치.
+- 앱 정상 기동 확인, `expo-updates` 네이티브 모듈이 문제 없이 초기화됨(logcat:
+  `UpdatesModule: getConstants called`, 에러 없음) — 네이티브 링크 자체는 검증 완료.
+- **한계**: 이건 dev 클라이언트 빌드라 `Updates.checkForUpdateAsync()`가 Expo SDK 자체 정책상
+  release 빌드에서만 동작한다(`__DEV__` 가드가 정상적으로 스킵시킴 — 의도한 동작). 즉
+  체크→다운로드→강제리로드 전체 사이클의 실사용 검증은 **실제 release 빌드**(스토어 제출용
+  빌드, 또는 `eas build --profile production`)에서만 가능 — 이번 라운드는 네이티브 연결과
+  로직 자체(코드 리뷰)만 검증, 전체 사이클 라이브 테스트는 다음 release 빌드 때 이어서.
+
+**실기기 검증**: Android 네이티브 재빌드(`expo prebuild` + gradle) 진행 중 — 이 문서 갱신 시점
+기준 진행 상황은 커밋 로그 참고. iOS는 맥 세션이 **네이티브 재빌드(pod install + Xcode build)**
+한 번 해줘야 반영됨 — JS/설정(app.json, services/updates)은 이미 공유 코드라 그대로 적용됨,
+플랫폼별 추가 코드 불필요(`expo-updates`는 원래 크로스플랫폼 패키지).
+
+**앞으로 실제로 "강제 푸쉬"를 쓰는 법**: `eas update --branch <채널명> --message "..."`로 JS
+번들만 새로 배포하면(네이티브 코드 변경 없는 버그 수정/UI 변경 한정 — 새 네이티브 모듈/권한 추가는
+여전히 스토어 재제출 필요), 이미 설치된 앱들이 다음 포그라운드 진입 시 자동으로 받아서 강제
+적용한다.
 
 ---
 

@@ -68,7 +68,25 @@
           }
         }
       ],
-      "expo-sharing"
-    ]
+      "expo-sharing",
+      "expo-updates"
+    ],
+    "extra": {
+      "router": {
+        "root": "./src/app"
+      },
+      "eas": {
+        "projectId": "6d080d0f-1fc1-4241-a4ca-97c5c79d8656"
+      }
+    },
+    "owner": "strides7",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6d080d0f-1fc1-4241-a4ca-97c5c79d8656",
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0
+    }
   }
 }

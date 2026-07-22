@@ -941,7 +941,16 @@ class PaceOverlayService : Service() {
     // (아래 lockScreen() 참고)으로 실제 화면 잠금까지 즉시 시도한다 — 이 뷰는 그 사이 잠깐의 간극과
     // 잠금이 실패하는 기기(API<28/접근성 꺼짐)를 위한 폴백.
     if (reason == "sleep_detected") {
-      val blackout = View(this).apply { setBackgroundColor(Color.BLACK) }
+      // ⚠️ 에뮬레이터 실측 중 발견(2026-07-23) — 화면 잠금 후 사용자가 스스로 깨서 다시 폰을 쓰려 할 때
+      // 이 화면을 벗어날 방법이 전혀 없었다(버튼 없음 + 터치 통과 금지라 그 밑에 뭐가 있든 영원히
+      // 안 보임 — 강제종료 외엔 탈출 불가능한 진짜 UX 버그). "화면 암전" 의도는 유지하되(버튼 텍스트
+      // 노출 안 함), 아무 곳이나 한 번 탭하면 조용히 닫히게(=endFromBlockOverlay, 다른 사유의
+      // "휴식하기"와 동일 동작) 해서 최소한의 탈출구를 보장한다.
+      val blackout = View(this).apply {
+        setBackgroundColor(Color.BLACK)
+        isClickable = true
+        setOnClickListener { endFromBlockOverlay() }
+      }
       blockOverlayView = blackout
       val params = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,

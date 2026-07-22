@@ -3220,6 +3220,14 @@ iOS에는 전혀 적용 안 됨 — iOS에서 동일 기능을 하려면 `AVAudi
 계속 켜둠" 모델이어야 하고, 그러면 배터리 비용이 스냅보다 확실히 크다. 사용자 확인 후 착수 여부
 결정 예정, 아직 시작 안 함.
 
+**후속(2026-07-23, 사용자 결정) — 고개짓 제거**: 이후 다른 세션이 ARKit TrueDepth로 head-nod를
+실제 구현(`modules/pace-gesture`, `useFeedRemoteControl`)했으나, 사용자가 실사용상 **"비현실적"**
+이라 판단해 **제거 결정**. 위 보류 시점의 우려(카메라 자동ON이 Focus Session 설계와 충돌 + 배터리)가
+실사용으로 확인된 셈. 구현: `app/feed/index.tsx`에서 `headDetectActive`를 상시 `false`로 고정해 ARKit
+카메라가 절대 안 켜지게 함(=고개짓 비활성). `pace-gesture` 네이티브 모듈/`useFeedRemoteControl` 훅은
+삭제하지 않고 유지(다른 세션 영역 + 스냅 재실험 여지) — 피드에서 트리거만 끈 것. "다음 넘김"의 주력은
+화면 탭 / 볼륨키(`pace-volumekey`, 에어팟·BT 리모컨) / 미디어키다.
+
 ### react-native-youtube-iframe 안드로이드 재테스트 결과 — iOS와 다르게 여전히 막힘 (2026-07-20)
 
 맥 세션이 iOS의 Referer 차단을 `react-native-youtube-iframe`(플레이어 HTML을 실제 호스팅 URL에서

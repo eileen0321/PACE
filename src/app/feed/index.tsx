@@ -46,11 +46,11 @@ export default function PaceFeedScreen() {
   // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
   const playing = current != null && status !== 'PAUSED';
 
-  // 2026-07-21: 고개짓이 "안 된다"는 실기기 리포트 디버깅 — 기존엔 배터리용으로 progress>=0.5(영상
-  // 절반 이후)에만 카메라를 켰는데, 그러면 전반부에 끄덕여도 카메라가 꺼져 있어 무반응이었다. 우선
-  // Focus Session ON이면 바로 감지하도록 절반 게이팅을 제거(원인 격리 + UX상 언제든 끄덕여 스킵).
-  // 배터리 재게이팅이 필요하면 나중에 되살린다. progress는 진단로그용으로만 유지.
-  const headDetectActive = isAutoMode;
+  // 2026-07-23 사용자 지시: 고개짓(ARKit 전면카메라 head-nod)을 "비현실적"으로 판단해 제거 —
+  // 항상 false로 두어 gesture 카메라가 절대 안 켜지게 한다(pace-gesture 모듈 자체는 다른 세션 영역이라
+  // 유지, 여기 피드에서 활성화만 끔). "다음 넘김"은 화면 탭/볼륨키/BT 리모컨으로 충분.
+  // (md "턱톡 기각·고개짓 보류" 섹션의 우려 — 카메라 자동ON이 Focus Session 설계와 충돌·배터리 — 와도 일치.)
+  const headDetectActive = false;
   void progress;
 
   useEffect(() => {

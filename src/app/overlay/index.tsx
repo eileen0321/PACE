@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
 import { OverlayExpandedCard } from '../../components/overlays/shared/OverlayExpandedCard';
@@ -34,6 +34,7 @@ const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 export default function OverlaySessionScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { platform } = useLocalSearchParams<{ platform?: AppShieldTarget }>();
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
@@ -246,7 +247,7 @@ export default function OverlaySessionScreen() {
         <Pressable
           onPress={() => router.push('/(tabs)/home')}
           hitSlop={10}
-          style={styles.appIconBtn}
+          style={[styles.appIconBtn, { top: insets.top + spacing.sm }]}
           accessibilityRole="button"
           accessibilityLabel={t('overlay.openApp')}
         >
@@ -312,10 +313,14 @@ export default function OverlaySessionScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F0F' },
-  overlayLayer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
+  // paddingTop 40 — appIconBtn(절대 위치, 높이 32 + 위 여백 8)이 차지하는 공간만큼 OverlayBar를
+  // 아래로 밀어서 겹치지 않게(둘 다 우측 정렬이라 안 밀면 "P" 아이콘과 "NEXT ON" 칩이 겹쳤음,
+  // 2026-07-22 실기기 확인 후 수정). appIconBtn 자신은 absolute라 이 padding 영향 안 받음.
+  overlayLayer: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingTop: 40 },
+  // top은 useSafeAreaInsets()로 인라인 오버라이드됨(position:absolute라 SafeAreaView의 padding이
+  // 자식에 적용 안 돼 상태바와 겹치던 버그 수정, 2026-07-22).
   appIconBtn: {
     position: 'absolute',
-    top: spacing.sm,
     right: spacing.md,
     zIndex: 11,
     width: 32,

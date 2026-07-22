@@ -45,13 +45,16 @@ export function AppHeader({ userEmail }: { userEmail: string }) {
 
   return (
     <View style={styles.header}>
-      <View>
+      <View style={styles.titleBlock}>
         <View style={styles.wordmarkRow}>
           <Text style={styles.wordmark}>PACE</Text>
           <Text style={styles.mottoDot}>•</Text>
-          <Text style={styles.motto}>{motto}</Text>
+          <Text style={styles.motto} numberOfLines={1}>{motto}</Text>
         </View>
-        <Text style={styles.subtitle}>Active Session Guard</Text>
+        {/* 2026-07-22 사용자 지시 — "ACTIVE SESSION GUARD"는 앱을 "감시/제재" 도구처럼 들리게 해서
+            "화면시간/디지털 웰빙" 포지셔닝과 안 맞는다는 지적. "오늘 얼마나 봤는지"를 담백하게
+            보여주는 "TODAY'S USAGE"로 교체. */}
+        <Text style={styles.subtitle}>Today's Usage</Text>
       </View>
       <View style={styles.avatarWrap}>
         <View style={styles.avatar}>
@@ -65,10 +68,15 @@ export function AppHeader({ userEmail }: { userEmail: string }) {
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 12 },
-  wordmarkRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  wordmark: { fontSize: 24, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -1.2, textTransform: 'uppercase' },
-  mottoDot: { fontSize: 16, color: colors.primary, marginTop: -2 },
-  motto: { fontSize: 11, fontFamily: typography.bodyFontFamilySemibold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 1 },
+  // 2026-07-22 사용자 지시 — "PACE" 타이틀 위치/정렬 수정. wordmarkRow가 기존엔 magin-top 마이너스
+  // 값으로 점(•)을 억지로 끌어올리는 방식이었는데, 폰트마다 baseline이 미묘하게 달라 실기기에서
+  // PACE 대문자와 모토 텍스트가 어긋나 보였다 — flex 정렬(alignItems:'flex-end')로 두 텍스트의
+  // 실제 하단선을 맞추는 방식으로 교체(고정폭 매직넘버 대신 상대 정렬).
+  titleBlock: { flexShrink: 1 },
+  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
+  wordmark: { fontSize: 24, lineHeight: 26, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -1.2, textTransform: 'uppercase' },
+  mottoDot: { fontSize: 14, lineHeight: 18, color: colors.primary },
+  motto: { flexShrink: 1, fontSize: 11, lineHeight: 18, fontFamily: typography.bodyFontFamilySemibold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 1 },
   subtitle: { color: colors.textTertiary, fontSize: 9, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 1.8, textTransform: 'uppercase', marginTop: 6 },
   avatarWrap: { alignItems: 'flex-end' },
   avatar: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },

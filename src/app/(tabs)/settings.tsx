@@ -12,6 +12,7 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useToastStore } from '../../store/useToastStore';
 import { clearUserHistory, getAllSessionsForExport } from '../../database/repositories/sessionsRepository';
@@ -137,6 +138,7 @@ export default function SettingsScreen() {
     setShowResetConfirm(false);
     update(DEFAULT_SETTINGS);
     useDailyBonusStore.getState().resetToday().catch(() => {});
+    useLimitHitStore.getState().resetToday().catch(() => {});
     if (user?.id) {
       clearUserHistory(user.id)
         .then(() => useStatsStore.getState().refresh(user.id))

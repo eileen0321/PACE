@@ -1,0 +1,204 @@
+# PACE — 2026-07-22 기능 스펙 & 시나리오 정리
+
+> 사장님이 밤에 던진 대량 요구사항을 정리 + 웹 리서치(최신 트렌드) + 그 자리에서 구현 가능한 것은
+> 구현/검증, 네이티브(Swift/Kotlin) 작업이 필요한 건 여기 상세 스펙으로 남겨 맥 세션이 iOS 쪽을
+> 이어받을 수 있게 함. **범례**: ✅ 구현+검증 완료 / ✅(기존) 이미 이전 세션에서 해결됨(재확인만) /
+> 🔧 네이티브 작업 필요(스펙만 정리, 이번 라운드엔 미구현) / ❓ 사장님 결정 필요
+
+---
+
+## 1. 시나리오 정리 (사용자가 던진 원문 요구사항 구조화)
+
+### 1-A. 핵심 가치 제안 (재미 요소 포함)
+- 사용 시간 / 쉬는 시간(내려놓은 시간) 측정
+- 사용 시간에 따른 알림 제공
+- 쉬는 시간에 따른 "집중 모드 보상" 제공
+- 블루투스를 이용한 넘김(다음 영상) 제공
+- 취침 모드에 따른 쇼츠 자동 종료 제공
+
+### 1-B. 수면 감지 강제 종료 파이프라인
+"누운 자세 → 수면 상태 감지 → 앱 종료"를 3단계로: ① WebView 즉시 파괴 ② 화면 암전+밝기 0%→OS
+슬립 진입 ③ SQLite `sessions.ended_at`에 정직하게 기록, 다음날 "새벽 1시 23분에 잠드셨습니다" 요약.
+신호: 무진동 3분 돌파 OR 이어폰 탈착.
+
+### 1-C. 홈 화면
+1. PACE 타이틀 위치/정렬
+2. "ACTIVE SESSION GUARD" → "TODAY'S USAGE"/"HEALTHY VIEWING"
+3. "YouTube with PACE" 카드 차별화 UI(핸즈프리/포커스 세션 배지)
+4. **PACE Flip Mode**(내려놓은 시간 측정) — 자이로/근접 센서로 뒤집힘 감지, 집중 타이머+크레딧 적립,
+   집어들면 즉시 정산. 통계에도 반영.
+
+### 1-D. 카피/가이드
+1. 자동재생 관련 문구 삭제
+2. "PACE = Screen Time / Digital Wellbeing 앱" 포지셔닝
+3. 단축어(iOS)/접근성(Android)/뒤집어놓기 가이드 페이지(이미지 포함)
+
+### 1-E. 오버레이/웹뷰
+1. 우상단 앱 아이콘이 상태바와 겹침
+2. Android 오버레이 불투명도/노출시간 조절
+3. iOS 웹뷰에서도 시간 상태바 노출 가능한지
+4. 블루투스 볼륨 기반 "다음" 시나리오 정리
+5. **한도 도달 UI 3단계화**(1차 풀다이얼로그 → 2차 완화 → 3차+ 자동소멸 토스트)
+
+### 1-F. 일반 유튜브 시청시간
+1. Android 일반 사용 측정 확인
+2. iOS: Shortcuts(단축어) 자동화 연동 방식("One Sec" 방식) 적용
+
+### 1-G. 일반 검증
+라이트/다크모드, 가로 금지, OTA(강제 업데이트), 서버 연동(구독/사용자 정보)
+
+---
+
+## 2. 이번 세션에서 실제로 구현+검증한 것 ✅
+
+| 항목 | 파일 | 내용 |
+|---|---|---|
+| 한도 도달 3단계 시스템 | `store/useLimitHitStore.ts`(신규), `components/home/LimitReachedOverlay.tsx`, `app/(tabs)/home.tsx` | 하루 스코프 `hitCount`(useDailyBonusStore와 동일 패턴, 자정에 자동 리셋). 1차=정확히 한도 도달(풀 다이얼로그 "TAKE YOUR PACE"+[5분추가][오늘은 여기까지]), 2차=+5분(완화 다이얼로그 "잠시 쉬어갈까요?"+[계속 보기][여기까지 보기]), 3차 이상=버튼 없이 2.2초 자동 소멸 토스트(4종 카피 순환). **접근성 처리**: `AccessibilityInfo.isScreenReaderEnabled()`로 스크린리더 켜져 있으면 자동소멸 안 하고 탭으로 닫게 전환 + `announceForAccessibility`로 즉시 음성 안내(WCAG 2.2.1 대응, 리서치 근거는 §4 참고) |
+| Home "YouTube with PACE" 카드 차별화 | `components/home/PlatformPickerCard.tsx`(새 `features` prop), `app/(tabs)/home.tsx` | 카드 하단에 "🎧 Hands-Free"/"⏱ Focus Session" 작은 칩 추가(GUARDED 카드만) — "그냥 열기" 카드와 시각적 차별화 |
+| AppHeader "PACE" 타이틀 정렬 수정 | `components/ui/AppHeader.tsx` | 매직넘버 `marginTop: -2`로 점(•)을 억지로 끌어올리던 방식 → `alignItems:'flex-end'` + `lineHeight` 통일로 실제 baseline 정렬(폰트별 흔들림 없앰) |
+| "ACTIVE SESSION GUARD" → "TODAY'S USAGE" | `components/ui/AppHeader.tsx` | "감시/제재" 톤을 "오늘 사용량 담백 표시"로 — Digital Wellbeing 포지셔닝과 일치 |
+| 오버레이 앱 아이콘-상태바 겹침 수정 | `app/overlay/index.tsx` | 근본 원인: `appIconBtn`이 `position:'absolute'`라 부모 SafeAreaView의 top padding이 적용 안 됨(절대 위치는 부모 padding 무시) → `useSafeAreaInsets()`로 `insets.top + spacing.sm`을 인라인 계산해서 실제 상태바 높이만큼 내림 |
+
+---
+
+## 3. 이미 이전 세션에서 해결/확인된 것 ✅(기존) — 재작업 불필요
+
+| 항목 | 근거 |
+|---|---|
+| 자동재생 관련 문구 삭제 | `app/onboarding/index.tsx` 주석 자체가 "무기한 자동재생이 아니라 정해둔 시간만큼만 진행되고 스스로 멈춘다"로 이미 수정됐다고 기록. 실제 슬라이드 카피 확인(`translations.ts` slide2Subtitle: "Timed, Not Endless"/"무한정이 아니라 시간제한") — "자동" 단어 노출 없음 |
+| 다크모드 전용(라이트모드 없음, 의도된 설계) | `app.json`의 `userInterfaceStyle: "dark"`로 OS Appearance API가 항상 'dark' 반환하도록 고정. 코드 전체에 `useColorScheme`/`Appearance.*` 참조 0건(라이트모드 분기 로직 자체가 없어 새는 곳도 없음). Android 네이티브 테마(`Theme.AppCompat.DayNight`→`NoActionBar`)도 이전 세션에서 이미 고정 완료(QA_ISSUES_2026-07-18 #14 관련) |
+| 세로 화면 고정(가로 금지) | `app.json` 최상위 `"orientation": "portrait"` — 빌드 타임에 양쪽 플랫폼 다 적용됨 |
+| Android 일반 유튜브 사용 측정 | 이번 세션 실기기 검증(`QA_ANDROID_LIFECYCLE_2026-07-22.md` #4) — Pace 프로세스가 살아있는 한(강제종료 안 한 상태) 유튜브를 Pace 안 거치고 직접 열어도 `PaceAccessibilityService`가 자동 감지해서 오버레이/집행이 정상 작동함을 실기기로 확인 |
+
+---
+
+## 4. 네이티브 작업 필요 — 웹 리서치 결과 + 스펙 (🔧 맥 세션 iOS / 신중한 후속 라운드로 Android)
+
+### 4-A. PACE Flip Mode (내려놓은 시간 측정)
+
+**결론: `expo-sensors`로는 불가능 — 양쪽 플랫폼 다 신규 네이티브 모듈 필요.**
+`expo-sensors`의 Accelerometer/DeviceMotion 리스너는 Android 백그라운드에서 확인된 실패 사례가
+있고([expo/expo#21960](https://github.com/expo/expo/issues/21960)), iOS는 OS 자체가 백그라운드
+CoreMotion을 제한한다 — 래퍼 문제가 아니라 플랫폼 제약.
+
+**Android(가능, 기존 패턴 재사용)**: `PaceOverlayService.kt`와 같은 포그라운드 `Service` +
+`SensorManager`(`TYPE_ACCELEROMETER`/`TYPE_GRAVITY`, z축으로 뒤집힘 판별, z≈+9.8=위, z≈-9.8=아래).
+화면 꺼짐/잠금 상태에서도 계속 작동(Android는 백그라운드 센서 제약이 iOS보다 훨씬 느슨—
+[Android 공식 문서](https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion)).
+`maxReportLatencyUs`로 배터리 소모 최소화 권장.
+
+**iOS(제약 있음)**: `CMMotionManager`/`CMDeviceMotion.gravity.z`(0.7~1.0=뒤집힘,
+[NSHipster](https://nshipster.com/cmdevicemotion/)) — 단, **앱이 백그라운드로 가면 CoreMotion
+이벤트가 끊긴다**(Apple 개발자 포럼에서 재확인 필요 시점마다 재초기화해야 한다고 확인,
+[포럼](https://developer.apple.com/forums/thread/126045)). 상용 실제 앱(FLIP, Flip Timer)은
+근접/조도 센서를 쓰는 쪽도 있음. 백그라운드 유지를 위해선 이 코드베이스의 `pace-gesture` 모듈이
+이미 쓰는 것과 같은 "무음 오디오 세션 유지" 트릭이 선례가 있지만(App Store 정책상 회색지대),
+정직한 설계는 "포그라운드/화면 켜진 상태에서만 인정, 짧은 재확인 윈도우"로 제한하는 것.
+
+**임계값 권장(상용 앱 공개값 없음, 리서치 기반 합리적 기본값)**: 뒤집힘 유지 2~5초 후 타이머 시작
+(손떨림/충격 오탐 방지), 집어들기는 ~1초 유지 후 정지. 저역통과 필터로 단일 샘플 흔들림 무시.
+
+**작업 규모**: Android 신규 네이티브 모듈(Service+SensorManager) + iOS 신규 Swift 모듈
+(CMMotionManager, 백그라운드 제약 문서화된 UX로 설계) + JS 스토어(타이머/크레딧 적립, Stats 반영).
+**이번 라운드에 구현 안 함** — 네이티브 빌드 사이클(느림, 실기기 검증 필수)이 필요해 별도 라운드로.
+
+### 4-B. 수면 감지 강제 종료 파이프라인
+
+**신호 우선순위 재검토 권장**: 사용자 스펙의 "무진동 3분"은 실제 수면감지 앱(Sleep as Android는
+15분 주기 재확인, Sleep Cycle은 마이크+가속도 병행 — 순수 무진동만으로 "잠들었다" 판단은
+오탐 위험 높다고 두 서비스 다 명시)보다 훨씬 공격적. **8~12분으로 완화 권장**, 블루투스 이어폰
+탈착(`ACTION_ACL_DISCONNECTED` Android / `AVAudioSession.routeChangeNotification`
+`.oldDeviceUnavailable` iOS)은 "보조 신호"(타이머를 단축)로만 쓰고 단독 트리거로는 안 씀(통화하러
+잠깐 빼는 경우와 구분 안 됨).
+
+**화면 암전/밝기 관련 중요한 플랫폼 비대칭**:
+- Android `WindowManager.LayoutParams.screenBrightness`는 **앱 자신의 윈도우에만** 적용(시스템
+  전체 밝기가 아님) — 사용자 스펙이 원하는 "시스템 자체 슬립 진입"은 결국 검은 화면 렌더 + OS
+  자체 타임아웃에 맡기는 것과 동일(이미 스펙에 명시된 대로라 문제 없음).
+- **iOS는 더 제한적**: `UIScreen.main.brightness`는 설정 가능하지만 Apple이 "OS가 임의 시점에
+  원래 밝기로 되돌린다"고 공식 문서에 명시([Apple 개발자 포럼](https://developer.apple.com/forums/thread/79998)),
+  잠금 전까지만 유지됨 — 밝기 0% 지정은 "최선 노력"일 뿐 시스템 슬립 보장이 아님. WebView 파괴 +
+  검은 화면 렌더가 실질적으로 신뢰 가능한 부분.
+- WebView/오디오 세션 종료 자체는 두 플랫폼 다 평이한 작업(단, `PaceOverlayService.kt`의
+  MediaSession/AudioFocus도 같이 정리해야 오디오 덕킹이 낀 채로 안 남음).
+
+**작업 규모**: 모션-정지 감지 native primitive는 4-A(Flip Mode)와 공유 가능(같은 "기기가 움직이는지"
+센서 watcher). 블루투스 탈착 리스너는 상대적으로 가벼움(`modules/pace-overlay`(Android)/
+`pace-gesture` 인근(iOS)에 추가). 화면 암전/WebView 파괴/DB 기록은 순수 JS 작업. **이번 라운드에
+구현 안 함** — 트리거 레이어(네이티브)가 선행돼야 함.
+
+### 4-C. 핑거 스냅 ("재미삼아") — 이미 있는 구현 검증만 남음
+
+기존 감사 결과(`QA_ANDROID_LIFECYCLE_2026-07-22.md` Bluetooth 섹션 B30 참고): `PaceSnapDetector.kt`
+(Android)가 이미 존재하고 450ms REFRACTORY_MS 디바운스까지 구현돼 있음 — **이건 새로 만들 게
+아니라 실기기에서 스냅 인식 민감도/오탐률만 재검증하면 됨**. iOS `PaceGestureModule.swift`도
+존재(ARKit 고개끄덕임 + 스냅 감지) — 다만 앞선 맥 세션 리뷰(`QA_FULL_REVIEW_2026-07-22.md` C항목)가
+"스냅 오디오세션이 WebView 재생 오디오랑 충돌 가능성 있어 신중한 실기기 테스트 필요"라고 이미
+경고해뒀음. **다음 실기기 라운드에서 두 플랫폼 다 정밀도만 확인 — 이번 세션에선 코드 추가 안 함**
+(오디오 세션 잘못 건드리면 재생 자체가 깨질 위험, 맥 세션 경고 존중).
+
+### 4-D. iOS Shortcuts(단축어) 연동 — "One Sec 방식" 일반 앱 사용시간 추적
+
+**메커니즘 확인됨**: iOS Shortcuts 앱의 "오토메이션(Automation)" 탭 → "앱" 트리거 → "열림/닫힘"
+선택 → 앱 자체 URL 스킴(`pace://`, 이미 `app.json`에 `"scheme": "pace"` 정의돼 있어 그대로 재사용
+가능) 딥링크로 신호 전달. Apple 공식 문서 확인: "앱" 타입 오토메이션은 "실행 전 확인(Ask Before
+Running)"과 "실행 시 알림(Notify When Run)" 둘 다 끌 수 있어 완전 무음 실행 가능(One Sec도 이
+방식으로 안내).
+
+**알려진 함정(실제 개발자 사례 확인)**: 가로챈 앱으로 다시 딥링크 돼돌아가는 설계를 하면
+"열림→가로채기→다시 열기→다시 열림 감지" 무한루프에 빠진 사례가 실제로 보고됨
+([dev.to 사례](https://dev.to/eliguzz/building-an-open-source-one-sec-alternative-breaking-the-shortcuts-infinite-loop-thanks-to-ios-26-ka4)).
+Pace는 "가로채서 되돌리기"가 아니라 "열림/닫힘 시각만 기록"하는 설계라 이 루프 위험은 낮지만,
+설계 시 명시적으로 피해야 함.
+
+**사용자 설정 마찰(One Sec 자체 튜토리얼 기준 7단계)**: Shortcuts 앱 열기 → 오토메이션 탭 → 개인
+오토메이션 생성 → "앱" 트리거 선택 → 대상 앱 지정 → "즉시 실행" 설정 → 액션에서 Pace 단축어
+검색 → **액션 안에서 대상 앱을 한 번 더 지정**(이 마지막 단계를 빠뜨리는 게 제일 흔한 실패 원인,
+One Sec가 자기 튜토리얼에서 강조). **→ 이게 바로 사장님이 요청한 "이미지 가이드 페이지"가 왜
+필수인지의 근거** — 텍스트 설명만으로는 부족, 앱마다(유튜브/인스타/틱톡) 별도 오토메이션이
+필요해서 가이드도 앱별로 3세트 필요.
+
+**작업 규모**: (1) Pace 쪽 딥링크 핸들러(`pace://usage-event?app=youtube&state=opened` 형태,
+expo-router가 scheme을 자동으로 라우팅 처리 — 별도 파싱 불필요, JS 작업), (2) 오픈↔클로즈 사이
+경과시간 누적 로직(JS 작업), (3) **이미지 가이드 페이지**(1-D-3과 동일 항목, 앱별 7단계
+스크린샷). **딥링크 핸들러+누적 로직은 JS만으로 가능해서 다음 라운드에 구현 가능** — 네이티브
+필요 없음. 가이드 페이지 이미지는 실제 iOS 기기에서 Shortcuts 앱 스크린샷을 찍어야 해서(맥 세션
+쪽 실기기 필요) 이번 세션엔 스켈레톤 텍스트만 별도 준비 가능.
+
+### 4-E. Android 오버레이 불투명도/노출시간 조절
+
+`PaceOverlayService.kt`(네이티브 Kotlin)이 실제 오버레이 뷰(불투명도/크기)를 그리는 코드 — JS에서
+직접 조절 불가. 네이티브 파라미터화(예: 설정값을 오버레이 서비스에 전달해서 alpha 값 조정)가
+필요. **이번 세션엔 미구현**(네이티브 빌드 필요) — 다음 라운드 후보.
+
+### 4-F. iOS 웹뷰에 "시간 상태바"
+
+iOS는 현재 `/feed`(인앱 WebView)로 라우팅(2026-07-22 App Review 대응, home.tsx 참고) — 이 WebView
+화면 안에 남은시간 표시줄을 얹는 건 **순수 JS/RN 오버레이 View 작업**(네이티브 불필요, 이미 화면이
+Pace 자신의 React 트리 안에 있으므로). 다음 라운드에 `app/feed/index.tsx`에 작은 상태 표시줄
+컴포넌트 추가로 구현 가능 — 우선순위 정해주시면 바로 착수.
+
+### 4-G. 블루투스 볼륨 기반 "다음" 시나리오
+
+❓ **사장님 결정 필요**: `QA_ANDROID_LIFECYCLE_2026-07-22.md` Bluetooth 섹션에서 이미 확인된 대로,
+Android는 실제 유튜브 재생 중 하드웨어 미디어버튼이 OS 정책상 Pace로 안 옴(B22, 우회 불가). 남은
+현실적 옵션은 "물리 볼륨 버튼을 다음으로 쓰기"(iOS `PaceVolumeKeyModule.swift`가 이미 이 방식,
+Android는 미구현) — 근데 이건 사용자가 실제 영상 소리 볼륨도 같이 바뀌는 부작용이 있어 UX
+트레이드오프 결정이 필요함. 어느 쪽으로 갈지 방향 정해주시면 그에 맞춰 스펙 구체화.
+
+---
+
+## 5. 아직 반영 안 한 항목 (다음 라운드 후보, 우선순위 필요)
+
+- 가이드 페이지(단축어/접근성/뒤집어놓기 설정, 이미지 포함) — 스켈레톤 구조는 JS로 가능, 스크린샷은 실기기 필요
+- Flip Mode UI/Stats 반영(네이티브 트리거 완성 후)
+- 수면 감지 UI(네이티브 트리거 완성 후)
+- Android 오버레이 불투명도 조절(네이티브)
+- OTA(강제 업데이트) — `expo-updates` 패키지 자체가 **미설치**(package.json에 없음). EAS 프로젝트
+  연동이 필요해 계정/설정 작업 — ❓ 사장님 확인 필요(이번 주 출시에 필수인지 여부부터 결정)
+- 서버 연동(구독/사용자 정보) — `QA_ANDROID_LIFECYCLE_2026-07-22.md`/`QA_FULL_REVIEW_2026-07-22.md`에
+  이미 최우선 블로커로 기록됨(백엔드 미배포, RC 키 없음) — 중복 집계 방지, 그쪽 문서가 최신 소스
+
+---
+
+*이 문서는 계속 갱신됩니다. 구현 여부는 git 커밋 히스토리로 교차 확인 가능.*

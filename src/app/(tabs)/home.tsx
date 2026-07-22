@@ -9,6 +9,7 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
@@ -50,19 +51,34 @@ export default function HomeScreen() {
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
+  const { hitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast } = useLimitHitStore();
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
-  const [dismissedLimitReached, setDismissedLimitReached] = useState(false);
+  // 2026-07-22 — 예전엔 "한 번 닫으면 오늘 하루 끝"인 단일 boolean이었는데, 3단계 시스템에선 3차
+  // 토스트가 5분마다 계속 다시 떠야 한다(그래야 "완화된 반복 알림"이 됨). dismissedHitCount로
+  // "이 hitCount는 이미 보여준 적 있다"만 기록 — hitCount가 다음 5분 임계값으로 올라가면 그 값보다
+  // 커지므로 자동으로 다시 보인다. Extend Time으로 한도가 올라가 isLimitReached가 false가 되면
+  // hitCount 자체가 다음 로직에서 0으로 안 내려가지만(오늘 누적 기록이라 정직하게 유지), 어차피
+  // isLimitReached가 false면 visible 조건 자체가 꺼진다.
+  const [dismissedHitCount, setDismissedHitCount] = useState(0);
 
-  // healthy-shorts-assistant(3) App.tsx의 "APPLE SCREEN TIME LOCKOUT OVERLAY" 이식 — 일일 한도 도달 시
-  // Home에 전체화면 안내를 띄운다(LimitReachedOverlay.tsx). focus.tsx와 동일한 계산식(dailyLimitMinutes
-  // + 오늘 보너스). isLimitReached가 false로 돌아오면(Extend Time으로 한도를 늘렸거나 자정이 지나
-  // 새 날짜가 됐을 때) dismissedLimitReached도 리셋 — 다음에 다시 한도에 도달하면 새로 뜨게.
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
   useEffect(() => {
-    if (!isLimitReached) setDismissedLimitReached(false);
-  }, [isLimitReached]);
+    loadLimitHits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2026-07-22 사용자 지시 — 한도 도달 알림 3단계화. 한도를 넘긴 뒤 5분 단위로 "몇 번째 도달인지"
+  // 계산(정확히 한도=1차, +5분=2차, +10분 이상=3차 이상)해서 useLimitHitStore를 그 값까지 따라잡게
+  // 하고, 그 값(tier로 clamp)에 맞는 다이얼로그/토스트를 렌더한다.
+  const minutesOverLimit = Math.max(0, todayUsageMinutes - effectiveDailyLimitMinutes);
+  const currentHitThreshold = isLimitReached ? Math.floor(minutesOverLimit / 5) + 1 : 0;
+  useEffect(() => {
+    if (currentHitThreshold > 0) ensureLimitHitAtLeast(currentHitThreshold);
+  }, [currentHitThreshold, ensureLimitHitAtLeast]);
+  const limitTier: 1 | 2 | 3 = hitCount <= 1 ? 1 : hitCount === 2 ? 2 : 3;
+  const showLimitReached = isLimitReached && hitCount > dismissedHitCount && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null;
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -110,7 +126,7 @@ export default function HomeScreen() {
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     if (isLimitReached) {
-      setDismissedLimitReached(false);
+      setDismissedHitCount(0);
       return;
     }
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {
@@ -178,6 +194,7 @@ export default function HomeScreen() {
             gradientFrom="rgba(88,86,214,0.35)"
             onPress={() => onSelectPlatform('youtube')}
             isActive={activeSessionPlatform === 'youtube'}
+            features={['🎧 Hands-Free', '⏱ Focus Session']}
           />
         </View>
 
@@ -199,10 +216,13 @@ export default function HomeScreen() {
       />
 
       <LimitReachedOverlay
-        visible={isLimitReached && !dismissedLimitReached && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null}
+        visible={showLimitReached}
+        tier={limitTier}
+        hitCount={hitCount}
         limitMinutes={effectiveDailyLimitMinutes}
-        onExtend={() => { addBonusMinutes(15); setDismissedLimitReached(false); }}
-        onDismiss={() => setDismissedLimitReached(true)}
+        todayUsageMinutes={todayUsageMinutes}
+        onExtend={() => { addBonusMinutes(5); setDismissedHitCount(hitCount); }}
+        onDismiss={() => setDismissedHitCount(hitCount)}
       />
     </SafeAreaView>
   );

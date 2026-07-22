@@ -6,6 +6,7 @@ export const STORAGE_KEYS = {
   deviceId: 'pace_device_id',
   settings: 'pace_user_settings',
   dailyBonus: 'pace_daily_bonus',
+  limitHits: 'pace_limit_hits',
   premiumIsPremium: 'pace_premium_is_premium',
   premiumExpiresAt: 'pace_premium_expires_at',
   bluetoothOnboardingSeen: 'pace_bluetooth_onboarding_seen',

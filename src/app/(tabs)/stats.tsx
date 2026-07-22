@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from 'expo-router';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useFlipStore } from '../../store/useFlipStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { capabilities } from '../../services/platform';
@@ -47,6 +48,11 @@ export default function StatsScreen() {
   const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
+  // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)". iOS만 실제 계측(CMMotionManager),
+  // Android는 co-session이 별도 처리하므로 iOS에서만 카드 노출.
+  const putDownSeconds = useFlipStore((s) => s.putDownSeconds);
+  const flipCredits = useFlipStore((s) => s.credits);
+  const loadFlip = useFlipStore((s) => s.load);
 
   // 2026-07-18: home.tsx와 동일한 이유로 useFocusEffect로 교체(마운트 1회만 refresh하면 세션 종료 후
   // 이 탭으로 돌아와도 방금 끝난 세션이 반영 안 됨 — 실기기 검증 중 Home에서 먼저 발견한 버그를
@@ -58,6 +64,7 @@ export default function StatsScreen() {
       // 이전 세션 종료 시점에 오프라인이었거나 실패해 못 보낸 백로그가 있으면 여기서 한 번 더 시도.
       pushUnsyncedSessions(user.id).catch(() => {});
       bluetooth.refresh();
+      loadFlip(); // 오늘 내려놓은 시간(Flip Mode) 최신값 반영
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, refresh])
   );
@@ -158,6 +165,17 @@ export default function StatsScreen() {
           </GlassSurface>
         </View>
 
+        {/* 4-A. FLIP MODE — 오늘 내려놓은 시간(쉬는시간) + 적립 크레딧 (스펙 §4-A, iOS 전용 계측) */}
+        {Platform.OS === 'ios' && putDownSeconds > 0 && (
+          <View>
+            <Text style={styles.sectionTitle}>쉬는 시간</Text>
+            <GlassSurface style={styles.divideCard}>
+              <BehaviorRow title="오늘 내려놓은 시간" subtitle="폰을 엎어둔 채 쉰 시간" value={formatMinSec(putDownSeconds)} valueColor={colors.successLight} />
+              <BehaviorRow title="적립 크레딧" subtitle="쉬는 시간 1분당 1 크레딧" value={`${flipCredits}`} valueColor={colors.primary} last />
+            </GlassSurface>
+          </View>
+        )}
+
         {/* 5. WEEKLY ACTIVITY GRAPH WITH GOAL LINE */}
         <View>
           <Text style={styles.sectionTitle}>{t('stats.weeklyActivity')}</Text>
@@ -254,6 +272,13 @@ function formatHours(totalMinutes: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// Flip Mode 쉬는시간 표시용 — 초 단위를 "Xm Ys"(1분 미만이면 "Ys")로.
+function formatMinSec(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {

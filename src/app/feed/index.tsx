@@ -11,6 +11,7 @@ import { useVolumeNext } from '../../hooks/useVolumeNext';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useTimerStore } from '../../store/useTimerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -35,6 +36,10 @@ export default function PaceFeedScreen() {
   const advance = useShortsQueueStore((s) => s.advance);
   const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
   const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
+  // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 시각 + 세션 남은 시간을
+  // 상단에 순수 JS로 노출한다(Android 오버레이의 남은시간 표시와 대응). 세션 미활성이면 시계만.
+  const isSessionActive = useTimerStore((s) => s.isSessionActive);
+  const remainingMinutes = useTimerStore((s) => s.remainingMinutes);
 
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
@@ -56,6 +61,13 @@ export default function PaceFeedScreen() {
   useEffect(() => {
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 시간 상태바용 벽시계 — 30초마다 갱신(분 단위 표시라 그 이상 촘촘할 필요 없음).
+  const [clock, setClock] = useState(() => formatClock(new Date()));
+  useEffect(() => {
+    const id = setInterval(() => setClock(formatClock(new Date())), 30 * 1000);
+    return () => clearInterval(id);
   }, []);
 
   // 2026-07-21 기기 디버깅: 까만화면이 "큐 0개"인지 vs "WebView 재생 실패"인지 로그로 가른다.
@@ -194,6 +206,24 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
+        {/* 시간 상태바(스펙 §1-E.3) — 웹뷰 몰입 중 시간 감각 유지용. 벽시계 + (세션 중이면) 남은시간. */}
+        <View style={styles.statusBar} pointerEvents="none">
+          <View style={styles.statusPill}>
+            <Feather name="clock" size={12} color="#FFFFFF" />
+            <Text style={styles.statusText}>{clock}</Text>
+            {isSessionActive && (
+              <>
+                <View style={styles.statusDivider} />
+                <Feather name="watch" size={11} color={remainingMinutes <= 5 ? colors.warning : '#FFFFFF'} />
+                <Text style={[styles.statusText, remainingMinutes <= 5 && { color: colors.warning }]}>
+                  {remainingMinutes}
+                  {t('home.minUnit')}
+                </Text>
+              </>
+            )}
+          </View>
+        </View>
+
         {usingScrape && (
           <View style={styles.fallbackBanner}>
             <Feather name="alert-triangle" size={12} color={colors.warning} />
@@ -270,6 +300,13 @@ export default function PaceFeedScreen() {
   );
 }
 
+// 벽시계 HH:MM(24시간) — 상태바용. 로케일 무관하게 항상 24h로 통일(숫자 시계 톤).
+function formatClock(d: Date): string {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   // 2026-07-19 버그 수정: position:'absolute'가 빠져 있어서 이 UI 레이어가 WebView 플레이어와 같은
@@ -285,6 +322,11 @@ const styles = StyleSheet.create({
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   appIconText: { color: '#FFFFFF', fontSize: 18, fontFamily: typography.displayFontFamily },
+  // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.
+  statusBar: { alignItems: 'center', marginTop: spacing.sm },
+  statusPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 5 },
+  statusText: { color: '#FFFFFF', fontSize: 12, fontFamily: typography.monoFontFamilyBold },
+  statusDivider: { width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },
   fallbackBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, alignSelf: 'flex-start', marginTop: spacing.sm, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   fallbackText: { color: colors.textSecondary, fontSize: 10, fontFamily: typography.bodyFontFamilyMedium },
   // 2026-07-23: 유투브 웹뷰 자체 하단 UI(메타/다음영상 미리보기 바)와 안 겹치게 크게 띄우고 좌측 정렬.

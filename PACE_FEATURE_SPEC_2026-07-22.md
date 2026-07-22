@@ -100,7 +100,24 @@ CoreMotion을 제한한다 — 래퍼 문제가 아니라 플랫폼 제약.
 
 **작업 규모**: Android 신규 네이티브 모듈(Service+SensorManager) + iOS 신규 Swift 모듈
 (CMMotionManager, 백그라운드 제약 문서화된 UX로 설계) + JS 스토어(타이머/크레딧 적립, Stats 반영).
-**이번 라운드에 구현 안 함** — 네이티브 빌드 사이클(느림, 실기기 검증 필수)이 필요해 별도 라운드로.
+
+**✅ iOS 구현 완료(2026-07-23, 맥 세션)** — Android 몫은 co-session이 후속 라운드로:
+- **`modules/pace-flip/`**(신규 Expo 로컬 모듈, `apple` 전용): `PaceFlipModule.swift`가
+  `CMMotionManager.deviceMotion`(5Hz)로 `gravity.z` 관찰 → **face-down = z>0.8, face-up = z<0.5**.
+  단일 `candidateSince` 상태머신 + 디바운스(**엎어놓기 2s / 집어들기 1s** 유지 확정, 위 임계값 권장대로)로
+  손떨림/이동 오탐 차단. `onFlip {faceDown}` 이벤트 + `isFaceDown()` 즉시조회. `pod install`로 자동링크
+  확인(Podfile.lock에 `PaceFlip 1.0.0` 등재).
+- **`src/store/useFlipStore.ts`**: 날짜 스코프(useDailyBonusStore 패턴, 자정 자동리셋) — face-down에
+  타이머 시작, face-up에 경과 누적(`putDownSeconds`) + **크레딧 적립(쉬는시간 1분당 1, §1-A "쉬는 시간에
+  따른 집중 모드 보상")**, AsyncStorage 영속.
+- **`src/hooks/useFlipMode.ios.ts`**(iOS) / `.ts`(no-op): PaceFlip → 스토어 배선. **AppState background
+  진입 시 정산 후 관찰 중단, foreground 복귀 시 재개**(CoreMotion 백그라운드 제약 정직 보정 — 위 "정직한
+  설계" 방침대로 포그라운드/화면 켜진 상태만 인정). `requireNativeModule`로 직접 로드(볼륨키/제스처 훅과
+  동일 — 상대경로 require Metro 미해석 회피).
+- **배선**: `src/app/_layout.tsx`에서 `useFlipMode({ enabled: true })` 전역 계측. **Stats 반영**:
+  `app/(tabs)/stats.tsx`에 "쉬는 시간" 카드(오늘 내려놓은 시간 + 적립 크레딧, iOS 전용 노출) 추가.
+- ⚠️ **검증 한계**: 시뮬레이터엔 모션 센서가 없어 face-down 감지 자체는 **실기기 검증 필수**(다음 실기기
+  라운드). 시뮬에선 Swift 컴파일/링크 + 스토어·Stats 카드 JS 경로만 확인.
 
 ### 4-B. 수면 감지 강제 종료 파이프라인
 
@@ -171,12 +188,18 @@ expo-router가 scheme을 자동으로 라우팅 처리 — 별도 파싱 불필�
 직접 조절 불가. 네이티브 파라미터화(예: 설정값을 오버레이 서비스에 전달해서 alpha 값 조정)가
 필요. **이번 세션엔 미구현**(네이티브 빌드 필요) — 다음 라운드 후보.
 
-### 4-F. iOS 웹뷰에 "시간 상태바"
+### 4-F. iOS 웹뷰에 "시간 상태바" — ✅ 구현 완료(2026-07-23, 맥 세션 iOS)
 
 iOS는 현재 `/feed`(인앱 WebView)로 라우팅(2026-07-22 App Review 대응, home.tsx 참고) — 이 WebView
 화면 안에 남은시간 표시줄을 얹는 건 **순수 JS/RN 오버레이 View 작업**(네이티브 불필요, 이미 화면이
-Pace 자신의 React 트리 안에 있으므로). 다음 라운드에 `app/feed/index.tsx`에 작은 상태 표시줄
-컴포넌트 추가로 구현 가능 — 우선순위 정해주시면 바로 착수.
+Pace 자신의 React 트리 안에 있으므로).
+
+**구현**(`app/feed/index.tsx`): 상단 중앙에 반투명 필 형태의 시간 상태바 추가.
+- **벽시계**(`HH:MM`, 24h) — 30초 간격 `setInterval` 갱신. 몰입형 웹뷰에서 잃기 쉬운 시간 감각 유지.
+- **세션 남은시간** — `useTimerStore.remainingMinutes`를 세션 활성(`isSessionActive`) 시에만 병기.
+  남은 ≤5분이면 경고색(`colors.warning`)으로 전환(Android 오버레이 저시간 경고와 톤 일치).
+- `pointerEvents="none"`으로 WebView 재생 탭을 가리지 않음(중앙 spacer none 처리와 동일 컨벤션).
+- 검증: 시뮬레이터(iPhone 17)에서 벽시계/남은시간 렌더 확인. 순수 JS라 실기기 불필요.
 
 ### 4-G. 블루투스 볼륨 기반 "다음" 시나리오 — ✅ 구현 완료(2026-07-23)
 

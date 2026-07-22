@@ -127,6 +127,46 @@ class PaceOverlayService : Service() {
   private var btWasConnectedThisSession = false
   private var btDisconnectedDuringStillness = false
 
+  // 한도 도달 UI 3단계화(2026-07-23, 사용자 지적 — "TAKE YOUR PACE" 3단계 시스템이 LimitReachedOverlay.tsx
+  // (JS)에만 구현돼 있었는데, 그건 activeSessionPlatform===null(=홈 탭을 직접 보고 있을 때)에만 뜨는
+  // 조건이 걸려 있어 실제 시청 중 한도 도달(=네이티브 showBlockOverlay 경로) 때는 전혀 안 쓰이고
+  // 예전 단일 다이얼로그 문구가 그대로 나가고 있었다 — 여기 네이티브 쪽에 3단계를 새로 이식).
+  // 하루 스코프 히트카운트(useLimitHitStore.ts와 동일 개념, 자정 지나면 리셋) — 1차=정확히 한도
+  // 도달, 2차=+5분 한 번 더 다 씀, 3차 이상=계속 그럼(단, 3차부터는 차단이 아니라 안내만, 아래 참고).
+  private var dailyLimitHitCount = 0
+  // 오늘 최초로 도달했을 때의 한도(분) — 이후 "+5분" 연장을 아무리 눌러도 안 바뀜. tier1 문구
+  // "{N}분 시청 완료"와 tier3+ 문구의 usageMinutes 계산(= 이 값 + (hitCount-1)*EXTEND_MINUTES) 둘 다
+  // 이 값을 기준으로 삼는다 — 매 확장 사이클이 정확히 EXTEND_MINUTES만큼만 추가되는 구조라 실제
+  // 오늘 시청한 총량과 정확히 일치한다.
+  private var dailyLimitOriginalMinutes = 0
+
+  private fun todayDateStr(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+  // ACTION_START에서 매번 호출 — 날짜가 바뀌었으면 히트카운트/원래한도 둘 다 리셋(자정 롤오버).
+  // 같은 날 안에서 세션이 여러 번 시작/종료돼도(수동 종료 후 재시작 등) 히트카운트는 유지된다 —
+  // "오늘 몇 번째 도달인지"가 세션 단위가 아니라 날짜 단위 개념이기 때문.
+  private fun loadDailyLimitHitState() {
+    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val storedDate = prefs.getString(PREF_DAILY_LIMIT_HIT_DATE, null)
+    val today = todayDateStr()
+    if (storedDate != today) {
+      dailyLimitHitCount = 0
+      dailyLimitOriginalMinutes = 0
+    } else {
+      dailyLimitHitCount = prefs.getInt(PREF_DAILY_LIMIT_HIT_COUNT, 0)
+      dailyLimitOriginalMinutes = prefs.getInt(PREF_DAILY_LIMIT_ORIGINAL_MINUTES, 0)
+    }
+  }
+
+  private fun persistDailyLimitHitState() {
+    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+      .putString(PREF_DAILY_LIMIT_HIT_DATE, todayDateStr())
+      .putInt(PREF_DAILY_LIMIT_HIT_COUNT, dailyLimitHitCount)
+      .putInt(PREF_DAILY_LIMIT_ORIGINAL_MINUTES, dailyLimitOriginalMinutes)
+      .apply()
+  }
+
   // ⚠️ lastMotionAtMs는 여기서 초기화하지 않는다 — ACTION_START(신규 세션)는 onStartCommand가 이미
   // "지금"으로 세팅해두고, ACTION_TICK/null 복구 경로는 restoreStateFromPrefs()가 영속값을 먼저
   // 복원해둔다(둘 다 ensureInfraReady() 호출 전에 끝남). 여기서 다시 now로 덮으면 프로세스가 죽었다
@@ -332,6 +372,12 @@ class PaceOverlayService : Service() {
     // 프로세스 재시작(kill+알람 복구)이어도 무진동 시계가 "지금부터 다시 10분"으로 리셋되지 않게
     // 마지막 움직임 시각을 복원 — 없으면(구버전 상태/최초) 안전하게 지금으로(즉시 만료 방지).
     lastMotionAtMs = prefs.getLong(PREF_LAST_MOTION_AT_MS, SystemClock.elapsedRealtime())
+    // 한도 도달 히트카운트도 같은 이유로 복원 — 안 하면 프로세스가 죽었다 살아날 때마다 오늘 몇 번째
+    // 도달인지가 0으로 리셋돼 tier가 항상 1로 되돌아가는 버그가 된다(날짜가 바뀌었으면 여기서 그냥
+    // 이전 날짜 값을 그대로 들고 오지만, 다음 도달 시점에 performTick이 부르는 게 아니라 ACTION_START
+    // 때만 loadDailyLimitHitState()로 날짜 검사를 하므로 — 세션이 자정을 넘겨 계속 살아있는 드문
+    // 케이스는 여기서 완벽히 커버 안 됨, 알려진 한계로 남김).
+    loadDailyLimitHitState()
     return true
   }
 
@@ -400,6 +446,11 @@ class PaceOverlayService : Service() {
     // 수면감지는 몇 분 단위 판정이라 초 단위 정밀도가 필요 없음 — 배터리를 위해 배칭 지연을 여유있게.
     private const val STILLNESS_REPORT_LATENCY_US = 5_000_000 // 5s
     private const val PREF_LAST_MOTION_AT_MS = "session_last_motion_at_ms"
+    // 한도 도달 3단계 히트카운트 영속 키(날짜 스코프) — 위 PREF_LAST_MOTION_AT_MS와 마찬가지로
+    // PREFS_NAME 안에 같이 저장(별도 파일 불필요).
+    private const val PREF_DAILY_LIMIT_HIT_DATE = "daily_limit_hit_date"
+    private const val PREF_DAILY_LIMIT_HIT_COUNT = "daily_limit_hit_count"
+    private const val PREF_DAILY_LIMIT_ORIGINAL_MINUTES = "daily_limit_original_minutes"
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.
@@ -635,6 +686,12 @@ class PaceOverlayService : Service() {
         autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
         hardBlockMode = intent.getBooleanExtra(EXTRA_HARD_BLOCK_MODE, false)
         lastMotionAtMs = SystemClock.elapsedRealtime() // 신규 세션 — 수면감지 무진동 시계를 지금부터 시작
+        loadDailyLimitHitState() // 날짜 바뀌었으면 한도 히트카운트 리셋(자정 롤오버)
+        if (dailyLimitOriginalMinutes <= 0) {
+          // 오늘 첫 세션(또는 리셋 직후) — 지금 넘겨받은 값이 "오늘의 원래 한도"다.
+          dailyLimitOriginalMinutes = remainingMinutes
+          persistDailyLimitHitState()
+        }
         removeBlockOverlay() // 이전 세션이 만료→차단 화면인 채로 새 세션이 시작되는 경우 정리
         infraReady = false
         ensureInfraReady()
@@ -678,6 +735,7 @@ class PaceOverlayService : Service() {
         stopForegroundAppPolling()
         removeOverlay()
         removeBlockOverlay()
+        removeTier3Toast()
         teardownMediaSession()
         unregisterStillnessSensor()
         infraReady = false
@@ -733,19 +791,38 @@ class PaceOverlayService : Service() {
       // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
       // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
       // "Sleep Timer가 켜져 있었고 방금 만료됐다"로 판단 가능.
+      val isDailyLimit = remainingMinutes <= 0 && !sleepDetected
+      if (isDailyLimit) {
+        dailyLimitHitCount += 1
+        persistDailyLimitHitState()
+        // 한도 도달 3단계(2026-07-23, 사용자 지적 반영 — LimitReachedOverlay.tsx의 3단계를 실제
+        // 시청 중 차단 경로에도 이식). 3차부터는 스펙 원문 그대로 "선택지 없이 1~3초 자동 소멸하는
+        // 담백한 안내만(차단 아님, 그냥 알려주기만)" — 즉 세션을 실제로 멈추지 않는다: EXTEND_MINUTES를
+        // 조용히 더해 카운트다운을 이어가고, 짧은 안내 토스트만 띄운 뒤 평소처럼 다음 틱을 예약한다.
+        if (dailyLimitHitCount >= 3) {
+          val usageMinutes = dailyLimitOriginalMinutes + (dailyLimitHitCount - 1) * EXTEND_MINUTES
+          Log.d("PaceOverlay", "DAILY LIMIT tier=3+ hitCount=$dailyLimitHitCount usageMinutes=$usageMinutes (non-blocking, auto-extended)")
+          remainingMinutes += EXTEND_MINUTES
+          persistState()
+          showTier3Toast(usageMinutes, dailyLimitOriginalMinutes, dailyLimitHitCount)
+          scheduleNextTick(this)
+          return
+        }
+      }
       if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0 || sleepDetected) {
         val reason = when {
           sleepDetected -> "sleep_detected"
-          remainingMinutes <= 0 -> "daily_limit_reached"
+          isDailyLimit -> "daily_limit_reached"
           else -> "sleep_timer_expired"
         }
-        Log.d("PaceOverlay", "SESSION END reason=$reason stillnessElapsedMs=$stillnessElapsedMs thresholdMs=$stillnessThresholdMs btDisconnectedDuringStillness=$btDisconnectedDuringStillness")
+        Log.d("PaceOverlay", "SESSION END reason=$reason tier=${if (isDailyLimit) dailyLimitHitCount else 0} stillnessElapsedMs=$stillnessElapsedMs thresholdMs=$stillnessThresholdMs btDisconnectedDuringStillness=$btDisconnectedDuringStillness")
         markExpired(reason)
         clearSessionActive()
         if (notifyLimit && reason != "sleep_detected") {
           // 수면감지는 "자고 있는데 알림 소리/진동으로 깨우는" 모순을 피하려 알림을 안 보낸다 —
           // 화면 자체를 잠그므로(아래 showBlockOverlay/lockScreen) 어차피 알림을 봐도 소용없다.
-          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
+          val limitBody = if (isDailyLimit && dailyLimitHitCount >= 2) "잠시 쉬어갈까요?" else "잠시 휴대폰을 내려놓을 시간이에요."
+          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", limitBody)
         }
         cancelScheduledTick(this)
         // 2026-07-19 사용자 제품 결정: "Pace가 만료로 판단했는데 YouTube는 계속 시청 가능"했던 기존
@@ -765,7 +842,7 @@ class PaceOverlayService : Service() {
         if (hardBlockMode || reason == "sleep_detected") {
           PaceAccessibilityService.goHome()
         }
-        showBlockOverlay(reason)
+        showBlockOverlay(reason, if (isDailyLimit) dailyLimitHitCount else 0)
         return
       }
       scheduleNextTick(this)
@@ -930,7 +1007,7 @@ class PaceOverlayService : Service() {
   // 터치가 통과할 "바깥"이 없고, 오히려 통과시키면 안 된다(차단의 핵심). 버튼 2개만 인터랙션 가능:
   // "+5분"(세션 재개) / "휴식하기"(Pace로 이동 + 세션 완전 종료) — GLOBAL_ACTION_HOME은 여기서
   // 호출하지 않는다(그건 Hard Block Mode 옵트인 전용, performTick의 만료 분기에서 별도 처리).
-  private fun showBlockOverlay(reason: String) {
+  private fun showBlockOverlay(reason: String, dailyLimitTier: Int = 0) {
     if (blockOverlayView != null) return
     windowManager = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
     removeOverlay() // 작은 알약은 전체화면 차단으로 대체되므로 치운다
@@ -966,8 +1043,32 @@ class PaceOverlayService : Service() {
     }
 
     val isSleepTimer = reason == "sleep_timer_expired"
-    val titleText = if (isSleepTimer) "Sleep Timer 종료" else "오늘의 한도에 도달했어요"
-    val bodyText = if (isSleepTimer) "설정한 Sleep Timer 시간이 다 됐어요." else "오늘 정해둔 시청 시간을 다 썼어요."
+    val isDailyLimit = reason == "daily_limit_reached"
+    // 한도 도달 1차/2차 문구 분기(스펙 §1-E-5 "한도 도달 UI 3단계화" 원문 그대로, 사용자가 재확인한
+    // 정확한 카피) — 3차부터는 여기 안 오고 showTier3Toast()의 비차단 경로로 빠진다(performTick 참고).
+    val isDailyLimitTier2 = isDailyLimit && dailyLimitTier >= 2
+    val iconText = when {
+      isSleepTimer -> "⏸"
+      isDailyLimitTier2 -> "☕"
+      isDailyLimit -> "🛡"
+      else -> "⏸"
+    }
+    val titleText = when {
+      isSleepTimer -> "Sleep Timer 종료"
+      isDailyLimitTier2 -> "잠시 쉬어갈까요?"
+      isDailyLimit -> "TAKE YOUR PACE"
+      else -> "오늘의 한도에 도달했어요"
+    }
+    // tier1만 3줄(제목/부제/본문), 나머지는 2줄(제목/본문) — JS LimitReachedOverlay.tsx의 Modal 구조와 동일.
+    val subtitleText = if (isDailyLimit && !isDailyLimitTier2) "${dailyLimitOriginalMinutes}분 시청 완료" else null
+    val bodyText = when {
+      isSleepTimer -> "설정한 Sleep Timer 시간이 다 됐어요."
+      isDailyLimitTier2 -> "벌써 ${(dailyLimitTier - 1) * EXTEND_MINUTES}분이 지났습니다"
+      isDailyLimit -> "계속 시청할 수도, 여기서 멈출 수도 있습니다."
+      else -> "오늘 정해둔 시청 시간을 다 썼어요."
+    }
+    val extendBtnText = if (isDailyLimitTier2) "계속 보기" else "+${EXTEND_MINUTES}분"
+    val endBtnText = if (isDailyLimitTier2) "여기까지 보기" else "휴식하기"
     val d = resources.displayMetrics.density
 
     val root = LinearLayout(this).apply {
@@ -978,7 +1079,7 @@ class PaceOverlayService : Service() {
     }
 
     root.addView(TextView(this).apply {
-      text = "⏸"
+      text = iconText
       textSize = 40f
       gravity = Gravity.CENTER
     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (24 * d).toInt() })
@@ -990,6 +1091,16 @@ class PaceOverlayService : Service() {
       gravity = Gravity.CENTER
       setTypeface(typeface, android.graphics.Typeface.BOLD)
     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (10 * d).toInt() })
+
+    if (subtitleText != null) {
+      root.addView(TextView(this).apply {
+        text = subtitleText
+        setTextColor(Color.parseColor("#D1D5DB"))
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+      }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (8 * d).toInt() })
+    }
 
     root.addView(TextView(this).apply {
       text = bodyText
@@ -1006,7 +1117,7 @@ class PaceOverlayService : Service() {
     val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
 
     buttonRow.addView(TextView(this).apply {
-      text = "+${EXTEND_MINUTES}분"
+      text = extendBtnText
       setTextColor(Color.WHITE)
       textSize = 13f
       setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -1017,7 +1128,7 @@ class PaceOverlayService : Service() {
     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = (10 * d).toInt() })
 
     buttonRow.addView(TextView(this).apply {
-      text = "휴식하기"
+      text = endBtnText
       setTextColor(Color.parseColor("#D1D5DB"))
       textSize = 13f
       setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -1044,6 +1155,90 @@ class PaceOverlayService : Service() {
   private fun removeBlockOverlay() {
     blockOverlayView?.let { windowManager?.removeView(it) }
     blockOverlayView = null
+  }
+
+  // 한도 도달 3차 이상(스펙 §1-E-5) — 다른 사유들의 showBlockOverlay와 완전히 다른 성격: 이건
+  // "차단"이 아니라 "안내"라 세션을 멈추지 않는다(performTick에서 이 함수를 부르기 전에 이미
+  // EXTEND_MINUTES를 조용히 더하고 다음 틱을 정상 예약해둔 상태). 그래서 이 뷰는 터치를 흡수하지
+  // 않는다(FLAG_NOT_TOUCHABLE) — 그 아래 YouTube가 이 토스트가 떠 있는 동안에도 그대로 조작 가능해야
+  // "차단 아님"이 실제로 성립한다. JS Tier3Toast(LimitReachedOverlay.tsx)와 동일한 4종 문구를
+  // hitCount로 순환하고, 동일한 WCAG 2.2.1(Timing Adjustable) 대응도 미러링한다 — 스크린리더가
+  // 켜져 있으면 자동 소멸 대신 탭으로 닫게 바꾸고 즉시 음성 안내.
+  private var tier3ToastView: View? = null
+  private val tier3ToastHandler = Handler(Looper.getMainLooper())
+  private var tier3DismissRunnable: Runnable? = null
+
+  private fun showTier3Toast(usageMinutes: Int, goalMinutes: Int, hitCount: Int) {
+    val messages = listOf(
+      "Take your pace." to "지금까지 ${usageMinutes}분 시청했습니다.",
+      "잠시 쉬어갈까요?" to "오늘 ${usageMinutes}분 시청했습니다.",
+      "Time well spent." to "오늘 목표 시간을 초과했습니다.",
+      "오늘 다른 할일이 있었나요?" to "목표 ${goalMinutes}분을 넘겼어요."
+    )
+    val (msgTitle, msgBody) = messages[(hitCount - 3) % messages.size]
+
+    removeTier3Toast() // 이전 토스트가 아직 안 사라졌으면(연속 도달 등) 먼저 치우고 새로 띄움
+    windowManager = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager
+    val screenReaderOn = am?.isEnabled == true && am.isTouchExplorationEnabled
+    val d = resources.displayMetrics.density
+
+    val pill = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply { cornerRadius = 20f * d; setColor(Color.parseColor("#F20B0C0F")) }
+      setPadding((20 * d).toInt(), (14 * d).toInt(), (20 * d).toInt(), (14 * d).toInt())
+    }
+    pill.addView(TextView(this).apply {
+      text = msgTitle
+      setTextColor(Color.WHITE)
+      textSize = 14f
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    })
+    pill.addView(TextView(this).apply {
+      text = msgBody
+      setTextColor(Color.parseColor("#9CA3AF"))
+      textSize = 12f
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = (4 * d).toInt() })
+
+    if (screenReaderOn) {
+      pill.isClickable = true
+      pill.setOnClickListener { removeTier3Toast() }
+    }
+
+    tier3ToastView = pill
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      if (screenReaderOn) WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+      else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+      y = (180 * d).toInt()
+    }
+    windowManager?.addView(tier3ToastView, params)
+
+    if (am?.isEnabled == true) {
+      @Suppress("DEPRECATION")
+      val event = android.view.accessibility.AccessibilityEvent.obtain(android.view.accessibility.AccessibilityEvent.TYPE_ANNOUNCEMENT)
+      event.text.add("$msgTitle $msgBody")
+      am.sendAccessibilityEvent(event)
+    }
+
+    if (!screenReaderOn) {
+      val dismiss = Runnable { removeTier3Toast() }
+      tier3DismissRunnable = dismiss
+      tier3ToastHandler.postDelayed(dismiss, 2200)
+    }
+  }
+
+  private fun removeTier3Toast() {
+    tier3DismissRunnable?.let { tier3ToastHandler.removeCallbacks(it) }
+    tier3DismissRunnable = null
+    tier3ToastView?.let { windowManager?.removeView(it) }
+    tier3ToastView = null
   }
 
   private fun extendFromBlockOverlay() {
@@ -1151,6 +1346,7 @@ class PaceOverlayService : Service() {
     stopForegroundAppPolling()
     removeOverlay()
     removeBlockOverlay()
+    removeTier3Toast()
     teardownMediaSession()
     unregisterStillnessSensor()
     // 세션 자체가 끝나면(한도 도달/사용자 종료 등) Focus Session이 켜져 있었더라도 워처가 orphan

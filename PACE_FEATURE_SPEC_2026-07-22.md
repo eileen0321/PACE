@@ -59,6 +59,40 @@
 | "ACTIVE SESSION GUARD" → "TODAY'S USAGE" | `components/ui/AppHeader.tsx` | "감시/제재" 톤을 "오늘 사용량 담백 표시"로 — Digital Wellbeing 포지셔닝과 일치 |
 | 오버레이 앱 아이콘-상태바 겹침 수정 | `app/overlay/index.tsx` | 근본 원인: `appIconBtn`이 `position:'absolute'`라 부모 SafeAreaView의 top padding이 적용 안 됨(절대 위치는 부모 padding 무시) → `useSafeAreaInsets()`로 `insets.top + spacing.sm`을 인라인 계산해서 실제 상태바 높이만큼 내림 |
 
+**⚠️ 중대 갭 발견 및 수정(2026-07-23) — 3단계 시스템이 실제 시청 중엔 전혀 안 뜨고 있었음**:
+사장님이 실기기에서 직접 한도 도달을 겪고 나서야 발견 — 위 3단계 시스템(`LimitReachedOverlay.tsx`)은
+`activeSessionPlatform === null`(=홈 탭을 직접 보고 있을 때)에만 뜨는 조건이 걸려 있는데, Android의
+실제 세션 흐름은 `PaceOverlayService.kt`(네이티브)가 자기 완결적으로 만료를 판단하고
+`showBlockOverlay()`로 별도의 네이티브 다이얼로그를 띄운다(2026-07-19에 이미 그렇게 설계됨,
+§4 원본 문서 참고) — 즉 **실제 시청 중 한도 도달 시 뜨는 건 JS의 "TAKE YOUR PACE"가 아니라
+네이티브의 옛날 단일 문구("오늘의 한도에 도달했어요")였다.** 3단계 개편이 사실상 홈 화면에서만
+유효하고, 정작 필요한 순간(실시청 중 차단)엔 적용이 안 되고 있던 것 — 사용자가 실기기 스크린샷으로
+직접 지적해서 발견.
+
+**수정**: `PaceOverlayService.kt`에 하루 스코프 `dailyLimitHitCount`/`dailyLimitOriginalMinutes`
+(날짜 자정 리셋, `useLimitHitStore.ts`와 동일 개념을 네이티브에 이식)를 추가하고
+`showBlockOverlay(reason, dailyLimitTier)`로 확장:
+- **1차**: "TAKE YOUR PACE" / "{원래한도}분 시청 완료" / "계속 시청할 수도, 여기서 멈출 수도
+  있습니다." / [5분 추가][오늘은 여기까지] — JS 카피 그대로.
+- **2차**: "잠시 쉬어갈까요?" / "벌써 {(hitCount-1)×5}분이 지났습니다" / [계속 보기][여기까지 보기].
+- **3차 이상**: 스펙 원문 "선택지 없이 1~3초 자동 소멸하는 담백한 안내만(차단 아님)"을 네이티브에서
+  문자 그대로 구현 — `showBlockOverlay`를 아예 안 타고 `performTick`에서 조용히 `EXTEND_MINUTES`를
+  더해 세션을 계속 진행시킨 뒤, 터치를 흡수하지 않는(`FLAG_NOT_TOUCHABLE`) 신규 `showTier3Toast()`로
+  2.2초 안내만 띄운다 — 그 아래 YouTube는 토스트가 떠 있는 동안에도 정상 조작 가능(JS
+  `pointerEvents='none'`과 동일 원칙). 4종 카피 순환도 JS `TIER3_MESSAGES`와 동일하게 이식,
+  WCAG 2.2.1(스크린리더면 자동소멸 대신 탭으로 닫기 + 즉시 음성 안내)도 미러링.
+- 프로세스가 죽었다 알람으로 되살아나는 기존 복구 경로(`restoreStateFromPrefs`)에도 히트카운트
+  복원을 추가 — 안 하면 재시작마다 tier가 1로 리셋되는 재발 위험이 있었음.
+
+**에뮬레이터 실측 검증(2026-07-23)**: 1분짜리 테스트 한도로 3번 연속 도달시켜 로그로 확인 —
+`SESSION END reason=daily_limit_reached tier=1`, `tier=2`(문구 "잠시 쉬어갈까요?"의 "벌써 5분이
+지났습니다" 정확히 일치), `DAILY LIMIT tier=3+ hitCount=3 usageMinutes=11 (non-blocking,
+auto-extended)`. tier1/2는 JS `LimitReachedOverlay`(홈 화면 진입 시)로도 동일 데이터가 화면에
+정확히 렌더되는 것까지 확인(우연히 세션이 다른 사유로 끝나 홈으로 튕겨나갈 때마다 이 경로를 탐).
+tier3의 정확한 2.2초 창은 스크린샷 타이밍상 여러 시도에도 못 잡았으나, 로그의 정확한 데이터 값과
+이미 다른 오버레이 종류(수면감지 블랙아웃 등)로 검증된 동일 WindowManager 렌더링 메커니즘 재사용을
+근거로 code-review+로그 수준의 신뢰도로 간주.
+
 ---
 
 ## 3. 이미 이전 세션에서 해결/확인된 것 ✅(기존) — 재작업 불필요

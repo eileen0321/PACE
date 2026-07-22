@@ -1,4 +1,4 @@
-import { requireNativeModule } from 'expo-modules-core';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
 // Expo Modules API 로컬 모듈 — iOS+Android 공용(2026-07-23, Android 쪽 네이티브 모듈 추가로 공용화).
 // iOS는 CMMotionManager, Android는 SensorManager로 기기를 "엎어놓았는지(face-down)"를 감지해
@@ -9,7 +9,7 @@ import { requireNativeModule } from 'expo-modules-core';
 //    기술적으로는 계속 동작 가능하지만 플랫폼 간 체감 통일을 위해 의도적으로 동일하게 제한 —
 //    "포그라운드/화면 켜진 상태에서만 인정"이 양쪽 다 정직한 설계. JS(useFlipMode.ts)는 이 이벤트 +
 //    AppState + physicalFaceDown()으로 백그라운드 구간까지 브리징해 실제 경과를 계산한다.
-// ⚠️ 시뮬레이터/일부 에뮬레이터엔 모션 센서가 없어 검증 불가 → 실기기 필요. 미빌드 시 requireNativeModule throw.
+// ⚠️ 시뮬레이터/일부 에뮬레이터엔 모션 센서가 없어 감지 검증 불가 → 실기기 필요(미링크여도 옵셔널 로드라 크래시 없음).
 type PaceFlipNativeModule = {
   /** 모션 관찰 시작. 이후 엎어놓음/집어듦마다 'onFlip' 이벤트({ faceDown: boolean }) 발생. */
   start(): Promise<void>;
@@ -21,4 +21,7 @@ type PaceFlipNativeModule = {
   addListener(event: 'onFlip', listener: (payload: { faceDown: boolean }) => void): { remove: () => void };
 };
 
-export const PaceFlip = requireNativeModule<PaceFlipNativeModule>('PaceFlip');
+// requireOptionalNativeModule: 미링크 환경(Expo Go/OTA/미빌드)에서도 import 시점에 throw하지 않고
+// null을 준다(감사 C2 — 앱 부팅 크래시 방지). 실제 사용처(useFlipMode.ts)는 requireNativeModule을
+// try/catch로 직접 로드하므로 이 export는 옵셔널로 안전하게 둔다.
+export const PaceFlip = requireOptionalNativeModule<PaceFlipNativeModule>('PaceFlip');

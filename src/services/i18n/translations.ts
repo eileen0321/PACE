@@ -64,6 +64,11 @@ export const translations = {
       next: 'Next',
       previous: 'Previous',
       autoModeToggles: 'Focus Session Toggles',
+      restTime: 'Rest Time',
+      restTimeToday: 'Face-down today',
+      restTimeSub: 'Time your phone rested face-down',
+      restCredits: 'Credits earned',
+      restCreditsSub: '1 credit per minute of rest',
     },
 
     focus: {
@@ -371,6 +376,11 @@ export const translations = {
       next: '다음',
       previous: '이전',
       autoModeToggles: '포커스 세션 전환 횟수',
+      restTime: '쉬는 시간',
+      restTimeToday: '오늘 내려놓은 시간',
+      restTimeSub: '폰을 엎어둔 채 쉰 시간',
+      restCredits: '적립 크레딧',
+      restCreditsSub: '쉬는 시간 1분당 1 크레딧',
     },
 
     focus: {

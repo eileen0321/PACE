@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -172,12 +173,24 @@ class PaceAccessibilityService : AccessibilityService() {
   // autoNextService.android.ts)이 꺼져 있으면 무조건 false를 반환해 시스템 기본 볼륨 동작을 그대로
   // 통과시킨다 — 즉 실제 스토어 제출 빌드에서는 이 코드가 있어도 하이재킹이 발동하지 않는다.
   // 켜져 있어도 감시 대상 앱(SupportedApps.PACKAGES)이 포그라운드일 때만 소비하므로, 전화/음악 등
-  // 무관한 앱에서는 볼륨 버튼이 평소와 똑같이 동작한다.
+  // 무관한 앱에서는 볼륨 버튼이 평소와 똑같이 동작한다. 마지막으로, 감시 대상 앱이 켜져 있어도
+  // 이벤트를 낸 입력 장치가 폰 자체 내장 버튼이면(InputDevice.isExternal()==false) 역시 통과시킨다
+  // — 그래야 세션 중에도 사용자가 폰 본체 볼륨 버튼으로 실제 음량을 조절할 수 있다. 오직 외부
+  // (블루투스 리모컨/이어폰) 장치에서 온 볼륨 이벤트만 다음넘김 대리 신호로 소비한다.
   override fun onKeyEvent(event: KeyEvent): Boolean {
     if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
       return false
     }
     if (!isWatching || !SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+      return false
+    }
+    // 2026-07-23 사용자 지적 — "사용자가 실제 볼륨을 올리거나 내리고 싶을 땐?" 폰 자체 물리
+    // 볼륨 버튼까지 이걸로 삼키면 세션 중엔 진짜 음량 조절 수단이 아예 없어진다. InputDevice.
+    // isExternal()로 이벤트를 낸 입력 장치가 내장 버튼인지 외부(블루투스 리모컨/이어폰) 장치인지
+    // 구분해서, 외부 장치에서 온 볼륨 이벤트만 "다음넘김" 대리 신호로 취급한다 — 폰 자체 볼륨
+    // 버튼은 여기서 바로 return false로 통과시켜 평소와 똑같이 실제 음량을 조절한다.
+    val device = InputDevice.getDevice(event.deviceId)
+    if (device == null || !device.isExternal) {
       return false
     }
     // ACTION_DOWN에서만 처리 — ACTION_UP까지 같이 소비하면 한 번의 물리 입력이 두 번 카운트될 위험.

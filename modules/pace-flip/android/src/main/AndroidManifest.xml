@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- TYPE_GRAVITY/TYPE_LINEAR_ACCELERATION 모션 센서는 런타임 권한도, 매니페스트 선언도 필요 없음
+       (BODY_SENSORS는 심박수 등 생체 센서 전용 — 가속도/중력 센서와 무관). 선언할 권한이 없어 비어있음. -->
+</manifest>

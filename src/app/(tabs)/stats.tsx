@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,8 +48,7 @@ export default function StatsScreen() {
   const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
-  // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)". iOS만 실제 계측(CMMotionManager),
-  // Android는 co-session이 별도 처리하므로 iOS에서만 카드 노출.
+  // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)", 양쪽 플랫폼 다 실제 계측.
   const putDownSeconds = useFlipStore((s) => s.putDownSeconds);
   const flipCredits = useFlipStore((s) => s.credits);
   const loadFlip = useFlipStore((s) => s.load);
@@ -165,8 +164,8 @@ export default function StatsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 4-A. FLIP MODE — 오늘 내려놓은 시간(쉬는시간) + 적립 크레딧 (스펙 §4-A, iOS 전용 계측) */}
-        {Platform.OS === 'ios' && putDownSeconds > 0 && (
+        {/* 4-A. FLIP MODE — 오늘 내려놓은 시간(쉬는시간) + 적립 크레딧 (스펙 §4-A, 2026-07-23부터 양쪽 플랫폼 계측) */}
+        {putDownSeconds > 0 && (
           <View>
             <Text style={styles.sectionTitle}>쉬는 시간</Text>
             <GlassSurface style={styles.divideCard}>

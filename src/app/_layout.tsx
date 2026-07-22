@@ -45,7 +45,7 @@ export default function RootLayout() {
   const loadDailyBonus = useDailyBonusStore((s) => s.load);
 
   // Flip Mode(스펙 §4-A) — 앱이 떠 있는 동안 전역으로 "내려놓은 시간(쉬는시간)"을 측정한다.
-  // iOS만 실제 감지(CMMotionManager), 그 외 no-op(useFlipMode.ts). 포그라운드에서만 동작(§4-A 제약).
+  // iOS(CMMotionManager)/Android(SensorManager) 둘 다 실제 감지, 포그라운드에서만 동작(§4-A 제약).
   useFlipMode({ enabled: true });
 
   const [fontsLoaded] = useFonts({

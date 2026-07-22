@@ -119,6 +119,37 @@ CoreMotion을 제한한다 — 래퍼 문제가 아니라 플랫폼 제약.
 - ⚠️ **검증 한계**: 시뮬레이터엔 모션 센서가 없어 face-down 감지 자체는 **실기기 검증 필수**(다음 실기기
   라운드). 시뮬에선 Swift 컴파일/링크 + 스토어·Stats 카드 JS 경로만 확인.
 
+**✅ Android 구현 완료(2026-07-23)** — iOS와 동일한 `PaceFlip` 인터페이스(`start`/`stop`/
+`isFaceDown`/`onFlip`)로 구현, JS 레이어(`useFlipMode.ts`, `useFlipStore.ts`, Stats 카드)는
+**완전히 공용화**(플랫폼 분기 전부 제거) — iOS 전용이던 `useFlipMode.ios.ts`는 삭제하고 로직을
+공용 `useFlipMode.ts`로 병합, `stats.tsx`의 `Platform.OS === 'ios'` 카드 게이트도 제거:
+- **`modules/pace-flip/android/`**(신규 Expo 로컬 모듈): `PaceFlipModule.kt`가 `SensorManager`의
+  `TYPE_GRAVITY`를 관찰. **Android는 iOS와 z축 부호가 반대** — face-down일 때 z ≈ **-9.8**
+  (테이블 반작용력 관례, face-up이 iOS와 반대로 양수) — 물리적으로 같은 현상을 각 플랫폼이 반대
+  부호로 표현할 뿐. 임계값은 iOS의 ±0.8/±0.5(정규화 g 단위)를
+  `SensorManager.STANDARD_GRAVITY`(9.80665) 배율로 환산(-7.85/+4.90 m/s²), 디바운스도 동일(엎어놓기
+  2s/집어들기 1s).
+- **오탐 완화 리서치 반영(웹 리서치, 2026-07-23)**: gravity.z 임계값만 쓰면 차량 대시보드(진동+코너링
+  힘), 주머니 속, 비스듬한 거치대에서 오탐 위험이 있음이 드라이빙감지/낙상감지 업계 공통 지적
+  ([Damoov](https://damoov.com/how-your-smartphone-understands-driving/), [낙상감지 특허 문헌](https://patents.justia.com/patent/9638711))
+  — 표준 완화책인 "선형가속도 크기가 거의 0"(기기가 실제로 거의 안 움직이는 중) 게이트를 추가:
+  `TYPE_LINEAR_ACCELERATION` 크기가 1.2 m/s² 이하일 때만 tilt 후보를 인정, iOS 대비 오탐에 더
+  강건함(이 게이트는 iOS 쪽엔 없음 — 향후 라운드에서 iOS에도 이식 고려 가능).
+- **백그라운드 신뢰성 리서치 확인**: Doze 모드 공식 제약 목록(네트워크/WakeLock/알람/JobScheduler)에
+  SensorManager 리스너는 포함 안 됨 — 포그라운드 서비스 안에서라면 센서 전달 자체는 계속됨이 확인됨
+  ([Doze/Standby 공식 문서](https://developer.android.com/training/monitoring-device-state/doze-standby)).
+  다만 이번 라운드는 **iOS와 동일하게 포그라운드 전용으로 의도적으로 통일**했다(§4-A 상단 이유 —
+  플랫폼 간 체감 차이 방지 + 새 상시 포그라운드서비스/알림 신설 회피) — Android가 기술적으로는 더
+  느슨한 백그라운드 동작이 가능하지만 다음 라운드 후보로 남김.
+- **배칭**: `registerListener`에 `maxReportLatencyUs=200ms` 지정 — 1~2초 디바운스 창보다 충분히
+  짧게 잡아 배터리 절약 배칭이 반응성을 해치지 않게 함(리서치 권고 그대로 적용).
+- **권한**: `TYPE_GRAVITY`/`TYPE_LINEAR_ACCELERATION`은 런타임 권한도 매니페스트 선언도 불필요
+  확인(`BODY_SENSORS`는 심박수 등 생체 센서 전용, 무관) — Play 스토어 "건강 앱" 선언 대상도 아님
+  (핵심 기능이 수면/건강 추적이 아니라 세션 부가기능이라 해당 정책 범위 밖으로 확인).
+- **빌드 검증**: `expo prebuild --clean` + `gradlew assembleDebug` 성공, 에뮬레이터/실기기 설치 완료.
+  ⚠️ **동작 검증은 아직**: face-down/up 실측(실기기에서 실제로 뒤집어보고 크레딧 적립 확인)은
+  다음 단계 — 이 문서 갱신 이후 결과 추가 예정.
+
 ### 4-B. 수면 감지 강제 종료 파이프라인
 
 **신호 우선순위 재검토 권장**: 사용자 스펙의 "무진동 3분"은 실제 수면감지 앱(Sleep as Android는

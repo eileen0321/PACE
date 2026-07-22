@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // PACE Flip Mode — "내려놓은 시간(쉬는 시간)" 측정 스토어 (스펙 §4-A, 2026-07-23).
 // 기기를 엎어놓으면(face-down) 타이머 시작, 집어들면 그 경과를 오늘 누적에 더하고 크레딧을 적립한다.
 // 날짜 스코프(useDailyBonusStore와 동일 패턴) — 자정이 지나면 자동 리셋.
-// 네이티브 감지(iOS=modules/pace-flip)는 useFlipMode 훅이 담당하고, 이 스토어는 계측/영속만 한다.
+// 네이티브 감지(modules/pace-flip, iOS+Android)는 useFlipMode 훅이 담당하고, 이 스토어는 계측/영속만 한다.
 const KEY = 'pace_flip_today';
 const CREDIT_PER_MINUTE = 1; // 쉬는 시간 1분당 집중 크레딧 1 (§1-A "쉬는 시간에 따른 집중 모드 보상")
 

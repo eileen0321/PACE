@@ -26,6 +26,12 @@ import kotlin.math.sqrt
 // 실제로 거의 안 움직이는 중) 게이트를 추가로 요구한다. TYPE_LINEAR_ACCELERATION(중력 성분이 이미
 // 제거된 값)의 크기가 LINEAR_ACCEL_EPSILON 이하일 때만 "진짜로 내려놓은 상태 후보"로 인정 — 차량
 // 진동/걷는 중 흔들림처럼 tilt는 맞아도 계속 움직이는 상황을 걸러낸다.
+//
+// ⚠️ 비정상 케이스 대응(맥 세션이 iOS에 먼저 추가한 background 브리징과 동일 계약 공유) — Android도
+// 포그라운드 전용으로 의도적으로 통일했으므로(useFlipMode.ts 참고) 앱이 background로 가면 stop()이
+// 불려 센서 관찰이 멈춘다. `physicalFaceDown()`이 디바운스 없는 즉시 판정을 제공해 JS가 foreground
+// 복귀 시 "그 사이 집어들었는지" 재조율할 수 있게 한다 — kill 복구/방치 상한 등 나머지 비정상 케이스는
+// useFlipStore.ts(스토어 레벨, 플랫폼 공용)가 전부 처리.
 class PaceFlipModule : Module() {
   private var sensorManager: SensorManager? = null
   private var gravityListener: SensorEventListener? = null
@@ -34,6 +40,8 @@ class PaceFlipModule : Module() {
   private var faceDown = false
   private var candidateSinceMs = -1L // 현재 확정 상태의 "반대"가 시작된 시각(-1=후보 없음)
   private var lastLinearAccelMagnitude = 0f
+  private var lastZ: Float = 0f // 최신 gravity.z 샘플(즉시 물리상태 조회용, iOS PaceFlipModule.swift와 동일)
+  private var hasSample = false // 첫 샘플 도착 여부(start 직후 stale 조회 방지)
 
   companion object {
     private const val FACE_DOWN_THRESHOLD = -7.85f // -0.8 * 9.80665 (SensorManager.STANDARD_GRAVITY)
@@ -51,8 +59,17 @@ class PaceFlipModule : Module() {
     Name("PaceFlip")
     Events("onFlip")
 
+    // 디바운스 확정된 상태(관찰 중일 때만 유효).
     Function("isFaceDown") {
       faceDown
+    }
+
+    // 디바운스 없이 "지금 이 순간 물리적으로 엎어져 있나"를 최신 샘플로 즉시 판정.
+    // background 복귀 후 재조율(그동안 집어들었는지)에 useFlipMode.ts가 사용. 아직 샘플 없으면 null
+    // (iOS PaceFlipModule.swift의 physicalFaceDown()과 동일 계약 — 선형가속도 게이트는 여기선 적용
+    // 안 함: 이건 디바운스 안전장치가 아니라 "지금 순간의 기울기 스냅샷"이 필요한 별개 용도라서).
+    Function("physicalFaceDown") { ->
+      if (!hasSample) null else lastZ < FACE_DOWN_THRESHOLD
     }
 
     AsyncFunction("start") { promise: Promise ->
@@ -72,6 +89,7 @@ class PaceFlipModule : Module() {
       faceDown = false
       candidateSinceMs = -1L
       lastLinearAccelMagnitude = 0f
+      hasSample = false
       sensorManager = sm
 
       val linearAccelSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
@@ -92,6 +110,8 @@ class PaceFlipModule : Module() {
       val gListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
           val z = event.values[2]
+          lastZ = z
+          hasSample = true
           val now = SystemClock.elapsedRealtime()
           val tiltOpposite = if (faceDown) z > FACE_UP_THRESHOLD else z < FACE_DOWN_THRESHOLD
           val stillEnough = lastLinearAccelMagnitude <= LINEAR_ACCEL_EPSILON
@@ -131,5 +151,6 @@ class PaceFlipModule : Module() {
     sensorManager = null
     faceDown = false
     candidateSinceMs = -1L
+    hasSample = false
   }
 }

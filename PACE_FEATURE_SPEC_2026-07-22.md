@@ -110,14 +110,34 @@ CoreMotion을 제한한다 — 래퍼 문제가 아니라 플랫폼 제약.
 - **`src/store/useFlipStore.ts`**: 날짜 스코프(useDailyBonusStore 패턴, 자정 자동리셋) — face-down에
   타이머 시작, face-up에 경과 누적(`putDownSeconds`) + **크레딧 적립(쉬는시간 1분당 1, §1-A "쉬는 시간에
   따른 집중 모드 보상")**, AsyncStorage 영속.
-- **`src/hooks/useFlipMode.ios.ts`**(iOS) / `.ts`(no-op): PaceFlip → 스토어 배선. **AppState background
-  진입 시 정산 후 관찰 중단, foreground 복귀 시 재개**(CoreMotion 백그라운드 제약 정직 보정 — 위 "정직한
-  설계" 방침대로 포그라운드/화면 켜진 상태만 인정). `requireNativeModule`로 직접 로드(볼륨키/제스처 훅과
-  동일 — 상대경로 require Metro 미해석 회피).
+- **`src/hooks/useFlipMode.ios.ts`**(iOS) / `.ts`(no-op): PaceFlip → 스토어 배선.
+  `requireNativeModule`로 직접 로드(볼륨키/제스처 훅과 동일 — 상대경로 require Metro 미해석 회피).
 - **배선**: `src/app/_layout.tsx`에서 `useFlipMode({ enabled: true })` 전역 계측. **Stats 반영**:
   `app/(tabs)/stats.tsx`에 "쉬는 시간" 카드(오늘 내려놓은 시간 + 적립 크레딧, iOS 전용 노출) 추가.
-- ⚠️ **검증 한계**: 시뮬레이터엔 모션 센서가 없어 face-down 감지 자체는 **실기기 검증 필수**(다음 실기기
-  라운드). 시뮬에선 Swift 컴파일/링크 + 스토어·Stats 카드 JS 경로만 확인.
+
+**🔬 추가 웹리서치(2026-07-23) + 비정상 케이스 보강** — "정상만 되고 비정상은?" 지적 반영:
+- **권한 재확인**([Apple DTS 포럼](https://developer.apple.com/forums/thread/762886)): raw `CMMotionManager`
+  `deviceMotion`(gravity)은 **`NSMotionUsageDescription` 불필요·프롬프트 없음·미기재해도 크래시 안 함**
+  (권한 필요한 건 `CMMotionActivityManager`/`CMPedometer`/`CMSensorRecorder` 등). 즉 우리 모듈은 권한
+  크래시 위험 없음. 단 DTS가 미래 대비 문자열 권장 → `app.json ios.infoPlist`에 `NSMotionUsageDescription`
+  추가(무해).
+- **핵심 비정상 케이스 — background 브리징**: iOS는 폰을 엎으면 화면을 끄고 앱이 background로 가
+  **CoreMotion이 멈춘다**([forums/126045](https://developer.apple.com/forums/thread/126045)). 초기 구현은
+  background 진입 시 즉시 정산해 "화면 꺼진 채 엎어둔 진짜 쉬는 시간"이 ~0으로 측정되는 버그가 있었다.
+  → **수정**: background에선 정산하지 않고 `flipStartMs`만 유지(스토어가 AsyncStorage 영속), foreground
+  복귀 시 `physicalFaceDown()`(디바운스 없는 즉시 판정, Swift에 신규 추가)으로 재조율 —
+  이미 집어들었으면 그 사이 경과 **전체를 정산**(background 구간을 타임스탬프로 브리징, CoreMotion 없이도).
+- **앱 강제종료(OOM/스와이프) 복구**: 진행 중 `flipStartMs`를 영속 → 다음 콜드스타트(=앱을 다시 열었으니
+  face-up)에서 `load()`가 정산. background에 오래 있다 iOS가 앱을 죽여도 쉼이 유실되지 않음.
+- **방치/밤샘 오검 상한**: 한 번의 쉼 정산 경과에 `MAX_REST_SECONDS`(4h) 상한 — "엎어둔 채 잊음/주머니
+  방치"가 비현실적 크레딧으로 잡히는 것 방지.
+- **재진입/중복 보호**: 스토어 `onFaceDown` 재진입 가드(복귀 후 네이티브가 다시 face-down 확정해도
+  `flipStartMs` 보존), Swift `start()` 중복 호출 시 기존 관찰 정리(`isDeviceMotionActive` 가드).
+- **`inactive` 무시**: 알림 배너/제어센터 일시상태에선 쉼 세션을 조각내지 않음(곧 active 복귀).
+- ⚠️ **여전한 한계(정직 고지)**: ① 시뮬레이터엔 모션 센서가 없어 face-down 감지 **동작 자체**는 실기기
+  검증 필수. ② background 중 "집어들었다 다시 엎기"처럼 앱이 못 본 전이는 원리상 관측 불가 → 복귀 시점의
+  상태로 근사(상한으로 방어). ③ 진짜 백그라운드 상시 측정은 무음 오디오 세션 트릭이 필요하나 App Store
+  회색지대라 채택 안 함(정직한 포그라운드/복귀-브리징 설계 유지).
 
 **✅ Android 구현 완료(2026-07-23)** — iOS와 동일한 `PaceFlip` 인터페이스(`start`/`stop`/
 `isFaceDown`/`onFlip`)로 구현, JS 레이어(`useFlipMode.ts`, `useFlipStore.ts`, Stats 카드)는

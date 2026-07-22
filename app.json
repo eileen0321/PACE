@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.pace.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free."
+        "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free.",
+        "NSMotionUsageDescription": "Pace uses motion to detect when you place your phone face down, so it can measure your screen-free rest time (Flip Mode)."
       },
       "icon": "./assets/ios-icon.png"
     },

@@ -53,18 +53,26 @@ export function useFlipMode({ enabled }: { enabled: boolean }) {
     const startMotion = () => mod?.start().catch((err) => console.warn('[flip] start 실패:', String(err)));
     startMotion();
 
+    // 화면이 꺼지는 순간(엎어놓기)을 놓치지 않도록 쉼 "시작"을 잡는다.
+    //  - iOS는 폰을 엎으면 화면을 끈다. 자동잠금 전이면 앱은 'inactive'(화면만 off), 잠기면 'background'.
+    //    어느 쪽이든 "그 순간 물리적으로 엎어져 있으면"(physicalFaceDown=true) 쉼을 시작한다.
+    //    (2s 디바운스 확정 전에 화면이 꺼져도 누락 없게 — 30초 자동잠금에서 짧게 엎었다 드는 경우 포함.)
+    //  - physicalFaceDown 게이트가 있어 알림 배너/제어센터 같은 face-up 일시상태에선 시작 안 한다.
+    const captureRestStart = () => {
+      if (!useFlipStore.getState().isFaceDown && mod?.physicalFaceDown() === true) {
+        console.log('[flip] 📵 화면 off 순간 엎어져 있음 → 쉬는시간 시작(디바운스 레이스 보정)');
+        onFaceDown();
+      }
+    };
     let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
     const appSub = AppState.addEventListener('change', (next) => {
-      if (next === 'background') {
-        // background: CoreMotion이 멈추므로 관찰만 중단. 정산하지 않음(flipStartMs 유지 → 복귀 시 브리징).
-        // ⚠️ 실기기 레이스: 폰을 엎으면 iOS가 화면을 빨리 꺼 2s 디바운스 확정 전에 background로 갈 수
-        //    있다. 이때 이미 진행 중(isFaceDown)이 아니고 "지금 물리적으로 엎어져 있으면"(physicalFaceDown
-        //    =true) 그 순간부터 쉼을 시작한다 — 안 그러면 화면 끄고 엎어둔 시간이 통째로 누락된다.
+      if (next === 'inactive') {
+        // 화면 off(아직 잠기지 않음). 쉼 시작만 포착 — 모션은 계속 돌 수 있으니 stop하지 않는다.
+        captureRestStart();
+      } else if (next === 'background') {
+        // 잠김/완전 백그라운드: CoreMotion이 멈추므로 관찰 중단. 정산하지 않음(flipStartMs 유지 → 복귀 브리징).
         if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
-        if (!useFlipStore.getState().isFaceDown && mod?.physicalFaceDown() === true) {
-          console.log('[flip] 📵 background 진입 시 엎어져 있음 → 쉬는시간 시작(디바운스 레이스 보정)');
-          onFaceDown();
-        }
+        captureRestStart();
         try { mod?.stop(); } catch {}
       } else if (next === 'active') {
         startMotion();
@@ -73,13 +81,11 @@ export function useFlipMode({ enabled }: { enabled: boolean }) {
         reconcileTimer = setTimeout(() => {
           const resting = useFlipStore.getState().isFaceDown;
           if (resting && mod?.physicalFaceDown() === false) {
-            console.log('[flip] 🔁 복귀 재조율 — background 중 집어듦 → 정산');
+            console.log('[flip] 🔁 복귀 재조율 — 그 사이 집어듦 → 정산');
             onFaceUp();
           }
         }, RECONCILE_DELAY_MS);
       }
-      // 'inactive'(알림 배너/제어센터 등 일시 상태)에선 아무것도 하지 않는다 — CoreMotion이 대개
-      // 유지되고, 곧 active로 복귀하므로 쉼 세션을 조각내지 않는다.
     });
 
     return () => {

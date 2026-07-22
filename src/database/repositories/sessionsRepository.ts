@@ -25,6 +25,28 @@ export async function endSession(sessionId: string, durationSeconds: number, vid
   );
 }
 
+// 수면 감지(스펙 §1-B "새벽 1시 23분에 잠드셨습니다" 요약)용 — 가장 최근의 sleep_detected 세션 1건.
+// 홈 화면이 앱을 열 때마다 이 값을 조회해 아직 안 보여준 것(useSleepInsightStore가 id로 dedupe)이면
+// 인사이트 배너로 보여준다.
+export async function getLatestSleepDetectedSession(userId: string): Promise<ViewingSession | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<any>(
+    `SELECT * FROM viewing_sessions WHERE user_id = ? AND status = 'sleep_detected' AND ended_at IS NOT NULL
+     ORDER BY ended_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    durationSeconds: row.duration_seconds,
+    videosWatched: row.videos_watched,
+    platformApp: row.platform_app,
+    status: row.status,
+  };
+}
+
 export async function getUnsyncedSessions(userId: string): Promise<ViewingSession[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(

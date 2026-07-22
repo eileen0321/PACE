@@ -136,6 +136,19 @@ class PaceAccessibilityService : AccessibilityService() {
       instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
     }
 
+    // 2026-07-23 수면 감지(스펙 §1-B "화면 암전 + 밝기 0% → OS 슬립 진입") — GLOBAL_ACTION_LOCK_SCREEN
+    // (API 28+)은 접근성 서비스가 실제로 화면을 잠글 수 있는 유일한 표준 방법. iOS의
+    // UIScreen.main.brightness는 애플이 "OS가 임의 시점에 원래 밝기로 되돌린다"고 명시해 최선노력일
+    // 뿐이지만(PACE_FEATURE_SPEC_2026-07-22.md §4-B), 이건 실제로 화면을 끄고 잠근다 — Android가 이
+    // 지점에서 iOS보다 확실한 구현이 가능한 드문 경우. API<28이거나 접근성이 꺼져있으면(instance==null)
+    // 조용히 무시 — PaceOverlayService의 순수 암전 오버레이(showBlockOverlay reason=sleep_detected)가
+    // 항상 별도로 뜨므로 이게 실패해도 "아무 일도 안 일어남" 상태는 아니다.
+    fun lockScreen() {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+      }
+    }
+
     // 2026-07-20 실기기 검증 중 발견(사용자 지적 — 알약이 "됐다 안됐다" 함): PaceOverlayService의
     // 알약 표시/숨김이 UsageStatsManager 1초 폴링(ForegroundAppWatcher)에만 의존했는데, 이 API는
     // 구글 공식 문서 기준으로도 실시간 정확도를 보장하지 않는다 — 이벤트 기반인 이 서비스가 이미

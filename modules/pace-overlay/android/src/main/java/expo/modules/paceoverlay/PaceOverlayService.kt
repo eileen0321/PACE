@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
@@ -24,6 +28,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import kotlin.math.sqrt
 
 // Android=떠 있는 알약(pill) 오버레이(PACE_ARCHITECTURE.md "Android=floating pill / iOS=frame 차분"과
 // 일치시킨 네이티브 구현). TYPE_APPLICATION_OVERLAY 레거시 방식 — Android 17+ Bubbles API 우선 전략은
@@ -104,6 +109,58 @@ class PaceOverlayService : Service() {
   // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
   // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
   private var infraReady = false
+
+  // 수면 감지 강제 종료 파이프라인(스펙 §1-B/§4-B, 2026-07-23) — "누운 자세로 보다가 잠듦"을
+  // "무진동 N분 지속"으로 근사. 실제 수면감지 앱(Sleep as Android 등) 공개 자료 기준 순수 무진동
+  // 3분은 오탐 위험이 높다는 리서치 결론에 따라 10분(완화)을 기본값으로 채택. Flip Mode
+  // (PaceFlipModule.kt)와 같은 리서치 근거로 TYPE_LINEAR_ACCELERATION 크기를 감시 —
+  // "중력 성분이 이미 제거된" 값이라 기기 방향(누워서 보든 세워서 보든)과 무관하게 순수 움직임만
+  // 잡아낼 수 있어 Flip Mode의 orientation 게이트보다 이 용도에 더 적합하다(방향 무관하게 "안 움직임"
+  // 자체가 신호).
+  private var sensorManager: SensorManager? = null
+  private var stillnessListener: SensorEventListener? = null
+  private var lastMotionAtMs = 0L // elapsedRealtime 기준 — 마지막으로 유의미한 움직임이 감지된 시각
+  // 블루투스 이어폰 탈착은 스펙에서 "보조 신호(타이머 단축)로만, 단독 트리거로는 안 씀"이라 명시—
+  // 통화 중 잠깐 빼는 경우와 "진짜로 자면서 빠짐"을 구분 못 하기 때문. 탈착이 감지되면 이번 무진동
+  // 구간에 한해 더 짧은 임계값을 적용(단, 여전히 그 짧은 시간만큼은 실제로 안 움직여야 함 — 탈착
+  // 자체가 즉시 트리거가 되는 게 아니다).
+  private var btWasConnectedThisSession = false
+  private var btDisconnectedDuringStillness = false
+
+  // ⚠️ lastMotionAtMs는 여기서 초기화하지 않는다 — ACTION_START(신규 세션)는 onStartCommand가 이미
+  // "지금"으로 세팅해두고, ACTION_TICK/null 복구 경로는 restoreStateFromPrefs()가 영속값을 먼저
+  // 복원해둔다(둘 다 ensureInfraReady() 호출 전에 끝남). 여기서 다시 now로 덮으면 프로세스가 죽었다
+  // 살아날 때마다 무진동 시계가 리셋되는 버그가 된다.
+  private fun registerStillnessSensor() {
+    if (sensorManager != null) return // 중복 등록 방지
+    val sm = getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+    val sensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) ?: return
+    // companion의 isBluetoothAudioConnected(context)(2026-07-23 핑거스냅용으로 이미 추가돼 있던
+    // 것)를 그대로 재사용 — 같은 조회를 중복 구현하지 않는다.
+    btWasConnectedThisSession = isBluetoothAudioConnected(this)
+    btDisconnectedDuringStillness = false
+    val listener = object : SensorEventListener {
+      override fun onSensorChanged(event: SensorEvent) {
+        val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
+        val magnitude = sqrt(x * x + y * y + z * z)
+        if (magnitude > STILLNESS_WAKE_EPSILON) {
+          lastMotionAtMs = SystemClock.elapsedRealtime()
+          btDisconnectedDuringStillness = false // 다시 움직였으니 "이번 무진동 구간"은 리셋
+        }
+      }
+      override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+    sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL, STILLNESS_REPORT_LATENCY_US)
+    sensorManager = sm
+    stillnessListener = listener
+  }
+
+  private fun unregisterStillnessSensor() {
+    val sm = sensorManager ?: return
+    stillnessListener?.let { sm.unregisterListener(it) }
+    sensorManager = null
+    stillnessListener = null
+  }
 
   // 2026-07-19: Bluetooth Hands-Free Control — 사용자 지시(Copilot 스펙 정리) 반영. 새 네이티브
   // 의존성(react-native-track-player 등) 없이 Android SDK 표준 android.media.session.MediaSession
@@ -256,6 +313,7 @@ class PaceOverlayService : Service() {
       .putBoolean(PREF_NOTIFY_BREAK, notifyBreak)
       .putBoolean(PREF_AUTO_NEXT_SESSION, autoNextEnabled)
       .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
+      .putLong(PREF_LAST_MOTION_AT_MS, lastMotionAtMs)
       .apply()
   }
 
@@ -271,6 +329,9 @@ class PaceOverlayService : Service() {
     notifyBreak = prefs.getBoolean(PREF_NOTIFY_BREAK, true)
     autoNextEnabled = prefs.getBoolean(PREF_AUTO_NEXT_SESSION, false)
     hardBlockMode = prefs.getBoolean(PREF_HARD_BLOCK_MODE, false)
+    // 프로세스 재시작(kill+알람 복구)이어도 무진동 시계가 "지금부터 다시 10분"으로 리셋되지 않게
+    // 마지막 움직임 시각을 복원 — 없으면(구버전 상태/최초) 안전하게 지금으로(즉시 만료 방지).
+    lastMotionAtMs = prefs.getLong(PREF_LAST_MOTION_AT_MS, SystemClock.elapsedRealtime())
     return true
   }
 
@@ -289,6 +350,7 @@ class PaceOverlayService : Service() {
     showOverlay(remainingMinutes)
     startForegroundAppPolling()
     setupMediaSession()
+    registerStillnessSensor()
     infraReady = true
   }
 
@@ -325,6 +387,19 @@ class PaceOverlayService : Service() {
     private const val NOTIFICATION_ID_LIMIT_REACHED = 4203
     private const val NOTIFICATION_ID_BREAK_REMINDER = 4204
     private const val TICK_ALARM_REQUEST_CODE = 4210
+
+    // 수면 감지(스펙 §1-B/§4-B) — 리서치 근거는 Flip Mode(PaceFlipModule.kt)와 공유: 실제 수면감지
+    // 앱들(Sleep as Android 등) 공개 자료 기준 순수 무진동 3분(사용자 원 스펙)은 오탐 위험이 높다고
+    // 명시돼 있어 10분으로 완화. 블루투스 탈착이 겹치면(보조 신호) 6분으로 단축 — 그래도 여전히
+    // "탈착 이후로도 그만큼 안 움직여야" 하므로 탈착 자체가 즉시 트리거가 되지 않는다.
+    private const val SLEEP_STILLNESS_MS = 10 * 60 * 1000L
+    private const val SLEEP_STILLNESS_SHORT_MS = 6 * 60 * 1000L
+    // Flip Mode의 LINEAR_ACCEL_EPSILON(1.2)보다 살짝 낮게 — 여긴 "완전히 멈췄다"를 원하므로
+    // Flip Mode(오탐 완화용 보조 게이트)보다 더 엄격하게 잡아도 무방.
+    private const val STILLNESS_WAKE_EPSILON = 1.0f
+    // 수면감지는 몇 분 단위 판정이라 초 단위 정밀도가 필요 없음 — 배터리를 위해 배칭 지연을 여유있게.
+    private const val STILLNESS_REPORT_LATENCY_US = 5_000_000 // 5s
+    private const val PREF_LAST_MOTION_AT_MS = "session_last_motion_at_ms"
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.
@@ -559,6 +634,7 @@ class PaceOverlayService : Service() {
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
         autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
         hardBlockMode = intent.getBooleanExtra(EXTRA_HARD_BLOCK_MODE, false)
+        lastMotionAtMs = SystemClock.elapsedRealtime() // 신규 세션 — 수면감지 무진동 시계를 지금부터 시작
         removeBlockOverlay() // 이전 세션이 만료→차단 화면인 채로 새 세션이 시작되는 경우 정리
         infraReady = false
         ensureInfraReady()
@@ -603,6 +679,7 @@ class PaceOverlayService : Service() {
         removeOverlay()
         removeBlockOverlay()
         teardownMediaSession()
+        unregisterStillnessSensor()
         infraReady = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -641,14 +718,33 @@ class PaceOverlayService : Service() {
         sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
       }
 
+      // 수면 감지(스펙 §1-B/§4-B) — 블루투스 탈착은 "보조 신호(타이머 단축)"로만: 탈착 자체가 트리거가
+      // 아니라, 탈착이 감지된 뒤로도 여전히 무진동이 이어질 때만 더 짧은 임계값을 적용한다(통화하러
+      // 잠깐 빼는 경우는 곧 다시 움직이므로 이 분기를 안 탄다).
+      val btNowConnected = isBluetoothAudioConnected(this)
+      if (btWasConnectedThisSession && !btNowConnected) {
+        btDisconnectedDuringStillness = true
+      }
+      btWasConnectedThisSession = btNowConnected
+      val stillnessElapsedMs = SystemClock.elapsedRealtime() - lastMotionAtMs
+      val stillnessThresholdMs = if (btDisconnectedDuringStillness) SLEEP_STILLNESS_SHORT_MS else SLEEP_STILLNESS_MS
+      val sleepDetected = stillnessElapsedMs >= stillnessThresholdMs
+
       // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
       // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
       // "Sleep Timer가 켜져 있었고 방금 만료됐다"로 판단 가능.
-      if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0) {
-        val reason = if (remainingMinutes <= 0) "daily_limit_reached" else "sleep_timer_expired"
+      if (remainingMinutes <= 0 || sleepTimerRemainingMinutes == 0 || sleepDetected) {
+        val reason = when {
+          sleepDetected -> "sleep_detected"
+          remainingMinutes <= 0 -> "daily_limit_reached"
+          else -> "sleep_timer_expired"
+        }
+        Log.d("PaceOverlay", "SESSION END reason=$reason stillnessElapsedMs=$stillnessElapsedMs thresholdMs=$stillnessThresholdMs btDisconnectedDuringStillness=$btDisconnectedDuringStillness")
         markExpired(reason)
         clearSessionActive()
-        if (notifyLimit) {
+        if (notifyLimit && reason != "sleep_detected") {
+          // 수면감지는 "자고 있는데 알림 소리/진동으로 깨우는" 모순을 피하려 알림을 안 보낸다 —
+          // 화면 자체를 잠그므로(아래 showBlockOverlay/lockScreen) 어차피 알림을 봐도 소용없다.
           sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
         }
         cancelScheduledTick(this)
@@ -660,10 +756,13 @@ class PaceOverlayService : Service() {
         // "종료" 버튼을 눌러야만(endFromBlockOverlay) 완전히 죽는다.
         stopForegroundAppPolling()
         teardownMediaSession()
+        unregisterStillnessSensor()
         // Hard Block Mode(기본 OFF, Settings에서 사용자가 직접 켠 경우만): 전체화면 차단에 더해
         // YouTube 자체를 강제로 홈으로 내보낸다 — PaceAccessibilityService가 이미 gesture 권한을
         // 갖고 있어 추가 권한 없이 가능(performGlobalAction은 canPerformGestures 범위 안).
-        if (hardBlockMode) {
+        // 수면감지는 이 설정과 무관하게 항상 goHome — "자는 사람 앞에 유튜브를 계속 틀어두는" 건
+        // 옵트인 설정 여부와 상관없이 이 기능의 존재 이유 자체를 무력화하므로.
+        if (hardBlockMode || reason == "sleep_detected") {
           PaceAccessibilityService.goHome()
         }
         showBlockOverlay(reason)
@@ -836,6 +935,27 @@ class PaceOverlayService : Service() {
     windowManager = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager
     removeOverlay() // 작은 알약은 전체화면 차단으로 대체되므로 치운다
 
+    // 수면감지(스펙 §1-B "화면 암전 + 밝기 0% → OS 슬립 진입")는 다른 두 사유와 완전히 다른 화면을
+    // 쓴다 — "+5분"/"휴식하기" 버튼이 있는 밝은 다이얼로그는 자고 있는 사람 앞에서 화면을 계속
+    // 밝혀두는 것이라 목적에 정반대다. 순수 암전(텍스트/버튼 없음)만 그리고, GLOBAL_ACTION_LOCK_SCREEN
+    // (아래 lockScreen() 참고)으로 실제 화면 잠금까지 즉시 시도한다 — 이 뷰는 그 사이 잠깐의 간극과
+    // 잠금이 실패하는 기기(API<28/접근성 꺼짐)를 위한 폴백.
+    if (reason == "sleep_detected") {
+      val blackout = View(this).apply { setBackgroundColor(Color.BLACK) }
+      blockOverlayView = blackout
+      val params = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+        0, // flags=0: 터치 통과 금지(모달)는 다른 사유와 동일
+        android.graphics.PixelFormat.OPAQUE // TRANSLUCENT가 아니라 완전 불투명 — 진짜 암전이어야 함
+      )
+      windowManager?.addView(blockOverlayView, params)
+      PaceAccessibilityService.lockScreen()
+      return
+    }
+
     val isSleepTimer = reason == "sleep_timer_expired"
     val titleText = if (isSleepTimer) "Sleep Timer 종료" else "오늘의 한도에 도달했어요"
     val bodyText = if (isSleepTimer) "설정한 Sleep Timer 시간이 다 됐어요." else "오늘 정해둔 시청 시간을 다 썼어요."
@@ -924,10 +1044,14 @@ class PaceOverlayService : Service() {
     // 즉시 재만료(무한 루프)된다. Daily Limit로 온 경우는 sleepTimerRemainingMinutes가 이미 -1이거나
     // 양수라 이 분기가 영향을 안 준다.
     if (sleepTimerRemainingMinutes == 0) sleepTimerRemainingMinutes = -1
+    // 수면감지로 왔더라도(이론상 이 버튼 자체가 그 화면엔 없지만 방어적으로) 무진동 시계를 재시작 —
+    // 안 그러면 재개 직후 다음 틱에서 곧바로 다시 만료된다(위 Sleep Timer와 같은 부류의 무한루프).
+    lastMotionAtMs = SystemClock.elapsedRealtime()
     persistState() // PREF_SESSION_ACTIVE를 다시 true로 되돌림(만료 시 clearSessionActive됐던 것)
     showOverlay(remainingMinutes) // 작은 알약 복귀
     startForegroundAppPolling()
     setupMediaSession()
+    registerStillnessSensor()
     scheduleNextTick(this)
   }
 
@@ -1019,6 +1143,7 @@ class PaceOverlayService : Service() {
     removeOverlay()
     removeBlockOverlay()
     teardownMediaSession()
+    unregisterStillnessSensor()
     // 세션 자체가 끝나면(한도 도달/사용자 종료 등) Focus Session이 켜져 있었더라도 워처가 orphan
     // 상태로 계속 도는 일이 없게 같이 정리 — 10분 타이머가 아직 안 끝났어도 취소.
     focusSessionHandler.removeCallbacks(focusSessionAutoStop)

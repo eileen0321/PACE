@@ -52,7 +52,9 @@ export type UserSettings = {
   focusSessionDurationMinutes: number;
 };
 
-export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'manual_stop';
+// 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService
+// 무진동 감지). 'sleep_timer_expired'(사용자가 직접 설정한 카운트다운)와는 다른 별개 사유.
+export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop';
 
 export type ViewingSession = {
   id: string;

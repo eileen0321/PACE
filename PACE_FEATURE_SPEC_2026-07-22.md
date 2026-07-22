@@ -192,8 +192,70 @@ CoreMotion을 제한한다 — 래퍼 문제가 아니라 플랫폼 제약.
 
 **작업 규모**: 모션-정지 감지 native primitive는 4-A(Flip Mode)와 공유 가능(같은 "기기가 움직이는지"
 센서 watcher). 블루투스 탈착 리스너는 상대적으로 가벼움(`modules/pace-overlay`(Android)/
-`pace-gesture` 인근(iOS)에 추가). 화면 암전/WebView 파괴/DB 기록은 순수 JS 작업. **이번 라운드에
-구현 안 함** — 트리거 레이어(네이티브)가 선행돼야 함.
+`pace-gesture` 인근(iOS)에 추가). 화면 암전/WebView 파괴/DB 기록은 순수 JS 작업.
+
+**✅ Android 구현 완료(2026-07-23 밤, 사용자 지시 "밤새 예외 케이스 포함해서 전수 다 확인" 반영)**
+— 기존 카운트다운 만료 파이프라인(`PaceOverlayService.performTick()` → `markExpired()` →
+`showBlockOverlay()` → JS `consumeExpired()` → `endSessionRow()`, 이미 Doze/kill 복구까지 하드닝돼
+있던 경로)을 그대로 재사용해 새 사유 `"sleep_detected"` 하나만 추가하는 방식으로 구현 — 3단계
+파이프라인을 처음부터 새로 만들 필요가 없었다:
+
+- **신호(무진동 감지)**: `registerStillnessSensor()`가 `TYPE_LINEAR_ACCELERATION`(중력 성분 제거된
+  값 — 기기가 누워있든 세워있든 방향 무관하게 순수 움직임만 잡음, Flip Mode의 orientation 게이트와
+  다른 이유로 이 센서를 선택) 크기를 감시, 매 순간 `lastMotionAtMs`를 갱신. `performTick()`(기존
+  60초 주기, AlarmManager 기반이라 Doze 중에도 이미 깨어남이 검증된 인프라)이 매 틱마다
+  `now - lastMotionAtMs`를 검사 — 이 값이 `SLEEP_STILLNESS_MS`(**10분**, 리서치 권장대로 3분에서
+  완화) 이상이면 수면 감지로 판단. 프로세스가 죽었다 알람으로 되살아나도 `lastMotionAtMs`를
+  SharedPreferences에 영속해 시계가 리셋되지 않게 함(기존 `persistState()`/`restoreStateFromPrefs()`
+  패턴 그대로 확장).
+- **블루투스 탈착(보조 신호)**: 매 틱마다 `getConnectedBluetoothAudioDevice()`(기존 Bluetooth
+  Hands-Free 코드가 이미 갖고 있던 함수)로 연결 상태를 확인 — 이번 세션 동안 연결→해제 전환이
+  감지되면 `btDisconnectedDuringStillness=true`로 표시해 임계값을 `SLEEP_STILLNESS_SHORT_MS`
+  (**6분**)로 단축. 스펙이 명시한 "단독 트리거로는 안 씀"을 정확히 구현: 탈착 자체는 아무것도
+  트리거하지 않고, 그 뒤로도 여전히 무진동이 이어질 때만(짧아진 시간만큼) 발동 — 통화하러 잠깐 뺐다
+  바로 다시 움직이면 이 분기를 타지 않는다.
+- **① 즉시 종료**: 수면감지 사유일 땐 `hardBlockMode`(옵트인 설정) 여부와 무관하게 항상
+  `PaceAccessibilityService.goHome()` 호출 — "자는 사람 앞에 유튜브를 계속 틀어두는" 건 다른
+  사유(Daily Limit의 소프트 차단)와 달리 이 기능의 존재 이유 자체를 무력화하므로 옵트아웃 대상이
+  아니라고 판단.
+- **② 화면 암전**: `showBlockOverlay()`에 `sleep_detected` 전용 분기 신설 — 다른 두 사유(Daily
+  Limit/Sleep Timer)의 "+5분/휴식하기" 버튼이 있는 밝은 다이얼로그 대신, **텍스트/버튼 없는 순수
+  검은 풀스크린**(`PixelFormat.OPAQUE`)만 그린다. 동시에 `PaceAccessibilityService.lockScreen()`
+  (신규) — `GLOBAL_ACTION_LOCK_SCREEN`(API 28+)으로 **실제 화면 잠금**을 시도한다. 이 지점은 Android가
+  iOS보다 확실한 구현이 가능한 드문 경우 — iOS의 `UIScreen.main.brightness`는 위에서 문서화했듯
+  "OS가 임의 시점에 되돌리는" 최선노력일 뿐이지만, `GLOBAL_ACTION_LOCK_SCREEN`은 접근성 서비스가
+  실제로 화면을 끄고 잠글 수 있는 표준 API. API<28이거나 접근성이 꺼져있으면 위 검은 풀스크린이
+  안전한 폴백.
+- **③ DB 기록**: 새 `SessionEndStatus` 값 `'sleep_detected'`(`types/models.ts`) 하나 추가 — 기존
+  `markExpired(reason)` → JS `consumeExpired()` → `endSessionRow(...)` 경로가 그대로 이 값을 실어
+  나른다(신규 배선 불필요, 기존 인프라가 사유 문자열에 무관심하게 설계돼 있었음). **"새벽 1시 23분에
+  잠드셨습니다" 인사이트**: `sessionsRepository.getLatestSleepDetectedSession()`(신규) +
+  `useSleepInsightStore`(신규, AsyncStorage로 세션 id dedupe — 같은 세션을 반복해서 안 보여줌) +
+  Home 화면 상단 배너(🌙 아이콘, 탭으로 닫기). `useFocusEffect`로 홈 화면에 돌아올 때마다 조회 —
+  "밤새 켜둔 채 잠들었다가 아침에 앱을 여는" 시나리오에 맞음.
+- **알림 억제**: 수면감지는 `notifyLimit` 알림을 안 보낸다(다른 두 사유와 차이) — 자고 있는데
+  알림음/진동으로 깨우는 건 명백한 모순이고, 어차피 화면을 잠그므로 알림을 봐도 소용없음.
+- **재개 경로 방어**: `extendFromBlockOverlay()`("+5분" 버튼, 다른 두 사유 전용)가 방어적으로
+  `lastMotionAtMs`를 리셋 + 센서 재등록 — sleep_detected 화면엔 이 버튼 자체가 없지만, 혹시 모를
+  경로로 재개되더라도 다음 틱에서 곧바로 재만료되는 무한루프를 방지.
+- **임계값**: `STILLNESS_WAKE_EPSILON=1.0f`(m/s², Flip Mode의 1.2보다 약간 엄격 — 여긴 "완전히
+  멈췄다"가 목적), 배칭 지연 5초(분 단위 판정이라 초 단위 정밀도 불필요, 배터리 우선).
+- ⚠️ **미검증**: 네이티브 빌드는 성공했으나, 10분 무진동을 실기기에서 실제로 재현해 화면 잠금까지
+  이어지는지는 **아직 실측 못 함**(이 작업이 진행된 시각에 사용자가 취침 중이라 실기기 협조 불가 —
+  에뮬레이터 가속도계 시뮬레이션으로 로직 경로만 간접 검증 예정, 이 문서 하단에 결과 추가 예정).
+  실기기 검증 전까지는 코드 리뷰 수준의 신뢰도로 간주할 것.
+
+**🔧 iOS 몫(맥 세션 후속 라운드)**: 위 Android 구현과 동일한 계약으로 미러링 필요 —
+1. 모션-정지 감지: `CMMotionManager.deviceMotion`의 `userAcceleration`(중력 제거된 값, Android의
+   `TYPE_LINEAR_ACCELERATION`과 동일 개념) 크기를 감시하는 별도 관찰자를 `pace-gesture` 또는 신규
+   모듈에 추가(Flip Mode의 `gravity` 관찰과는 별개 — orientation이 아니라 순수 움직임 감지이므로
+   같은 `CMMotionManager` 인스턴스를 공유하되 콜백 로직만 다르게).
+2. 블루투스 탈착: `AVAudioSession.routeChangeNotification`의 `.oldDeviceUnavailable` — 보조 신호로만.
+3. 화면 암전: iOS는 Android의 `GLOBAL_ACTION_LOCK_SCREEN`에 해당하는 API가 없음(사용자 동의 없이
+   기기를 잠글 방법이 OS 정책상 없음) — `UIScreen.main.brightness=0` + 인앱 화면을 검은색으로
+   렌더하는 최선노력 접근으로 타협 필요(위 §4-B 원 리서치에 이미 문서화됨).
+4. DB 기록/인사이트 배너는 JS 레이어라 이미 공용(`SessionEndStatus.sleep_detected`,
+   `useSleepInsightStore`, Home 배너) — iOS 쪽 트리거만 새로 연결하면 그대로 재사용 가능.
 
 ### 4-C. 핑거 스냅 ("재미삼아") — 이미 있는 구현 검증만 남음
 

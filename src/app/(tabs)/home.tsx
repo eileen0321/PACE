@@ -10,6 +10,7 @@ import { useSessionStore } from '../../store/useSessionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
+import { useSleepInsightStore, formatSleepInsight } from '../../store/useSleepInsightStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
@@ -52,6 +53,7 @@ export default function HomeScreen() {
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
   const { hitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast } = useLimitHitStore();
+  const { endedAt: sleepInsightEndedAt, check: checkSleepInsight, dismiss: dismissSleepInsight } = useSleepInsightStore();
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   // 2026-07-22 — 예전엔 "한 번 닫으면 오늘 하루 끝"인 단일 boolean이었는데, 3단계 시스템에선 3차
@@ -88,7 +90,10 @@ export default function HomeScreen() {
     useCallback(() => {
       if (user?.id) refresh(user.id);
       refreshBluetooth();
-    }, [user?.id, refresh, refreshBluetooth])
+      // 수면 감지 인사이트(스펙 §1-B) — 홈에 돌아올 때마다 아직 안 보여준 sleep_detected 세션이
+      // 있는지 확인. 대개 "밤새 켜둔 채 잠들었다가 아침에 앱을 여는" 시나리오라 focus effect가 자연스러움.
+      if (user?.id) checkSleepInsight(user.id);
+    }, [user?.id, refresh, refreshBluetooth, checkSleepInsight])
   );
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
@@ -161,6 +166,15 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
+
+        {sleepInsightEndedAt && (
+          <View style={styles.sleepInsightBanner}>
+            <Text style={styles.sleepInsightIcon}>🌙</Text>
+            <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt)}</Text>
+            <Text style={styles.sleepInsightDismiss} onPress={dismissSleepInsight}>✕</Text>
+          </View>
+        )}
+
         <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} />
 
         <View style={styles.sectionHeaderRow}>
@@ -231,6 +245,21 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingBottom: layout.tabBarContentClearance },
+  sleepInsightBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 28,
+    marginTop: spacing.sm,
+    padding: 14,
+    borderRadius: radius.card,
+    backgroundColor: 'rgba(129,140,248,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(129,140,248,0.25)',
+  },
+  sleepInsightIcon: { fontSize: 18 },
+  sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
+  sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 28, marginTop: spacing.lg, marginBottom: 12 },
   sectionTitle: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1.5, textTransform: 'uppercase' },
   quickControlsTitle: { paddingHorizontal: 28, marginTop: spacing.lg, marginBottom: 10 },

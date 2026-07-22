@@ -11,6 +11,7 @@ import { useVolumeNext } from '../../hooks/useVolumeNext';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useFlipStore } from '../../store/useFlipStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -42,12 +43,20 @@ export default function PaceFeedScreen() {
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
   const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
   const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
+  const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
   // 경로를 타 무음 자동재생이 걸릴 여지가 생긴다(status IDLE→READY 레이스로 첫 렌더가 play=false면
   // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
   const playing = current != null && status !== 'PAUSED';
+
+  // 엎어놓으면(쉬는 시간 시작) 영상을 멈춘다 — WKWebView가 재생 중이면 화면 wake-lock을 잡아 안 그러면
+  // 폰이 슬립에 못 든다. 정지 → 화면 꺼짐 허용 → 폰 자동잠금(스펙 §4-B "내려놓으면 쇼츠 멈춤" 방향).
+  // 집어들 때 자동 재생하진 않는다(쉼 존중 — 사용자가 탭/리모컨으로 재개).
+  useEffect(() => {
+    if (isFaceDown) setStatus('PAUSED');
+  }, [isFaceDown]);
 
   // 2026-07-23 사용자 지시: 고개짓(ARKit 전면카메라 head-nod)을 "비현실적"으로 판단해 제거 —
   // 항상 false로 두어 gesture 카메라가 절대 안 켜지게 한다(pace-gesture 모듈 자체는 다른 세션 영역이라

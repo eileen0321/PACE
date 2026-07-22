@@ -7,14 +7,22 @@ import { useFlipStore } from '../store/useFlipStore';
 // modules/pace-flip(CMMotionManager gravity.z)를 감싸 onFlip → useFlipStore로 계측한다.
 // Metro가 iOS에서만 이 .ios.ts를 선택. 미빌드/시뮬(모션센서 없음)에선 graceful 비활성.
 //
-// enabled일 때만 관찰 시작. AppState가 background로 가면 CoreMotion이 끊기므로(§4-A 문서화된 제약)
-// 그 시점까지의 경과를 정산(onFaceUp)하고, 포그라운드로 돌아오면 다시 관찰을 시작한다.
+// ⚠️ iOS 제약 대응(핵심): 폰을 엎어놓으면 iOS가 화면을 끄고 앱이 background로 가 CoreMotion이
+//    멈춘다. 그래서 background에선 "집어듦"을 센서로 감지할 수 없다. 대응:
+//    - background 진입: 정산하지 않고 관찰만 멈춘다(진행 중인 쉼 flipStartMs 유지 — 스토어가 영속).
+//    - foreground 복귀: 관찰 재개 후 잠깐 뒤 physicalFaceDown()으로 실제 상태를 재조율한다.
+//      · 이미 집어들었으면(false) 그 사이 경과 전체를 정산(background 구간 브리징).
+//      · 아직 엎어져 있으면(true) 계속 카운트(네이티브가 다시 face-down 확정하면 스토어 onFaceDown은
+//        재진입 가드로 무시되어 flipStartMs가 보존된다).
 type FlipModule = {
   start(): Promise<void>;
   stop(): void;
   isFaceDown(): boolean;
+  physicalFaceDown(): boolean | null;
   addListener(event: 'onFlip', listener: (payload: { faceDown: boolean }) => void): { remove: () => void };
 };
+
+const RECONCILE_DELAY_MS = 800; // 복귀 후 최신 모션 샘플이 도착할 시간(0.2s 간격) 확보
 
 export function useFlipMode({ enabled }: { enabled: boolean }) {
   const load = useFlipStore((s) => s.load);
@@ -45,19 +53,32 @@ export function useFlipMode({ enabled }: { enabled: boolean }) {
     const startMotion = () => mod?.start().catch((err) => console.warn('[flip] start 실패:', String(err)));
     startMotion();
 
-    // background 진입 시 정산 후 관찰 중단, foreground 복귀 시 재개(CoreMotion 제약 보정).
+    let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
     const appSub = AppState.addEventListener('change', (next) => {
-      if (next === 'background' || next === 'inactive') {
-        onFaceUp(); // 엎어놓은 채 백그라운드면 그때까지의 쉬는시간을 은행에 넣는다(no-op if not face-down)
+      if (next === 'background') {
+        // background: CoreMotion이 멈추므로 관찰만 중단. 정산하지 않음(flipStartMs 유지 → 복귀 시 브리징).
+        if (reconcileTimer) { clearTimeout(reconcileTimer); reconcileTimer = null; }
         try { mod?.stop(); } catch {}
       } else if (next === 'active') {
         startMotion();
+        // 복귀 재조율: 그동안 집어들었는지 최신 샘플로 확인. 아직 샘플 없으면(null) 계속 카운트 유지.
+        if (reconcileTimer) clearTimeout(reconcileTimer);
+        reconcileTimer = setTimeout(() => {
+          const resting = useFlipStore.getState().isFaceDown;
+          if (resting && mod?.physicalFaceDown() === false) {
+            console.log('[flip] 🔁 복귀 재조율 — background 중 집어듦 → 정산');
+            onFaceUp();
+          }
+        }, RECONCILE_DELAY_MS);
       }
+      // 'inactive'(알림 배너/제어센터 등 일시 상태)에선 아무것도 하지 않는다 — CoreMotion이 대개
+      // 유지되고, 곧 active로 복귀하므로 쉼 세션을 조각내지 않는다.
     });
 
     return () => {
       try { sub.remove(); } catch {}
       try { appSub.remove(); } catch {}
+      if (reconcileTimer) clearTimeout(reconcileTimer);
       try { mod?.stop(); } catch {}
     };
   }, [enabled, onFaceDown, onFaceUp]);

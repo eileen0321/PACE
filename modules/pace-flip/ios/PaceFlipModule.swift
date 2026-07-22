@@ -19,6 +19,8 @@ public class PaceFlipModule: Module {
 
   private var faceDown = false
   private var candidateSince: CFTimeInterval = -1 // 현재 확정 상태의 "반대"가 시작된 시각(-1=후보 없음)
+  private var lastZ: Double = 0                    // 최신 gravity.z 샘플(즉시 물리상태 조회용)
+  private var hasSample = false                    // 첫 샘플 도착 여부(start 직후 stale 조회 방지)
   private let FACE_DOWN_THRESHOLD = 0.8
   private let FACE_UP_THRESHOLD = 0.5
   private let DOWN_HOLD: CFTimeInterval = 2.0 // 엎어놓기 확정까지 유지 시간
@@ -28,8 +30,16 @@ public class PaceFlipModule: Module {
     Name("PaceFlip")
     Events("onFlip")
 
+    // 디바운스 확정된 상태(관찰 중일 때만 유효).
     Function("isFaceDown") { () -> Bool in
       return self.faceDown
+    }
+
+    // 디바운스 없이 "지금 이 순간 물리적으로 엎어져 있나"를 최신 샘플로 즉시 판정.
+    // background 복귀 후 재조율(그동안 집어들었는지)에 사용. 아직 샘플 없으면 nil.
+    Function("physicalFaceDown") { () -> Bool? in
+      guard self.hasSample else { return nil }
+      return self.lastZ > self.FACE_DOWN_THRESHOLD
     }
 
     AsyncFunction("start") { (promise: Promise) in
@@ -37,11 +47,18 @@ public class PaceFlipModule: Module {
         promise.resolve(nil)
         return
       }
+      // 이미 관찰 중이면 중복 start 방지(핸들러 이중 등록 차단).
+      if self.motion.isDeviceMotionActive {
+        self.motion.stopDeviceMotionUpdates()
+      }
       self.faceDown = false
       self.candidateSince = -1
+      self.hasSample = false
       self.motion.deviceMotionUpdateInterval = 0.2 // 5Hz — 반응성/배터리 균형
       self.motion.startDeviceMotionUpdates(to: self.queue) { [weak self] data, _ in
         guard let self = self, let z = data?.gravity.z else { return }
+        self.lastZ = z
+        self.hasSample = true
         let now = CACurrentMediaTime()
         // 확정 상태의 "반대"를 감지 중인가? (down 확정이면 up 후보, up 확정이면 down 후보)
         let oppositeNow = self.faceDown ? (z < self.FACE_UP_THRESHOLD) : (z > self.FACE_DOWN_THRESHOLD)

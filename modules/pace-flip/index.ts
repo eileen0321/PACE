@@ -11,8 +11,10 @@ type PaceFlipNativeModule = {
   /** 모션 관찰 시작. 이후 엎어놓음/집어듦마다 'onFlip' 이벤트({ faceDown: boolean }) 발생. */
   start(): Promise<void>;
   stop(): void;
-  /** 지금 엎어놓은 상태인지 즉시 조회(관찰 중일 때만 유효). */
+  /** 디바운스 확정된 엎어놓음 상태(관찰 중일 때만 유효). */
   isFaceDown(): boolean;
+  /** 디바운스 없이 지금 이 순간 물리적으로 엎어져 있나(background 복귀 재조율용). 샘플 없으면 null. */
+  physicalFaceDown(): boolean | null;
   addListener(event: 'onFlip', listener: (payload: { faceDown: boolean }) => void): { remove: () => void };
 };
 

@@ -17,6 +17,7 @@ import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
+import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
@@ -42,6 +43,10 @@ export default function RootLayout() {
   const syncSettingsFromServer = useSettingsStore((s) => s.syncFromServer);
   const initSubscription = useSubscriptionStore((s) => s.init);
   const loadDailyBonus = useDailyBonusStore((s) => s.load);
+
+  // Flip Mode(스펙 §4-A) — 앱이 떠 있는 동안 전역으로 "내려놓은 시간(쉬는시간)"을 측정한다.
+  // iOS만 실제 감지(CMMotionManager), 그 외 no-op(useFlipMode.ts). 포그라운드에서만 동작(§4-A 제약).
+  useFlipMode({ enabled: true });
 
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_600SemiBold,

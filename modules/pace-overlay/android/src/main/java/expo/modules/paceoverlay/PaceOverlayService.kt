@@ -257,6 +257,14 @@ class PaceOverlayService : Service() {
     mediaSession = null
   }
 
+  // 2026-07-23 실험 완료(제거됨) — 사용자가 외부 리서치(react-native-track-player 권장안: "무음
+  // 오디오를 실제로 재생해야 OS가 미디어 버튼 타겟을 넘겨준다")를 근거로 재검증 요청해 무음 AudioTrack을
+  // 실제로 재생하는 버전을 구현·실기기(에어팟 Pro 연결) 테스트했다. 결과: `dumpsys media_session`에서
+  // PaceSession이 `state=PLAYING(3)`으로 진짜 재생 중임이 확인됐음에도 "Media button session"은
+  // 계속 YouTube였다 — 즉 실제 오디오 출력 여부는 무관하고, YouTube가 오디오 포커스를 쥔 채 재생
+  // 중이면 라이브러리(react-native-track-player 포함)를 바꿔도 결과가 같을 것으로 결론. B22 재확인,
+  // 코드는 실익 없이 배터리만 쓰므로 되돌림(자세한 내용은 이 커밋의 이전 리비전 참고).
+
   private fun requestAudioFocusForMediaButtons() {
     val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

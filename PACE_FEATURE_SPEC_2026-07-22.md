@@ -433,6 +433,23 @@ isExternal()`로 이벤트를 낸 입력 장치가 폰 내장 버튼인지 외�
 리스크도 이미 격리돼 있어 남겨둬도 무해) **일반적인 "다음넘김" 수단은 기존 화면 스와이프 기반
 Auto Next 자동감지(Tier 1/2, 이미 구현됨) 하나로 간다** — 별도 후속 작업 없음, 이 항목 종결.
 
+**🔬 재검증 실험(2026-07-23, 사용자가 외부 리서치를 근거로 재확인 요청) — react-native-track-player
+류 "무음 오디오 실제 재생" 접근도 시도해봤으나 동일하게 실패 확인**: 외부 리서치가 제시한 가설은
+"MediaSession active=true + AudioFocus 요청만으로는 부족하고, 실제로 오디오가 재생 중이어야(진짜
+AudioTrack 출력, PlaybackState 메타데이터 자기신고가 아니라) OS가 미디어 버튼 타겟을 넘겨준다"는
+것 — `PaceOverlayService.kt`의 기존 구현(2026-07-19)은 MediaSession+AudioFocus까지만 했지 실제
+오디오 출력은 한 적이 없어서, 이 특정 변형은 그때까지 테스트 안 된 상태였다. 그래서 무음
+AudioTrack(모노 44.1kHz 16bit, 전부 0)을 백그라운드 스레드에서 실제로 `write()`하는 코드를
+`setupMediaSession()`에 추가해 실기기(갤럭시 노트20, 에어팟 프로 연결)로 재검증:
+- `dumpsys media_session` 확인 결과 `PaceSession`이 `state=PlaybackState {state=PLAYING(3)...}`로
+  **진짜 재생 중**임이 확인됨(무음 AudioTrack 자체도 에러 없이 정상 기동 로그 확인).
+- 그럼에도 `Media button session`은 **여전히 `com.google.android.youtube`** — 실제 오디오 출력
+  여부와 무관하게 YouTube가 오디오 포커스를 쥔 채 재생 중이면 미디어 버튼 타겟이 넘어오지 않음을
+  실기기로 재확인.
+- 결론: `react-native-track-player`/`react-native-music-control` 등 다른 라이브러리로 바꿔도
+  내부적으로 같은 Android MediaSession/AudioFocus API를 쓰는 이상 결과는 동일할 것으로 판단 — 새
+  의존성을 추가할 실익 없음. 실험 코드는 배터리만 소모하므로 되돌림(git 히스토리에 남아있음).
+
 ---
 
 ## 5. 아직 반영 안 한 항목 (다음 라운드 후보, 우선순위 필요)

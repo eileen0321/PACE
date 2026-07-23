@@ -450,6 +450,31 @@ AudioTrack(모노 44.1kHz 16bit, 전부 0)을 백그라운드 스레드에서 �
   내부적으로 같은 Android MediaSession/AudioFocus API를 쓰는 이상 결과는 동일할 것으로 판단 — 새
   의존성을 추가할 실익 없음. 실험 코드는 배터리만 소모하므로 되돌림(git 히스토리에 남아있음).
 
+**🔬 재검증 실험 #2(2026-07-23, 사용자 재요청) — 완전 독점 `AUDIOFOCUS_GAIN` + 무음 재생도 실패,
+게다가 실제 부작용까지 확인**: 실험 #1은 `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`(YouTube와 공존)이었는데,
+사용자가 "완전 독점형 GAIN을 써야 한다"는 추가 외부 리서치를 근거로 재요청 — 정확히 다른 변수라
+실제로 재검증할 가치가 있었음:
+- 실기기 로그: `requestAudioFocus(GAIN exclusive) result=1`(획득 성공) → 2.3초 후
+  `audioFocus changed: -1`(`AUDIOFOCUS_LOSS`) — YouTube가 자기 재생을 위해 곧바로 재요청해서 Pace가
+  다시 밀려남. **이 2.3초 사이 YouTube 오디오가 실제로 끊기거나 덕킹됐을 가능성이 높음** — 이게 바로
+  독점 GAIN 방식의 실제 대가(사전에 우려했던 트레이드오프가 실측으로 확인됨).
+- 그런데도 그 직후 확인한 `dumpsys media_session`의 `Media button session`은 여전히
+  `com.google.android.youtube`.
+- **웹 리서치로 근본 원인까지 확인(AOSP 소스 기반)**: 우리가 이미 성공적으로 쓰고 있는 볼륨키
+  가로채기(`PaceAccessibilityService.onKeyEvent`)는 진짜 evdev 하드웨어 이벤트라
+  `AccessibilityInputFilter`(InputDispatcher 파이프라인)를 거치지만, **블루투스 AVRCP 커맨드는
+  완전히 다른 경로** — `com.android.bluetooth`(`AvrcpTargetService`) → `AudioService` →
+  `MediaSessionService.dispatchMediaKeyEvent()`로 가는 시스템 내부 Binder IPC라서
+  `AccessibilityInputFilter`에 원천적으로 도달하지 않음(볼륨키와 AVRCP가 구조적으로 다른 두 세계).
+  새로 노출된 `OnMediaKeyEventDispatchedListener`/`SessionChangedListener` 등의 API도
+  `MEDIA_CONTENT_CONTROL`(시스템 서명 전용) 권한이 필요해 스토어 앱은 애초에 접근 불가. Shizuku/루트
+  경로도 결국 같은 `MediaSessionService` 우선순위 로직을 못 피해가 근본 해결이 안 됨.
+- **최종 결론**: 두 번의 실기기 실험(둘 다 실제 재생 상태로 확인됨) + AOSP 소스 기반 아키텍처 분석이
+  모두 같은 결론으로 수렴 — 이건 라이브러리 선택 문제가 아니라 **Android 플랫폼 레벨의 구조적 제약**.
+  `react-native-track-player` 등으로 바꿔도 내부적으로 같은 시스템 API를 거치는 이상 동일한 벽에
+  부딪힘. 실험 코드 전부 되돌림 — 이 방향은 더 이상 시도하지 않음, §4-G 결론(화면 스와이프 기반
+  Auto Next만 사용) 최종 확정.
+
 ---
 
 ## 5. 아직 반영 안 한 항목 (다음 라운드 후보, 우선순위 필요)

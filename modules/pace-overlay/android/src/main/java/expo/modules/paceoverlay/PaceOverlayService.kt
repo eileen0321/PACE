@@ -257,13 +257,19 @@ class PaceOverlayService : Service() {
     mediaSession = null
   }
 
-  // 2026-07-23 실험 완료(제거됨) — 사용자가 외부 리서치(react-native-track-player 권장안: "무음
-  // 오디오를 실제로 재생해야 OS가 미디어 버튼 타겟을 넘겨준다")를 근거로 재검증 요청해 무음 AudioTrack을
-  // 실제로 재생하는 버전을 구현·실기기(에어팟 Pro 연결) 테스트했다. 결과: `dumpsys media_session`에서
-  // PaceSession이 `state=PLAYING(3)`으로 진짜 재생 중임이 확인됐음에도 "Media button session"은
-  // 계속 YouTube였다 — 즉 실제 오디오 출력 여부는 무관하고, YouTube가 오디오 포커스를 쥔 채 재생
-  // 중이면 라이브러리(react-native-track-player 포함)를 바꿔도 결과가 같을 것으로 결론. B22 재확인,
-  // 코드는 실익 없이 배터리만 쓰므로 되돌림(자세한 내용은 이 커밋의 이전 리비전 참고).
+  // 2026-07-23 실험 2건 완료(둘 다 제거됨) — B22(YouTube 실제 재생 중 미디어 버튼 라우팅 불가) 재검증:
+  //  #1 무음 AudioTrack 실제 재생 + 기존 GAIN_TRANSIENT_MAY_DUCK: state=PLAYING(3)로 진짜 재생
+  //     확인됐지만 Media button session은 계속 YouTube.
+  //  #2 완전 독점 AUDIOFOCUS_GAIN + 무음 재생: 처음엔 포커스를 얻었지만(result=1) YouTube가 자기
+  //     재생을 위해 곧바로 재요청해 2.3초 만에 우리가 AUDIOFOCUS_LOSS로 밀려남(그 사이 YouTube
+  //     오디오가 실제로 끊기거나 덕킹됐을 가능성 높음 — 이게 이 방식의 실제 대가) — 그런데도
+  //     Media button session은 여전히 YouTube. 웹 리서치로 근본 원인도 확인: 블루투스 AVRCP
+  //     커맨드는 진짜 볼륨키(evdev 이벤트 → AccessibilityInputFilter)와 완전히 다른 경로로 들어옴
+  //     (com.android.bluetooth → AudioService → MediaSessionService, 시스템 내부 Binder IPC라
+  //     AccessibilityService.onKeyEvent가 원천적으로 못 봄). 새 리스너 API들(OnMediaKeyEventDispatched
+  //     Listener 등)도 MEDIA_CONTENT_CONTROL(시스템 서명 전용) 권한 필요해 스토어 앱은 접근 불가.
+  //     최종 결론: Android 플랫폼 레벨 제약, 어떤 서드파티 라이브러리(react-native-track-player 등)로
+  //     바꿔도 동일 — B22 최종 확정, 더 이상 이 방향 시도 안 함.
 
   private fun requestAudioFocusForMediaButtons() {
     val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager

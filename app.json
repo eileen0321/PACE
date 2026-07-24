@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.pace.app",
+      "bundleIdentifier": "com.strides7.pace",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free.",
         "NSMotionUsageDescription": "Pace uses motion to detect when you place your phone face down, so it can measure your screen-free rest time (Flip Mode)."
@@ -17,7 +17,7 @@
       "icon": "./assets/ios-icon.png"
     },
     "android": {
-      "package": "com.pace.app",
+      "package": "com.strides7.pace",
       "adaptiveIcon": {
         "backgroundColor": "#060709",
         "foregroundImage": "./assets/android-icon-foreground.png",

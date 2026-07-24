@@ -26,7 +26,7 @@ pace:
   google:
     client-id: ${GOOGLE_CLIENT_ID:}
   apple:
-    bundle-id: ${APPLE_BUNDLE_ID:com.pace.app}
+    bundle-id: ${APPLE_BUNDLE_ID:com.strides7.pace}
   revenuecat:
     webhook-auth-header: ${REVENUECAT_WEBHOOK_AUTH_HEADER:}
     api-key: ${REVENUECAT_API_KEY:}

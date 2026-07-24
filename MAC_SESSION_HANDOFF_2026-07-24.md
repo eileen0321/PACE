@@ -108,3 +108,41 @@ Windows 세션에서 `PACE_ARCHITECTURE.md`(3392줄) 후반부 + `QA_ANDROID_LIF
 이 문서는 조사 스냅샷이며, 각 항목의 최신 상세 근거는 원본 QA 문서(`QA_ANDROID_LIFECYCLE_
 2026-07-22.md`, `QA_FULL_REVIEW_2026-07-22.md`, `QA_IOS_IFRAME_2026-07-20.md`,
 `QA_FLIP_MODE_2026-07-23.md`, `PACE_FEATURE_SPEC_2026-07-22.md`)을 참고할 것.
+
+---
+
+## 4. ✅ Mac 세션 진행 완료 (2026-07-24, 사장님 지시 "스크린타임 빼고 다")
+
+웹리서치 기반 최선 구현 + 시뮬 빌드로 전 Swift 컴파일 검증. 커밋 로그 참고.
+
+### 4-1. 번들ID(핸드오프 1번) ✅
+- `expo prebuild --clean -p ios`로 `com.strides7.pace` 반영 확인(project.pbxproj). Expo SDK 57
+  기본 최소 iOS가 **16.4**라 iOS15 사용자 우려는 애초에 없음(ActivityKit 16.1/다이나믹아일랜드 16.2 항상 가용).
+- ⚠️ prebuild --clean이 `DEVELOPMENT_TEAM`을 비움 → 기기 빌드 시 `DEVELOPMENT_TEAM=328BF833XS
+  CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates` 넘겨야 함(위젯 App ID `com.strides7.pace.widget`도 자동 생성).
+
+### 4-2. iOS Live Activity/다이나믹아일랜드 ✅ (overlayService.ios.ts 빈 stub 채움)
+- **`@bacons/apple-targets` v5**(2026-07 재활성 — kingstinct 포크는 stale)로 위젯 익스텐션 주입.
+  `targets/widget/`(expo-target.config.js + PaceWidgetBundle/PaceWidgetLiveActivity/PaceAttributes.swift).
+  prebuild가 `PaceWidget` 타깃 생성 + `NSSupportsLiveActivities` 반영 확인.
+- **`modules/pace-live-activity`**(ActivityKit 브릿지): `Activity.request/update/end/endAll`,
+  `#available(iOS16.1)` 게이트. 카운트다운은 `Text(timerInterval:)`로 OS가 스스로 틱 → 앱 update 예산 회피.
+  `PaceAttributes`는 위젯/모듈 양쪽에 동일 복제(Expo CNG 표준 패턴).
+- `overlayService.ios.ts` → 피드 Focus Session(`isAutoMode`) 시작/종료에 배선.
+- ⚠️ 실기기 검증 필요: 다이나믹아일랜드는 사장님 iPhone 14 Pro(iOS26)에서만. 위젯 익스텐션 서명 첫 빌드 주의.
+
+### 4-3. §4-B iOS 취침 감지 ✅ (Android는 이미 구현 — iOS는 포그라운드 시청 케이스)
+- **`modules/pace-sleep`**: `CMMotionManager.userAcceleration` 무진동 + `AVAudioSession.routeChange`
+  (`.oldDeviceUnavailable`, 이어폰/BT 탈착). iOS엔 OS sleep/wake API 없어 이 방식이 정석(웹리서치 재확인).
+- **`useSleepGuard.ios`**: 무진동 10분(BT 탈착 후 6분 단축, 스펙 권장) → onSleep. 포그라운드 전용(iOS 제약).
+- 피드: 잠들면 영상 정지 + 검은 풀스크린 블랙아웃(iOS는 `GLOBAL_ACTION_LOCK_SCREEN` 같은 강제잠금 API
+  없음 → 인앱 블랙아웃이 최선) + DB `sleep_detected` 기록 → 홈 "…에 잠드셨습니다" 인사이트 재사용(Android와 공유).
+
+### 4-4. RevenueCat — 클라이언트 완성, appl_ 키만 대기
+- 코드는 이미 완성(양쪽). 사장님이 `.env`에 넣었던 `2TCHTR7ZLH`는 **App Store Connect IAP Key ID**
+  (SubscriptionKey_..p8, RC 대시보드 업로드용)라 SDK 키가 아님 → 비워서 graceful 폴백. RC → Project →
+  API Keys 의 Apple `appl_...` 공개 SDK 키를 넣어야 `Purchases.configure` 동작. (RC 대시보드 번들ID·IAP키는 이미 valid.)
+
+### 남은 것(맥 세션)
+- 실기기 설치·검증(기기 unavailable/잠금이라 대기): Live Activity 다이나믹아일랜드 표시, 취침감지 블랙아웃, 결제(키 오면).
+- iOS Sign in with Apple 공식 버튼(HIG 4.8), iOS Sleep Timer 네이티브(track-player) — 별도 라운드.

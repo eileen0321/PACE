@@ -13,6 +13,8 @@ let PaceOverlay: {
   getFocusSessionDurationMinutes(): number;
   hasRecordAudioPermission(): boolean;
   requestRecordAudioPermission(): Promise<{ status: string; granted: boolean }>;
+  hasCameraPermission(): boolean;
+  requestCameraPermission(): Promise<{ status: string; granted: boolean }>;
 } | null = null;
 
 try {
@@ -103,6 +105,25 @@ export const bluetoothService: BluetoothService = {
       return result?.granted ?? false;
     } catch (e) {
       console.warn('[bluetoothService.android] requestRecordAudioPermission failed', e);
+      return false;
+    }
+  },
+
+  async hasCameraPermission() {
+    try {
+      return PaceOverlay?.hasCameraPermission() ?? false;
+    } catch (e) {
+      console.warn('[bluetoothService.android] hasCameraPermission failed', e);
+      return false;
+    }
+  },
+
+  async requestCameraPermission() {
+    try {
+      const result = await PaceOverlay?.requestCameraPermission();
+      return result?.granted ?? false;
+    } catch (e) {
+      console.warn('[bluetoothService.android] requestCameraPermission failed', e);
       return false;
     }
   },

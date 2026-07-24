@@ -17,6 +17,12 @@ export const STORAGE_KEYS = {
   // getLatestSleepDetectedSession()을 조회하는데, 이 값과 다를 때만 "새벽 X시 Y분에 잠드셨어요"
   // 배너를 새로 띄운다(같은 세션을 앱 재실행마다 반복해서 보여주지 않기 위한 dedupe).
   lastSeenSleepInsightSessionId: 'pace_last_seen_sleep_insight_session_id',
+  // 2026-07-23 버그 수정 — BluetoothOnboardingSheet에서 사용자가 고른 Enable/Not Now를 여기 저장한다.
+  // 예전엔 이 선택이 "1회성 세션"에만 적용되고 이후 세션부터는 다시 켤 경로가 없어(Focus 탭 토글
+  // 버튼이 7/22 UI 단순화로 삭제됨) 핑거스냅/블루투스 핸즈프리가 온보딩 직후 10분 지나면 영구히
+  // 죽어 있었다. 이제 이 값을 세션 시작마다(home.tsx startSession) 다시 읽어 Enable을 골랐던
+  // 사용자는 매 세션 자동으로 Auto Mode가 켜지게 한다.
+  autoModeOptIn: 'pace_auto_mode_opt_in',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

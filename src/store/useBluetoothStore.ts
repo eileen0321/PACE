@@ -20,6 +20,8 @@ type BluetoothStoreState = {
   next: () => Promise<void>;
   previous: () => Promise<void>;
   toggleAutoMode: () => Promise<void>;
+  /** 이미 켜져 있으면 아무것도 안 하는 멱등 버전 — 매 세션 시작마다 불러도 안전(2026-07-23). */
+  enableAutoModeForSession: () => Promise<void>;
   setFocusSessionDurationMinutes: (minutes: number) => Promise<void>;
 };
 
@@ -61,13 +63,28 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
     // (알약 탭/블루투스 리모컨)는 100% 네이티브라 JS가 가로챌 수 없지만, 한 번이라도 이 경로로
     // 권한을 받아두면 이후 알약/리모컨 경로에서도 계속 동작한다.
     if (next) {
-      const hasPermission = await bluetoothService.hasRecordAudioPermission();
-      if (!hasPermission) await bluetoothService.requestRecordAudioPermission().catch(() => false);
+      const hasMic = await bluetoothService.hasRecordAudioPermission();
+      if (!hasMic) await bluetoothService.requestRecordAudioPermission().catch(() => false);
+      // 2026-07-24 손 밀어내기(shoo) 제스처 — 핑거스냅과 같은 진입점에서 같이 켜지므로 카메라
+      // 권한도 여기서 같이 물어봐야 한다(안 그러면 핑거스냅과 똑같이 "권한 요청 코드가 어디에도
+      // 없어서 조용히 죽어있는" 문제가 반복된다).
+      const hasCamera = await bluetoothService.hasCameraPermission();
+      if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
     }
     await bluetoothService.toggleAutoMode(next);
     set({ autoModeEnabled: next, autoToggleCount: get().autoToggleCount + 1 });
     // iOS는 네이티브 토스트가 없으므로(하드웨어 리모컨 미구현) 인앱 버튼 탭에서는 여기서 직접 표시.
     useToastStore.getState().show(next ? '🎧 Focus Session Enabled' : '🎧 Focus Session Disabled');
+  },
+
+  enableAutoModeForSession: async () => {
+    if (get().autoModeEnabled) return;
+    const hasMic = await bluetoothService.hasRecordAudioPermission();
+    if (!hasMic) await bluetoothService.requestRecordAudioPermission().catch(() => false);
+    const hasCamera = await bluetoothService.hasCameraPermission();
+    if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
+    await bluetoothService.toggleAutoMode(true);
+    set({ autoModeEnabled: true });
   },
 
   setFocusSessionDurationMinutes: async (minutes) => {

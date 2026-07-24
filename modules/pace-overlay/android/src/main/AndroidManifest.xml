@@ -14,12 +14,16 @@
        상시대기 경로를 안 열어주므로(시스템 어시스턴트 전용) 이 권한 없이는 대안이 없다. -->
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <!-- 2026-07-24 손 밀어내기(shoo) Hands-Free Next(PaceHandWaveDetector) — 앞카메라로 손 랜드마크만
+       온디바이스로 추적, 영상/사진 저장이나 서버 전송 전혀 없음. Focus Session이 켜져 있는 동안만 연다. -->
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
   <application>
     <service
       android:name="expo.modules.paceoverlay.PaceOverlayService"
       android:exported="false"
-      android:foregroundServiceType="specialUse|microphone">
+      android:foregroundServiceType="specialUse|microphone|camera">
       <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Pace digital-wellbeing session overlay" />

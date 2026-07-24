@@ -72,8 +72,20 @@ class PaceOverlayService : Service() {
         // 보장 안 하는 폴링 API라 놓치는 경우가 있었다. 접근성이 켜져 있으면 이벤트 기반(즉시 반영,
         // PaceAccessibilityService.getCurrentForegroundPackage)을 우선 쓰고, 꺼져있을 때만 기존
         // UsageStatsManager로 폴백한다.
-        val foregroundPackage = PaceAccessibilityService.getCurrentForegroundPackage()
-          ?: ForegroundAppWatcher.getForegroundPackage(applicationContext)
+        val accessibilityForeground = PaceAccessibilityService.getCurrentForegroundPackage()
+        // 2026-07-24 사용자 실기기 지적 — 최근앱(멀티태스킹)/작은 화면 갔다가 유튜브로 돌아오면
+        // 오버레이가 계속 안 뜨는 경우 확인. accessibility_service_config.xml의 packageNames 필터
+        // 때문에 유튜브/인스타/틱톡 외 창(systemui 최근앱 화면 등)으로는 TYPE_WINDOW_STATE_CHANGED
+        // 자체가 안 오므로 currentForegroundPackage가 최근앱 화면을 거치는 동안 갱신이 안 될 수
+        // 있다 — 이론상 유튜브로 복귀할 때 새 이벤트가 와야 하지만, 실기기에서 어긋나는 경우가
+        // 실제로 재현됐다. accessibility 쪽이 "여기 없음"이라고 할 때는 그 값을 바로 믿지 않고
+        // UsageStatsManager(실시간 조회, 캐시 아님)로 한 번 더 확인해서 오탐으로 인한 오버레이
+        // 실종을 막는다 — accessibility가 "여기 있음"이라고 할 때는 기존대로 즉시 신뢰한다.
+        val foregroundPackage = if (accessibilityForeground != null && SupportedApps.PACKAGES.contains(accessibilityForeground)) {
+          accessibilityForeground
+        } else {
+          ForegroundAppWatcher.getForegroundPackage(applicationContext) ?: accessibilityForeground
+        }
         val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
       } catch (e: Exception) {
@@ -546,9 +558,11 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getBoolean(PREF_BUILD_AUTO_NEXT_ENABLED, false)
 
-    // 2026-07-23 사용자 지시 — 핑거스냅(마이크, AudioRecord)과 블루투스 리모컨이 같은 오디오
-    // 세션을 두고 충돌할 수 있다는 QA 지적(C섹션) 반영: 블루투스 오디오 출력이 연결돼 있으면
-    // 리모컨이 이미 같은 역할(다음 넘김)을 하므로 핑거스냅을 아예 켜지 않는다 — 상호 배타적으로.
+    // 2026-07-23: 원래 "핑거스냅과 블루투스 리모컨이 같은 오디오 세션을 두고 충돌할 수 있다"는
+    // QA 지적(C섹션)을 근거로 핑거스냅 자체를 여기서 게이팅했었으나, setAutoMode()에서 그 로직을
+    // 제거했다(전제였던 "리모컨이 이미 다음넘김 처리" 자체가 거짓으로 확정됐고, AudioRecord는 폰
+    // 자체 마이크로 열리므로 블루투스 SCO/A2DP 오디오 세션과 실제로 겹치지 않는다). 이 함수는 이제
+    // 수면 감지(§4)의 "세션 중 블루투스 연결 해제됐는가" 체크에서만 쓰인다.
     // PaceOverlayModule.getConnectedBluetoothAudioDevice()와 동일한 검사(BLUETOOTH_CONNECT 런타임
     // 권한 불필요, AudioManager.getDevices()만으로 충분)를 여기 companion에도 둔다.
     private fun isBluetoothAudioConnected(context: Context): Boolean {
@@ -572,17 +586,25 @@ class PaceOverlayService : Service() {
         // 2026-07-20 실기기 검증 중 발견: revert 과정에서 이 호출이 통째로 빠져 있었다 — 핑거스냅이
         // "AUTO ON"과 완전히 끊어진 채 방치돼 있었음(권한 있어도 디텍터가 아예 안 켜짐). 실제 재생
         // 위치 감지(위)와 핑거스냅(마이크)은 같은 Focus Session 안에서 나란히 도는 별개의 트리거라
-        // 둘 다 여기서 같이 켜고 꺼야 한다. 단, 블루투스가 연결돼 있으면 위 사유로 스냅은 건너뛴다.
-        if (isBluetoothAudioConnected(context)) {
-          Log.d("PaceOverlayService", "PaceSnapDetector skipped — Bluetooth audio device connected, remote already covers next-swipe")
-        } else {
-          PaceSnapDetector.start(context) { triggerNext(context) }
-        }
+        // 둘 다 여기서 같이 켜고 꺼야 한다.
+        //
+        // ⚠️ 2026-07-23 되돌림 — "블루투스 연결돼 있으면 리모컨이 이미 다음넘김을 처리하니 핑거스냅은
+        // 끈다"는 전제로 여기서 스킵하던 로직이 있었는데, 오늘 밤 실기기 검증(§4-G)으로 그 전제 자체가
+        // 대다수 기기(에어팟/버즈 등 AVRCP-only)에서 거짓임이 확정됐다 — 블루투스 리모컨의 다음넘김은
+        // Android 플랫폼 레벨 제약으로 원천 불가능(볼륨키 릴레이를 실제로 지원하는 극소수 예외
+        // 기기만 별개). 그 전제가 무너진 채로 이 스킵을 유지하면 "리모컨도 안 되고 핑거스냅도 꺼진"
+        // 최악의 조합이 되므로, 블루투스 연결 여부와 무관하게 항상 켠다.
+        PaceSnapDetector.start(context) { triggerNext(context) }
+        // 2026-07-24 손 밀어내기(shoo) — 핑거스냅과 같은 Focus Session 안에서 나란히 도는 세 번째
+        // 핸즈프리 트리거. 카메라 권한이 없으면 PaceHandWaveDetector.start()가 조용히 no-op한다
+        // (PaceSnapDetector의 RECORD_AUDIO 방어와 동일한 원칙).
+        PaceHandWaveDetector.start(context) { triggerNext(context) }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
         focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
       } else {
         PaceAccessibilityService.stopWatching()
         PaceSnapDetector.stop()
+        PaceHandWaveDetector.stop()
       }
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()
@@ -1368,6 +1390,7 @@ class PaceOverlayService : Service() {
     focusSessionHandler.removeCallbacks(focusSessionAutoStop)
     PaceAccessibilityService.stopWatching()
     PaceSnapDetector.stop()
+    PaceHandWaveDetector.stop()
     infraReady = false
     if (instance === this) instance = null
     super.onDestroy()

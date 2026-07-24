@@ -92,6 +92,12 @@ export interface BluetoothService {
    */
   hasRecordAudioPermission(): Promise<boolean>;
   requestRecordAudioPermission(): Promise<boolean>;
+  /**
+   * 2026-07-24 손 밀어내기(shoo) Hands-Free Next — 핑거스냅과 같은 이유로 표준 dangerous 런타임
+   * 권한 요청이 필요하다. Android=실제 카메라 권한 다이얼로그. iOS=no-op(기능 자체가 없음, 항상 true).
+   */
+  hasCameraPermission(): Promise<boolean>;
+  requestCameraPermission(): Promise<boolean>;
 }
 
 // iOS 전략 확정(2026-07-18, PACE_ARCHITECTURE.md 참고): iOS는 실제 숏폼을 오버레이/자동넘김할 수

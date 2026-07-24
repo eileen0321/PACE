@@ -19,6 +19,7 @@ import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboard
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
+import { bluetoothService, overlayService } from '../../services/platform';
 import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -51,6 +52,7 @@ export default function HomeScreen() {
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
+  const enableAutoModeForSession = useBluetoothStore((s) => s.enableAutoModeForSession);
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
   const { hitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast } = useLimitHitStore();
   const { endedAt: sleepInsightEndedAt, check: checkSleepInsight, dismiss: dismissSleepInsight } = useSleepInsightStore();
@@ -107,8 +109,49 @@ export default function HomeScreen() {
     // 안드로이드 백그라운드 액티비티 시작 제한에 조용히 막혔다(예외 없음 — 그냥 실행이 안 됨).
     // 탭과 최대한 가까운 지금 시점에 바로 부른다.
     launchPlatformApp(platform).catch(() => {});
+    // 2026-07-24 밤 실기기 검증 중 발견한 진짜 큰 버그 — launchPlatformApp이 실제 유튜브 앱을 거의
+    // 즉시 포그라운드로 가져오면서 Pace 액티비티가 곧바로 백그라운드로 밀려나는데, PaceOverlayService
+    // (카운트다운/일일한도/미디어세션 전부 담당)를 켜는 코드는 지금까지 /overlay 화면이 마운트된
+    // 뒤(Connecting 애니메이션 300ms + 라우팅 이후)에야 실행되는 useEffect 안에 있었다. 실기기에서
+    // adb로 직접 확인해보니, 그 useEffect는 액티비티가 진짜로 다시 포그라운드로 돌아올 때까지
+    // 전혀 실행되지 않았다(RN이 백그라운드 상태에서 마운트 이펙트를 미룸) — 즉 사용자가 유튜브에
+    // 머무는 동안 실제로는 세션 추적/한도 집행 서비스가 단 한 번도 켜지지 않고 있었다는 뜻이다.
+    // 탭 이벤트를 처리 중인 지금(액티비티가 확실히 포그라운드인 시점)에 네이티브 서비스를 직접
+    // 켜서 이 경쟁 상태를 없앤다 — PaceOverlayService.start()는 멱등(ensureInfraReady의 infraReady
+    // 가드)이라 /overlay의 useEffect가 나중에 한 번 더 불러도 안전하다.
+    const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + bonusMinutes - todayUsageMinutes);
+    overlayService.startSession({
+      dailyLimitMinutes: settings.dailyLimitMinutes,
+      remainingMinutes,
+      autoNext: settings.autoNext,
+      sleepTimerMinutes: settings.sleepTimerMinutes ?? 0,
+      breakIntervalMinutes: settings.breakIntervalMinutes,
+      notifyRemaining: settings.notifyRemaining,
+      notifyLimit: settings.notifyLimit,
+      notifyBreak: settings.notifyBreak,
+      hardBlockMode: settings.hardBlockMode,
+    }).catch(() => {});
     setConnectingPlatform(platform);
-  }, []);
+    // 2026-07-23 버그 수정 — 예전엔 BluetoothOnboardingSheet에서 Enable을 고른 "그 첫 세션"에만
+    // Auto Mode(핑거스냅 포함)가 켜지고 10분 뒤 자동 종료된 뒤로는 다시 켤 방법이 없었다(Focus 탭
+    // 토글 버튼이 7/22에 삭제됨). Enable을 고른 적 있는 사용자는 매 세션 시작마다 다시 켜준다 —
+    // enableAutoModeForSession은 이미 켜져 있으면 아무것도 안 하는 멱등 호출이라 안전하다.
+    AsyncStorage.getItem(STORAGE_KEYS.autoModeOptIn).then(async (optIn) => {
+      if (optIn === 'true') { enableAutoModeForSession(); return; }
+      if (optIn === null) {
+        // 2026-07-23 마이그레이션 — autoModeOptIn 키는 오늘 새로 추가됐다. 이 키가 생기기 전부터
+        // 쓰던 기기는 온보딩(bluetoothOnboardingSeen)이 이미 true라 다시는 안 뜨므로, 새 키가
+        // 없다는 이유만으로 예전에 Enable을 골랐던 사용자까지 도로 꺼진 채 방치되면 안 된다.
+        // RECORD_AUDIO 권한이 이미 있다는 건 과거에 Enable 경로(dismissOnboarding/toggleAutoMode)를
+        // 탄 적 있다는 확실한 증거이므로 그걸 opt-in 신호로 승계한다.
+        const grantedBefore = await bluetoothService.hasRecordAudioPermission().catch(() => false);
+        if (grantedBefore) {
+          AsyncStorage.setItem(STORAGE_KEYS.autoModeOptIn, 'true').catch(() => {});
+          enableAutoModeForSession();
+        }
+      }
+    }).catch(() => {});
+  }, [enableAutoModeForSession]);
 
   const handleConnectingComplete = useCallback(() => {
     const platform = connectingPlatform;
@@ -145,6 +188,8 @@ export default function HomeScreen() {
 
   const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
     AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});
+    // 2026-07-23 버그 수정 — 이 선택을 저장해둬야 startSession이 다음 세션부터도 계속 참조할 수 있다.
+    AsyncStorage.setItem(STORAGE_KEYS.autoModeOptIn, String(enableAutoMode)).catch(() => {});
     if (enableAutoMode) toggleAutoMode();
     const platform = pendingPlatform;
     setPendingPlatform(null);

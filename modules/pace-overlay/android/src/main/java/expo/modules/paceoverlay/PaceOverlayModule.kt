@@ -98,9 +98,20 @@ class PaceOverlayModule : Module() {
     // 네이티브(PaceOverlayService)가 자기 완결적으로 담당하도록 확장 — 세션 시작 시점의 값을
     // 전부 함께 넘긴다(PaceOverlayService.kt 상단 주석 참고).
     AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean, sleepTimerMinutes: Int, breakIntervalMinutes: Int, notifyRemaining: Boolean, notifyLimit: Boolean, notifyBreak: Boolean, hardBlockMode: Boolean ->
+      // 2026-07-24 진단용 — 실기기에서 세션 시작 후 PaceOverlayService.onStartCommand 로그가 단 한
+      // 줄도 안 찍히는 현상 조사 중. startForegroundService 자체가(혹은 그 이전 단계가) 예외를
+      // 던지는데 JS 쪽 .catch(() => {})가 조용히 삼켜서 원인이 안 보였다 — 여기서 먼저 잡아 로그로
+      // 남긴다.
       appContext.reactContext?.let { context ->
-        PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode)
-      }
+        try {
+          Log.i("PaceOverlayModule", "start() called, calling PaceOverlayService.start")
+          PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode)
+          Log.i("PaceOverlayModule", "PaceOverlayService.start returned normally")
+        } catch (e: Exception) {
+          Log.e("PaceOverlayModule", "PaceOverlayService.start threw", e)
+          throw e
+        }
+      } ?: Log.w("PaceOverlayModule", "start() called but reactContext is null")
     }
 
     AsyncFunction("updateRemaining") { remainingMinutes: Int ->
@@ -249,6 +260,16 @@ class PaceOverlayModule : Module() {
 
     AsyncFunction("requestRecordAudioPermission") { promise: Promise ->
       Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.RECORD_AUDIO)
+    }
+
+    // 2026-07-24 손 밀어내기(shoo) Hands-Free Next — 핑거스냅의 RECORD_AUDIO와 동일한 이유로 표준
+    // dangerous 런타임 권한 요청 플로우가 필요하다(카메라도 마찬가지로 시스템 다이얼로그 필요).
+    Function("hasCameraPermission") {
+      appContext.reactContext?.let { context -> PaceHandWaveDetector.hasPermission(context) } ?: false
+    }
+
+    AsyncFunction("requestCameraPermission") { promise: Promise ->
+      Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.CAMERA)
     }
 
     // Focus Session이 켜져 있는 동안에만 호출된다 — 앱 시작부터 상시 청취가 아님(사용자 지시).

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { Redirect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../services/storage/keys';
@@ -17,13 +17,14 @@ import { colors } from '../constants/theme';
 // 이 플래그가 켜져 있으면 안 됨(매번 온보딩만 반복돼 "다음번" 분기에 영영 도달 못함) — false로 복귀.
 const TEST_ALWAYS_SHOW_ONBOARDING = false;
 
-// 2026-07-21 밤 사용자 지시(PACE_ARCHITECTURE.md "런치 플로우 단순화" 참고) — 온보딩 이후
-// 목적지를 탭 네비게이션(Home)이 아니라 곧바로 세션 화면(Android=Overlay+YouTube 자동실행,
-// iOS=Pace Feed WebView)으로 바꾼다. 로그인/유료화 체크는 원래도 여기서 강제하지 않았으므로
-// (게스트 폴백이 이미 자동 처리) "완전히 스킵" 요구사항은 추가 변경 없이 이미 충족돼 있다.
-// 기존 탭(Home/Focus/Stats/Settings)은 완전히 유지 — overlay/index.tsx에 새로 추가한 앱 아이콘
-// 버튼으로 언제든 들어갈 수 있다. iOS 쪽(/feed)은 맥 세션이 동시에 구현 중이라 여기서는 건드리지
-// 않고 기존 Home 목적지를 그대로 둔다 — 완료되면 문서를 보고 이 파일의 iOS 분기만 맞춰 정리할 것.
+// 2026-07-21 밤 사용자 지시로 한때 콜드 스타트 목적지를 탭 네비게이션(Home)이 아니라 곧바로
+// 세션 화면(Android=Overlay+YouTube 자동실행)으로 바꿨었으나, 2026-07-24 사용자 지적으로 되돌림 —
+// iOS는 바로 다음날(2026-07-22) "심사자가 유튜브가 아니라 네이티브 홈을 먼저 보게" App Review
+// 리스크 때문에 콜드 스타트를 홈으로 되돌렸는데, 그 수정이 Android엔 반영이 안 된 채(당시 주석에
+// "Android는 기존 유지"로 명시) 그대로 남아 있었다. 결과적으로 Android는 앱을 켜자마자 화면이 곧장
+// 유튜브로 덮여, (a) 같은 4.2/5.2.2류 심사 리스크에 그대로 노출되고 (b) 프리미엄 스플래시 애니메이션과
+// 홈의 쉬는시간(Flip Mode)/수면 인사이트 카드가 스칠 새도 없이 가려졌다. 이제 두 플랫폼 모두 콜드
+// 스타트는 홈으로 — 세션은 기존처럼 사용자가 플랫폼 카드를 직접 탭해야 시작된다.
 export default function RootIndex() {
   const [target, setTarget] = useState<'home' | 'onboarding' | null>(null);
 
@@ -39,10 +40,5 @@ export default function RootIndex() {
 
   if (target === null) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   if (target === 'onboarding') return <Redirect href="/onboarding" />;
-  if (Platform.OS === 'android') return <Redirect href={{ pathname: '/overlay', params: { platform: 'youtube' } }} />;
-  // iOS: 콜드 스타트는 **홈(네이티브 앱)**으로 — 유튜브 피드로 자동 진입하지 않는다. (2026-07-22 사용자
-  // 지시, App Review 리스크 완화) 앱을 켜면 심사자가 유튜브가 아니라 네이티브 집중/홈 화면을 먼저 보게
-  // 되고, Pace Feed(유튜브 웹뷰)는 사용자가 직접 눌러야만(집중 탭 → Open Pace Feed) 로드된다 →
-  // "유튜브 클라이언트"가 아니라 "부가기능"으로 확실히 보여 4.2/5.2.2 대응에 유리. Android는 기존 유지.
   return <Redirect href="/(tabs)/home" />;
 }

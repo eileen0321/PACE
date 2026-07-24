@@ -20,6 +20,8 @@ import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, overlayService } from '../../services/platform';
+import { BannerAd, BannerAdSize, TestIds } from 'react-native-google-mobile-ads';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -46,6 +48,10 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  // 2026-07-25 광고 배너 로드 실패 시(네트워크 없음, 재고 없음 등) 빈 공간만 남기지 않고 배너
+  // 영역 자체를 접어서 스크롤 영역이 다시 그 공간을 차지하게 한다.
+  const [adBannerFailed, setAdBannerFailed] = useState(false);
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
@@ -261,6 +267,25 @@ export default function HomeScreen() {
         <QuickControlsGrid />
       </ScrollView>
 
+      {/* 2026-07-25 — AdMob 배너, 하단 탭바 바로 위 고정. 무료 사용자에게만 노출(유료는 완전히
+          숨김 — 광고 없는 것도 구독 가치의 일부). 지금은 구글 공식 테스트 광고 단위 ID
+          (TestIds.ADAPTIVE_BANNER)로 붙여뒀다 — 실제 배포 전에 AdMob 콘솔에서 발급받은 진짜 광고
+          단위 ID로 반드시 교체해야 한다(테스트 ID로 낸 채 배포하면 광고가 하나도 안 뜬다).
+          ANCHORED_ADAPTIVE_BANNER는 기기 너비에 맞춰 높이가 기기마다 다르게 나온다(고정 50dp
+          아님) — 그래서 배너 높이를 상수로 하드코딩하지 않고, 배너를 ScrollView와 같은 flex
+          컬럼의 형제 요소로 둬서 실제 렌더된 높이만큼 스크롤 영역이 자동으로 줄어들게 한다(수동
+          padding 계산 불필요, 어떤 기기·가로세로모드에서도 안전). 로드 실패 시(네트워크 없음 등)
+          onAdFailedToLoad로 감지해 컨테이너 자체를 접어 빈 여백이 안 남게 한다. */}
+      {!isPremium && !adBannerFailed && (
+        <View style={styles.adBannerContainer}>
+          <BannerAd
+            unitId={TestIds.ADAPTIVE_BANNER}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            onAdFailedToLoad={() => setAdBannerFailed(true)}
+          />
+        </View>
+      )}
+
       <BluetoothOnboardingSheet
         visible={pendingPlatform !== null}
         onEnable={() => dismissOnboarding(true)}
@@ -290,6 +315,14 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingBottom: layout.tabBarContentClearance },
+  adBannerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingVertical: 4,
+  },
   sleepInsightBanner: {
     flexDirection: 'row',
     alignItems: 'center',

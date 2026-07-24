@@ -52,6 +52,12 @@
             "imageWidth": 220,
             "resizeMode": "contain",
             "backgroundColor": "#060709"
+          },
+          "android": {
+            "image": "./assets/android-icon-foreground.png",
+            "imageWidth": 200,
+            "resizeMode": "contain",
+            "backgroundColor": "#060709"
           }
         }
       ],

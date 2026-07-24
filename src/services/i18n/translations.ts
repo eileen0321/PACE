@@ -333,6 +333,7 @@ export const translations = {
       loadingShorts: 'Loading Shorts…',
       emptyQueueMessage: 'No Shorts to show.',
       loadFailedMessage: 'Failed to load Shorts.',
+      sleepBlackout: 'Looks like you dozed off · tap to exit',
     },
   },
 
@@ -633,6 +634,7 @@ export const translations = {
       loadingShorts: 'Shorts 불러오는 중…',
       emptyQueueMessage: '표시할 Shorts가 없습니다.',
       loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
+      sleepBlackout: '잠드신 것 같아요 · 탭하면 종료',
     },
   },
 } as const;

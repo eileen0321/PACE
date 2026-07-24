@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.strides7.pace",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free.",
-        "NSMotionUsageDescription": "Pace uses motion to detect when you place your phone face down, so it can measure your screen-free rest time (Flip Mode)."
+        "NSMotionUsageDescription": "Pace uses motion to detect when you place your phone face down, so it can measure your screen-free rest time (Flip Mode).",
+        "NSSupportsLiveActivities": true
       },
       "icon": "./assets/ios-icon.png"
     },
@@ -30,6 +31,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "@bacons/apple-targets",
       [
         "expo-router",
         {

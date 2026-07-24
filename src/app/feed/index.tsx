@@ -8,10 +8,14 @@ import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
+import { useSleepGuard } from '../../hooks/useSleepGuard';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useFlipStore } from '../../store/useFlipStore';
+import { useUserStore } from '../../store/useUserStore';
+import { startSession, endSession } from '../../database/repositories/sessionsRepository';
+import { overlayService } from '../../services/platform';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -36,6 +40,7 @@ export default function PaceFeedScreen() {
   const advance = useShortsQueueStore((s) => s.advance);
   const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
   const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
+  const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
@@ -44,6 +49,9 @@ export default function PaceFeedScreen() {
   const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
   const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
+  const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
+  const userId = useUserStore((s) => s.user?.id);
+  const feedOpenedAtRef = useRef(Date.now()); // 취침감지 세션 기록용 시청 시작 시각
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
@@ -57,6 +65,22 @@ export default function PaceFeedScreen() {
   useEffect(() => {
     if (isFaceDown) setStatus('PAUSED');
   }, [isFaceDown]);
+
+  // 취침 감지 강제 종료(스펙 §4-B) — 피드 시청 중 잠들면(무진동 지속, 이어폰 탈착 시 단축) 영상을 멈추고
+  // 검은 풀스크린으로 덮어 밤새 재생을 막는다. iOS는 화면을 강제로 잠글 API가 없어(스펙 문서화) 영상
+  // 정지 + WebView를 가리는 블랙아웃이 실질적 최선. DB엔 sleep_detected로 기록(홈 "…에 잠드셨습니다" 인사이트).
+  const onSleepDetected = () => {
+    setStatus('PAUSED');
+    setSleepBlackout(true);
+    if (userId) {
+      const durationSeconds = Math.max(0, Math.round((Date.now() - feedOpenedAtRef.current) / 1000));
+      startSession(userId, 'youtube')
+        .then((id) => endSession(id, durationSeconds, 0, 'sleep_detected'))
+        .catch(() => {});
+    }
+  };
+  // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지(정지/블랙아웃 중엔 불필요).
+  useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected });
 
   // 2026-07-23 사용자 지시: 고개짓(ARKit 전면카메라 head-nod)을 "비현실적"으로 판단해 제거 —
   // 항상 false로 두어 gesture 카메라가 절대 안 켜지게 한다(pace-gesture 모듈 자체는 다른 세션 영역이라
@@ -109,9 +133,23 @@ export default function PaceFeedScreen() {
   useEffect(() => {
     if (!isAutoMode) {
       setSessionEndsAt(null);
+      overlayService.endSession().catch(() => {}); // iOS: Live Activity 종료(Android: no-op 아님, 별도 경로)
       return;
     }
     setSessionEndsAt(Date.now() + focusSessionDurationMinutes * 60 * 1000); // 상태바 남은시간 계산 기준
+    // iOS Live Activity/다이나믹아일랜드에 Focus Session 카운트다운 표시(스펙 §1-E). remainingMinutes만
+    // 실제로 쓰이고 나머지 필드는 iOS overlayService가 무시(인터페이스 호환용 기본값).
+    overlayService.startSession({
+      dailyLimitMinutes,
+      remainingMinutes: focusSessionDurationMinutes,
+      autoNext: true,
+      sleepTimerMinutes: 0,
+      breakIntervalMinutes: 0,
+      notifyRemaining: false,
+      notifyLimit: false,
+      notifyBreak: false,
+      hardBlockMode: false,
+    }).catch(() => {});
     const timer = setTimeout(() => {
       setIsAutoMode(false);
       useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
@@ -310,6 +348,18 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* 취침 감지 블랙아웃(스펙 §4-B) — 잠든 걸로 판단되면 영상을 멈추고 화면을 검게 덮는다. iOS는
+          시스템 잠금 API가 없어 이 인앱 블랙아웃이 실질적 최선(밝기 0%는 OS가 되돌림). 아주 어둡게 두되,
+          깨어 있었다면 탭 한 번으로 나갈 수 있게(오탐 대비) 최소 문구만. */}
+      {sleepBlackout && (
+        <Pressable
+          style={styles.sleepBlackout}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}
+        >
+          <Text style={styles.sleepBlackoutText}>{t('feed.sleepBlackout')}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -359,4 +409,7 @@ const styles = StyleSheet.create({
   stateText: { color: colors.textSecondary, fontSize: 13, fontFamily: typography.bodyFontFamilyMedium },
   retryBtn: { marginTop: spacing.sm, backgroundColor: colors.primary, borderRadius: radius.button, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   retryText: { color: '#FFFFFF', fontSize: 13, fontFamily: typography.bodyFontFamilyBold },
+  // 취침 감지 블랙아웃(§4-B) — 거의 순수 검정, 최상단(zIndex). 아주 흐린 안내 문구만.
+  sleepBlackout: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 300, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' },
+  sleepBlackoutText: { color: 'rgba(255,255,255,0.28)', fontSize: 13, fontFamily: typography.bodyFontFamilyMedium },
 });

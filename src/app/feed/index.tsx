@@ -277,15 +277,14 @@ export default function PaceFeedScreen() {
               앱(Home)으로 복귀(세션은 백그라운드 유지). 딥링크로 스택이 비어도 replace라 안전. */}
           {/* 피드는 홈 위에 뜬 fullScreenModal — replace로 홈을 새로 그리면 밑의 홈과 겹쳐 "두 번 보임".
               back()으로 모달을 닫아 밑의 홈을 드러낸다. 딥링크로 스택이 비었을 때만 replace 폴백. */}
-          {/* 세션 ON 인디케이터(사용자 지시 2026-07-26) — 안드로이드 알약 "SESSION ON"과 동일하게, Focus
-              Session 켜지면 상단 P 옆에 글래스 "SESSION ON" 필을 명확히 표시. OFF면 렌더 안 함(영상 안 가림). */}
-          {isAutoMode && (
-            <View style={styles.sessionOnPill}>
-              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-              <View style={styles.sessionOnDot} />
-              <Text style={styles.sessionOnText}>SESSION ON</Text>
-            </View>
-          )}
+          {/* 세션 시작/표시 컨트롤(사용자 지시 2026-07-26) — 예전엔 하단 배지가 OFF일 때 흐려서 "어디 있냐"
+              못 찾음. 항상 보이는 상단 토글 필로 올린다: OFF는 "▶ START SESSION"(눌러서 켬), ON은 안드로이드
+              알약처럼 "● SESSION ON"(눌러서 끔). P 옆 고정 위치라 늘 찾기 쉽다. */}
+          <Pressable onPress={toggleAutoMode} hitSlop={8} style={[styles.sessionPill, isAutoMode && styles.sessionPillOn]}>
+            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+            {isAutoMode ? <View style={styles.sessionOnDot} /> : <Feather name="play" size={12} color="rgba(255,255,255,0.92)" />}
+            <Text style={styles.sessionOnText}>{isAutoMode ? 'SESSION ON' : 'START SESSION'}</Text>
+          </Pressable>
           <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
@@ -306,24 +305,8 @@ export default function PaceFeedScreen() {
             iOS 첫탭 재생(자동재생 차단 우회)이 실제로 먹히게 한다. */}
         <View style={{ flex: 1 }} pointerEvents="none" />
 
-        {current && (
-          <View style={styles.bottom} pointerEvents="box-none">
-            {/* 탭하여 Focus Session on/off. 켜면 10분 자동넘김 + (영상 1/2지점부터) 고개짓 감지 ON. */}
-            <Pressable
-              onPress={toggleAutoMode}
-              hitSlop={8}
-              style={[styles.autoModeBadge, isAutoMode ? styles.autoModeBadgeOn : styles.autoModeBadgeOff]}
-            >
-              <Feather name={isAutoMode ? 'zap' : 'play'} size={11} color={isAutoMode ? '#000000' : colors.textSecondary} />
-              <Text style={[styles.autoModeBadgeText, isAutoMode && styles.autoModeBadgeTextOn]}>
-                {isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}
-              </Text>
-            </Pressable>
-            {/* 2026-07-25 사용자 지시: 하단 미디어 컨트롤(이전/재생/다음)은 유튜브 웹뷰 자체 UI와
-                겹치고 실동작이 불안정해 제거 — 넘김은 화면 탭/볼륨키/BT 리모컨으로 충분. Focus Session
-                시작 배지만 남긴다. */}
-          </View>
-        )}
+        {/* 하단 "포커스 세션 시작" 배지는 OFF일 때 흐려서 유튜브 UI에 묻혀 못 찾는다는 지적(2026-07-26) →
+            상단 토글 필로 이전해 제거. 세션 시작/표시는 이제 상단 [START SESSION/SESSION ON] 필이 전담. */}
       </SafeAreaView>
 
       {(isLoading || (isRefilling && !current)) && (
@@ -393,8 +376,9 @@ const styles = StyleSheet.create({
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
   // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
-  // 상단 "SESSION ON" 글래스 필(안드 알약 대응) — 세션 켜졌을 때만. 초록 점 + 흰 텍스트, 보라 링.
-  sessionOnPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: `${colors.primary}66` },
+  // 상단 세션 토글 필(항상 표시) — OFF는 "▶ START SESSION"(중립 테두리), ON은 "● SESSION ON"(초록 테두리).
+  sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
+  sessionPillOn: { borderColor: colors.success },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.

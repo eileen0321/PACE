@@ -48,6 +48,12 @@ object ForegroundAppWatcher {
   // 인스턴스 상태가 아니라 object(싱글턴) 상태라 서비스가 재시작되면(onDestroy 후 재생성) 자동
   // 초기화된다.
   private var lastKnownForegroundPackage: String? = null
+  // 2026-07-26 추가 — lastKnownForegroundPackage가 "마지막으로 실제 재확인된" 시각. 아래 두 경로
+  // (MOVE_TO_FOREGROUND 이벤트 / lastTimeUsed 근접조회) 중 하나라도 재확인하면 갱신되고, 둘 다 오래
+  // 조용하면(STALENESS_MS 이상) getForegroundPackage가 null을 반환해 호출부가 "모른다"로 안전하게
+  // 처리하게 한다 — PaceAccessibilityService의 getCurrentForegroundPackage(maxAgeMs) staleness
+  // 가드와 동일한 원칙.
+  private var lastConfirmedAtMs: Long = 0L
   private var cursor: Long = 0L
 
   // ⚠️ 실기기 검증 중 발견한 버그(2026-07-18): MOVE_TO_FOREGROUND는 "앱 전환이 일어난 순간"에만
@@ -70,9 +76,47 @@ object ForegroundAppWatcher {
       events.getNextEvent(event)
       if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
         lastKnownForegroundPackage = event.packageName
+        lastConfirmedAtMs = end
       }
     }
     cursor = end
+    // 2026-07-26 사용자 지적("유튜브 미니창 갔다가 다시 키우면 오버레이 없어짐", 여러 번 반복 보고) —
+    // MOVE_TO_FOREGROUND는 edge-triggered라 "PIP 진입(→다른 창이 전면) 후 다시 풀스크린으로 복귀"가
+    // 일부 기기/OEM(특히 삼성 One UI 멀티윈도우)에서 새 전이 이벤트를 안 낼 수 있다 — 그러면
+    // lastKnownForegroundPackage가 PIP 진입 시점의 값(유튜브가 아닌 값)에 영구히 멈춰 오버레이가
+    // 다시 안 뜬다. 이벤트 스트림에 의존하지 않는 별도 신호로 교차검증: queryUsageStats의
+    // lastTimeUsed는 앱이 실제로 전면에서 계속 쓰이는 동안 주기적으로 갱신되는 값이라, 이벤트를
+    // 놓쳐도 "그 사이 유튜브가 최근에도 계속 쓰였다"는 사실 자체는 여전히 잡을 수 있다.
+    val recentlyUsed = mostRecentlyUsedSupportedApp(usageStatsManager, end)
+    if (recentlyUsed != null) {
+      lastKnownForegroundPackage = recentlyUsed
+      lastConfirmedAtMs = end
+    }
+    // 두 경로 다 오래 재확인을 못 했으면(진짜 지원 앱을 떠나 한참 지남) "모른다"로 폴백 — 안 그러면
+    // 옛날 값이 영원히 남아 오버레이가 안 사라지는 그 반대 버그(이전 세션에서 이미 한 번 겪음)가
+    // 이 경로로 재발한다.
+    if (end - lastConfirmedAtMs > STALENESS_MS) return null
     return lastKnownForegroundPackage
   }
+
+  // SupportedApps.PACKAGES 중 lastTimeUsed가 RECENCY_WINDOW_MS 이내로 가장 최근인 것을 찾는다.
+  // 여러 지원 앱이 동시에 최근값을 갖는 경우는 실사용상 거의 없다(한 번에 하나만 화면에 보임).
+  private fun mostRecentlyUsedSupportedApp(usageStatsManager: UsageStatsManager, nowMs: Long): String? {
+    val stats = usageStatsManager.queryUsageStats(
+      UsageStatsManager.INTERVAL_BEST, nowMs - RECENCY_WINDOW_MS, nowMs
+    ) ?: return null
+    var best: String? = null
+    var bestLastUsed = 0L
+    for (stat in stats) {
+      if (stat.packageName !in SupportedApps.PACKAGES) continue
+      if (stat.lastTimeUsed > bestLastUsed && nowMs - stat.lastTimeUsed <= RECENCY_WINDOW_MS) {
+        bestLastUsed = stat.lastTimeUsed
+        best = stat.packageName
+      }
+    }
+    return best
+  }
+
+  private const val RECENCY_WINDOW_MS = 4_000L
+  private const val STALENESS_MS = 6_000L
 }

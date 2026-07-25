@@ -169,17 +169,17 @@ export default function OverlaySessionScreen() {
         const durationSeconds = sessionStartedAtMsRef.current
           ? Math.max(0, Math.round((Date.now() - sessionStartedAtMsRef.current) / 1000))
           : 0;
-        // 2026-07-19 버그 수정(사용자 지적): videoIndex는 이 화면 자체가 그리는 "개발용 시뮬레이터
-        // 콘텐츠"(CURATED_VIDEOS를 setTimeout으로 순환시키는 데모 루프, 아래 참고)의 진행 상황일
-        // 뿐이다 — 실제 세션에서는 Android가 진짜 YouTube/Instagram/TikTok 앱을 열고(launchPlatformApp)
-        // 이 화면은 그 뒤에서 보이지도 않게 깔려 있으므로, 사용자가 그 안에서 실제로 몇 개를 봤는지
-        // Pace가 알 방법이 전혀 없다(다른 앱 내부 재생 상태를 관찰할 API가 없음). 그런데도 이 가짜
-        // videoIndex가 그대로 videos_watched로 DB에 저장되고 있었다 — Focus/Stats 탭의 "오늘 본
-        // 영상 수"가 실사용 중엔 사실상 의미 없는 숫자였던 원인. 실제로 셀 수 없는 값을 가짜로 채우는
-        // 대신 정직하게 0으로 기록한다("죽은 코드/가짜 데이터로 남기지 말라"는 이 세션의 원칙과 동일).
-        endSessionRow(sessionIdRef.current, durationSeconds, 0, endReasonRef.current)
-          .then(() => pushUnsyncedSessions(user.id))
-          .catch(() => {});
+        const sessionId = sessionIdRef.current;
+        const userId = user.id;
+        const endReason = endReasonRef.current;
+        // 2026-07-26 — PaceAccessibilityService가 실제 재생위치 신호(끝남/되감김 감지)로 센 진짜
+        // 시청 편수를 읽는다(자동넘김이든 사용자가 직접 넘겼든 다 포함). iOS/접근성 꺼짐은 항상 0 —
+        // 예전엔 개발용 시뮬레이터의 videoIndex를 가짜로 흘려보내다 고쳐서 정직하게 0을 기록했는데
+        // (아래 원래 있던 주석 참고), 이제는 Android에서 진짜 값을 셀 수 있게 됐다. endSession()
+        // (네이티브 stop → 카운터 리셋) 호출 전에 먼저 읽어야 한다.
+        overlayService.getVideoWatchCount().then((videosWatched) => (
+          endSessionRow(sessionId, durationSeconds, videosWatched, endReason)
+        )).then(() => pushUnsyncedSessions(userId)).catch(() => {});
         logOverlayEvent(user.id, sessionIdRef.current, 'SESSION_STOP', endReasonRef.current).catch(() => {});
       }
       timer.endSession();

@@ -56,9 +56,24 @@ object PaceHandWaveDetector {
   private const val REFRACTORY_MS = 1200L
   // 손 크기(손목~중지 뿌리 거리, 정규화 좌표계 0~1)가 이 윈도우 안에서 이 배수 이상 커지면
   // "다가오는 움직임"으로 판단. 초기 추정치 — 실기기 튜닝 전(V1, PaceSnapDetector와 동일 원칙).
-  private const val GROWTH_WINDOW_MS = 500L
-  private const val GROWTH_RATIO_THRESHOLD = 1.5
+  private const val GROWTH_WINDOW_MS = 700L
+  // 2026-07-26 사용자 지적 — "폰을 거치대에 세워두고 얼굴 앞에서 화면 쪽으로 손을 미는" 실제 사용
+  // 거리에서는 손이 카메라에 아주 가까이 붙지 않는다(그렇게 하려면 거치대에서 손을 뻗어 렌즈 코앞까지
+  // 가져가야 하는데 비현실적). V1의 1.5배 임계값은 5번 중 5번 다 실패할 만큼 너무 빡빡했다 —
+  // 낮추고, 그래도 안 잡히면 다음 로그(아래 onResult의 근접 실패 로그)로 실측 growthRatio를 보고
+  // 재조정한다.
+  private const val GROWTH_RATIO_THRESHOLD = 1.2
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
+
+  // 2026-07-26 사용자 관찰("손모양이 아니여도 카메라만 가리면 넘어가는듯") — MediaPipe 손 랜드마크
+  // 신뢰도(0.5)가 빠른 움직임/블러에서 프레임을 놓치는 경우의 안전망. 손 랜드마크와 별개로 Y평면
+  // 평균 밝기(luma)만 보고 "짧은 시간 안에 급격히 어두워짐 = 뭔가로 렌즈를 가림"을 잡는다 — ML
+  // 모델을 안 거치므로 계산이 훨씬 싸고, 손 인식이 실패하는 바로 그 상황(렌즈를 완전히 덮어 손
+  // 랜드마크 자체를 못 찾는 경우)에 오히려 더 잘 맞는다. 둘 중 하나라도 걸리면 트리거(OR 조건) —
+  // lastTriggerAtMs를 공유해 같은 제스처가 두 경로에서 중복 트리거되지 않게 한다.
+  private const val LUMA_WINDOW_MS = 400L
+  private const val LUMA_DROP_RATIO = 0.45 // 최근 대비 밝기가 이 비율 이하로 떨어지면(45% 이하) 발동
+  private const val LUMA_DARK_ABS_MAX = 70.0 // 절대 밝기도 충분히 어두워야(0~255) — 정상 조도 변화 오탐 방지
 
   @Volatile private var running = false
   private var cameraProvider: ProcessCameraProvider? = null
@@ -69,6 +84,8 @@ object PaceHandWaveDetector {
   private var lastTriggerAtMs = 0L
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
   private val sizeHistory = ArrayDeque<Pair<Long, Double>>()
+  // (timestamp, averageLuma) 짧은 이력 — occlusion(가려짐) 안전망용, sizeHistory와 동일한 원리.
+  private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
 
   // 2026-07-24: 프로젝트에 트랜지티브로 딸려온 androidx.lifecycle 버전이 LifecycleOwner를 순수 Java
   // 인터페이스(getLifecycle())로 노출해 Kotlin `override val lifecycle` 프로퍼티 오버라이드 문법이
@@ -154,7 +171,7 @@ object PaceHandWaveDetector {
           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
           .build()
         analysisExecutor?.let { executor ->
-          analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy) }
+          analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy, onWave) }
         }
 
         provider.unbindAll()
@@ -204,7 +221,7 @@ object PaceHandWaveDetector {
     sizeHistory.clear()
   }
 
-  private fun analyzeFrame(proxy: ImageProxy) {
+  private fun analyzeFrame(proxy: ImageProxy, onWave: () -> Unit) {
     val now = System.currentTimeMillis()
     if (!running || now - lastProcessedAtMs < PROCESS_INTERVAL_MS) {
       proxy.close()
@@ -212,6 +229,8 @@ object PaceHandWaveDetector {
     }
     lastProcessedAtMs = now
     try {
+      // occlusion 안전망 — Y평면 평균 밝기만 보는 거라 MediaPipe 추론 전에 먼저, 훨씬 싸게 계산.
+      checkOcclusion(averageLuma(proxy), now, onWave)
       val bitmap = yuv420ToBitmap(proxy)
       if (bitmap != null) {
         val rotated = rotateBitmap(bitmap, proxy.imageInfo.rotationDegrees)
@@ -223,6 +242,48 @@ object PaceHandWaveDetector {
     } finally {
       proxy.close()
     }
+  }
+
+  // Y평면(휘도) 바이트를 그대로 평균 — YUV_420_888에서 Y가 곧 밝기이므로 비트맵 변환 없이 가장 싸게
+  // "이 프레임이 전체적으로 얼마나 밝은지"를 얻는다. 320x240 전체를 순회해도 매 프레임이 아니라
+  // PROCESS_INTERVAL_MS(150ms)당 1번뿐이라 비용이 무시할 만하다.
+  private fun averageLuma(proxy: ImageProxy): Double {
+    val yBuffer = proxy.planes[0].buffer
+    val yBytes = ByteArray(yBuffer.remaining())
+    yBuffer.duplicate().get(yBytes)
+    var sum = 0L
+    for (b in yBytes) sum += (b.toInt() and 0xFF)
+    return sum.toDouble() / yBytes.size
+  }
+
+  // 2026-07-26 사용자 관찰 기반 안전망 — 손 랜드마크 신뢰도와 무관하게, 프레임이 짧은 시간 안에
+  // 급격히+충분히 어두워지면(렌즈 앞을 뭔가로 가림) 트리거. sizeHistory/growthRatio와 완전히
+  // 같은 원리(윈도우 안 최댓값 대비 현재 비율)를 밝기에 대해 적용.
+  private fun checkOcclusion(luma: Double, now: Long, onWave: () -> Unit) {
+    lumaHistory.addLast(now to luma)
+    while (lumaHistory.isNotEmpty() && now - lumaHistory.first().first > LUMA_WINDOW_MS) {
+      lumaHistory.removeFirst()
+    }
+    val brightestInWindow = lumaHistory.maxOfOrNull { it.second } ?: return
+    if (brightestInWindow <= 0.0) return
+    val dropRatio = luma / brightestInWindow
+    if (dropRatio <= LUMA_DROP_RATIO && luma <= LUMA_DARK_ABS_MAX) {
+      fireTrigger("occlusion luma=$luma brightestInWindow=$brightestInWindow dropRatio=$dropRatio", onWave)
+    }
+  }
+
+  // onResult(손 크기 성장)와 checkOcclusion(밝기 급감) 두 경로가 공유하는 발동 로직 — 중복 트리거
+  // 방지(REFRACTORY_MS)와 메인 스레드 dispatch를 한 곳에 모은다.
+  private fun fireTrigger(reason: String, onWave: () -> Unit) {
+    val now = System.currentTimeMillis()
+    if (now - lastTriggerAtMs <= REFRACTORY_MS) return
+    Log.i(TAG, "WAVE detected ($reason)")
+    lastTriggerAtMs = now
+    sizeHistory.clear()
+    lumaHistory.clear()
+    // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
+    // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
+    Handler(Looper.getMainLooper()).post { onWave() }
   }
 
   // ImageAnalysis 기본 출력 포맷(YUV_420_888) → Bitmap. CameraX 버전마다 존재 여부가 불확실한
@@ -274,6 +335,12 @@ object PaceHandWaveDetector {
     val oldestInWindow = sizeHistory.firstOrNull() ?: return
     val growthRatio = handSize / oldestInWindow.second
     val pastRefractory = now - lastTriggerAtMs > REFRACTORY_MS
+
+    // 2026-07-26 튜닝용 — 임계값을 못 넘긴 시도도 실측값을 남겨야 다음 조정 근거가 생긴다("안 됨"만
+    // 알아서는 얼마나 못 미쳤는지 알 수 없었다). 스팸 방지로 임계값 근처(0.9배 이상)일 때만 남긴다.
+    if (growthRatio > GROWTH_RATIO_THRESHOLD * 0.9 && growthRatio <= GROWTH_RATIO_THRESHOLD) {
+      Log.d(TAG, "near-miss growthRatio=$growthRatio handSize=$handSize threshold=$GROWTH_RATIO_THRESHOLD")
+    }
 
     if (growthRatio > GROWTH_RATIO_THRESHOLD && pastRefractory) {
       Log.i(TAG, "WAVE detected growthRatio=$growthRatio handSize=$handSize")

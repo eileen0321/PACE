@@ -46,6 +46,10 @@ class PaceOverlayService : Service() {
   private var overlayView: LinearLayout? = null
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
+  // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
+  // 맞춘다: Focus Session이 켜져 있을 때만 보이는 작은 보라 링 글래스 원(⚡). iOS의 focusDot과 동일한
+  // 역할(비클릭, 순수 상태표시) — applyAutoBadgeStyle()이 autoBadge와 함께 이 가시성도 갱신한다.
+  private var zapBadge: View? = null
   // 2026-07-19: 한도/Sleep Timer 만료 시 뜨는 전체화면 차단 화면 — 작은 알약(overlayView)과 별개
   // View. 알림 권한과 무관하게 항상 뜬다(SYSTEM_ALERT_WINDOW는 세션 시작 때 이미 확인된 별개 권한).
   private var blockOverlayView: View? = null
@@ -423,6 +427,10 @@ class PaceOverlayService : Service() {
     startForegroundAppPolling()
     setupMediaSession()
     registerStillnessSensor()
+    // 2026-07-26 — ACTION_TICK 프로세스-재시작 복구 경로도 커버: 이 서비스 프로세스는 죽었다 살아나도
+    // PaceAccessibilityService(별도 OS 바인딩 서비스)의 isTrackingPlayback 상태가 이미 살아있으면
+    // 아무 것도 안 하지만(내부에서 idempotent), 혹시 그쪽도 같이 재시작됐다면 여기서 다시 켜준다.
+    PaceAccessibilityService.startPlaybackTracking()
     infraReady = true
   }
 
@@ -459,6 +467,18 @@ class PaceOverlayService : Service() {
     private const val NOTIFICATION_ID_LIMIT_REACHED = 4203
     private const val NOTIFICATION_ID_BREAK_REMINDER = 4204
     private const val TICK_ALARM_REQUEST_CODE = 4210
+    // 2026-07-26 — 수면감지 암전 화면에서 상태바/내비바까지 완전히 숨기기 위한 플래그 조합
+    // (View.setSystemUiVisibility, API 30 이후 deprecated지만 여전히 동작). STICKY라 스와이프로
+    // 잠깐 드러나도 위 setOnSystemUiVisibilityChangeListener가 즉시 재적용한다.
+    @Suppress("DEPRECATION")
+    private const val SLEEP_BLACKOUT_IMMERSIVE_FLAGS = (
+      View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+      View.SYSTEM_UI_FLAG_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+    )
 
     // 수면 감지(스펙 §1-B/§4-B) — 리서치 근거는 Flip Mode(PaceFlipModule.kt)와 공유: 실제 수면감지
     // 앱들(Sleep as Android 등) 공개 자료 기준 순수 무진동 3분(사용자 원 스펙)은 오탐 위험이 높다고
@@ -503,6 +523,18 @@ class PaceOverlayService : Service() {
     // MediaSession에 반영하는 용도라, 세션 없이 호출돼도(instance==null) 스와이프/토스트/카운터
     // 자체는 정상 동작한다.
     private var instance: PaceOverlayService? = null
+
+    // 2026-07-26 사용자 지시 — 수면감지 무진동 타이머는 가속도계(폰 물리적 움직임)만 보는데, Focus
+    // Session의 핵심은 "폰을 안 만지고 손짓/스냅/블루투스 리모컨으로만 조작"이다. 그래서 정상적으로
+    // 핸즈프리를 쓰기만 해도 폰 자체는 안 움직이니 결국 잠들었다고 오판하는 문제가 실기기에서
+    // 확인됐다(SESSION END reason=sleep_detected, 실제로는 계속 스와이프하며 시청 중이었음). 자동
+    // 재생위치 기반 스와이프(checkPlaybackAndMaybeSwipe, PaceAccessibilityService)는 사람 개입이
+    // 전혀 없어 "깨어있음" 증거가 될 수 없지만, 사람이 직접 낸 신호(핑거스냅/손짓/블루투스 리모컨
+    // 버튼)는 진짜 의식적 행동이므로 이걸 감지하면 무진동 시계를 리셋한다 — swipeOnce(핑거스냅/손짓/
+    // 블루투스 미디어버튼 공용 경로)와 볼륨키 리모컨 경로 양쪽에서 호출(PaceAccessibilityService 참고).
+    fun markUserActivity() {
+      instance?.lastMotionAtMs = SystemClock.elapsedRealtime()
+    }
 
     fun triggerNext(context: Context) {
       PaceAccessibilityService.swipeOnce(up = true)
@@ -733,6 +765,10 @@ class PaceOverlayService : Service() {
         ensureInfraReady()
         persistState()
         scheduleNextTick(this)
+        // 2026-07-26 사용자 지시("실제 재생 중일 때만 차감") — Focus Session(autoNextEnabled) 여부와
+        // 무관하게 가드된 세션이 시작되면 항상 재생 위치 추적을 켠다. 접근성이 꺼져 있으면 내부에서
+        // 조용히 무시되고, performTick()은 이 경우 기존처럼(항상 차감) 폴백한다.
+        PaceAccessibilityService.startPlaybackTracking()
       }
       // 2026-07-19: 프로세스가 죽었다 PaceTickReceiver의 알람으로 되살아난 경우, infraReady가
       // false(새 프로세스 인스턴스라 필드가 전부 기본값)이므로 SharedPreferences에서 상태를 복구한
@@ -774,6 +810,7 @@ class PaceOverlayService : Service() {
         removeTier3Toast()
         teardownMediaSession()
         unregisterStillnessSensor()
+        PaceAccessibilityService.stopPlaybackTracking()
         infraReady = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -791,7 +828,17 @@ class PaceOverlayService : Service() {
   // 여기서 뭔가 던지면 예전엔 그대로 앱이 죽었다.
   private fun performTick() {
     try {
-      remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+      // 2026-07-26 사용자 지시("실제 재생 중일 때만 차감") — 예전엔 세션이 활성인 동안 실제 재생
+      // 여부와 무관하게 매분 무조건 깎았다(일시정지/백그라운드도 "사용"으로 카운트되는 정확도 문제).
+      // isLikelyPlaying()==false(재생 중이 아님이 확인됨)일 때만 건너뛰고, null(접근성 꺼짐 등 판단
+      // 불가)이거나 true(실제 재생 중)면 기존처럼 차감 — 신호가 아예 없을 땐 안전하게 항상 차감
+      // 쪽으로 폴백한다.
+      val isPlaying = PaceAccessibilityService.isLikelyPlaying()
+      if (isPlaying != false) {
+        remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+      } else {
+        Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
+      }
       if (sleepTimerRemainingMinutes > 0) {
         sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
       }
@@ -922,17 +969,35 @@ class PaceOverlayService : Service() {
   // 영역은 터치가 아래 앱(YouTube)으로 그대로 통과하므로, 배지를 빗맞혀도 이제 아무 일도 안 일어나고
   // 원래 하려던 영상 조작(스크롤/탭)이 정상적으로 전달된다. 유일한 인터랙션은 배지 자체(아래
   // applyAutoBadgeStyle의 padding을 dp로 교정)로 좁혔다.
+  // 2026-07-25 사용자 지시("두껍다고 했잖아", "앞뒤 재생도 필요없잖아", "맥이 반영한 ui대로 동일하게
+  // 수정해") — iOS Pace Feed 리디자인(feat(feed) 커밋, src/app/feed/index.tsx 상단바)과 같은 톤으로
+  // 전면 재설계. prev/next 버튼 제거(iOS도 "실동작 불안정 + 웹뷰 UI와 겹침" 이유로 이미 제거함,
+  // PaceAccessibilityService.swipeOnce 자체는 Bluetooth 리모컨 경로에서 여전히 쓰이므로 손대지 않음).
+  // 두껍던 단일 다크 바(#E60C0D12, 6개 요소 빽빽) → 얇은 글래스 캡슐 하나(dot+remaining+세션 토글) +
+  // 그 오른쪽에 작은 원형 글래스 P 버튼(+ 세션 중일 때만 보이는 보라 링 zap 배지) — iOS
+  // appIconBtn/focusDot과 동일한 사이즈(36dp)·컬러 톤(rgba(0,0,0,0.45) 배경 + rgba(255,255,255,0.22)
+  // 테두리)으로 맞췄다. Android는 다이나믹 아일랜드가 없어 남은시간 텍스트는 유지(iOS와 완전히
+  // 동일하게 아예 없애면 이 화면이 세션 시간을 보여줄 유일한 자리가 사라짐) — 대신 캡슐 자체를
+  // 훨씬 얇고 반투명하게 만들어 "두껍다"는 지적을 해소.
   private fun showOverlay(remainingMinutes: Int) {
     if (overlayView != null) return
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    val d = resources.displayMetrics.density
 
     val bar = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
-      setPadding(36, 22, 20, 22)
+    }
+
+    // 얇은 글래스 캡슐: pulsing dot + "Xm left" + 세션 토글(autoBadge, 탭 가능 — 진짜 Auto Mode 토글).
+    val statusPill = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding((14 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
       background = GradientDrawable().apply {
-        cornerRadius = 30f
-        setColor(Color.parseColor("#E60C0D12")) // rgba(12,13,18,0.9) 근사 — (3) bg-[#0C0D12]/90
+        cornerRadius = 999f
+        setColor(Color.parseColor("#730C0D12")) // rgba(12,13,18,0.45) — iOS 글래스 필과 동일 불투명도
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#38FFFFFF")) // rgba(255,255,255,0.22)
       }
     }
 
@@ -947,42 +1012,16 @@ class PaceOverlayService : Service() {
         repeatCount = android.view.animation.Animation.INFINITE
       })
     }
-    bar.addView(dot, LinearLayout.LayoutParams(14, 14).apply { rightMargin = 18 })
+    statusPill.addView(dot, LinearLayout.LayoutParams((8 * d).toInt(), (8 * d).toInt()).apply { rightMargin = (10 * d).toInt() })
 
     remainingLabel = TextView(this).apply {
-      text = "Pace  ⏱ ${remainingMinutes}m Left"
+      text = "${remainingMinutes}m left"
       setTextColor(Color.WHITE)
-      textSize = 13f
-      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      textSize = 12f
+      setTypeface(typeface, android.graphics.Typeface.NORMAL)
     }
-    bar.addView(remainingLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 16 })
-
-    // 2026-07-20 실기기 검증 7차에서 확정된 사실 — 실제 유튜브 앱 재생 중엔 Bluetooth 하드웨어
-    // 버튼이 절대 Pace로 안 온다(OS가 MediaSessionService 내부에서 무조건 YouTube로 타겟팅, 5가지
-    // 우회 다 실패). 반면 이 알약 자체는 Pace 소유의 진짜 View라 탭은 100% Pace가 받는다 — 블루투스
-    // 라우팅을 아예 안 거치므로 그 제약이 적용되지 않는 별도 경로(사용자 제안). triggerNext/
-    // triggerPrevious는 이미 Bluetooth 경로에서 검증된 PaceAccessibilityService.swipeOnce()를 그대로
-    // 재사용 — 새 스와이프 로직 아님, 입력 소스만 하드웨어 버튼 대신 알약 탭으로 바뀐 것.
-    val prevBtn = TextView(this).apply {
-      text = "⏮"
-      textSize = 13f
-      isClickable = true
-      setOnClickListener { triggerPrevious(applicationContext) }
-    }
-    applyPillButtonStyle(prevBtn)
-    bar.addView(prevBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-      rightMargin = (6 * resources.displayMetrics.density).toInt()
-    })
-
-    val nextBtn = TextView(this).apply {
-      text = "⏭"
-      textSize = 13f
-      isClickable = true
-      setOnClickListener { triggerNext(applicationContext) }
-    }
-    applyPillButtonStyle(nextBtn)
-    bar.addView(nextBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-      rightMargin = (10 * resources.displayMetrics.density).toInt()
+    statusPill.addView(remainingLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      rightMargin = (10 * d).toInt()
     })
 
     autoBadge = TextView(this).apply {
@@ -996,8 +1035,15 @@ class PaceOverlayService : Service() {
         persistState()
       }
     }
-    applyAutoBadgeStyle()
-    bar.addView(autoBadge)
+    statusPill.addView(autoBadge)
+    bar.addView(statusPill, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      rightMargin = (8 * d).toInt()
+    })
+
+    applyAutoBadgeStyle() // autoBadge 텍스트/색을 현재 상태로 맞춤
+    // 2026-07-26 사용자 지적("자동넘김 표시하려고 번개 넣은 건데 SESSION ON으로 표시할 거면 번개가
+    // 필요없잖아") — 맞는 말이다. statusPill의 "SESSION ON/OFF" 텍스트가 이미 같은 상태를 말로
+    // 표시하고 있는데 바로 옆에 같은 뜻의 zap 원까지 있는 건 중복이었다. zap 배지 제거.
 
     // 2026-07-21 밤 사용자 지시(PACE_ARCHITECTURE.md "런치 플로우 단순화") — 콜드 스타트가
     // 이제 탭 대신 곧바로 세션(Overlay+YouTube)으로 가므로, 실사용 중 대부분의 시간(YouTube가
@@ -1005,22 +1051,27 @@ class PaceOverlayService : Service() {
     // 있어야 Home/Focus/Stats/Settings에 접근 가능하다 — JS 쪽 overlay/index.tsx에도 같은
     // 목적의 앱 아이콘 버튼이 있지만 그건 Pace Activity가 전경일 때만(거의 항상 YouTube에
     // 가려짐) 보이므로 실질적으로 이 네이티브 버튼이 진짜 진입점이다. getLaunchIntentForPackage
-    // 사용 — 이 모듈이 호스트 앱의 MainActivity 클래스에 직접 의존하지 않도록.
+    // 사용 — 이 모듈이 호스트 앱의 MainActivity 클래스에 직접 의존하지 않도록. 스타일은 iOS
+    // appIconBtn과 동일(36dp 원형 글래스, rgba(0,0,0,0.45)+테두리rgba(255,255,255,0.22)).
     val appBtn = TextView(this).apply {
       text = "P"
-      textSize = 12f
+      textSize = 15f
+      gravity = Gravity.CENTER
       setTypeface(typeface, android.graphics.Typeface.BOLD)
+      setTextColor(Color.parseColor("#F2FFFFFF")) // rgba(255,255,255,0.95)
       isClickable = true
       setOnClickListener {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
         launchIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         launchIntent?.let { startActivity(it) }
       }
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#730C0D12"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#38FFFFFF"))
+      }
     }
-    applyPillButtonStyle(appBtn)
-    bar.addView(appBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-      leftMargin = (10 * resources.displayMetrics.density).toInt()
-    })
+    bar.addView(appBtn, LinearLayout.LayoutParams((36 * d).toInt(), (36 * d).toInt()))
 
     overlayView = bar
 
@@ -1032,7 +1083,11 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
       android.graphics.PixelFormat.TRANSLUCENT
     ).apply {
-      gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+      // 2026-07-25 사용자 지시 — "애플하고 동일하게" 배치. iOS Pace Feed topBar는 justifyContent:
+      // 'flex-end'로 우상단 정렬(App.tsx/feed/index.tsx 참고) — 화면 중앙이 아니라 우상단 코너에
+      // 붙인다. 여백도 iOS의 spacing.md(16dp)에 맞춤.
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * resources.displayMetrics.density).toInt()
       y = 80 // 상태바 아래 여백 — 기기별 safe-area는 후속 보정 필요
     }
     windowManager?.addView(overlayView, params)
@@ -1059,10 +1114,21 @@ class PaceOverlayService : Service() {
       // 안 보임 — 강제종료 외엔 탈출 불가능한 진짜 UX 버그). "화면 암전" 의도는 유지하되(버튼 텍스트
       // 노출 안 함), 아무 곳이나 한 번 탭하면 조용히 닫히게(=endFromBlockOverlay, 다른 사유의
       // "휴식하기"와 동일 동작) 해서 최소한의 탈출구를 보장한다.
+      // 2026-07-26 실기기 재확인 — FLAG_LAYOUT_IN_SCREEN/NO_LIMITS만으론 창 자체는 화면 전체로
+      // 확장되지만, 상태바/내비바는 SystemUI가 이 창과 별개의 레이어로 그 위에 항상 그리는 시스템
+      // 소유 요소라 그 배경색(제스처 내비 인디케이터의 반투명 회색 등)은 우리 View의 검은색과
+      // 무관하게 그대로 남는다 — "색을 맞추는" 접근으로는 못 고치고, 애초에 암전 화면에서 상태바
+      // 아이콘/제스처 바 자체가 보이면 안 되므로 완전히 숨기는(immersive) 쪽이 올바른 수정이다.
       val blackout = View(this).apply {
         setBackgroundColor(Color.BLACK)
         isClickable = true
         setOnClickListener { endFromBlockOverlay() }
+        systemUiVisibility = SLEEP_BLACKOUT_IMMERSIVE_FLAGS
+        setOnSystemUiVisibilityChangeListener {
+          // 가장자리 스와이프 등으로 시스템 바가 일시적으로 다시 드러나면 즉시 재적용 — 그렇지 않으면
+          // 한 번 노출된 뒤로 계속 보여서 암전 의도가 깨진다.
+          systemUiVisibility = SLEEP_BLACKOUT_IMMERSIVE_FLAGS
+        }
       }
       blockOverlayView = blackout
       val params = WindowManager.LayoutParams(
@@ -1070,9 +1136,15 @@ class PaceOverlayService : Service() {
         WindowManager.LayoutParams.MATCH_PARENT,
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-        0, // flags=0: 터치 통과 금지(모달)는 다른 사유와 동일
+        // 창 자체를 화면 전체(시스템 바 포함)로 확장해 검은 View가 화면 전체를 덮게 한다. 터치 통과
+        // 금지(모달)는 그대로 유지.
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         android.graphics.PixelFormat.OPAQUE // TRANSLUCENT가 아니라 완전 불투명 — 진짜 암전이어야 함
-      )
+      ).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+          layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+      }
       windowManager?.addView(blockOverlayView, params)
       PaceAccessibilityService.lockScreen()
       return
@@ -1315,40 +1387,26 @@ class PaceOverlayService : Service() {
     }
   }
 
-  // Previous/Next 알약 버튼 공용 스타일 — autoBadge와 동일하게 dp 스케일 패딩을 써서 고밀도
-  // 화면에서 터치 영역이 raw px처럼 쪼그라드는 걸 방지(2026-07-19 AUTO 배지 오작동 버그와 동일한
-  // 원인을 처음부터 피함).
-  private fun applyPillButtonStyle(view: TextView) {
-    val d = resources.displayMetrics.density
-    view.setPadding((10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt())
-    view.setTextColor(Color.WHITE)
-    view.background = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(Color.parseColor("#14FFFFFF"))
-    }
-  }
-
+  // 2026-07-25 iOS feed의 bottom autoModeBadge(초록=ON/반투명흰색=OFF)와 톤을 맞췄다 — 배지 자체가
+  // zapBadge 가시성의 소스오브트루스이므로 여기서 같이 갱신(호출부 2곳, showOverlay/setAutoMode 모두
+  // 이 함수 하나만 부르면 됨).
   private fun applyAutoBadgeStyle() {
     autoBadge?.apply {
-      // 2026-07-21 밤 사용자 지시 — "Auto"/"자동" 브랜딩을 UI에서 완전히 제거. 이 배지는 Focus
-      // Session이 지금 실제로 도는지(런타임 상태)를 보여준다.
       text = if (autoNextEnabled) "SESSION ON" else "SESSION OFF"
-      // dp 스케일 패딩(density 곱) — 이전엔 raw px(20,10)라 고밀도 화면에서 실제 터치 영역이
-      // 몇 dp로 쪼그라들어 배지를 빗맞히기 쉬웠다(위 showOverlay 주석 참고). Android 권장 최소
-      // 터치 타깃(48dp)엔 못 미치지만, 알약 배지라는 시각적 크기 제약 안에서 최대한 넓힘.
       val d = resources.displayMetrics.density
-      setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
-      setTextColor(if (autoNextEnabled) Color.WHITE else Color.parseColor("#9CA3AF"))
+      setPadding((10 * d).toInt(), (7 * d).toInt(), (10 * d).toInt(), (7 * d).toInt())
+      setTextColor(if (autoNextEnabled) Color.parseColor("#0B0C0F") else Color.parseColor("#9CA3AF"))
       background = GradientDrawable().apply {
-        cornerRadius = 100f
-        setColor(if (autoNextEnabled) Color.parseColor("#5856D6") else Color.parseColor("#14FFFFFF"))
+        cornerRadius = 999f
+        setColor(if (autoNextEnabled) Color.parseColor("#30D158") else Color.parseColor("#1FFFFFFF"))
       }
     }
+    zapBadge?.visibility = if (autoNextEnabled) View.VISIBLE else View.GONE
   }
 
   private fun setRemainingText(remainingMinutes: Int) {
     Log.d("PaceOverlay", "setRemainingText($remainingMinutes) remainingLabel=${if (remainingLabel != null) "exists" else "NULL"}")
-    remainingLabel?.text = "Pace  ⏱ ${remainingMinutes}m Left"
+    remainingLabel?.text = "${remainingMinutes}m left"
   }
 
   private fun removeOverlay() {
@@ -1356,6 +1414,7 @@ class PaceOverlayService : Service() {
     overlayView = null
     remainingLabel = null
     autoBadge = null
+    zapBadge = null
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽

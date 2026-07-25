@@ -18,9 +18,17 @@ export type AppCapabilities = {
   /** Pace Feed(자체 플레이어 대체 피드)를 쓸 수 있는가. iOS의 핵심 대체 경로 — 모든 플랫폼에서 동작 가능. */
   supportsPaceFeed: boolean;
   /**
-   * Bluetooth Hands-Free Control UI(Home 배지/Focus 카드/Settings 섹션)를 노출하는가 — 2026-07-19.
-   * 두 플랫폼 다 UI는 노출(인앱 버튼 탭은 항상 동작)하고, 실제 하드웨어 리모컨 검증 여부는
-   * bluetoothService.supportsHardwareRemote(Android=true 검증완료, iOS=false 미검증)로 별도 구분.
+   * "Bluetooth 헤드셋의 하드웨어 버튼으로 YouTube Shorts를 직접 조작"한다는 원래 약속을 보여주는
+   * UI(Home 배지/칩, Settings "Playback Controls", Stats "Bluetooth Controls")를 노출하는가.
+   * 2026-07-25 B1 정정 — Android는 이 하드웨어 버튼 라우팅이 OS 레벨에서 100% 불가능함이 두 차례
+   * 실기기 검증(2026-07-19·07-23, QA_ANDROID_LIFECYCLE_2026-07-22.md #B22)으로 확정됐고, 유일한
+   * 인앱 대체 진입점(Next/Prev 버튼)도 이미 삭제돼(#B26) 이 문구가 약속하는 내용은 Android에서
+   * 도달 불가능한 죽은 기능이다 — false로 내려 UI에서 숨긴다.
+   * ⚠️ 주의: `useBluetoothStore.toggleAutoMode`/`enableAutoModeForSession`(핑거스냅·손 밀어내기·
+   * 위치 감시 기반 "Auto Mode"/Focus Session)는 **이 플래그와 별개의 실제 동작하는 Android 전용
+   * 기능**이다(PACE_ARCHITECTURE.md "Focus Session 리디자인" 참고) — 이 플래그를 false로 내려도
+   * BluetoothOnboardingSheet의 Enable 진입점과 Auto Mode 토글 자체는 그대로 남겨뒀다(Android에서
+   * 지금도 실제로 쓰이는 기능이라 끄면 안 됨). iOS는 이 값이 그대로 true라 기존 동작/문구 변경 없음.
    */
   supportsHandsFreeControl: boolean;
   /** 실제 하드웨어 리모컨(AirPods 등) 신호 수신까지 실기기로 검증됐는가. Android=true, iOS=false(스텁). */
@@ -36,7 +44,7 @@ export const capabilities: AppCapabilities = {
   // Pace Feed는 expo-video 기반이라 플랫폼 무관하게 가능하지만, 제품상 iOS의 "차단 대체 출구"로
   // 우선 노출한다(Android는 오버레이가 실제 피드에 직접 개입하므로 대체 피드 필요성이 낮음).
   supportsPaceFeed: Platform.OS === 'ios',
-  supportsHandsFreeControl: true,
+  supportsHandsFreeControl: Platform.OS !== 'android',
   bluetoothHardwareVerified: bluetoothService.supportsHardwareRemote,
 };
 

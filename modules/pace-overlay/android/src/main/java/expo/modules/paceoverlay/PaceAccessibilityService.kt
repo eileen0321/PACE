@@ -49,6 +49,14 @@ class PaceAccessibilityService : AccessibilityService() {
   // 너무 오래된 값은 "모른다"로 취급하고 폴백(UsageStatsManager)을 타게 한다.
   private var currentForegroundPackageAtMs = 0L
   private var lastKnownCurrentSec = -1
+  // 2026-07-26 추가 — currentSec가 이전 폴링보다 실제로 늘어난(=재생 중이라는 강한 증거) 마지막
+  // 시각. companion의 isLikelyPlaying()이 이 값의 신선도로 "지금 실제로 재생 중인가"를 판단해
+  // PaceOverlayService.performTick()의 사용시간 차감을 게이팅한다.
+  private var lastPlaybackAdvanceAtMs = 0L
+  // 2026-07-26 사용자 지시("몇 편 봤는지 카운트") — 자동넘김 스와이프든 사용자가 직접 손으로 넘긴
+  // 것이든 checkPlaybackAndMaybeSwipe()가 "영상이 바뀌었다"고 판단할 때마다 1씩 증가. 세션 시작
+  // (startPlaybackTracking)마다 0으로 리셋 — companion getVideoCount()로 JS가 읽는다.
+  private var videoAdvanceCount = 0
   private var lastSwipeAtMs = 0L
   private var lastVolumeKeySwipeAtMs = 0L
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
@@ -58,12 +66,37 @@ class PaceAccessibilityService : AccessibilityService() {
   // 없어도 동작은 똑같이 맞지만, 있으면 트리 워크 빈도가 크게 줄어든다.
   private var cachedTimingNode: AccessibilityNodeInfo? = null
 
+  // 2026-07-26 사용자 지시("유튜브 시청 시간을 측정할 방법 없어?" → "실제 재생 중일 때만 차감") —
+  // 기존엔 isWatching(=Focus Session/자동넘김 ON)일 때만 이 폴링이 돌아서, Focus Session을 안 켠
+  // "YouTube with PACE" 세션에서는 재생위치 신호 자체가 전혀 안 잡혔다. 사용시간 정확도는 Focus
+  // Session 여부와 무관하게 필요하므로, 폴링 자체는 세션이 살아있는 동안(isTrackingPlayback) 항상
+  // 돌게 분리하고, 실제 스와이프(자동넘김)만 기존대로 isWatching으로 게이팅한다(checkPlaybackAndMaybeSwipe
+  // 내부에서 처리).
+  private var isTrackingPlayback = false
+  private var pollingScheduled = false
+  // Focus Session(isWatching)이 꺼져 있어도 순수 사용시간 추적(isTrackingPlayback)만으로 폴링이
+  // 돌아야 하므로 둘 중 하나라도 켜져 있으면 실행 — 실제 스와이프 여부는
+  // checkPlaybackAndMaybeSwipe 내부에서 isWatching으로 별도 게이팅한다.
   private val pollRunnable = object : Runnable {
     override fun run() {
-      if (isWatching && SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+      if ((isWatching || isTrackingPlayback) && SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
         checkPlaybackAndMaybeSwipe()
       }
       handler.postDelayed(this, POLL_INTERVAL_MS)
+    }
+  }
+
+  private fun ensurePollingScheduled() {
+    if (!pollingScheduled) {
+      pollingScheduled = true
+      handler.post(pollRunnable)
+    }
+  }
+
+  private fun maybeStopPolling() {
+    if (!isWatching && !isTrackingPlayback && pollingScheduled) {
+      pollingScheduled = false
+      handler.removeCallbacks(pollRunnable)
     }
   }
 
@@ -113,7 +146,7 @@ class PaceAccessibilityService : AccessibilityService() {
         service.isWatching = true
         service.lastKnownCurrentSec = -1
         service.lastSwipeAtMs = SystemClock.elapsedRealtime()
-        service.handler.post(service.pollRunnable)
+        service.ensurePollingScheduled()
         Log.d("PaceAccessibility", "startWatching() -> polling started, safetyTimeoutMs=$intervalMs")
       }
     }
@@ -121,8 +154,51 @@ class PaceAccessibilityService : AccessibilityService() {
     fun stopWatching() {
       instance?.let { service ->
         service.isWatching = false
-        service.handler.removeCallbacks(service.pollRunnable)
+        service.maybeStopPolling()
       }
+    }
+
+    // 2026-07-26 사용자 지시("실제 재생 중일 때만 차감") — Focus Session(자동넘김) 여부와 무관하게,
+    // 가드된 세션이 시작되면(PaceOverlayService.startSession) 항상 재생 위치 폴링만 켠다. 실제
+    // 스와이프는 하지 않는다(isWatching이 별도로 꺼져 있으면 checkPlaybackAndMaybeSwipe가 swipe를
+    // 건너뜀) — 순수 사용시간 추적 전용 세션에서 원치 않는 자동넘김이 발생하면 안 되므로.
+    fun startPlaybackTracking() {
+      val service = instance
+      if (service == null) {
+        Log.w("PaceAccessibility", "startPlaybackTracking() called but instance is null — accessibility not bound yet, usage-time will fall back to always-decrement")
+        return
+      }
+      if (!service.isTrackingPlayback) {
+        service.isTrackingPlayback = true
+        service.lastKnownCurrentSec = -1
+        service.lastPlaybackAdvanceAtMs = 0L
+        service.videoAdvanceCount = 0
+        service.ensurePollingScheduled()
+        Log.d("PaceAccessibility", "startPlaybackTracking() -> polling started (usage-time accuracy only)")
+      }
+    }
+
+    // 2026-07-26 — 이번 세션(startPlaybackTracking()~지금)에서 실제로 넘어간 영상 편수. 접근성이
+    // 꺼져있으면(instance==null) 0 — 이 경우 JS 쪽은 videosWatched=0으로 정직하게 기록한다(예전에
+    // 가짜 videoIndex를 썼다가 고쳤던 것과 같은 원칙).
+    fun getVideoCount(): Int = instance?.videoAdvanceCount ?: 0
+
+    fun stopPlaybackTracking() {
+      instance?.let { service ->
+        service.isTrackingPlayback = false
+        service.lastPlaybackAdvanceAtMs = 0L
+        service.maybeStopPolling()
+      }
+    }
+
+    // null = 판단 불가(접근성 꺼짐/추적 미시작/아직 신호 한 번도 못 잡음) — 호출부는 이 경우 기존
+    // 방식대로 항상 차감하는 쪽으로 안전하게 폴백해야 한다. true/false = 실제로 판단 가능한 경우의
+    // 재생 여부(maxStaleMs 이내에 재생 위치가 실제로 늘어난 적이 있는지).
+    fun isLikelyPlaying(maxStaleMs: Long = 5_000L): Boolean? {
+      val service = instance ?: return null
+      if (!service.isTrackingPlayback) return null
+      if (service.lastPlaybackAdvanceAtMs == 0L) return null
+      return SystemClock.elapsedRealtime() - service.lastPlaybackAdvanceAtMs <= maxStaleMs
     }
 
     // 2026-07-19: Bluetooth Hands-Free Next/Previous — 위 interval 기반 Auto Next 루프와 별개로,
@@ -130,6 +206,10 @@ class PaceAccessibilityService : AccessibilityService() {
     // 아니어도(예: 사용자가 Pace 쪽을 보고 있어도) 그냥 시도한다 — 리모컨을 눌렀다는 것 자체가 이미
     // 숏폼을 보고 있다는 강한 신호라 startWatching()의 포그라운드 패키지 체크만큼 보수적일 필요가 없음.
     fun swipeOnce(up: Boolean) {
+      // 2026-07-26 사용자 지시 — 핑거스냅/손짓/블루투스 리모컨은 전부 이 함수를 거치는 "사람이 직접
+      // 낸 신호" 공용 경로다. 자동 재생위치 스와이프(checkPlaybackAndMaybeSwipe)와 구분해 여기서만
+      // 수면감지 무진동 시계를 리셋한다(PaceOverlayService.markUserActivity 참고).
+      PaceOverlayService.markUserActivity()
       instance?.let { service -> if (up) service.performSwipeUp() else service.performSwipeDown() }
     }
 
@@ -237,6 +317,9 @@ class PaceAccessibilityService : AccessibilityService() {
     }
     lastVolumeKeySwipeAtMs = now
     Log.i("PaceAccessibility", "onKeyEvent volume-key-next keyCode=${event.keyCode} pkg=$currentForegroundPackage")
+    // 2026-07-26 사용자 지시 — 외부 블루투스 리모컨의 실제 물리 버튼 입력이므로 swipeOnce와 동일하게
+    // "사람이 직접 낸 신호"다 — 수면감지 무진동 시계 리셋.
+    PaceOverlayService.markUserActivity()
     // 방향 구분 없이 둘 다 "다음"으로 취급 — 사용자가 명시한 요구가 "볼륨받아서 다음재생으로
     // 넘기기"였지 별도 이전/다음 구분이 아니었다. 오디오 자체는 iOS 쪽과 동일하게 실제로 변하지
     // 않아야 하므로(return true로 시스템 볼륨 변경 자체를 여기서 막음) 영상 시청 중 볼륨이 실수로
@@ -249,6 +332,8 @@ class PaceAccessibilityService : AccessibilityService() {
 
   override fun onDestroy() {
     isWatching = false
+    isTrackingPlayback = false
+    pollingScheduled = false
     handler.removeCallbacks(pollRunnable)
     if (instance === this) instance = null
     super.onDestroy()
@@ -264,23 +349,42 @@ class PaceAccessibilityService : AccessibilityService() {
     if (timing != null) {
       val (currentSec, totalSec) = timing
       Log.d("PaceAccessibility", "timing current=${currentSec}s total=${totalSec}s")
+      // 2026-07-26 — currentSec가 이전 폴링보다 실제로 늘었다는 건 스와이프 여부(isWatching)와
+      // 무관하게 "지금 영상이 실제로 재생 중"이라는 강한 증거. isLikelyPlaying()이 이 시각의
+      // 신선도로 PaceOverlayService의 사용시간 차감을 게이팅한다.
+      if (lastKnownCurrentSec >= 0 && currentSec > lastKnownCurrentSec) {
+        lastPlaybackAdvanceAtMs = now
+      }
       val nearEnd = totalSec > 0 && currentSec >= totalSec - 1
       // 영상이 끝나고 다음(또는 반복) 영상으로 넘어가 재생 위치가 이전보다 확 줄어든 경우 —
-      // 폴링 간격(500ms) 사이에 "끝나는 순간"을 놓쳤더라도 이걸로 뒤늦게 잡아낸다.
+      // 폴링 간격(500ms) 사이에 "끝나는 순간"을 놓쳤더라도 이걸로 뒤늦게 잡아낸다. 이 신호는
+      // 자동넘김이 스와이프를 했든 사용자가 직접 손으로 넘겼든 똑같이 "영상이 바뀌었다"는 뜻이라
+      // isWatching과 무관하게 항상 체크한다 — 2026-07-26 "몇 편 봤는지 세기"(videoAdvanceCount)가
+      // 바로 이 지점에 걸린다.
       val loopedBack = lastKnownCurrentSec > 0 && currentSec < lastKnownCurrentSec - 1
       if (nearEnd || loopedBack) {
-        Log.d("PaceAccessibility", "SWIPE tier=1 reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s")
-        performSwipeUp()
-        lastSwipeAtMs = now
+        videoAdvanceCount++
+        Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s count=$videoAdvanceCount isWatching=$isWatching")
+        // 자동넘김(isWatching)이 꺼져 있으면(순수 사용시간 추적 전용 세션) 영상 전환 카운트는 계속
+        // 세되 스와이프는 절대 하지 않는다 — Focus Session을 안 켠 사용자에게 원치 않는 자동넘김이
+        // 발생하면 안 되므로.
+        if (isWatching) {
+          performSwipeUp()
+          lastSwipeAtMs = now
+        }
         lastKnownCurrentSec = -1
         return
       }
       lastKnownCurrentSec = currentSec
     }
+    if (!isWatching) return
     // Tier 2: 재생 위치 신호를 아예 못 찾았거나(광고, 노드 구조 변경, 다른 로케일), 신호는 있지만
-    // 비정상적으로 오래 안 끝나는 경우 — 둘 다 이 안전 타임아웃 하나로 커버된다.
+    // 비정상적으로 오래 안 끝나는 경우 — 둘 다 이 안전 타임아웃 하나로 커버된다. isWatching이 꺼져
+    // 있으면 위에서 이미 return했으므로 여긴 항상 자동넘김이 실제로 스와이프하는 경로 — 이것도
+    // 결국 한 편을 넘기는 것이므로 카운트한다.
     if (now - lastSwipeAtMs >= safetyTimeoutMs) {
-      Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs}")
+      videoAdvanceCount++
+      Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs} count=$videoAdvanceCount")
       performSwipeUp()
       lastSwipeAtMs = now
       lastKnownCurrentSec = -1

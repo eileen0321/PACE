@@ -1,15 +1,9 @@
-import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { QuickControlSheet } from './QuickControlSheet';
-
-const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
-const DAILY_LIMIT_OPTIONS = [15, 30, 45, 60, 90, 120];
-const BREAK_OPTIONS = [0, 10, 15, 20, 30];
-
-type SheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder' | null;
+import type { QuickControlSheetKind } from '../../app/quick-control-sheet';
 
 // healthy-shorts-assistant(2) App.tsx "Quick Controls" 3단 그리드 포팅(App.tsx:401-456). focus.tsx
 // 에도 같은 설정을 순환-탭(cycle) 방식으로 편집하는 UI가 이미 있는데, 여기서는 원본 디자인대로
@@ -19,52 +13,25 @@ type SheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder' | null;
 // 2026-07-18: 원본 3번째 타일은 "Auto Next"였는데, 사용자 지시(외부 프로덕트 조언 반영)로 Home
 // 전면에서 AUTO 브랜딩을 빼기로 해서 Break Reminder로 교체 — Auto Next 토글 자체는 기능적으로
 // 사라진 게 아니라 Focus 탭의 Session Status/Interventions에서 여전히 켜고 끌 수 있다.
+// 2026-07-25 — 시트를 로컬 state+<Modal>에서 router.push(quick-control-sheet)로 교체(이유는
+// quick-control-sheet.tsx 상단 주석 참고, edge-to-edge 내비게이션 바 흰색 버그 회피).
 export function QuickControlsGrid() {
-  const { settings, update } = useSettingsStore();
-  const [openSheet, setOpenSheet] = useState<SheetKind>(null);
+  const router = useRouter();
+  const { settings } = useSettingsStore();
 
   const sleepLabel = settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : 'OFF';
   const limitLabel = `${settings.dailyLimitMinutes}m`;
   const breakLabel = settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : 'OFF';
 
+  const openSheet = (kind: QuickControlSheetKind) => router.push({ pathname: '/quick-control-sheet', params: { kind } });
+
   return (
     <View style={styles.wrap}>
       <View style={styles.grid}>
-        <Tile icon="moon" label="Sleep Timer" value={sleepLabel} onPress={() => setOpenSheet('sleepTimer')} />
-        <Tile icon="clock" label="Daily Limit" value={limitLabel} onPress={() => setOpenSheet('dailyLimit')} />
-        <Tile icon="coffee" label="Break Reminder" value={breakLabel} onPress={() => setOpenSheet('breakReminder')} />
+        <Tile icon="moon" label="Sleep Timer" value={sleepLabel} onPress={() => openSheet('sleepTimer')} />
+        <Tile icon="clock" label="Daily Limit" value={limitLabel} onPress={() => openSheet('dailyLimit')} />
+        <Tile icon="coffee" label="Break Reminder" value={breakLabel} onPress={() => openSheet('breakReminder')} />
       </View>
-
-      <QuickControlSheet
-        visible={openSheet === 'sleepTimer'}
-        title="Sleep Timer"
-        description="Stop and lock short session automatically"
-        icon="moon"
-        options={SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m }))}
-        selectedValue={settings.sleepTimerMinutes ?? 0}
-        onSelect={(v) => update({ sleepTimerMinutes: v === 0 ? null : v })}
-        onClose={() => setOpenSheet(null)}
-      />
-      <QuickControlSheet
-        visible={openSheet === 'dailyLimit'}
-        title="Daily Limit"
-        description="Set healthy boundaries for shorts platforms"
-        icon="clock"
-        options={DAILY_LIMIT_OPTIONS.map((m) => ({ label: `${m}m`, value: m }))}
-        selectedValue={settings.dailyLimitMinutes}
-        onSelect={(v) => update({ dailyLimitMinutes: v })}
-        onClose={() => setOpenSheet(null)}
-      />
-      <QuickControlSheet
-        visible={openSheet === 'breakReminder'}
-        title="Break Reminder"
-        description="Take short breaks during your session"
-        icon="coffee"
-        options={BREAK_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m }))}
-        selectedValue={settings.breakIntervalMinutes}
-        onSelect={(v) => update({ breakIntervalMinutes: v })}
-        onClose={() => setOpenSheet(null)}
-      />
     </View>
   );
 }

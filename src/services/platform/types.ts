@@ -55,6 +55,14 @@ export interface OverlayService {
    * 됐으면 null. iOS: 항상 null(no-op, Screen Time이 자체적으로 차단을 집행하므로 이 경로가 필요 없음).
    */
   consumeExpired(): Promise<SessionEndStatus | null>;
+  /**
+   * 2026-07-26 사용자 지시("몇 편 봤는지 카운트") — 이번 세션에서 실제로 넘어간 영상 편수(자동넘김
+   * 스와이프든 사용자가 직접 손으로 넘긴 것이든 전부 포함, PaceAccessibilityService의 재생위치
+   * 신호 기반). Android: 실제 값. iOS: 항상 0(no-op) — 서드파티 앱 내부 재생 상태를 관찰할 방법이
+   * 없어 애초에 셀 수 없다(PACE_ARCHITECTURE.md "videos_watched 가짜 데이터" 참고). endSession() 전에
+   * 호출해야 한다 — endSession()이 네이티브 카운터를 리셋한다.
+   */
+  getVideoWatchCount(): Promise<number>;
 }
 
 export type BluetoothState = {

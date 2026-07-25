@@ -18,6 +18,11 @@
        온디바이스로 추적, 영상/사진 저장이나 서버 전송 전혀 없음. Focus Session이 켜져 있는 동안만 연다. -->
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+  <!-- 2026-07-25 BOOT_COMPLETED(B3) — 재부팅 시점에 이미 활성 중이던 세션(Daily Limit 카운트다운)을
+       복구하기 위함. PaceBootReceiver.kt 상단 주석 참고 — "그날 세션을 한 번도 안 시작했으면 감지
+       자체가 안 됨"이라는 더 넓은 문제는 이걸로 해결 안 됨(별도 설계 필요, PACE_PROJECT_MANAGEMENT.md
+       §6 참고). -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
   <application>
     <service
@@ -36,6 +41,17 @@
     <receiver
       android:name="expo.modules.paceoverlay.PaceTickReceiver"
       android:exported="false" />
+
+    <!-- 2026-07-25 BOOT_COMPLETED(B3, PaceBootReceiver.kt 참고) — exported="true"는 시스템이 부팅
+         브로드캐스트를 이 리시버에 배달하기 위한 필수 요건(자체적으로 protected broadcast라 임의
+         3rd-party 앱이 스푸핑해 호출할 수 없음). RECEIVE_BOOT_COMPLETED 권한은 위에서 선언. -->
+    <receiver
+      android:name="expo.modules.paceoverlay.PaceBootReceiver"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+      </intent-filter>
+    </receiver>
 
     <!-- Auto Next 실제 스와이프(2026-07-18, PaceAccessibilityService.kt 주석 참고) — exported="true"는
          AccessibilityService의 필수 관례이고(시스템이 바인딩해야 함), android:permission이 시스템

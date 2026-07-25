@@ -56,13 +56,17 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled,
       </View>
 
       <View style={styles.bottomRow}>
-        <View style={styles.statusLeft}>
-          <View style={styles.dotWrap}>
-            <Animated.View style={[styles.dotPing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]} />
-            <View style={styles.dot} />
+        <View style={styles.statCol}>
+          <View style={styles.statLabelRow}>
+            <View style={styles.dotWrap}>
+              <Animated.View style={[styles.dotPing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]} />
+              <View style={styles.dot} />
+            </View>
+            <Text style={styles.statLabel}>Watched Today</Text>
           </View>
-          <Text style={styles.statusText}>{autoNextEnabled ? 'Session Ready' : 'Standby'}</Text>
+          <Text style={styles.statValue}>{minutesWatched}m</Text>
         </View>
+        <View style={styles.statDivider} />
         {/* 쉬는시간(내려놓은 시간) — Flip Mode 누적. 사용시간(위 큰 숫자)과 짝을 이뤄 세션 상태에 표시. */}
         <View style={styles.restRight}>
           <Text style={styles.restIcon}>🌙</Text>
@@ -87,14 +91,17 @@ const styles = StyleSheet.create({
   percentLabel: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1, textTransform: 'uppercase', marginTop: 4 },
   track: { height: 8, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.pill, overflow: 'hidden', marginBottom: spacing.md },
   fill: { height: '100%', borderRadius: radius.pill },
-  bottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 },
-  statusLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  bottomRow: { flexDirection: 'row', alignItems: 'center', paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  statCol: { flex: 1, gap: 4 },
+  statLabelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   dotWrap: { width: 8, height: 8, alignItems: 'center', justifyContent: 'center' },
   dotPing: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: colors.successLight },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
-  statusText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB', letterSpacing: 0.5, textTransform: 'uppercase' },
   restRight: { flexDirection: 'row', alignItems: 'center' },
   restIcon: { fontSize: 11, marginRight: 4 },
   restLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1 },
   restValue: { fontSize: 12, fontFamily: typography.displayFontFamily, color: '#818CF8', letterSpacing: 0.3 },
+  statLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 0.5, textTransform: 'uppercase' },
+  statValue: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB' },
+  statDivider: { width: 1, alignSelf: 'stretch', backgroundColor: 'rgba(255,255,255,0.08)', marginHorizontal: spacing.md },
 });

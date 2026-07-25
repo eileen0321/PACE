@@ -4,46 +4,20 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from 'react-native-reanimated';
+import Animated, { SlideInRight, SlideOutLeft } from 'react-native-reanimated';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { TranslationKey } from '../../services/i18n';
 
-// healthy-shorts-assistant(4) Onboarding.tsx 이식(사용자 명시적 지시, 2026-07-21) — Framer
-// Motion 기반 웹 애니메이션을 react-native-reanimated의 entering/exiting 레이아웃 애니메이션으로
-// 대체. 원본 3슬라이드(도파민 차단막/Auto Next/블루투스) 내용은 그대로 가져오되, "Hands-Free"라는
-// 이름을 Auto Next와 블루투스 둘 다에 재사용하면 Settings의 실제 "Hands-Free Control"(블루투스
-// 리모컨) 기능과 헷갈린다는 이전 세션 결정에 따라 2번 슬라이드는 원래 "Continuous Playback"으로
-// 이름을 분리했었다.
-//
-// 2026-07-21 밤 감사 발견(사용자 지적: "가이드 페이지 현재 구현에 따라 바꿨어?") — 그런데 실제
-// 앱 전체(Focus 탭/feed 화면 배지/Settings의 "Focus Session Duration")는 이 기능을 전부 "Focus
-// Session"이라고 부르고 있었다 — 온보딩만 "Continuous Playback"이라는 다른 이름을 써서 실제
-// 화면과 안 맞았다. 2번 슬라이드 이름을 "Focus Session"으로 다시 맞추고, 설명도 "무기한 자동재생"
-// 이 아니라 "정해둔 시간만큼만 진행되고 스스로 멈춘다"는 실제 동작(포커스 세션 리디자인 참고)을
-// 반영하도록 수정. 3번 슬라이드에는 이날 밤 추가된 "두 번째 실행부터는 앱이 곧바로 영상 피드로
-// 들어간다"는 새 런치 플로우도 한 줄 추가(PACE_ARCHITECTURE.md "런치 플로우 단순화" 참고).
-const SLIDE_THEME = {
-  shield: { accent: '#818CF8', icon: 'shield' as const },
-  autopilot: { accent: '#34D399', icon: 'repeat' as const },
-  bluetooth: { accent: '#F59E0B', icon: 'headphones' as const },
-};
-
-type SlideKey = keyof typeof SLIDE_THEME;
-const SLIDE_KEYS: SlideKey[] = ['shield', 'autopilot', 'bluetooth'];
-
-function SlideVisual({ slideKey }: { slideKey: SlideKey }) {
-  const theme = SLIDE_THEME[slideKey];
-  return (
-    <View style={styles.visualWrap}>
-      <View style={[styles.visualRing, { borderColor: `${theme.accent}66` }]} />
-      <View style={[styles.visualCore, { backgroundColor: `${theme.accent}1A`, borderColor: `${theme.accent}33` }]}>
-        <Feather name={theme.icon} size={32} color={theme.accent} />
-      </View>
-    </View>
-  );
-}
+// healthy-shorts-assistant(4) Onboarding.tsx 이식(2026-07-21) 이후 사용자 지적(2026-07-25,
+// "부팅 타임 가이드 페이지 너무 촌스러운거 아냐?") — 원형 아이콘 링 + 컬러 배지 필 + 체크마크
+// 불릿리스트 + 그라데이션 글로우 조합이 전형적인 "기능 소개 랜딩페이지" 템플릿처럼 읽힌다는 지적에
+// 따라 미니멀 텍스트 중심으로 재설계(사용자 선택). 그래픽 요소를 걷어내고 큰 타이포 타이틀 +
+// 짧은 한 줄 설명 + 얇은 색상 액센트 바만 남긴다.
+const SLIDE_ACCENTS = ['#818CF8', '#34D399', '#F59E0B'] as const;
+type SlideKey = 0 | 1 | 2;
+const SLIDE_KEYS: SlideKey[] = [0, 1, 2];
 
 export default function OnboardingScreen() {
   const { t } = useTranslation();
@@ -51,7 +25,7 @@ export default function OnboardingScreen() {
   const [index, setIndex] = useState(0);
 
   const slideKey = SLIDE_KEYS[index];
-  const theme = SLIDE_THEME[slideKey];
+  const accent = SLIDE_ACCENTS[slideKey];
   const isLast = index === SLIDE_KEYS.length - 1;
   const n = index + 1;
 
@@ -72,55 +46,27 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.glow, { backgroundColor: `${theme.accent}26` }]} />
-
       <View style={styles.header}>
-        <View style={styles.brandRow}>
-          <View style={styles.brandBadge}>
-            <Text style={styles.brandBadgeText}>P</Text>
-          </View>
-          <Text style={styles.brandLabel}>{t('onboarding.protocol')}</Text>
-        </View>
+        <Text style={styles.brandLabel}>{t('onboarding.protocol')}</Text>
         {!isLast && (
-          <Pressable onPress={finish} style={styles.skipButton}>
+          <Pressable onPress={finish} hitSlop={8}>
             <Text style={styles.skipText}>{t('onboarding.skip')}</Text>
           </Pressable>
         )}
       </View>
 
-      <Animated.View key={slideKey} entering={SlideInRight.duration(280)} exiting={SlideOutLeft.duration(200)} style={styles.slideBody}>
-        <View style={styles.visualCard}>
-          <SlideVisual slideKey={slideKey} />
-          <View style={[styles.badge, { backgroundColor: theme.accent }]}>
-            <Text style={styles.badgeText}>{t(`onboarding.slide${n}Badge` as TranslationKey)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.textBlock}>
-          <Text style={styles.featureLabel}>{t('onboarding.featureLabel', { n })}</Text>
-          <Text style={styles.title}>{t(`onboarding.slide${n}Title` as TranslationKey)}</Text>
-          <Text style={styles.subtitle}>{t(`onboarding.slide${n}Subtitle` as TranslationKey)}</Text>
-        </View>
-
+      <Animated.View key={slideKey} entering={SlideInRight.duration(220)} exiting={SlideOutLeft.duration(160)} style={styles.slideBody}>
+        <View style={[styles.accentBar, { backgroundColor: accent }]} />
+        <Text style={styles.featureLabel}>{t('onboarding.featureLabel', { n })}</Text>
+        <Text style={styles.title}>{t(`onboarding.slide${n}Title` as TranslationKey)}</Text>
         <Text style={styles.description}>{t(`onboarding.slide${n}Description` as TranslationKey)}</Text>
-
-        <View style={styles.bulletList}>
-          {[1, 2, 3].map((b) => (
-            <View key={b} style={styles.bulletRow}>
-              <View style={[styles.bulletDot, { backgroundColor: theme.accent }]}>
-                <Feather name="check" size={10} color="#FFFFFF" />
-              </View>
-              <Text style={styles.bulletText}>{t(`onboarding.slide${n}Bullet${b}` as TranslationKey)}</Text>
-            </View>
-          ))}
-        </View>
       </Animated.View>
 
       <View style={styles.footer}>
         <View style={styles.dots}>
           {SLIDE_KEYS.map((key, i) => (
             <Pressable key={key} onPress={() => setIndex(i)} hitSlop={8}>
-              <View style={[styles.dot, i === index && [styles.dotActive, { backgroundColor: theme.accent }]]} />
+              <View style={[styles.dot, i === index && [styles.dotActive, { backgroundColor: accent }]]} />
             </Pressable>
           ))}
         </View>
@@ -135,46 +81,14 @@ export default function OnboardingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
-  glow: {
-    position: 'absolute',
-    top: -80,
-    left: -80,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    opacity: 0.6,
-  },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  brandBadge: { width: 20, height: 20, borderRadius: 6, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#FFFFFF', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold },
-  brandLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 2, color: colors.textTertiary, textTransform: 'uppercase' },
-  skipButton: { paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle },
-  skipText: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, color: colors.textTertiary, textTransform: 'uppercase' },
-  slideBody: { flex: 1, justifyContent: 'center', gap: spacing.lg },
-  visualCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.cardLarge,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: spacing.xl,
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  visualWrap: { width: 128, height: 128, alignItems: 'center', justifyContent: 'center' },
-  visualRing: { position: 'absolute', width: 96, height: 96, borderRadius: 48, borderWidth: 1 },
-  visualCore: { width: 64, height: 64, borderRadius: 32, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
-  badgeText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1.5, color: '#FFFFFF', textTransform: 'uppercase' },
-  textBlock: { gap: 4 },
-  featureLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 2, color: colors.primary, textTransform: 'uppercase' },
-  title: { fontSize: 24, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, letterSpacing: -0.3 },
-  subtitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
-  description: { fontSize: 12, color: colors.textSecondary, lineHeight: 19 },
-  bulletList: { gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
-  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-  bulletDot: { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
-  bulletText: { flex: 1, fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary, lineHeight: 18 },
+  brandLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, color: colors.textPrimary },
+  skipText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textTertiary },
+  slideBody: { flex: 1, justifyContent: 'center', gap: spacing.md, paddingBottom: spacing.xl },
+  accentBar: { width: 28, height: 4, borderRadius: 2 },
+  featureLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, letterSpacing: 1, color: colors.textTertiary },
+  title: { fontSize: 34, lineHeight: 40, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
+  description: { fontSize: 16, lineHeight: 24, fontFamily: typography.bodyFontFamily, color: colors.textSecondary, maxWidth: '90%' },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.lg, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
   dots: { flexDirection: 'row', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border },

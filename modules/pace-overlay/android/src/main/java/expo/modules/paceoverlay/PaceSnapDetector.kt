@@ -3,8 +3,10 @@ package expo.modules.paceoverlay
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
@@ -12,8 +14,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlin.math.PI
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 // 2026-07-20 핑거스냅 Hands-Free Next(사용자 지시, Focus Session 설계 — PACE_ARCHITECTURE.md 참고).
@@ -25,8 +30,14 @@ import kotlin.math.sqrt
 // ⚠️ V1 — 실기기 튜닝 전. 오탐/미탐 비율은 아직 실사용 검증 안 됨(임계값은 초기 추정치).
 object PaceSnapDetector {
   private const val TAG = "PaceSnapDetector"
-  private const val SAMPLE_RATE = 16_000
-  private const val FRAME_SIZE = 320 // 20ms @ 16kHz
+  // 2026-07-26 사용자 지시(수면감지 V2 — 실제 수면앱들의 SONAR 방식, SonarBeat 논문 등 웹 리서치
+  // 근거) 대응으로 44.1kHz로 상향(기존 16kHz) — 18~19kHz 반사음을 캡처하려면 나이퀴스트가 최소
+  // 38kHz는 넘어야 한다. 스냅 탐지 로직 자체는 대역/ZCR을 표본율 파라미터로 계산하므로(goertzelMagnitude
+  // 의 sampleRate 인자, zeroCrossingRate는 표본율 무관) 상향해도 그대로 작동 — 오히려 해상도가 올라감.
+  // 별도 AudioRecord를 하나 더 열면(안드로이드 다수 기기가 동시 활성 AudioRecord 1개만 지원) 스냅
+  // 감지와 충돌하므로, 이미 열려있는 이 스트림 하나를 공유해 스냅탐지 + sonar 반사음 분석을 같이 한다.
+  private const val SAMPLE_RATE = 44_100
+  private const val FRAME_SIZE = 882 // 20ms @ 44.1kHz
   private const val REFRACTORY_MS = 450L
   // 스냅은 저역(목소리/쿵 소리)보다 중고역 비중이 뚜렷이 커서 이 비율로 걸러낸다(정밀 분류 아님, 1차 필터).
   private const val HIGH_BAND_HZ = 2500.0
@@ -37,8 +48,80 @@ object PaceSnapDetector {
   // 실측 후 필요하면 올릴 것.
   private const val MIN_ZCR = 0.08
 
+  // 2026-07-26 SONAR 안전망(수면감지 V2, 사용자 지시로 웹 리서치 후 구현 — SonarBeat/Sleep as Android
+  // 방식 참고: 18~20kHz 초음파를 스피커로 내보내고 반사음 위상 변화로 흉부 움직임/호흡을 감지).
+  // ⚠️ V1 — 아직 수면판단 결정에 반영 안 함(로그만). 실기기 실측 데이터 없이 위상→호흡률 임계값을
+  // 확정하는 건 위험하다는 판단(핑거스냅/손짓도 실기기 로그로 여러 번 재조정한 뒤에야 쓸만해졌음) —
+  // 같은 방식으로 먼저 로그를 쌓고, 그 데이터로 다음에 실제 게이팅 로직을 튜닝한다.
+  private const val SONAR_TONE_HZ = 19_000.0
+  private const val SONAR_HEARTBEAT_MS = 2000L
+
   @Volatile private var running = false
   private var thread: Thread? = null
+  private var sonarTrack: AudioTrack? = null
+  // (timestamp, phase) 최근 이력 — 위상 변화율(=반사체 움직임 속도의 대리 지표)을 보려면 최소 2점만
+  // 있으면 되지만, 호흡 같은 주기적 패턴 여부를 보려면 몇 초 분량은 있어야 해서 여유 있게 담아둔다.
+  private val sonarPhaseHistory = ArrayDeque<Pair<Long, Double>>()
+  private const val SONAR_PHASE_WINDOW_MS = 8_000L
+
+  // 2026-07-26 SONAR 톤 발생 — STREAM_MUSIC이 아니라 USAGE_MEDIA로 짧게 잡아 다른 앱(YouTube)
+  // 오디오와 믹싱만 되고 포커스를 뺏지 않게 한다. 볼륨은 최소치 근처로(사람 귀엔 어차피 안 들리는
+  // 대역이라 크게 낼 필요 없고, 스피커 왜곡/배터리도 아낀다).
+  private fun startSonarTone(): AudioTrack? {
+    return try {
+      val bufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+      val samplesPerCycle = (SAMPLE_RATE / SONAR_TONE_HZ).toInt().coerceAtLeast(2)
+      // 19kHz가 44.1kHz의 정확한 정수배 분주가 아니라 루프 지점에서 위상 불연속(작은 클릭)이 생길
+      // 수밖에 없다 — 버퍼를 넉넉히 크게(2000사이클, ~90ms) 잡아 그 불연속 빈도 자체를 낮춘다
+      // (완전한 해결은 스트리밍 합성이 필요하지만, 아직 로그 전용 V1이라 이 정도로 충분).
+      val tone = ShortArray(samplesPerCycle * 2000)
+      for (i in tone.indices) {
+        tone[i] = (Short.MAX_VALUE * 0.3 * sin(2.0 * PI * SONAR_TONE_HZ * i / SAMPLE_RATE)).toInt().toShort()
+      }
+      val track = AudioTrack.Builder()
+        .setAudioAttributes(
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        )
+        .setAudioFormat(
+          AudioFormat.Builder()
+            .setSampleRate(SAMPLE_RATE)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .build()
+        )
+        .setBufferSizeInBytes(max(bufferSize, tone.size * 2))
+        .setTransferMode(AudioTrack.MODE_STATIC)
+        .build()
+      track.write(tone, 0, tone.size)
+      track.setLoopPoints(0, tone.size, -1) // -1 = 무한 반복
+      track.play()
+      Log.i(TAG, "sonar tone started at ${SONAR_TONE_HZ}Hz")
+      track
+    } catch (e: Exception) {
+      Log.w(TAG, "sonar tone start failed — sonar disabled this session", e)
+      null
+    }
+  }
+
+  // Goertzel의 I/Q(코사인/사인) 성분을 각각 구해 위상(atan2)까지 얻는 버전 — 기존 goertzelMagnitude는
+  // 크기만 반환해 위상 정보가 없다. sonar는 "반사음이 있냐 없냐"가 아니라 "위상이 시간에 따라 어떻게
+  // 변하냐"(=움직임의 방향/속도)를 봐야 하므로 별도로 둔다.
+  private fun goertzelPhase(samples: ShortArray, targetHz: Double, sampleRate: Int): Double {
+    val n = samples.size
+    val k = (0.5 + (n * targetHz) / sampleRate).toInt()
+    val w = (2.0 * PI / n) * k
+    var real = 0.0
+    var imag = 0.0
+    for (i in samples.indices) {
+      val angle = w * i
+      real += samples[i] * cos(angle)
+      imag -= samples[i] * sin(angle)
+    }
+    return atan2(imag, real)
+  }
 
   fun hasPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -50,11 +133,19 @@ object PaceSnapDetector {
       return
     }
     running = true
+    sonarPhaseHistory.clear()
+    sonarTrack = startSonarTone()
     thread = Thread { runDetectionLoop(onSnap) }.apply { start() }
   }
 
   fun stop() {
     running = false
+    try {
+      sonarTrack?.stop()
+      sonarTrack?.release()
+    } catch (_: Exception) {}
+    sonarTrack = null
+    sonarPhaseHistory.clear()
     thread = null
   }
 
@@ -141,6 +232,7 @@ object PaceSnapDetector {
     var lastTriggerAt = 0L
     var lastHeartbeatAt = 0L
     var peakRmsSinceHeartbeat = 0.0
+    var lastSonarLogAt = 0L
 
     try {
       recorder.startRecording()
@@ -158,11 +250,28 @@ object PaceSnapDetector {
         if (rms > peakRmsSinceHeartbeat) peakRmsSinceHeartbeat = rms
 
         val now = System.currentTimeMillis()
+        // 2026-07-26 SONAR — 같은 프레임에서 19kHz 위상도 같이 뽑는다(별도 AudioRecord 없이 이 스트림
+        // 하나 재사용, 위 SAMPLE_RATE 상향 코멘트 참고). 아직 어떤 결정에도 안 쓰고 로그만 남긴다.
+        if (sonarTrack != null) {
+          val phase = goertzelPhase(frame, SONAR_TONE_HZ, SAMPLE_RATE)
+          sonarPhaseHistory.addLast(now to phase)
+          while (sonarPhaseHistory.isNotEmpty() && now - sonarPhaseHistory.first().first > SONAR_PHASE_WINDOW_MS) {
+            sonarPhaseHistory.removeFirst()
+          }
+        }
         // TEMP 튜닝용 로그(작업 끝나면 제거) — 1초마다 바닥/피크를 찍어 실제 임계값을 실측한다.
         if (now - lastHeartbeatAt > 1000) {
           Log.i(TAG, "heartbeat noiseFloor=$noiseFloor peakRms=$peakRmsSinceHeartbeat")
           lastHeartbeatAt = now
           peakRmsSinceHeartbeat = 0.0
+        }
+        // 2026-07-26 SONAR 캘리브레이션용 로그 — 위상 이력의 변화 폭(최댓값-최솟값)을 몇 초마다 찍는다.
+        // 나중에 이 값의 실측 분포(무진동 vs 움직임 vs 호흡 중)를 보고 실제 게이팅 임계값을 정한다.
+        if (sonarPhaseHistory.size >= 2 && now - lastSonarLogAt > SONAR_HEARTBEAT_MS) {
+          val phases = sonarPhaseHistory.map { it.second }
+          val range = (phases.maxOrNull() ?: 0.0) - (phases.minOrNull() ?: 0.0)
+          Log.d(TAG, "sonar phaseRange=$range samples=${phases.size}")
+          lastSonarLogAt = now
         }
         // 2026-07-20 실기기 검증 중 발견: 노이즈 바닥이 에코캔슬링 덕에 80~150대로 안정됐는데도
         // 사용자가 여러 번 스냅해도 이 문턱값(6배/800) 자체를 못 넘는 경우가 대부분이었다 — 실제

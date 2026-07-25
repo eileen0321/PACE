@@ -13,6 +13,13 @@ import { bottomSheetPadding, colors, radius, spacing, typography } from '../../c
 // 여부를 스스로 재확인해 토스트로 알려주므로 유저가 "잘 됐는지" 직접 눈으로 단계를 맞춰볼 필요가 없다.
 // Bluetooth = 선택 기능인 것과 동일하게, Auto Next/접근성도 선택 기능이라는 원칙(Copilot 대화 후반부
 // 정정 내용)에 맞춰 "Setup Required" 같은 경고 문구 없이 "이걸 켜면 뭐가 좋아지는지"만 설명한다.
+//
+// 2026-07-25 B1 — 이 시트는 Android 전용(settings.tsx의 `Platform.OS === 'android'` 블록에서만
+// 띄움, Accessibility Service 자체가 Android 개념). 원래 benefit 3줄 중 "Bluetooth/AirPods
+// Control"은 하드웨어 리모컨으로 YouTube를 조작할 수 있다는 뜻인데, Android OS가 미디어 버튼을
+// 서드파티 앱에 절대 안 넘겨줘서 확정적으로 불가능함이 확인됐다(QA_ANDROID_LIFECYCLE_2026-07-22.md
+// #B22) — 접근성 권한을 켜도 이 혜택은 생기지 않으므로 삭제. 나머지 두 줄(Focus Session/Hands-Free
+// Mode)은 실제로 이 권한이 있어야 동작하는 핑거스냅·손 밀어내기 스와이프라 그대로 유지.
 export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
   visible: boolean;
   onEnable: () => void;
@@ -34,10 +41,6 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
         <View style={styles.benefitRow}>
           <Feather name="check" size={14} color={colors.successLight} />
           <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitAutoNext')}</Text>
-        </View>
-        <View style={styles.benefitRow}>
-          <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitBluetooth')}</Text>
         </View>
         <View style={styles.benefitRow}>
           <Feather name="check" size={14} color={colors.successLight} />

@@ -201,6 +201,14 @@ class PaceOverlayModule : Module() {
       PaceAccessibilityService.stopWatching()
     }
 
+    // 2026-07-26 사용자 지시("몇 편 봤는지 카운트") — 이번 세션에서 실제로 넘어간 영상 편수
+    // (자동넘김 스와이프든 사용자가 직접 손으로 넘긴 것이든 전부 포함). 접근성이 꺼져있으면 0.
+    // consumeExpired()와 같은 동기 Function 패턴 — JS는 세션 종료 직전(overlayService.endSession()
+    // 호출 전에) 이 값을 읽어 DB videos_watched에 정직하게 기록한다.
+    Function("getVideoWatchCount") {
+      PaceAccessibilityService.getVideoCount()
+    }
+
     // Bluetooth 리모컨 버튼뿐 아니라 Focus 탭 등 인앱 Next/Previous 버튼 탭에서도 같은 스와이프를
     // 쓸 수 있도록 노출(2026-07-19) — MediaSession 콜백(PaceOverlayService)이 부르는 것과 동일한
     // PaceAccessibilityService.swipeOnce()를 JS에서도 직접 호출 가능하게 한다.

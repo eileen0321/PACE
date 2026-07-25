@@ -22,6 +22,7 @@ let PaceOverlay: {
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
   consumeExpired(): string | null;
+  getVideoWatchCount(): number;
 } | null = null;
 
 try {
@@ -76,5 +77,9 @@ export const overlayService: OverlayService = {
 
   async consumeExpired() {
     return (PaceOverlay?.consumeExpired() ?? null) as SessionEndStatus | null;
+  },
+
+  async getVideoWatchCount() {
+    return PaceOverlay?.getVideoWatchCount() ?? 0;
   },
 };

@@ -49,4 +49,7 @@ export const overlayService: OverlayService = {
   async consumeExpired() {
     return null; // iOS는 Screen Time(ManagedSettings Shield)이 자체적으로 차단을 집행 — no-op
   },
+  async getVideoWatchCount() {
+    return 0; // iOS는 서드파티 앱 내부 재생 상태를 관찰할 방법이 없어 애초에 셀 수 없음 — no-op
+  },
 };

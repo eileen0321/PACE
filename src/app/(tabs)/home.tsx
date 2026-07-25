@@ -20,7 +20,7 @@ import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboard
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
-import { bluetoothService, overlayService } from '../../services/platform';
+import { bluetoothService, capabilities, overlayService } from '../../services/platform';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
@@ -104,6 +104,11 @@ export default function HomeScreen() {
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
+  // 2026-07-25 B1 — 이 시트 자체는 Android에서도 그대로 띄운다: "Enable"이 실제로 켜는 건 Bluetooth
+  // 헤드셋 하드웨어 버튼(죽음, capabilities.supportsHandsFreeControl 참고)이 아니라 핑거스냅/손
+  // 밀어내기/자동재생 워처로 구성된 진짜 동작하는 Auto Mode(Focus Session)다 — 이게 지금 Android에서
+  // Auto Mode를 켜는 유일한 진입점이라 지웠으면 안 됐다. 대신 BluetoothOnboardingSheet 자체의 문구를
+  // 플랫폼별로 갈라 Android에서 더 이상 "Bluetooth 헤드셋 버튼" 거짓 약속을 하지 않도록 고쳤다.
   // healthy-shorts-assistant(3) 이식 — 실제 /overlay 이동 전에 ConnectingOverlay 체크리스트
   // 애니메이션을 먼저 보여준다(App.tsx triggerConnectingSequence). 애니메이션이 끝나면
   // handleConnectingComplete가 실제 라우팅을 수행.
@@ -249,7 +254,11 @@ export default function HomeScreen() {
             statusText={
               activeSessionPlatform === 'youtube'
                 ? 'Active'
-                : isBluetoothConnected
+                // 2026-07-25 B1 — "Hands-Free Ready"는 Bluetooth 헤드셋 하드웨어 버튼이 실제로
+                // YouTube를 조작할 수 있다는 뜻인데 Android는 OS 레벨에서 그게 불가능함이 확정됐다
+                // (capabilities.supportsHandsFreeControl 주석 참고) — Android에서는 이 배지를 아예
+                // 노출하지 않는다. iOS는 기존 그대로.
+                : capabilities.supportsHandsFreeControl && isBluetoothConnected
                   ? '🎧 Hands-Free Ready'
                   : '▶ Tracks time & enforces limits'
             }
@@ -257,7 +266,7 @@ export default function HomeScreen() {
             gradientFrom="rgba(88,86,214,0.35)"
             onPress={() => onSelectPlatform('youtube')}
             isActive={activeSessionPlatform === 'youtube'}
-            features={['🎧 Hands-Free', '⏱ Focus Session']}
+            features={[...(capabilities.supportsHandsFreeControl ? ['🎧 Hands-Free'] : []), '⏱ Focus Session']}
           />
         </View>
 

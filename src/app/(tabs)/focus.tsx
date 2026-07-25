@@ -165,7 +165,7 @@ export default function FocusScreen() {
       </ScrollView>
 
       {/* Demo Mindful Break Prompt Modal */}
-      <Modal visible={showPromptDemo} transparent animationType="fade" onRequestClose={() => setShowPromptDemo(false)}>
+      <Modal visible={showPromptDemo} transparent animationType="fade" onRequestClose={() => setShowPromptDemo(false)} statusBarTranslucent navigationBarTranslucent>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, styles.modalCardIndigo]}>
             <View style={styles.modalIconIndigo}>

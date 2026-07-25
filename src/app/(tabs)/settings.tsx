@@ -491,7 +491,7 @@ export default function SettingsScreen() {
 
       {!isPremium && <AdBanner />}
 
-      <Modal visible={showResetConfirm} transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)}>
+      <Modal visible={showResetConfirm} transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)} statusBarTranslucent navigationBarTranslucent>
         <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('settings.resetSettings')}</Text>
@@ -511,7 +511,7 @@ export default function SettingsScreen() {
       {/* 2026-07-21 밤 감사 발견 — Help Center 행이 onPress 자체가 없어 완전히 죽어있었다. 백엔드/CMS가
           없어 외부 지원 페이지로 연결할 수 없으므로, 핵심 기능 FAQ를 앱 안에 직접 담아 최소한의
           실질적 도움을 준다. */}
-      <Modal visible={showHelpCenter} transparent animationType="slide" onRequestClose={() => setShowHelpCenter(false)}>
+      <Modal visible={showHelpCenter} transparent animationType="slide" onRequestClose={() => setShowHelpCenter(false)} statusBarTranslucent navigationBarTranslucent>
         <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
           <View style={[styles.modalCard, styles.helpCard]}>
             <View style={styles.helpHeaderRow}>

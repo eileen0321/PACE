@@ -89,7 +89,7 @@ export function LimitReachedOverlay({ visible, tier, hitCount, limitMinutes, tod
 
   const isTier1 = tier === 1;
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       <View style={styles.backdrop}>
         <View style={styles.spacer} />
         <View style={styles.centerBlock}>

@@ -52,7 +52,7 @@ export function ConnectingOverlay({ visible, platformName, platformFullTitle, on
   }, [visible, step, maxStep, onComplete]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent>
       <GlassSurface style={styles.backdrop} intensity={30} fallbackColor="rgba(0,0,0,0.9)">
         <View style={styles.glow} pointerEvents="none" />
         <ActivityIndicator size="large" color={colors.primary} style={styles.spinner} />

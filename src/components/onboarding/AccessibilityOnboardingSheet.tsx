@@ -21,7 +21,7 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onDismiss} />
       <View style={[styles.sheet, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
         <View style={styles.handle} />

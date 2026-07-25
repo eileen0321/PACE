@@ -24,7 +24,11 @@ export function QuickControlSheet<T>({ visible, title, description, icon, option
 }) {
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    // 2026-07-25 사용자 지적 — 안드로이드에서 Modal은 부모 액티비티와 별개의 네이티브 창이라
+    // styles.xml의 투명 내비게이션 바 테마를 안 물려받고 시스템 기본값(흰색)으로 떨어진다.
+    // navigationBarTranslucent(+짝인 statusBarTranslucent, 안 켜면 상태바 쪽에서 크래시/경고 남)로
+    // 이 창도 엣지투엣지 투명하게 맞춘다.
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={[styles.sheet, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
         <View style={styles.handle} />

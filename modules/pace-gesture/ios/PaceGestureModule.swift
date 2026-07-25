@@ -128,19 +128,34 @@ public class PaceGestureModule: Module {
   }
 }
 
-// MARK: - 핑거스냅 감지 (SoundAnalysis 내장 분류기)
+// MARK: - 핑거스냅 감지 (raw 오디오 DSP — 안드로이드 PaceSnapDetector 이식, SoundAnalysis 미사용)
+// SoundAnalysis(SNClassifySoundRequest)는 iOS18+ 백그라운드 GPU 차단 등으로 Swift try/catch가 못 잡는
+// ObjC NSException/추상화 이전 크래시가 구조적이라(실기기 로그 025855/030709.ips) 폐기하고, 안드로이드
+// PaceSnapDetector와 동일한 raw DSP로 감지한다: 적응형 noiseFloor 대비 RMS 스파이크 + Goertzel 고/저역
+// 마그니튜드 비율 + ZCR + 불응(refractory). AVAudioEngine 탭으로 PCM Float 버퍼를 받아 분석.
+// AEC(VoiceProcessing)는 포맷 변형/덕킹/크래시 이슈로 끄고 .measurement 모드로 순간 스파이크를 보존한다.
 @available(iOS 13.0, *)
-private final class SnapDetector: NSObject, SNResultsObserving {
-  private let audioEngine = AVAudioEngine()
-  private var analyzer: SNAudioStreamAnalyzer?
-  private let queue = DispatchQueue(label: "pace.snap.analysis")
+private final class SnapDetector {
+  private let engine = AVAudioEngine()
+  private let queue = DispatchQueue(label: "pace.snap.dsp")
   private let onSnap: (Double) -> Void
   private let onError: (String) -> Void
+
+  // 안드로이드 상수 이식. RMS 절대치는 16-bit(±32768) 기준 → Float(±1)로 ÷32768 환산, 나머지(Goertzel
+  // 비율/ZCR/스파이크 배수)는 스케일 불변이라 그대로.
+  private var noiseFloor: Float = 0.006     // 안드 200/32768
   private var lastFire: TimeInterval = 0
+  private let spikeMult: Float = 3.5        // rms > floor*3.5
+  private let minAbsRms: Float = 0.012      // 안드 400/32768 (무음 오탐 컷)
+  private let floorGate: Float = 3.0        // rms < floor*3.0 일 때만 floor 갱신
+  private let highHz: Float = 2500, lowHz: Float = 500
+  private let freqRatio: Float = 1.2        // high > low*1.2
+  private let zcrMin: Float = 0.08
+  private let refractory: TimeInterval = 0.45
+  private var logTick = 0
 
   init(onSnap: @escaping (Double) -> Void, onError: @escaping (String) -> Void) {
-    self.onSnap = onSnap
-    self.onError = onError
+    self.onSnap = onSnap; self.onError = onError
   }
 
   func start() {
@@ -154,81 +169,70 @@ private final class SnapDetector: NSObject, SNResultsObserving {
   private func begin() {
     do {
       let session = AVAudioSession.sharedInstance()
-      // .playAndRecord: WebView(YouTube) 소리가 나면서 동시에 마이크 입력을 받아야 하므로 mixWithOthers.
-      try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
+      // .measurement: AGC/튜닝 최소화로 순간 스파이크 보존. .mixWithOthers로 유튜브 소리와 공존.
+      try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
       try session.setActive(true)
-
-      let input = audioEngine.inputNode
-      // ⭐ Apple 내장 AEC(Voice Processing) — "쇼츠 소리에 스냅이 묻힌다"를 해결하는 핵심.
-      // 스피커로 나가는 재생음이 마이크로 되돌아온 에코 성분을 하드웨어/DSP로 제거해, 마이크 탭에는
-      // 재생음이 빠지고 스냅 같은 근접 소리만 남는다(Android AcousticEchoCanceler 대응, WWDC19/23).
-      // ⚠️ 엔진이 '정지' 상태일 때 켜야 하고(여기서는 prepare/start 전이라 OK), 켜면 입출력 노드가
-      // 함께 VP 모드로 전환된다. 실패해도(구형/미지원) 치명적이지 않으므로 AEC 없이 계속 진행.
-      if #available(iOS 13.0, *) {
-        do { try input.setVoiceProcessingEnabled(true) }
-        catch { onError("voice processing(AEC) 활성 실패 — AEC 없이 진행: \(error.localizedDescription)") }
+      let input = engine.inputNode
+      // ⭐ 크래시 회피: 커스텀 포맷을 만들지 말고 하드웨어 입력 포맷을 그대로 installTap에 넘긴다
+      // (라우트 변경 시 sampleRate 불일치 "required condition is false" 크래시 방지 — 리서치 확인).
+      let format = input.outputFormat(forBus: 0)
+      let sr = Float(format.sampleRate)
+      guard sr > 0 else { onError("input sampleRate 0"); return }
+      input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+        self?.process(buffer, sampleRate: sr)
       }
-
-      let format = input.outputFormat(forBus: 0) // VP 활성 이후의 실제 입력 포맷(모노로 바뀔 수 있음)
-      let analyzer = SNAudioStreamAnalyzer(format: format)
-      self.analyzer = analyzer
-
-      let request = try SNClassifySoundRequest(classifierIdentifier: .version1)
-      // ⚠️ 2026-07-26 실기기 크래시 수정(SIGABRT): windowDuration에 분류기 허용 범위 밖 값(0.5s)을
-      // 넣으면 SoundAnalysis가 NSException을 던지는데, Swift try/catch는 ObjC NSException을 못 잡아
-      // 앱이 죽었다(크래시 로그 Pace-…-025855.ips에서 확인). windowDurationConstraint로 유효 범위를
-      // 조회해 0.5s에 가장 가까운 "안전한" 값으로만 설정한다. overlapFactor(0~1)는 0.75로 안전.
-      if #available(iOS 15.0, *) {
-        let target = 0.5
-        switch request.windowDurationConstraint {
-        case .enumeratedDurations(let durations) where !durations.isEmpty:
-          if let best = durations.min(by: { abs(CMTimeGetSeconds($0) - target) < abs(CMTimeGetSeconds($1) - target) }) {
-            request.windowDuration = best
-          }
-        case .durationRange(let range):
-          let lo = CMTimeGetSeconds(range.start), hi = CMTimeGetSeconds(range.end)
-          let clamped = min(max(target, lo), hi)
-          request.windowDuration = CMTimeMakeWithSeconds(clamped, preferredTimescale: 48_000)
-        default:
-          break // 알 수 없는 제약이면 기본 windowDuration 그대로(안전)
-        }
-        request.overlapFactor = 0.75
-      }
-      try analyzer.add(request, withObserver: self)
-
-      input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, when in
-        self?.queue.async { self?.analyzer?.analyze(buffer, atAudioFramePosition: when.sampleTime) }
-      }
-      audioEngine.prepare()
-      try audioEngine.start()
+      engine.prepare()
+      try engine.start()
+      NSLog("[pace-snap] started sr=%.0f", Double(sr))
     } catch {
       onError("audio start failed: \(error.localizedDescription)")
     }
   }
 
-  func stop() {
-    audioEngine.inputNode.removeTap(onBus: 0)
-    if audioEngine.isRunning { audioEngine.stop() }
-    analyzer?.removeAllRequests()
-    analyzer = nil
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-  }
+  private func process(_ buffer: AVAudioPCMBuffer, sampleRate: Float) {
+    guard let ch = buffer.floatChannelData?[0] else { return }
+    let n = Int(buffer.frameLength)
+    guard n > 32 else { return }
 
-  // SNResultsObserving
-  func request(_ request: SNRequest, didProduce result: SNResult) {
-    guard let result = result as? SNClassificationResult,
-          let top = result.classification(forIdentifier: "finger_snapping") else { return }
-    // 신뢰도 임계 — 오탐 방지. AEC로 재생음이 빠져 신호가 깨끗해진 만큼 0.7→0.65로 약간 민감하게
-    // (Android가 "lower snap sensitivity threshold" 한 방향과 동일). 실기기 오탐/미탐 보고 튜닝.
-    guard top.confidence > 0.65 else { return }
-    let now = CFAbsoluteTimeGetCurrent()
-    guard now - lastFire > 0.8 else { return } // 디바운스(연속 스냅 1회로)
+    var sum: Float = 0
+    for i in 0..<n { let s = ch[i]; sum += s * s }
+    let rms = (sum / Float(n)).squareRoot()
+
+    if rms < noiseFloor * floorGate { noiseFloor = noiseFloor * 0.95 + rms * 0.05 } // 스파이크 아닐 때만 갱신
+
+    logTick += 1
+    if logTick % 20 == 0 { NSLog("[pace-snap] rms=%.4f floor=%.4f", Double(rms), Double(noiseFloor)) }
+
+    guard rms > noiseFloor * spikeMult, rms > minAbsRms else { return }        // 스파이크
+    let high = goertzel(ch, n, highHz, sampleRate)
+    let low = goertzel(ch, n, lowHz, sampleRate)
+    guard high > low * freqRatio else { return }                              // 고역 우세(스냅 vs 목소리/음악)
+    var cross = 0
+    for i in 1..<n { if (ch[i-1] >= 0) != (ch[i] >= 0) { cross += 1 } }
+    let zcr = Float(cross) / Float(n)
+    guard zcr > zcrMin else { return }                                        // 광대역성
+
+    let now = CACurrentMediaTime()
+    guard now - lastFire > refractory else { return }
     lastFire = now
-    DispatchQueue.main.async { self.onSnap(top.confidence) }
+    NSLog("[pace-snap] 🫰 SNAP rms=%.4f hi/lo=%.2f zcr=%.3f", Double(rms), Double(high / max(low, 1e-6)), Double(zcr))
+    DispatchQueue.main.async { self.onSnap(Double(rms)) }
   }
 
-  func request(_ request: SNRequest, didFailWithError error: Error) {
-    onError("analysis failed: \(error.localizedDescription)")
+  // Goertzel 단일-빈 마그니튜드(정규화 안 함) — 스케일 불변, 안드로이드와 동일.
+  private func goertzel(_ x: UnsafePointer<Float>, _ n: Int, _ targetHz: Float, _ sr: Float) -> Float {
+    let k = Int(0.5 + Float(n) * targetHz / sr)
+    let w = (2.0 * Float.pi / Float(n)) * Float(k)
+    let coeff = 2.0 * cos(w)
+    var q1: Float = 0, q2: Float = 0
+    for i in 0..<n { let q0 = coeff * q1 - q2 + x[i]; q2 = q1; q1 = q0 }
+    return (q1 * q1 + q2 * q2 - q1 * q2 * coeff).squareRoot()
+  }
+
+  func stop() {
+    engine.inputNode.removeTap(onBus: 0)
+    if engine.isRunning { engine.stop() }
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
 }
 
@@ -303,8 +307,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var samples: [(t: TimeInterval, size: CGFloat)] = []
   private var lastFire: TimeInterval = 0
   private var lastAnalyze: TimeInterval = 0
+  private var logTick = 0
   private let windowSec: TimeInterval = 0.5
-  private let growthRatio: CGFloat = 1.5
+  private let growthRatio: CGFloat = 1.5          // 안드 GROWTH_RATIO_THRESHOLD
+  private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
+  private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
   private let analyzeIntervalSec: TimeInterval = 0.15 // 안드로이드와 동일하게 ~150ms마다만 추론(배터리)
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void) {
@@ -352,8 +359,23 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       return
     }
     session.addOutput(output)
+
+    // ⭐ 손짓 안 잡히던 #1 원인 = orientation(리서치 확인). 연결(connection)에서 세로+전면미러를 고정해
+    // 픽셀버퍼가 똑바로 나오게 하고, Vision 핸들러엔 .up만 넘긴다(양쪽에서 이중 변환하면 다시 틀어짐).
+    if let conn = output.connection(with: .video) {
+      if #available(iOS 17.0, *) {
+        if conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 } // 세로
+      } else if conn.isVideoOrientationSupported {
+        conn.videoOrientation = .portrait
+      }
+      if conn.isVideoMirroringSupported {
+        conn.automaticallyAdjustsVideoMirroring = false
+        conn.isVideoMirrored = true
+      }
+    }
     session.commitConfiguration()
     session.startRunning()
+    NSLog("[pace-wave] camera started (front, portrait+mirror)")
   }
 
   func stop() {
@@ -372,7 +394,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     lastAnalyze = now
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-    let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .leftMirrored, options: [:])
+    // 연결에서 이미 세로+미러 고정 → 핸들러엔 .up.
+    let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
     do {
       try handler.perform([request])
     } catch {
@@ -392,20 +415,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let dx = wrist.location.x - mcp.location.x
     let dy = wrist.location.y - mcp.location.y
     let size = CGFloat((dx * dx + dy * dy).squareRoot())
-    guard size > 0 else { return }
+    guard size >= minHandSize else { return } // 너무 작으면(먼 배경) 무시 — 안드 MIN_HAND_SIZE=0.03
+
+    logTick += 1
+    if logTick % 10 == 0 { NSLog("[pace-wave] hand size=%.3f (win=%d)", Double(size), samples.count) }
 
     let t = now
     samples.append((t, size))
-    // 창(500ms) 밖 샘플 제거.
-    samples.removeAll { t - $0.t > windowSec }
-    guard samples.count >= 3 else { return }
+    samples.removeAll { t - $0.t > windowSec } // 창(500ms) 밖 제거
+    guard samples.count >= 2, let oldest = samples.first else { return }
 
-    // 창 안 최소 크기 대비 현재 크기가 growthRatio 이상이면 "손이 급히 다가옴 = 손짓"으로 판정.
-    let minSize = samples.map { $0.size }.min() ?? size
-    if size >= minSize * growthRatio {
-      guard now - lastFire > 0.8 else { return } // 디바운스
+    // 창 안 최고령(가장 오래된) 크기 대비 현재 크기가 growthRatio 이상 = "손이 급히 다가옴"(안드와 동일).
+    if size >= oldest.size * growthRatio {
+      guard now - lastFire > refractorySec else { return }
       lastFire = now
-      samples.removeAll() // 연속 오탐 방지
+      samples.removeAll() // 트리거 후 이력 초기화
+      NSLog("[pace-wave] 👋 WAVE size=%.3f ratio=%.2f", Double(size), Double(size / max(oldest.size, 0.001)))
       DispatchQueue.main.async { self.onWave() }
     }
   }

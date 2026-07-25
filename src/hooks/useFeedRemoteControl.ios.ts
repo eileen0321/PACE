@@ -60,20 +60,18 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision)을 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
-  // ⚠️ 2026-07-26 실기기 크래시 대응: 핑거스냅('snap')은 SoundAnalysis가 이 오디오 설정에서
-  // ObjC NSException을 던져 앱이 죽는다(SnapDetector.begin, 크래시 로그 확인). Swift로는 ObjC 예외를
-  // 못 잡으므로, 크래시-세이프(ObjC @try/@catch)로 재작성하기 전까지 스냅은 잠시 뺀다 → 'wave'만.
-  // 손짓(카메라)은 모든 실패 경로가 가드/옵셔널이라 안전. 다음 넘김은 손짓 + 볼륨키(리모컨) + 자동넘김.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision) + 핑거스냅(raw 오디오 DSP)을 함께 시작, 꺼지면 정지.
+  // Focus Session 동안만 켜짐(안드로이드 setAutoMode에서 snap+handwave 함께 켜는 것과 동일).
+  // 2026-07-26(2차): 스냅을 SoundAnalysis→raw DSP(안드 이식)로 재작성해 크래시가 사라져 'both' 복귀.
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('wave').catch((err) => {
+      mod.start('both').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
+        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

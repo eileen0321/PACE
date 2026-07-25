@@ -13,6 +13,8 @@ import { capabilities } from '../../services/platform';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { AdBanner } from '../../components/home/AdBanner';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
 import { colors, gradients, layout, radius, sourceColors, spacing, typography } from '../../constants/theme';
@@ -45,6 +47,7 @@ import type { DailyStats } from '../../types/models';
 export default function StatsScreen() {
   const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
   const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
@@ -257,6 +260,8 @@ export default function StatsScreen() {
           </View>
         )}
       </ScrollView>
+
+      {!isPremium && <AdBanner />}
     </SafeAreaView>
   );
 }

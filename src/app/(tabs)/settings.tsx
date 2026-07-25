@@ -21,6 +21,7 @@ import { capabilities, overlayService, autoNextService } from '../../services/pl
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { AdBanner } from '../../components/home/AdBanner';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -487,6 +488,8 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
       </ScrollView>
+
+      {!isPremium && <AdBanner />}
 
       <Modal visible={showResetConfirm} transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)}>
         <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>

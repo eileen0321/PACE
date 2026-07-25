@@ -11,6 +11,8 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
 import { capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { AdBanner } from '../../components/home/AdBanner';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) SettingsSection.tsx(Focus 탭)를 토씨 하나 안 틀리고 그대로 이식
@@ -26,6 +28,7 @@ export default function FocusScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
@@ -176,6 +179,8 @@ export default function FocusScreen() {
           </View>
         </View>
       </Modal>
+
+      {!isPremium && <AdBanner />}
     </SafeAreaView>
   );
 }

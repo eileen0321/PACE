@@ -277,8 +277,15 @@ export default function PaceFeedScreen() {
               앱(Home)으로 복귀(세션은 백그라운드 유지). 딥링크로 스택이 비어도 replace라 안전. */}
           {/* 피드는 홈 위에 뜬 fullScreenModal — replace로 홈을 새로 그리면 밑의 홈과 겹쳐 "두 번 보임".
               back()으로 모달을 닫아 밑의 홈을 드러낸다. 딥링크로 스택이 비었을 때만 replace 폴백. */}
-          {/* 집중모드 표시는 하단 "포커스 세션 켜짐" 배지 하나로 통일(안드로이드 알약 "SESSION ON"과 동일
-              단일 인디케이터). 예전 P옆 ⚡는 배지와 중복이라 제거(사용자 지시 2026-07-26). */}
+          {/* 세션 ON 인디케이터(사용자 지시 2026-07-26) — 안드로이드 알약 "SESSION ON"과 동일하게, Focus
+              Session 켜지면 상단 P 옆에 글래스 "SESSION ON" 필을 명확히 표시. OFF면 렌더 안 함(영상 안 가림). */}
+          {isAutoMode && (
+            <View style={styles.sessionOnPill}>
+              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+              <View style={styles.sessionOnDot} />
+              <Text style={styles.sessionOnText}>SESSION ON</Text>
+            </View>
+          )}
           <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
@@ -386,6 +393,10 @@ const styles = StyleSheet.create({
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
   // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
+  // 상단 "SESSION ON" 글래스 필(안드 알약 대응) — 세션 켜졌을 때만. 초록 점 + 흰 텍스트, 보라 링.
+  sessionOnPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: `${colors.primary}66` },
+  sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
+  sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.
   appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.

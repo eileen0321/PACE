@@ -196,11 +196,12 @@ export default function PaceFeedScreen() {
   };
 
   const toggleAutoMode = () => {
-    setIsAutoMode((prev) => {
-      const next = !prev;
-      useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
-      return next;
-    });
+    // 토스트(다른 컴포넌트 setState)를 setIsAutoMode 업데이터 안에서 호출하면 React가
+    // "Cannot update a component (ToastHost) while rendering..." 경고를 낸다(업데이터는 순수해야 함).
+    // 이벤트 핸들러 본문(렌더 밖)에서 현재 값을 뒤집어 계산하고, 상태 변경과 토스트를 분리 호출한다.
+    const next = !isAutoMode;
+    setIsAutoMode(next);
+    useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).

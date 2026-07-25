@@ -20,7 +20,9 @@ type BluetoothStoreState = {
   next: () => Promise<void>;
   previous: () => Promise<void>;
   toggleAutoMode: () => Promise<void>;
-  /** 이미 켜져 있으면 아무것도 안 하는 멱등 버전 — 매 세션 시작마다 불러도 안전(2026-07-23). */
+  /** 매 세션 시작마다 불러도 안전한 버전(2026-07-23) — 실제 멱등 보장은 네이티브
+   * (PaceSnapDetector/PaceHandWaveDetector/PaceAccessibilityService가 각자 running 플래그로
+   * 자체 방어)가 하므로 여기서 항상 네이티브를 부른다(2026-07-25 수정 근거는 구현부 주석 참고). */
   enableAutoModeForSession: () => Promise<void>;
   setFocusSessionDurationMinutes: (minutes: number) => Promise<void>;
 };
@@ -78,7 +80,14 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
   },
 
   enableAutoModeForSession: async () => {
-    if (get().autoModeEnabled) return;
+    // 2026-07-25 실기기 지적("손동작/핑거스냅 왜 계속 안 됨") — 여기 `if (get().autoModeEnabled)
+    // return` 가드가 진짜 원인이었다. autoModeEnabled는 네이티브 SharedPreferences(PREF_AUTO_MODE,
+    // 프로세스 재시작에도 살아남음)를 refresh()로 그대로 읽어온 값이라, "이전 세션에서 켰었다"만
+    // 있어도 true로 남는다. 근데 실제 감지기(PaceSnapDetector/PaceHandWaveDetector)는 프로세스가
+    // 죽으면(force-stop, 크래시, OS 회수) 같이 사라지는 인메모리 상태다 — 그래서 새 프로세스에서는
+    // JS만 "이미 켜져 있다"고 믿고 네이티브를 아예 안 불러서, 실제로는 아무 감지기도 안 도는 상태로
+    // 조용히 멈춰 있었다. 네이티브 쪽(PaceOverlayService.setAutoMode → 각 감지기의 자체 running
+    // 가드)이 이미 멱등이므로, 여기서는 매번 그냥 부른다 — 중복 호출은 네이티브가 안전하게 no-op.
     const hasMic = await bluetoothService.hasRecordAudioPermission();
     if (!hasMic) await bluetoothService.requestRecordAudioPermission().catch(() => false);
     const hasCamera = await bluetoothService.hasCameraPermission();

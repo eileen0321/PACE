@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { colors } from '../../constants/theme';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 
@@ -28,8 +28,9 @@ const adModuleAvailable = Boolean(BannerAd && BannerAdSize && TestIds);
 
 export function AdBanner() {
   const [failed, setFailed] = useState(false);
+  const [diag, setDiag] = useState('AD: loading…'); // 진단용 — 기기 광고 로드 상태를 화면에 표시
   const setHeight = useAdBannerStore((s) => s.setHeight);
-  const visible = adModuleAvailable && !failed;
+  const visible = adModuleAvailable; // 진단 동안은 실패해도 컨테이너 유지(에러 텍스트 보이게)
 
   // 2026-07-25 — 화면(Home/Focus/Stats/Settings)들이 이 배너의 실제 렌더 높이만큼 스크롤 하단
   // 여백을 잡아야 광고가 마지막 콘텐츠를 안 가린다(ANCHORED_ADAPTIVE_BANNER는 기기 너비에 따라
@@ -44,13 +45,19 @@ export function AdBanner() {
   if (!visible || !BannerAd || !BannerAdSize || !TestIds) return null;
 
   const handleLayout = (e: LayoutChangeEvent) => setHeight(e.nativeEvent.layout.height);
+  void failed; void setFailed;
 
   return (
     <View style={styles.container} onLayout={handleLayout}>
+      <Text style={styles.diag}>{diag}</Text>
       <BannerAd
         unitId={TestIds.ADAPTIVE_BANNER}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-        onAdFailedToLoad={() => setFailed(true)}
+        onAdLoaded={() => setDiag('AD: loaded ✓')}
+        onAdFailedToLoad={(e: unknown) => {
+          const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message?: unknown }).message) : String(e);
+          setDiag('AD FAIL: ' + msg);
+        }}
       />
     </View>
   );
@@ -65,4 +72,5 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingVertical: 4,
   },
+  diag: { color: '#FFD400', fontSize: 11, paddingHorizontal: 8 },
 });

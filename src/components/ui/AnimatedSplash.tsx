@@ -59,8 +59,6 @@ export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
 
   return (
     <Animated.View exiting={FadeOut.duration(400)} style={styles.container}>
-      <View style={styles.spacer} />
-
       <View style={styles.brandBlock}>
         {/* 2026-07-22 수정: 원본 의도는 "원 안 중앙에 아이콘". 기존엔 glow가 top:38% 절대위치로 화면
             위에 떠 있고 아이콘은 flex로 아래에 있어 둘이 따로 놀았다 → glow를 아이콘 뒤 중앙에 겹쳐
@@ -103,8 +101,7 @@ const styles = StyleSheet.create({
     zIndex: 110,
     backgroundColor: '#060709',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 64,
+    justifyContent: 'center', // 원+아이콘 브랜드 블록을 화면 정중앙에(로딩바는 아래 절대고정)
   },
   // 아이콘(112)을 감싸는 256 원 오라. iconArea가 256 정사각 + 중앙정렬이라 glow는 그 영역을 꽉 채운
   // 원이 되고 iconWrap이 정중앙에 온다 → "원 안 중앙 아이콘".
@@ -116,7 +113,6 @@ const styles = StyleSheet.create({
     borderRadius: 128,
     backgroundColor: `${colors.primary}26`,
   },
-  spacer: { flex: 0.6 },
   brandBlock: { alignItems: 'center', gap: 24 },
   iconWrap: {
     width: 112,
@@ -153,6 +149,9 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   barTrack: {
+    position: 'absolute', // 브랜드 블록 중앙정렬과 분리 — 로딩바는 하단 고정
+    bottom: 90,
+    alignSelf: 'center',
     width: 160,
     height: 4,
     borderRadius: radius.pill,

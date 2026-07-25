@@ -11,8 +11,7 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
 import { capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
-import { AdBanner } from '../../components/home/AdBanner';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) SettingsSection.tsx(Focus 탭)를 토씨 하나 안 틀리고 그대로 이식
@@ -28,7 +27,7 @@ export default function FocusScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const adBannerHeight = useAdBannerStore((s) => s.height);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
@@ -51,7 +50,7 @@ export default function FocusScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         {/* 1. Session Control Hero */}
         <LinearGradient colors={['#1A1D26', colors.cardDeep]} style={styles.heroCard}>
           <View style={styles.liveTag}>
@@ -179,8 +178,6 @@ export default function FocusScreen() {
           </View>
         </View>
       </Modal>
-
-      {!isPremium && <AdBanner />}
     </SafeAreaView>
   );
 }

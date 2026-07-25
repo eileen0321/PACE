@@ -13,8 +13,7 @@ import { capabilities } from '../../services/platform';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
-import { AdBanner } from '../../components/home/AdBanner';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
 import { colors, gradients, layout, radius, sourceColors, spacing, typography } from '../../constants/theme';
@@ -47,7 +46,7 @@ import type { DailyStats } from '../../types/models';
 export default function StatsScreen() {
   const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const adBannerHeight = useAdBannerStore((s) => s.height);
   const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
@@ -86,7 +85,7 @@ export default function StatsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         {/* 1. THIS WEEK HERO */}
         <LinearGradient colors={gradients.heroCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroCard}>
           <View style={styles.heroGlow} pointerEvents="none" />
@@ -260,8 +259,6 @@ export default function StatsScreen() {
           </View>
         )}
       </ScrollView>
-
-      {!isPremium && <AdBanner />}
     </SafeAreaView>
   );
 }

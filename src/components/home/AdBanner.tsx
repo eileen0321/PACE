@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { colors } from '../../constants/theme';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 
 // 2026-07-25 — react-native-google-mobile-ads는 네이티브 코드가 있는 모듈이라 네이티브 재빌드
 // 전에는(예: 지금처럼 AdMob 라이브러리와 Kotlin 버전 충돌로 빌드가 아직 안 끝난 경우) 설치된 APK에
@@ -23,11 +24,29 @@ try {
 // 지금은 구글 공식 테스트 광고 단위 ID(TestIds.ADAPTIVE_BANNER)로 붙여뒀다 — 실제 배포 전에 AdMob
 // 콘솔에서 발급받은 진짜 광고 단위 ID로 반드시 교체해야 한다(테스트 ID로 낸 채 배포하면 광고가
 // 하나도 안 뜬다).
+const adModuleAvailable = Boolean(BannerAd && BannerAdSize && TestIds);
+
 export function AdBanner() {
   const [failed, setFailed] = useState(false);
-  if (!BannerAd || !BannerAdSize || !TestIds || failed) return null;
+  const setHeight = useAdBannerStore((s) => s.setHeight);
+  const visible = adModuleAvailable && !failed;
+
+  // 2026-07-25 — 화면(Home/Focus/Stats/Settings)들이 이 배너의 실제 렌더 높이만큼 스크롤 하단
+  // 여백을 잡아야 광고가 마지막 콘텐츠를 안 가린다(ANCHORED_ADAPTIVE_BANNER는 기기 너비에 따라
+  // 높이가 달라 상수로 못 박음). 안 보일 때(네이티브 모듈 미링크/로드 실패/언마운트)는 0으로
+  // 되돌려 화면이 여백을 도로 접게 한다. 훅 순서를 조건 안에서 바꾸면 안 되므로 항상 최상단에서
+  // 호출하고, 내부에서만 visible로 분기한다.
+  useEffect(() => {
+    if (!visible) setHeight(0);
+    return () => setHeight(0);
+  }, [visible, setHeight]);
+
+  if (!visible || !BannerAd || !BannerAdSize || !TestIds) return null;
+
+  const handleLayout = (e: LayoutChangeEvent) => setHeight(e.nativeEvent.layout.height);
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={handleLayout}>
       <BannerAd
         unitId={TestIds.ADAPTIVE_BANNER}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}

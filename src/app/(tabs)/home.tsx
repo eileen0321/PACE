@@ -20,8 +20,7 @@ import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, overlayService } from '../../services/platform';
-import { AdBanner } from '../../components/home/AdBanner';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -48,7 +47,7 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const user = useUserStore((s) => s.user);
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const adBannerHeight = useAdBannerStore((s) => s.height);
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
@@ -212,7 +211,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
 
         {sleepInsightEndedAt && (
@@ -263,14 +262,6 @@ export default function HomeScreen() {
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>
         <QuickControlsGrid />
       </ScrollView>
-
-      {/* 2026-07-25 — AdMob 배너, 하단 탭바 바로 위 고정. 무료 사용자에게만 노출(유료는 완전히
-          숨김 — 광고 없는 것도 구독 가치의 일부). ANCHORED_ADAPTIVE_BANNER는 기기 너비에 맞춰
-          높이가 기기마다 다르게 나온다(고정 50dp 아님) — 그래서 배너 높이를 상수로 하드코딩하지
-          않고, ScrollView와 같은 flex 컬럼의 형제 요소로 둬서 실제 렌더된 높이만큼 스크롤 영역이
-          자동으로 줄어들게 한다. 네이티브 모듈 미링크/로드 실패 시 자체적으로 null 렌더(AdBanner
-          내부 처리) — 배너 하나 때문에 Home 전체가 죽지 않는다. */}
-      {!isPremium && <AdBanner />}
 
       <BluetoothOnboardingSheet
         visible={pendingPlatform !== null}

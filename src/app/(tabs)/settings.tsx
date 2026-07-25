@@ -14,6 +14,7 @@ import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useToastStore } from '../../store/useToastStore';
 import { clearUserHistory, getAllSessionsForExport } from '../../database/repositories/sessionsRepository';
 import { getWeeklyStats } from '../../database/repositories/statsRepository';
@@ -21,7 +22,6 @@ import { capabilities, overlayService, autoNextService } from '../../services/pl
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
-import { AdBanner } from '../../components/home/AdBanner';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
@@ -72,6 +72,7 @@ export default function SettingsScreen() {
   const logout = useUserStore((s) => s.logout);
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
+  const adBannerHeight = useAdBannerStore((s) => s.height);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
@@ -195,7 +196,7 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <Text style={styles.screenTitle}>{t('settings.screenTitle')}</Text>
 
         {/* 1. Account */}
@@ -488,8 +489,6 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
       </ScrollView>
-
-      {!isPremium && <AdBanner />}
 
       <Modal visible={showResetConfirm} transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)} statusBarTranslucent navigationBarTranslucent>
         <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>

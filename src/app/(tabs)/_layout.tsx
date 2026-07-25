@@ -1,10 +1,12 @@
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
+import { AdBanner } from '../../components/home/AdBanner';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 
 // 2026-07-19 실기기(갤럭시 Note20, 3버튼 내비게이션) 1차 수정 — jlpt-master/zen-master의 방어적
 // 최솟값 패턴(paddingBottom = Math.max(insets.bottom, 10))을 그대로 이식했으나, 실기기 스크린샷을
@@ -36,13 +38,22 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
 export default function TabsLayout() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
   const androidBottomInset = Math.max(insets.bottom, ANDROID_MIN_BOTTOM_INSET) + ANDROID_EXTRA_BOTTOM_GAP;
+  // 2026-07-25 사용자 지적 — 배너가 화면(Home/Focus/Stats/Settings) 각각에 따로 있으면 탭을
+  // 넘나들 때마다 그 화면의 배너 인스턴스가 새로 마운트되면서 매번 새 광고를 구글 서버에서 다시
+  // 받아와야 해서 "탭 넘길 때마다 잠깐 비었다가 뜨는" 게 반복됐다. Tabs 내비게이터 자체와 같은
+  // 레벨(형제)에 딱 하나만 두고 탭바 바로 위에 절대 위치로 고정하면, 화면이 바뀌어도 이 배너는
+  // 리마운트되지 않아 광고를 한 번만 불러온다 — 화면들(각 tabs/*.tsx)에 있던 개별 <AdBanner />는
+  // 제거했다(중복 표시 방지).
+  const tabBarHeight = TAB_BAR_BASE_HEIGHT + (Platform.OS === 'android' ? androidBottomInset : insets.bottom);
 
   const renderIcon = (routeName: string) => ({ focused, color }: { focused: boolean; color: import('react-native').ColorValue; size: number }) => {
     return <Feather name={TAB_ICONS[routeName]} size={22} color={color as string} style={focused ? styles.iconActive : undefined} />;
   };
 
   return (
+    <View style={styles.root}>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -80,9 +91,19 @@ export default function TabsLayout() {
       <Tabs.Screen name="stats" options={{ title: t('tabs.stats'), tabBarIcon: renderIcon('stats') }} />
       <Tabs.Screen name="settings" options={{ title: t('tabs.settings'), tabBarIcon: renderIcon('settings') }} />
     </Tabs>
+    {!isPremium && (
+      <View style={[styles.adBannerFloat, { bottom: tabBarHeight }]} pointerEvents="box-none">
+        <AdBanner />
+      </View>
+    )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
+  // Tabs 내비게이터와 형제로 두고 탭바 바로 위에 절대 위치로 고정 — 화면(Home/Focus/Stats/
+  // Settings)이 바뀌어도 이 배너는 리마운트되지 않으므로 탭 전환마다 광고를 새로 안 받아온다.
+  adBannerFloat: { position: 'absolute', left: 0, right: 0 },
   iconActive: { }, // Feather는 strokeWidth prop이 없어(고정 아웃라인) 색상 변화만으로 활성 표시 — size/color 이미 충분한 대비
 });

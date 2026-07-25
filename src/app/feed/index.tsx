@@ -4,8 +4,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
-import { SessionTimePill } from '../../components/feed/SessionTimePill';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
@@ -250,14 +250,21 @@ export default function PaceFeedScreen() {
           {/* 2026-07-25 사용자 지시: 상단은 영상을 최대한 안 가리게 "앱 복귀 버튼 하나"만 남긴다.
               X(닫기)와 "Pace Feed" 필은 영상 가리는 군더더기라 제거. 우상단 P만 유지 — 탭하면 Pace
               앱(Home)으로 복귀(세션은 백그라운드 유지). 딥링크로 스택이 비어도 replace라 안전. */}
-          <Pressable onPress={() => router.replace('/(tabs)/home')} hitSlop={12} style={styles.appIconBtn}>
+          {/* 피드는 홈 위에 뜬 fullScreenModal — replace로 홈을 새로 그리면 밑의 홈과 겹쳐 "두 번 보임".
+              back()으로 모달을 닫아 밑의 홈을 드러낸다. 딥링크로 스택이 비었을 때만 replace 폴백. */}
+          {/* 집중모드(Focus Session) ON일 때만 P 왼쪽에 글래스 ⚡ 인디케이터(사용자 지시 2026-07-25).
+              OFF면 아예 렌더 안 함 — 영상 안 가리게. 상시 카운트다운/남은시간은 다이나믹아일랜드가 담당. */}
+          {isAutoMode && (
+            <Animated.View entering={FadeIn.duration(260)} exiting={FadeOut.duration(200)} style={styles.focusDot}>
+              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+              <Feather name="zap" size={15} color={colors.primary} />
+            </Animated.View>
+          )}
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
           </Pressable>
         </View>
-
-        {/* 세션 남은시간을 "가끔" 살짝 보여주는 글래스 필(사용자 지시) — 계속 안 뜨고 주기적 페이드인. */}
-        <SessionTimePill endsAt={sessionEndsAt} />
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}
@@ -360,6 +367,8 @@ const styles = StyleSheet.create({
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
   // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
+  // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.
+  focusDot: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: `${colors.primary}66` },
   appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.
   statusBar: { alignItems: 'center', marginTop: spacing.sm },

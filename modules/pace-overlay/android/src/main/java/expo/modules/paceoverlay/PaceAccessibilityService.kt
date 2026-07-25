@@ -42,6 +42,12 @@ class PaceAccessibilityService : AccessibilityService() {
   private var isWatching = false
   private var safetyTimeoutMs = DEFAULT_SAFETY_TIMEOUT_MS
   private var currentForegroundPackage: String? = null
+  // 2026-07-25 실기기 지적("앱 껐는데 왜 오버레이가 홈 화면에 떠있어") — 이 값은
+  // accessibility_service_config.xml의 packageNames 필터 때문에 유튜브/인스타/틱톡 창일 때만
+  // 갱신된다. 런처나 다른 앱으로 나가면 이벤트 자체가 안 와서 이 값이 "유튜브"인 채로 영원히
+  // 멈춰있을 수 있다 — 아래 getCurrentForegroundPackage(maxAgeMs)가 이 시각을 같이 확인해서,
+  // 너무 오래된 값은 "모른다"로 취급하고 폴백(UsageStatsManager)을 타게 한다.
+  private var currentForegroundPackageAtMs = 0L
   private var lastKnownCurrentSec = -1
   private var lastSwipeAtMs = 0L
   private var lastVolumeKeySwipeAtMs = 0L
@@ -155,7 +161,18 @@ class PaceAccessibilityService : AccessibilityService() {
     // TYPE_WINDOW_STATE_CHANGED로 foreground 패키지를 즉시(폴링 지연 없이) 추적하고 있으므로
     // (onAccessibilityEvent 참고) 접근성이 켜져 있으면 이 값을 우선 쓰게 노출한다. 접근성이
     // 꺼져있으면(instance==null) null을 반환해 호출부가 기존 UsageStatsManager로 폴백하게 한다.
-    fun getCurrentForegroundPackage(): String? = instance?.currentForegroundPackage
+    //
+    // 2026-07-25 실기기 지적("앱 껐는데 홈 화면에 오버레이가 떠있다") — packageNames 필터
+    // (유튜브/인스타/틱톡만) 때문에 사용자가 런처나 다른 앱으로 나가면 이 값이 갱신 자체가 안 되고
+    // "유튜브"인 채로 멈춰있다. maxAgeMs 안에 실제로 갱신된 값만 신뢰하고, 그보다 오래됐으면 null을
+    // 반환해 호출부가 UsageStatsManager 폴백을 타게 한다 — "떠나면 오래지 않아 반드시 숨겨진다"를
+    // 보장하는 안전장치.
+    fun getCurrentForegroundPackage(maxAgeMs: Long = 3000L): String? {
+      val service = instance ?: return null
+      val age = SystemClock.elapsedRealtime() - service.currentForegroundPackageAtMs
+      if (service.currentForegroundPackageAtMs == 0L || age > maxAgeMs) return null
+      return service.currentForegroundPackage
+    }
   }
 
   override fun onServiceConnected() {
@@ -169,6 +186,7 @@ class PaceAccessibilityService : AccessibilityService() {
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
       currentForegroundPackage = event.packageName?.toString()
+      currentForegroundPackageAtMs = SystemClock.elapsedRealtime()
     }
   }
 

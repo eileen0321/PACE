@@ -61,6 +61,15 @@ export default function PaywallScreen() {
       });
   };
 
+  // 2026-07-26 사용자 지시 — 프리미엄 혜택(광고 제거/자동넘김 무제한/리모컨/고급 취침모드)을 명시적으로
+  // 나열. 예전엔 RC 상품 목록만 덩그러니 보여줘서 "돈 내면 뭐가 좋아지는지" 자체가 안 보였다.
+  const benefits = [
+    t('paywall.benefitNoAds'),
+    t('paywall.benefitUnlimitedAutoNext'),
+    t('paywall.benefitRemoteControl'),
+    t('paywall.benefitAdvancedSleepMode'),
+  ];
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -73,6 +82,17 @@ export default function PaywallScreen() {
         data={offerings}
         keyExtractor={(item) => item.identifier}
         contentContainerStyle={{ gap: spacing.sm, padding: spacing.md }}
+        ListHeaderComponent={
+          <View style={styles.benefitsBox}>
+            <Text style={styles.benefitsTitle}>{t('paywall.benefitsTitle')}</Text>
+            {benefits.map((b) => (
+              <View key={b} style={styles.benefitRow}>
+                <Text style={styles.benefitCheck}>✓</Text>
+                <Text style={styles.benefitText}>{b}</Text>
+              </View>
+            ))}
+          </View>
+        }
         renderItem={({ item }) => (
           <Pressable style={styles.package} onPress={() => onPurchase(item)}>
             <Text style={styles.packageTitle}>{item.product.title}</Text>
@@ -109,6 +129,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.md },
   title: { fontSize: 22, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   close: { color: colors.textSecondary },
+  benefitsBox: { backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.md, marginBottom: spacing.sm, gap: spacing.xs },
+  benefitsTitle: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold, fontSize: 14, marginBottom: 2 },
+  benefitRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs },
+  benefitCheck: { color: colors.success, fontFamily: typography.bodyFontFamilyBold, fontSize: 13 },
+  benefitText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1, lineHeight: 18 },
   package: { backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.md },
   packageTitle: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   packagePrice: { color: colors.textSecondary, marginTop: 4 },

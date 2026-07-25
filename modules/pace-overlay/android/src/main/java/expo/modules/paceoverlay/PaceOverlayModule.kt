@@ -209,6 +209,30 @@ class PaceOverlayModule : Module() {
       PaceAccessibilityService.getVideoCount()
     }
 
+    // 2026-07-26 사용자 지시 — 무료 Focus Session 자동넘김 30회 한도 + 보상형 광고로 20회씩 연장.
+    // useSubscriptionStore.isPremium이 바뀔 때마다 JS가 호출(부팅 시/구매·복원 완료 시)해 네이티브
+    // 한도 체크 자체를 켜고 끈다.
+    Function("setUnlimitedAutoNext") { enabled: Boolean ->
+      PaceAccessibilityService.setUnlimitedAutoNext(enabled)
+    }
+
+    // consumeExpired()와 동일 패턴 — 1회성 소비, 접근성 꺼짐/한도 미도달이면 false.
+    Function("consumeAutoNextCapReached") {
+      PaceAccessibilityService.consumeAutoNextCapReached()
+    }
+
+    // 보상형 광고 시청 완료(onEarnedReward) 후 호출 — 한도를 늘리고 자동넘김을 재개한다.
+    Function("extendAutoNextCap") { extendBy: Int ->
+      PaceAccessibilityService.extendAutoNextCap(extendBy)
+    }
+
+    Function("getAutoSwipeStatus") {
+      mapOf(
+        "count" to PaceAccessibilityService.getAutoSwipeCount(),
+        "cap" to PaceAccessibilityService.getAutoSwipeCap()
+      )
+    }
+
     // Bluetooth 리모컨 버튼뿐 아니라 Focus 탭 등 인앱 Next/Previous 버튼 탭에서도 같은 스와이프를
     // 쓸 수 있도록 노출(2026-07-19) — MediaSession 콜백(PaceOverlayService)이 부르는 것과 동일한
     // PaceAccessibilityService.swipeOnce()를 JS에서도 직접 호출 가능하게 한다.

@@ -82,7 +82,11 @@ export default function RootLayout() {
       await loadSettings();
       syncSettingsFromServer().catch(() => {});
     })();
-    initSubscription();
+    initSubscription().then(() => {
+      // 2026-07-26 사용자 지시("유료일땐 ... 자동넘김 무제한") — init() 완료 직후 현재 isPremium을
+      // 네이티브에 1회 동기화. 이후 값 변화(구매/복원/RC 리스너 갱신)는 아래 subscribe가 담당.
+      autoNextService.setUnlimitedAutoNext(useSubscriptionStore.getState().isPremium).catch(() => {});
+    });
     loadDailyBonus();
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
@@ -101,6 +105,17 @@ export default function RootLayout() {
     if (Platform.OS === 'android') {
       NavigationBar.setStyle('light');
     }
+  }, []);
+
+  // 2026-07-26 — isPremium이 바뀔 때마다(구매 완료, 복원, RC CustomerInfo 리스너 갱신, 로그아웃 등)
+  // 네이티브 자동넘김 무제한 플래그를 계속 동기화. 부팅 시 1회는 위 initSubscription().then()이 담당.
+  useEffect(() => {
+    const unsub = useSubscriptionStore.subscribe((state, prevState) => {
+      if (state.isPremium !== prevState.isPremium) {
+        autoNextService.setUnlimitedAutoNext(state.isPremium).catch(() => {});
+      }
+    });
+    return unsub;
   }, []);
 
   // 2026-07-19: notifyAccessibilityNeeded() 알림 탭 처리 — data.action을 보고 바로 접근성 설정으로

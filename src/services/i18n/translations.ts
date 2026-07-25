@@ -272,6 +272,11 @@ export const translations = {
       loadFailedMessage: 'Could not reach the store. Check your connection and try again.',
       retry: 'Retry',
       notConfigured: 'Purchases are not available in this build.',
+      benefitsTitle: "What you'll get",
+      benefitNoAds: 'No banner or rewarded ads',
+      benefitUnlimitedAutoNext: 'Unlimited Focus Session auto-advance (no daily video cap)',
+      benefitRemoteControl: 'Hands-free remote control (earbud/Bluetooth button skip)',
+      benefitAdvancedSleepMode: 'Advanced Sleep Mode (customizable stillness sensitivity)',
     },
 
     overlay: {
@@ -298,6 +303,12 @@ export const translations = {
       notifBreakReminderBody: 'Take a short stretch or breathing break before continuing.',
       notifAccessibilityNeededTitle: 'Hands-Free Shorts needs one tap',
       notifAccessibilityNeededBody: 'Tap here, then turn PACE on under Installed apps.',
+      autoNextCapReachedTitle: 'Focus Session paused',
+      autoNextCapReachedMessage: "You've reached today's free Focus Session limit ({{cap}} videos). Watch a short ad to keep going for {{extend}} more.",
+      watchAdForMore: 'Watch ad for +{{extend}}',
+      autoNextExtendedToast: '+{{extend}} more Focus Session videos unlocked',
+      autoNextAdFailed: "Couldn't load the ad — try again in a moment.",
+      notNow: 'Not now',
     },
 
     // 2026-07-21 감사 발견 — iOS Pace Feed(feed/index.tsx)가 스캐폴드 단계라 t() 없이 하드코딩돼
@@ -558,6 +569,11 @@ export const translations = {
       loadFailedMessage: '스토어에 연결하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.',
       retry: '다시 시도',
       notConfigured: '이 빌드에서는 결제 기능을 사용할 수 없습니다.',
+      benefitsTitle: '이런 게 좋아져요',
+      benefitNoAds: '배너/보상형 광고 전부 제거',
+      benefitUnlimitedAutoNext: 'Focus Session 자동넘김 무제한(일일 횟수 제한 없음)',
+      benefitRemoteControl: '핸즈프리 리모컨(이어폰/블루투스 버튼으로 넘기기)',
+      benefitAdvancedSleepMode: '고급 취침모드(무진동 감지 민감도 직접 설정)',
     },
 
     overlay: {
@@ -584,6 +600,12 @@ export const translations = {
       notifBreakReminderBody: '계속하기 전에 짧게 스트레칭하거나 숨을 골라보세요.',
       notifAccessibilityNeededTitle: '한 번만 탭하면 핸즈프리 완성',
       notifAccessibilityNeededBody: '여기를 탭한 다음, 설치된 앱에서 PACE를 켜주세요.',
+      autoNextCapReachedTitle: 'Focus Session이 멈췄어요',
+      autoNextCapReachedMessage: '오늘 무료 Focus Session 한도({{cap}}회)에 도달했어요. 짧은 광고를 보면 {{extend}}회 더 이어집니다.',
+      watchAdForMore: '광고 보고 +{{extend}}회 받기',
+      autoNextExtendedToast: 'Focus Session {{extend}}회 더 이어져요',
+      autoNextAdFailed: '광고를 불러오지 못했어요 — 잠시 후 다시 시도해 주세요.',
+      notNow: '나중에',
     },
 
     feed: {

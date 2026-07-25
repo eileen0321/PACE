@@ -12,6 +12,21 @@ export interface AutoNextService {
   requestPermission(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
+  /**
+   * 2026-07-26 사용자 지시("무료일땐 ... 유료일땐 ... 자동넘김 무제한") — useSubscriptionStore.isPremium이
+   * 바뀔 때마다(부팅 시/구매·복원 완료 시) 호출해 네이티브 한도 체크 자체를 켜고 끈다. Android만 실제
+   * 동작, iOS는 no-op(자동넘김 횟수 제한 개념 자체가 없음 — 애초에 하드웨어 리모컨/제스처 기반).
+   */
+  setUnlimitedAutoNext(enabled: boolean): Promise<void>;
+  /**
+   * 무료 사용자의 자동넘김이 한도(기본 30회)에 도달해 일시정지됐는지 1회성 소비 확인(읽으면 즉시
+   * 리셋) — true면 보상형 광고 유도 모달을 띄운다. Android만 실제 신호, iOS는 항상 false.
+   */
+  consumeAutoNextCapReached(): Promise<boolean>;
+  /** 보상형 광고 시청 완료(onEarnedReward) 보상 — 한도를 extendBy만큼 늘리고 즉시 재개. */
+  extendAutoNextCap(extendBy: number): Promise<void>;
+  /** 현재 한도 상태(표시용, 예: "12/30회"). Android만 실제 값, iOS는 항상 {count:0, cap:0}. */
+  getAutoSwipeStatus(): Promise<{ count: number; cap: number }>;
 }
 
 export interface OverlayService {

@@ -16,4 +16,14 @@ export const autoNextService: AutoNextService = {
     throw new Error('Focus Session hands-free advancing is not supported on iOS');
   },
   async stop() {},
+  // 자동넘김 횟수 제한(무료 30회/보상형 광고 20회 연장) 개념 자체가 Android 전용(PaceAccessibilityService
+  // 스와이프 카운트 기반) — iOS는 그 스와이프 엔진이 없으므로 전부 no-op.
+  async setUnlimitedAutoNext() {},
+  async consumeAutoNextCapReached() {
+    return false;
+  },
+  async extendAutoNextCap() {},
+  async getAutoSwipeStatus() {
+    return { count: 0, cap: 0 };
+  },
 };

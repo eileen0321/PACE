@@ -15,7 +15,7 @@ import Animated, {
 import { colors, radius, typography } from '../../constants/theme';
 
 const ICON = require('../../../assets/splash-icon.png');
-const DURATION_MS = 2400;
+const DURATION_MS = 600;
 
 // healthy-shorts-assistant(4) Splash.tsx 이식(사용자 명시적 지시, 2026-07-21) — Framer Motion의
 // spring/shimmer/tracking-in 애니메이션을 react-native-reanimated로 재구현. expo-splash-screen의
@@ -31,12 +31,12 @@ export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
   const barX = useSharedValue(-1);
 
   useEffect(() => {
-    iconScale.value = withDelay(150, withSpring(1, { stiffness: 160, damping: 22 }));
-    iconOpacity.value = withDelay(150, withTiming(1, { duration: 300 }));
-    shimmerX.value = withRepeat(withTiming(1, { duration: 2200, easing: Easing.linear }), -1, false);
-    textOpacity.value = withDelay(400, withTiming(1, { duration: 700 }));
-    textY.value = withDelay(400, withTiming(0, { duration: 700 }));
-    barX.value = withRepeat(withSequence(withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
+    iconScale.value = withDelay(40, withSpring(1, { stiffness: 260, damping: 22 }));
+    iconOpacity.value = withDelay(40, withTiming(1, { duration: 120 }));
+    shimmerX.value = withRepeat(withTiming(1, { duration: 550, easing: Easing.linear }), -1, false);
+    textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
+    textY.value = withDelay(150, withTiming(0, { duration: 220 }));
+    barX.value = withRepeat(withSequence(withTiming(1, { duration: 260, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
 
     const timer = setTimeout(onComplete, DURATION_MS);
     return () => clearTimeout(timer);

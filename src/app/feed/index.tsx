@@ -4,7 +4,6 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
@@ -87,11 +86,12 @@ export default function PaceFeedScreen() {
   // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지(정지/블랙아웃 중엔 불필요).
   useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected });
 
-  // 2026-07-23 사용자 지시: 고개짓(ARKit 전면카메라 head-nod)을 "비현실적"으로 판단해 제거 —
-  // 항상 false로 두어 gesture 카메라가 절대 안 켜지게 한다(pace-gesture 모듈 자체는 다른 세션 영역이라
-  // 유지, 여기 피드에서 활성화만 끔). "다음 넘김"은 화면 탭/볼륨키/BT 리모컨으로 충분.
-  // (md "턱톡 기각·고개짓 보류" 섹션의 우려 — 카메라 자동ON이 Focus Session 설계와 충돌·배터리 — 와도 일치.)
-  const headDetectActive = false;
+  // 2026-07-26 사용자 지시 "안드로이드와 동일하게": 안드로이드는 Session ON일 때 감지기(스냅/손짓)를
+  // 한꺼번에 켠다(PaceOverlayService.setAutoMode → start snap/handwave). iOS도 동일하게 Focus Session
+  // (isAutoMode) 동안만 핸즈프리 감지를 켠다 — 이 플래그가 useFeedRemoteControl.ios의 감지 게이팅.
+  // 현재 감지기는 핑거스냅(SoundAnalysis+AEC). 손짓(카메라 Vision)은 2단계로 pace-gesture에 추가 예정.
+  // (고개짓 head-nod는 2026-07-23 "비현실적" 판단으로 계속 제외 — 'snap' 모드만 start.)
+  const handsFreeDetectActive = isAutoMode;
   void progress;
 
   useEffect(() => {
@@ -209,7 +209,7 @@ export default function PaceFeedScreen() {
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
-    headDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
+    headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
   });
 
   // 2026-07-22 감사 수정: 볼륨키(에어팟/버즈/다이소 BT 리모컨) → 다음 Short 훅이 추가됐지만 어느
@@ -253,14 +253,8 @@ export default function PaceFeedScreen() {
               앱(Home)으로 복귀(세션은 백그라운드 유지). 딥링크로 스택이 비어도 replace라 안전. */}
           {/* 피드는 홈 위에 뜬 fullScreenModal — replace로 홈을 새로 그리면 밑의 홈과 겹쳐 "두 번 보임".
               back()으로 모달을 닫아 밑의 홈을 드러낸다. 딥링크로 스택이 비었을 때만 replace 폴백. */}
-          {/* 집중모드(Focus Session) ON일 때만 P 왼쪽에 글래스 ⚡ 인디케이터(사용자 지시 2026-07-25).
-              OFF면 아예 렌더 안 함 — 영상 안 가리게. 상시 카운트다운/남은시간은 다이나믹아일랜드가 담당. */}
-          {isAutoMode && (
-            <Animated.View entering={FadeIn.duration(260)} exiting={FadeOut.duration(200)} style={styles.focusDot}>
-              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-              <Feather name="zap" size={15} color={colors.primary} />
-            </Animated.View>
-          )}
+          {/* 집중모드 표시는 하단 "포커스 세션 켜짐" 배지 하나로 통일(안드로이드 알약 "SESSION ON"과 동일
+              단일 인디케이터). 예전 P옆 ⚡는 배지와 중복이라 제거(사용자 지시 2026-07-26). */}
           <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
@@ -369,7 +363,6 @@ const styles = StyleSheet.create({
   // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.
-  focusDot: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: `${colors.primary}66` },
   appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.
   statusBar: { alignItems: 'center', marginTop: spacing.sm },

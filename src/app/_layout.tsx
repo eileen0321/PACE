@@ -48,6 +48,18 @@ export default function RootLayout() {
   // iOS(CMMotionManager)/Android(SensorManager) 둘 다 실제 감지, 포그라운드에서만 동작(§4-A 제약).
   useFlipMode({ enabled: true });
 
+  // AdMob 초기화 — 무료 사용자 배너(AdBanner)가 로드되려면 앱 시작 시 mobileAds().initialize()를
+  // 1회 호출해야 한다(안 하면 배너가 onAdFailedToLoad로 조용히 사라져 "안 뜨는" 것처럼 보임).
+  // AdBanner와 동일한 방어적 require — 네이티브 미링크(재빌드 전)여도 앱이 안 죽게.
+  useEffect(() => {
+    try {
+      const mobileAds = require('react-native-google-mobile-ads').default;
+      mobileAds().initialize().catch(() => {});
+    } catch (e) {
+      if (__DEV__) console.warn('[ads] initialize 스킵(네이티브 미링크):', String(e));
+    }
+  }, []);
+
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_600SemiBold,
     PlusJakartaSans_700Bold,

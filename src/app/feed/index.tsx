@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
@@ -32,6 +32,9 @@ type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  // fullScreenModal 프레젠테이션에선 SafeAreaView의 top edge가 0으로 잡혀 상단바가 시스템 상태바와
+  // 겹친다(overlay/index.tsx와 동일 이슈) → useSafeAreaInsets로 명시 보정, 0이면 47로 폴백.
+  const insets = useSafeAreaInsets();
   const queue = useShortsQueueStore((s) => s.queue);
   const isLoading = useShortsQueueStore((s) => s.isLoading);
   const isRefilling = useShortsQueueStore((s) => s.isRefilling);
@@ -224,7 +227,9 @@ export default function PaceFeedScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* 웹뷰를 시스템 상태바 아래로 내려 유튜브 자체 헤더가 상태바와 겹치지 않게 한다(사용자 지시).
+          상단 insets.top만큼은 검은 스트립(상태바 영역), 그 아래로 영상+유튜브 UI. */}
       {current && !feedBlocked && (
         <YouTubeShortsPlayer
           videoId={current.videoId}
@@ -235,8 +240,10 @@ export default function PaceFeedScreen() {
         />
       )}
 
-      <SafeAreaView style={styles.uiLayer} edges={['top', 'bottom']} pointerEvents="box-none">
-        <View style={styles.topBar} pointerEvents="box-none">
+      <SafeAreaView style={styles.uiLayer} edges={['bottom']} pointerEvents="box-none">
+        {/* uiLayer는 position:absolute라 컨테이너 paddingTop을 무시하고 top:0에 붙는다 → topBar에 명시
+            top 여백(insets.top, 모달에서 0이면 47 폴백)을 줘 시스템 상태바와 안 겹치게. */}
+        <View style={[styles.topBar, { marginTop: Math.max(insets.top, 47) }]} pointerEvents="box-none">
           {/* 2026-07-20 실기기 감사 중 발견: 딥링크(pace://feed)로 바로 진입했을 때는 이 화면이
               네비게이션 스택의 첫 화면이라 router.back()이 되돌아갈 곳이 없어 "GO_BACK not handled"
               에러가 실제로 떴다(스크린샷으로 확인) — canGoBack()으로 방어. */}

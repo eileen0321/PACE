@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
+import { SessionTimePill } from '../../components/feed/SessionTimePill';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
@@ -96,6 +98,7 @@ export default function PaceFeedScreen() {
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   // 시간 상태바용 벽시계 — 30초마다 갱신(분 단위 표시라 그 이상 촘촘할 필요 없음).
   const [clock, setClock] = useState(() => formatClock(new Date()));
@@ -244,26 +247,17 @@ export default function PaceFeedScreen() {
         {/* uiLayer는 position:absolute라 컨테이너 paddingTop을 무시하고 top:0에 붙는다 → topBar에 명시
             top 여백(insets.top, 모달에서 0이면 47 폴백)을 줘 시스템 상태바와 안 겹치게. */}
         <View style={[styles.topBar, { marginTop: Math.max(insets.top, 47) }]} pointerEvents="box-none">
-          {/* 2026-07-20 실기기 감사 중 발견: 딥링크(pace://feed)로 바로 진입했을 때는 이 화면이
-              네비게이션 스택의 첫 화면이라 router.back()이 되돌아갈 곳이 없어 "GO_BACK not handled"
-              에러가 실제로 떴다(스크린샷으로 확인) — canGoBack()으로 방어. */}
-          <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}
-            hitSlop={12}
-            style={styles.iconBtn}
-          >
-            <Feather name="x" size={22} color="#FFFFFF" />
-          </Pressable>
-          <View style={styles.categoryPill}>
-            <Feather name="youtube" size={13} color="#FF4444" />
-            <Text style={styles.categoryText}>Pace Feed · Shorts · {queue.length}{isRefilling ? '+' : ''}</Text>
-          </View>
-          {/* 2026-07-21 사용자 지시: 유투브 웹뷰 우상단에 작은 "P" 앱 아이콘 → 탭하면 Pace 앱(Home 탭)으로
-              복귀(세션은 백그라운드 유지). Android는 overlay/index.tsx에 같은 P 아이콘을 넣었고, iOS는 이 /feed에. */}
+          {/* 2026-07-25 사용자 지시: 상단은 영상을 최대한 안 가리게 "앱 복귀 버튼 하나"만 남긴다.
+              X(닫기)와 "Pace Feed" 필은 영상 가리는 군더더기라 제거. 우상단 P만 유지 — 탭하면 Pace
+              앱(Home)으로 복귀(세션은 백그라운드 유지). 딥링크로 스택이 비어도 replace라 안전. */}
           <Pressable onPress={() => router.replace('/(tabs)/home')} hitSlop={12} style={styles.appIconBtn}>
+            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
           </Pressable>
         </View>
+
+        {/* 세션 남은시간을 "가끔" 살짝 보여주는 글래스 필(사용자 지시) — 계속 안 뜨고 주기적 페이드인. */}
+        <SessionTimePill endsAt={sessionEndsAt} />
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}
@@ -359,13 +353,14 @@ const styles = StyleSheet.create({
   // index.tsx의 같은 패턴(overlayLayer)은 이미 position:'absolute'로 올바르게 돼 있었다 — 이
   // 화면만 그 컨벤션이 빠져 있었음.
   uiLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.md },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, marginTop: spacing.sm },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: 'rgba(0,0,0,0.45)' },
   categoryPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 },
   categoryText: { color: '#FFFFFF', fontSize: 11, fontFamily: typography.bodyFontFamilyBold },
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
-  appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  appIconText: { color: '#FFFFFF', fontSize: 18, fontFamily: typography.displayFontFamily },
+  // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
+  appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
+  appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.
   statusBar: { alignItems: 'center', marginTop: spacing.sm },
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 5 },

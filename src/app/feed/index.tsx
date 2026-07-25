@@ -258,24 +258,8 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
-        {/* 시간 상태바(스펙 §1-E.3) — 웹뷰 몰입 중 시간 감각 유지용. 벽시계 + (세션 중이면) 남은시간. */}
-        <View style={styles.statusBar} pointerEvents="none">
-          <View style={styles.statusPill}>
-            <Feather name="clock" size={12} color="#FFFFFF" />
-            <Text style={styles.statusText}>{clock}</Text>
-            {sessionRemainingMin != null && (
-              <>
-                <View style={styles.statusDivider} />
-                <Feather name="watch" size={11} color={sessionRemainingMin <= 5 ? colors.warning : '#FFFFFF'} />
-                <Text style={[styles.statusText, sessionRemainingMin <= 5 && { color: colors.warning }]}>
-                  {sessionRemainingMin}
-                  {t('home.minUnit')}
-                </Text>
-              </>
-            )}
-          </View>
-        </View>
-
+        {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
+            시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}
         {usingScrape && (
           <View style={styles.fallbackBanner}>
             <Feather name="alert-triangle" size={12} color={colors.warning} />
@@ -301,20 +285,9 @@ export default function PaceFeedScreen() {
                 {isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}
               </Text>
             </Pressable>
-            {/* 2026-07-23 사용자 지시(하단 미디어 겹침 수정): 제목/채널은 유투브 웹뷰가 이미 표시하므로
-                Pace에선 제거(중복+겹침 원인). 컨트롤은 왼쪽·위로 올려 유투브 자체 UI(우측 액션/바닥
-                메타·다음영상바)와 안 겹치게 한다. */}
-            <View style={styles.controls}>
-              <Pressable onPress={goPrevious} hitSlop={10} style={styles.ctrlBtn}>
-                <Feather name="skip-back" size={20} color="#FFFFFF" />
-              </Pressable>
-              <Pressable onPress={() => setStatus((s) => (s === 'PAUSED' ? 'PLAYING' : 'PAUSED'))} hitSlop={10} style={styles.ctrlBtnMain}>
-                <Feather name={playing ? 'pause' : 'play'} size={22} color="#000000" />
-              </Pressable>
-              <Pressable onPress={goNext} hitSlop={10} style={styles.ctrlBtn}>
-                <Feather name="skip-forward" size={20} color="#FFFFFF" />
-              </Pressable>
-            </View>
+            {/* 2026-07-25 사용자 지시: 하단 미디어 컨트롤(이전/재생/다음)은 유튜브 웹뷰 자체 UI와
+                겹치고 실동작이 불안정해 제거 — 넘김은 화면 탭/볼륨키/BT 리모컨으로 충분. Focus Session
+                시작 배지만 남긴다. */}
           </View>
         )}
       </SafeAreaView>

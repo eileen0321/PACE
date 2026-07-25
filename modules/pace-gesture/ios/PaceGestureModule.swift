@@ -2,6 +2,7 @@ import ExpoModulesCore
 import AVFoundation
 import SoundAnalysis
 import ARKit
+import Vision
 
 // Pace iOS 핸즈프리 "다음 영상 넘기기" 트리거 모듈 (2026-07-20, 사용자 지시).
 // AirPods 블루투스 리모컨(구 useFeedRemoteControl.ios.ts)을 대체 — 두 가지 무접촉 신호로 넘긴다:
@@ -19,13 +20,15 @@ import ARKit
 public class PaceGestureModule: Module {
   private var snapDetector: SnapDetector?
   private var headDetector: HeadDetector?
+  private var waveDetector: WaveDetector?
 
   public func definition() -> ModuleDefinition {
     Name("PaceGesture")
 
-    Events("onSnap", "onHeadNod", "onError")
+    Events("onSnap", "onHeadNod", "onHandWave", "onError")
 
-    // mode: "snap" | "head" | "both" — 어떤 감지기를 켤지.
+    // mode: "snap" | "head" | "wave" | "both" — 어떤 감지기를 켤지. ("both" = 스냅+손짓, iOS 핸즈프리 2종.
+    // 고개짓(head)은 2026-07-23 "비현실적" 판단으로 제외돼 명시 요청 시에만.)
     // 2026-07-21(2차): 핑거스냅 재활성 (사용자 지시 "핑거스냅도 제대로"). 예전에 "쇼츠 소리에 스냅이
     // 묻힌다"고 껐지만, Android가 AcousticEchoCanceler로 해결한 것처럼 iOS도 **Voice Processing 내장
     // AEC**(setVoiceProcessingEnabled)로 스피커→마이크 에코(=재생 중인 쇼츠 소리)를 상쇄해 스냅만
@@ -33,7 +36,8 @@ public class PaceGestureModule: Module {
     AsyncFunction("start") { (mode: String, promise: Promise) in
       DispatchQueue.main.async {
         if mode == "snap" || mode == "both" { self.startSnap() }
-        if mode == "head" || mode == "both" { self.startHead() }
+        if mode == "wave" || mode == "both" { self.startWave() }
+        if mode == "head" { self.startHead() }
         promise.resolve(nil)
       }
     }
@@ -43,6 +47,8 @@ public class PaceGestureModule: Module {
       self.snapDetector = nil
       self.headDetector?.stop()
       self.headDetector = nil
+      self.waveDetector?.stop()
+      self.waveDetector = nil
     }
 
     // 고개짓 지원 기기인지(TrueDepth). JS가 UI 노출 여부 판단에 사용.
@@ -54,7 +60,26 @@ public class PaceGestureModule: Module {
     OnDestroy {
       self.snapDetector?.stop()
       self.headDetector?.stop()
+      self.waveDetector?.stop()
     }
+  }
+
+  // 손짓(전면카메라 "손 흔들기/휘젓기")으로 다음 넘김 — 안드로이드 PaceHandWaveDetector(MediaPipe) 대응.
+  // iOS는 Vision VNDetectHumanHandPoseRequest로 손 랜드마크를 얻고, "손이 카메라로 다가오는(=손 크기가
+  // 짧은 창 안에서 급격히 커지는)" 모션을 감지한다(안드로이드와 동일한 모션-기반 휴리스틱, 특정 포즈
+  // 분류 아님). Focus Session ON 동안만 켜져 게이팅됨(카메라 상시 구동 방지 — 배터리/프라이버시).
+  private func startWave() {
+    guard #available(iOS 14.0, *) else {
+      sendEvent("onError", ["kind": "wave", "message": "Hand pose needs iOS 14+"])
+      return
+    }
+    if waveDetector != nil { return }
+    let d = WaveDetector(
+      onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
+      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) }
+    )
+    waveDetector = d
+    d.start()
   }
 
   // 2026-07-23 사용자 지시 — 핑거스냅(AVAudioSession .playAndRecord + Voice Processing)이 블루투스
@@ -250,5 +275,126 @@ private final class HeadDetector: NSObject, ARSessionDelegate {
 
   func session(_ session: ARSession, didFailWithError error: Error) {
     onError("ARSession failed: \(error.localizedDescription)")
+  }
+}
+
+// MARK: - 손짓 감지 (Vision 손 포즈 + 전면카메라, 모션-기반 "다가오는 손")
+@available(iOS 14.0, *)
+private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+  private let session = AVCaptureSession()
+  private let queue = DispatchQueue(label: "pace.wave.camera")
+  private let request = VNDetectHumanHandPoseRequest()
+  private let onWave: () -> Void
+  private let onError: (String) -> Void
+
+  // 최근 (시각, 손 크기) 샘플 — 500ms 창에서 크기가 1.5배 이상 커지면 "다가오는 손짓"으로 판정.
+  private var samples: [(t: TimeInterval, size: CGFloat)] = []
+  private var lastFire: TimeInterval = 0
+  private var lastAnalyze: TimeInterval = 0
+  private let windowSec: TimeInterval = 0.5
+  private let growthRatio: CGFloat = 1.5
+  private let analyzeIntervalSec: TimeInterval = 0.15 // 안드로이드와 동일하게 ~150ms마다만 추론(배터리)
+
+  init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void) {
+    self.onWave = onWave
+    self.onError = onError
+    super.init()
+    request.maximumHandCount = 1
+  }
+
+  func start() {
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized:
+      queue.async { self.configureAndRun() }
+    case .notDetermined:
+      AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+        guard let self = self else { return }
+        guard granted else { self.onError("camera permission denied"); return }
+        self.queue.async { self.configureAndRun() }
+      }
+    default:
+      onError("camera permission denied")
+    }
+  }
+
+  private func configureAndRun() {
+    session.beginConfiguration()
+    session.sessionPreset = .vga640x480 // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감)
+    guard
+      let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+      let input = try? AVCaptureDeviceInput(device: device),
+      session.canAddInput(input)
+    else {
+      session.commitConfiguration()
+      onError("front camera unavailable")
+      return
+    }
+    session.addInput(input)
+
+    let output = AVCaptureVideoDataOutput()
+    output.alwaysDiscardsLateVideoFrames = true
+    output.setSampleBufferDelegate(self, queue: queue)
+    guard session.canAddOutput(output) else {
+      session.commitConfiguration()
+      onError("camera output unavailable")
+      return
+    }
+    session.addOutput(output)
+    session.commitConfiguration()
+    session.startRunning()
+  }
+
+  func stop() {
+    queue.async {
+      if self.session.isRunning { self.session.stopRunning() }
+      for i in self.session.inputs { self.session.removeInput(i) }
+      for o in self.session.outputs { self.session.removeOutput(o) }
+      self.samples.removeAll()
+    }
+  }
+
+  // AVCaptureVideoDataOutputSampleBufferDelegate
+  func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    let now = CFAbsoluteTimeGetCurrent()
+    guard now - lastAnalyze >= analyzeIntervalSec else { return } // 프레임 스로틀
+    lastAnalyze = now
+    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+    let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .leftMirrored, options: [:])
+    do {
+      try handler.perform([request])
+    } catch {
+      return // 개별 프레임 실패는 무시(다음 프레임에서 재시도)
+    }
+    guard let obs = request.results?.first else {
+      // 손이 안 보이면 창을 비워 오탐 방지(손이 사라졌다 다시 크게 나타나는 걸 성장으로 오인 X).
+      samples.removeAll()
+      return
+    }
+
+    // 손 "크기" = 손목 ↔ 중지뿌리(MCP) 거리(안드로이드와 동일 지표). 신뢰도 낮은 점은 버린다.
+    guard
+      let wrist = try? obs.recognizedPoint(.wrist), wrist.confidence > 0.3,
+      let mcp = try? obs.recognizedPoint(.middleMCP), mcp.confidence > 0.3
+    else { return }
+    let dx = wrist.location.x - mcp.location.x
+    let dy = wrist.location.y - mcp.location.y
+    let size = CGFloat((dx * dx + dy * dy).squareRoot())
+    guard size > 0 else { return }
+
+    let t = now
+    samples.append((t, size))
+    // 창(500ms) 밖 샘플 제거.
+    samples.removeAll { t - $0.t > windowSec }
+    guard samples.count >= 3 else { return }
+
+    // 창 안 최소 크기 대비 현재 크기가 growthRatio 이상이면 "손이 급히 다가옴 = 손짓"으로 판정.
+    let minSize = samples.map { $0.size }.min() ?? size
+    if size >= minSize * growthRatio {
+      guard now - lastFire > 0.8 else { return } // 디바운스
+      lastFire = now
+      samples.removeAll() // 연속 오탐 방지
+      DispatchQueue.main.async { self.onWave() }
+    }
   }
 }

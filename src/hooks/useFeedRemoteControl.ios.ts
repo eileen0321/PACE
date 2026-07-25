@@ -22,10 +22,10 @@ type Callbacks = {
 };
 
 type GestureModule = {
-  start(mode: 'snap' | 'head' | 'both'): Promise<void>;
+  start(mode: 'snap' | 'head' | 'wave' | 'both'): Promise<void>;
   stop(): void;
   isHeadGestureSupported(): boolean;
-  addListener(event: 'onSnap' | 'onHeadNod' | 'onError', listener: (payload: any) => void): { remove: () => void };
+  addListener(event: 'onSnap' | 'onHeadNod' | 'onHandWave' | 'onError', listener: (payload: any) => void): { remove: () => void };
 };
 
 export function useFeedRemoteControl(callbacks: Callbacks) {
@@ -49,6 +49,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     const subs = [
       mod.addListener('onHeadNod', () => cbRef.current.onNext()),
       mod.addListener('onSnap', () => cbRef.current.onNext()),
+      mod.addListener('onHandWave', () => cbRef.current.onNext()),
       mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)),
     ];
     return () => {
@@ -59,19 +60,19 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 핑거스냅(마이크+AEC) 시작, 꺼지면 정지. Focus Session 동안만 켜져 게이팅됨.
-  // 2026-07-21(2차): 고개짓(ARKit)은 실기기에서 잘 안 돼 제외(사용자 지시) → 스냅 단일. 스냅은
-  // Voice Processing AEC로 쇼츠 소리 마스킹을 해결해 재생 중에도 잡힌다. (headDetectActive 이름은
-  // 공유 피드 계약 유지를 위해 그대로 두되 의미는 "핸즈프리 감지 ON"으로 쓴다.)
+  // 감지 게이팅: active면 핑거스냅(마이크+AEC) + 손짓(전면카메라 Vision)을 함께 시작, 꺼지면 정지.
+  // Focus Session 동안만 켜져 게이팅됨(안드로이드가 setAutoMode에서 snap+handwave를 함께 켜는 것과 동일).
+  // 2026-07-26 사용자 지시 "안드로이드와 동일하게": 스냅 단일 → 'both'(스냅+손짓). 고개짓(ARKit)은
+  // "비현실적" 판단으로 계속 제외. (headDetectActive 이름은 공유 피드 계약 유지용, 의미는 "핸즈프리 ON".)
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('snap').catch((err) => {
+      mod.start('both').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 스냅 start 실패:', err);
+        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

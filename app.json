@@ -13,7 +13,8 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Pace listens for a finger snap (with echo cancellation of the video audio) to advance to the next Short hands-free.",
         "NSMotionUsageDescription": "Pace uses motion to detect when you place your phone face down, so it can measure your screen-free rest time (Flip Mode).",
-        "NSSupportsLiveActivities": true
+        "NSSupportsLiveActivities": true,
+        "NSCameraUsageDescription": "Pace watches for a hand wave over the front camera to advance to the next Short hands-free during a Focus Session. Video never leaves your device and is not recorded."
       },
       "icon": "./assets/ios-icon.png"
     },

@@ -8,13 +8,14 @@ import type { EventSubscription } from 'expo-modules-core';
 // 네이티브는 "신호 감지"만 한다: 핑거스냅(SoundAnalysis) → onSnap, 고개짓(ARKit) → onHeadNod.
 // "무엇을 할지"(다음/이전/토글)·디바운스·임계는 JS(useFeedRemoteControl.ios.ts)가 결정.
 type PaceGestureNativeModule = {
-  /** mode: 'snap' | 'head' | 'both' — 켤 감지기 선택. 마이크/카메라 권한을 내부에서 요청. */
-  start(mode: 'snap' | 'head' | 'both'): Promise<void>;
+  /** mode: 'snap' | 'head' | 'wave' | 'both'('both'=스냅+손짓) — 켤 감지기 선택. 마이크/카메라 권한 내부 요청. */
+  start(mode: 'snap' | 'head' | 'wave' | 'both'): Promise<void>;
   stop(): void;
   /** 고개짓(ARKit face)이 이 기기에서 지원되나(TrueDepth). 시뮬레이터/구형 기기는 false. */
   isHeadGestureSupported(): boolean;
   addListener(event: 'onSnap', listener: (payload: { confidence: number }) => void): EventSubscription;
   addListener(event: 'onHeadNod', listener: (payload: Record<string, never>) => void): EventSubscription;
+  addListener(event: 'onHandWave', listener: (payload: Record<string, never>) => void): EventSubscription;
   addListener(event: 'onError', listener: (payload: { kind: string; message: string }) => void): EventSubscription;
 };
 

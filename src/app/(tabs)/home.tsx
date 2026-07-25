@@ -11,6 +11,7 @@ import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useSleepInsightStore, formatSleepInsight } from '../../store/useSleepInsightStore';
+import { useFlipStore } from '../../store/useFlipStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
@@ -50,6 +51,7 @@ export default function HomeScreen() {
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
+  const restSeconds = useFlipStore((s) => s.putDownSeconds); // 오늘 쉬는시간(내려놓은 시간) — 히어로 카드에 표시
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
@@ -222,7 +224,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} />
+        <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} restSeconds={restSeconds} />
 
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>{t('home.choosePlatform')}</Text>

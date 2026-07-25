@@ -16,6 +16,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useUserStore } from '../../store/useUserStore';
 import { startSession, endSession } from '../../database/repositories/sessionsRepository';
+import type { SessionEndStatus } from '../../types/models';
 import { overlayService } from '../../services/platform';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -55,7 +56,8 @@ export default function PaceFeedScreen() {
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
-  const feedOpenedAtRef = useRef(Date.now()); // 취침감지 세션 기록용 시청 시작 시각
+  // 현재 "활성 시청 세그먼트" 시작 시각. null이면 카운트 안 함(백그라운드/flush 직후). 사용시간 측정용.
+  const watchSegmentStartRef = useRef<number | null>(Date.now());
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
@@ -70,18 +72,30 @@ export default function PaceFeedScreen() {
     if (isFaceDown) setStatus('PAUSED');
   }, [isFaceDown]);
 
+  // iOS 사용시간 측정(2026-07-26) — 안드로이드는 /overlay 세션이 시청 시간을 viewing_sessions에
+  // 기록하지만 iOS는 그동안 수면 감지 때만 기록해 정상 시청 시간이 todayUsageMinutes/일일한도에 전혀
+  // 안 잡히는 갭이 있었다. 이제 "피드가 포그라운드로 열려 있던 시간"을 세그먼트로 재서 이탈(언마운트)·
+  // 백그라운드 전환·수면 감지 때 flush한다(안드 오버레이 세션 지속시간 기록과 동일 개념). 백그라운드
+  // 시간은 세그먼트를 끊어(null) 제외하고, flush마다 세그먼트를 닫아 이중 집계를 막는다.
+  const flushWatchTime = (status: SessionEndStatus) => {
+    const startedAt = watchSegmentStartRef.current;
+    watchSegmentStartRef.current = null; // 세그먼트 종료 — 재개(active 복귀) 전까지 카운트 안 함
+    if (startedAt == null) return;
+    const uid = useUserStore.getState().user?.id;
+    const durationSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    if (!uid || durationSeconds < 3) return; // 3초 미만(즉시 이탈/오탐)은 무시
+    startSession(uid, 'youtube')
+      .then((id) => endSession(id, durationSeconds, 0, status))
+      .catch(() => {});
+  };
+
   // 취침 감지 강제 종료(스펙 §4-B) — 피드 시청 중 잠들면(무진동 지속, 이어폰 탈착 시 단축) 영상을 멈추고
   // 검은 풀스크린으로 덮어 밤새 재생을 막는다. iOS는 화면을 강제로 잠글 API가 없어(스펙 문서화) 영상
   // 정지 + WebView를 가리는 블랙아웃이 실질적 최선. DB엔 sleep_detected로 기록(홈 "…에 잠드셨습니다" 인사이트).
   const onSleepDetected = () => {
     setStatus('PAUSED');
     setSleepBlackout(true);
-    if (userId) {
-      const durationSeconds = Math.max(0, Math.round((Date.now() - feedOpenedAtRef.current) / 1000));
-      startSession(userId, 'youtube')
-        .then((id) => endSession(id, durationSeconds, 0, 'sleep_detected'))
-        .catch(() => {});
-    }
+    flushWatchTime('sleep_detected'); // 잠들기까지의 시청 시간을 sleep_detected로 기록(세그먼트도 닫힘)
   };
   // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지(정지/블랙아웃 중엔 불필요).
   useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected });
@@ -123,10 +137,20 @@ export default function PaceFeedScreen() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') {
+        flushWatchTime('completed');     // 앱을 벗어나면 그때까지의 시청 시간을 기록(세그먼트 닫힘)
         setIsAutoMode((prev) => (prev ? false : prev));
+      } else {
+        watchSegmentStartRef.current = Date.now(); // 복귀 시 새 세그먼트 시작(백그라운드 시간은 제외)
       }
     });
     return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 피드 이탈(언마운트) 시 잔여 시청 시간 기록 — 이걸로 "일반 시청"도 todayUsageMinutes에 잡힌다.
+  useEffect(() => {
+    return () => { flushWatchTime('completed'); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Focus Session = 시간 제한 자동 진행(2026-07-20 사용자 지시, PACE_ARCHITECTURE.md "Focus Session =

@@ -174,12 +174,24 @@ private final class SnapDetector: NSObject, SNResultsObserving {
       self.analyzer = analyzer
 
       let request = try SNClassifySoundRequest(classifierIdentifier: .version1)
-      // 짧은 창으로 순간적 스냅을 잘 잡도록(기본 1.5s → 0.5s). windowDuration/overlapFactor는 iOS 15+.
-      // windowDuration 0.5s = 응답성/정확도 균형(Apple 권장), overlapFactor 0.75 = 창을 촘촘히 겹쳐
-      // 순간적 스냅이 어느 한 창의 중앙 근처에 반드시 잡히게(0.5보다 놓침 감소). Focus Session 중에만
-      // 도는 기능이라 늘어난 연산은 감수. (웹 리서치: overlap↑ = 정확도↑·연산↑.)
+      // ⚠️ 2026-07-26 실기기 크래시 수정(SIGABRT): windowDuration에 분류기 허용 범위 밖 값(0.5s)을
+      // 넣으면 SoundAnalysis가 NSException을 던지는데, Swift try/catch는 ObjC NSException을 못 잡아
+      // 앱이 죽었다(크래시 로그 Pace-…-025855.ips에서 확인). windowDurationConstraint로 유효 범위를
+      // 조회해 0.5s에 가장 가까운 "안전한" 값으로만 설정한다. overlapFactor(0~1)는 0.75로 안전.
       if #available(iOS 15.0, *) {
-        request.windowDuration = CMTimeMakeWithSeconds(0.5, preferredTimescale: 48_000)
+        let target = 0.5
+        switch request.windowDurationConstraint {
+        case .enumeratedDurations(let durations) where !durations.isEmpty:
+          if let best = durations.min(by: { abs(CMTimeGetSeconds($0) - target) < abs(CMTimeGetSeconds($1) - target) }) {
+            request.windowDuration = best
+          }
+        case .durationRange(let range):
+          let lo = CMTimeGetSeconds(range.start), hi = CMTimeGetSeconds(range.end)
+          let clamped = min(max(target, lo), hi)
+          request.windowDuration = CMTimeMakeWithSeconds(clamped, preferredTimescale: 48_000)
+        default:
+          break // 알 수 없는 제약이면 기본 windowDuration 그대로(안전)
+        }
         request.overlapFactor = 0.75
       }
       try analyzer.add(request, withObserver: self)

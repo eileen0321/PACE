@@ -136,11 +136,16 @@ export default function PaceFeedScreen() {
   // 무관하게(그건 별개 입력장치일 뿐) 앱 자체의 포그라운드 상태만 본다.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') {
+      // ⚠️ 2026-07-26 크래시/버그 수정: 예전엔 state !== 'active'(즉 'inactive'도 포함)면 autoMode를
+      // 꺼버렸는데, 카메라/마이크 권한 팝업이 뜨는 순간 앱이 'inactive'가 되어 "세션 켜자마자 다시
+      // 꺼짐"이 발생했다. 실제로 앱을 벗어나는 건 'background'뿐이므로 거기서만 끄고 flush한다.
+      if (state === 'background') {
         flushWatchTime('completed');     // 앱을 벗어나면 그때까지의 시청 시간을 기록(세그먼트 닫힘)
         setIsAutoMode((prev) => (prev ? false : prev));
-      } else {
-        watchSegmentStartRef.current = Date.now(); // 복귀 시 새 세그먼트 시작(백그라운드 시간은 제외)
+      } else if (state === 'active') {
+        // background로 세그먼트가 닫혔을(null) 때만 새로 시작 — 'inactive'(권한 팝업 등)에서 돌아온
+        // 경우엔 세그먼트가 살아 있으므로 건드리지 않아 그 사이 시청 시간을 잃지 않는다.
+        if (watchSegmentStartRef.current == null) watchSegmentStartRef.current = Date.now();
       }
     });
     return () => sub.remove();

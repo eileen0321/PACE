@@ -1337,8 +1337,21 @@ Time 삭제 후 iOS 피드에 안드로이드 오버레이가 하던 기능들�
 - **#2 EAS 시크릿**: EAS 클라우드 빌드 쓸 거면 `EXPO_PUBLIC_API_BASE_URL/RC_IOS_KEY/RC_ANDROID_KEY/
   GOOGLE_WEB_CLIENT_ID/GOOGLE_IOS_CLIENT_ID`를 `eas secret:create`로 등록해야 함(.env는 gitignore라 EAS에
   안 올라감). 로컬 빌드(expo run)는 .env로 동작하니 무관.
-- **#5 [MEDIUM] backendSync**가 서버 accepted 수 무시하고 전부 markSynced(`backendSync.ts:38-39`) →
-  서버가 일부 거부 시 그 세션 영구 유실. 엔드포인트가 accepted id 반환하도록.
-- **GAP4** iOS 볼륨키 리모컨이 `isBluetoothConnected`(항상 false 스텁)에 게이팅돼 영영 비활성 — AVAudioSession
-  BT 라우트 감지로 isConnected 채우거나 게이트 제거 필요(사용자는 "BT 연결시만" 원함 → 감지 구현이 정답).
-- ⚠️ **진단 로그**(VEV/domlog/MUTEBLOCKS/PACEWV/PACEWAVE) 제출 전 제거.
+- ~~**#5 backendSync**~~ ✅ 해결(Mac). `pushSessions` 반환 `synced`가 보낸 수보다 적으면 markSynced
+  스킵→다음 sync 전량 재시도(세션 id UUID라 서버 upsert로 중복 무시). co-session도 병렬 수정→dc97f9f 머지.
+- ~~**GAP4** iOS 볼륨키 BT 게이팅~~ ✅ 해결(Mac). `PaceGestureModule.swift`에 `isBluetoothAudioConnected`
+  Function 노출(AVAudioSession.currentRoute BT 라우트 감지) + `feed/index.tsx`가 마운트/AppState/5s 폴로
+  실제 감지. "BT 연결시만" 요구 충족.
+- **#2 EAS 시크릿**은 여전히 사장님 몫(위 참조, EAS 클라우드 빌드 쓸 때만).
+- ⚠️ **진단 로그**(VEV/domlog/MUTEBLOCKS/PACEWV/PACEWAVE) 제출 전 제거 — 사장님이 피드/음소거 수정
+  기기 확인 후 클린빌드 예정(아직 제거 안 함).
+
+**🌙 오늘밤 최종 상태(Mac, 자동):**
+- HEAD=`dc97f9f`(local==origin). co-session #1 안드 블로커(7815a7c)까지 머지 완료. tsc 0 errors.
+- co-session이 backendSync/feed/Swift 3파일을 병렬 수정했으나 **자동머지 클린**(Swift `Function`+`private func`
+  각 1개, 중복선언 없음 확인). 머지 최종본 Release 빌드 **Build Succeeded, 0 errors**.
+- ⚠️ 기기 설치는 "Connecting to: eileen의 iPhone"에서 대기 — 밤이라 폰 잠금/절전. 바이너리는 DerivedData에
+  완성됨. **아침에 폰 깨우고 앱 재실행(또는 `npx expo run:ios --device … --configuration Release` 재실행)하면
+  설치됨.** 원격 잠금해제 불가라 여기까지가 한계.
+- 아침 기기 확인 항목: 피드 첫영상 소리컷/음소거아이콘, 손짓(SESSION ON 상태서 카메라 권한), 스플래시 번쩍,
+  구글 로그인, BT볼륨키 리모컨, 수면감지(밤새 테스트).

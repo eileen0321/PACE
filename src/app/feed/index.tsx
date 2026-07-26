@@ -14,9 +14,12 @@ import { useSleepGuard } from '../../hooks/useSleepGuard';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useStatsStore } from '../../store/useStatsStore';
+import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useUserStore } from '../../store/useUserStore';
 import { startSession, endSession } from '../../database/repositories/sessionsRepository';
+import { notifyLowTime, notifyLimitReached, notifyBreakReminder } from '../../services/notifications';
 import type { SessionEndStatus } from '../../types/models';
 import { overlayService } from '../../services/platform';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -49,6 +52,9 @@ export default function PaceFeedScreen() {
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const sleepTimerMinutes = useSettingsStore((s) => s.settings.sleepTimerMinutes); // iOS 슬립 타이머(안드 parity)
   const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
+  const breakIntervalMinutes = useSettingsStore((s) => s.settings.breakIntervalMinutes); // 브레이크 리마인더(안드 parity)
+  const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes); // 세션 시작 전 오늘 사용시간(일일한도 계산)
+  const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
@@ -114,10 +120,45 @@ export default function PaceFeedScreen() {
   // 넘김(advance)엔 playing이 안 바뀌어 타이머가 리셋되지 않는다(=세션 누적 시간 기준).
   useEffect(() => {
     if (!playing || sleepBlackout || !sleepTimerMinutes || sleepTimerMinutes <= 0) return;
-    const id = setTimeout(() => onSleepDetected(), sleepTimerMinutes * 60 * 1000);
+    const id = setTimeout(() => {
+      // 슬립 타이머 만료 = 사용자가 설정한 카운트다운(수면감지와 다른 별개 사유) → 'sleep_timer_expired'로 기록.
+      setStatus('PAUSED');
+      setSleepBlackout(true);
+      flushWatchTime('sleep_timer_expired');
+    }, sleepTimerMinutes * 60 * 1000);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, sleepBlackout, sleepTimerMinutes]);
+
+  // ── iOS 피드 세션 tick (안드로이드 overlay/index.tsx의 60초 tick과 동등, 2026-07-27 패리티 감사 반영) ──
+  // Screen Time 삭제 후 iOS엔 "일일한도 강제 종료 / 브레이크 리마인더 / 저시간(5·1분) 알림"이 전부 빠져
+  // 있었다(Home 게이트는 '시작'만 막을 뿐 진행 중 세션은 무한). 안드로이드가 네이티브 tick으로 하던 걸
+  // 여기서 JS로 동일하게 한다. 재생 중일 때만 카운트, 정지/블랙아웃이면 끈다. 일일한도 도달 시 정지+홈 복귀
+  // (홈의 LimitReachedOverlay가 연장 UX 담당 — 안드로이드가 세션 종료 후 한도화면 띄우는 것과 동등).
+  useEffect(() => {
+    if (!playing || sleepBlackout) return;
+    const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes;
+    let watchedThisSession = 0; // 분
+    let nextBreakIn = breakIntervalMinutes; // 다음 브레이크까지 남은 분
+    const id = setInterval(() => {
+      watchedThisSession += 1;
+      const remaining = effectiveDailyLimit - todayUsageMinutes - watchedThisSession;
+      if (remaining === 5 || remaining === 1) notifyLowTime(remaining).catch(() => {}); // 저시간 알림
+      if (breakIntervalMinutes > 0) { // 브레이크 리마인더
+        nextBreakIn -= 1;
+        if (nextBreakIn <= 0) { notifyBreakReminder().catch(() => {}); nextBreakIn = breakIntervalMinutes; }
+      }
+      if (remaining <= 0) { // 일일 한도 도달 → 종료 + 홈 복귀
+        notifyLimitReached().catch(() => {});
+        setStatus('PAUSED');
+        flushWatchTime('daily_limit_reached');
+        clearInterval(id);
+        if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home');
+      }
+    }, 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, sleepBlackout, dailyLimitMinutes, bonusMinutes, todayUsageMinutes, breakIntervalMinutes]);
 
   // 2026-07-26 사용자 지시 "안드로이드와 동일하게": 안드로이드는 Session ON일 때 감지기(스냅/손짓)를
   // 한꺼번에 켠다(PaceOverlayService.setAutoMode → start snap/handwave). iOS도 동일하게 Focus Session

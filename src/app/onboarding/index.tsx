@@ -75,7 +75,9 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'center', gap: spacing.xl },
   headerBlock: { alignItems: 'center', gap: spacing.xs, marginBottom: spacing.sm },
-  title: { fontSize: 22, fontFamily: typography.displayFontFamily, color: '#FFFFFF', letterSpacing: -0.3, textAlign: 'center' },
+  // 2026-07-26 사용자 지시 — 시선이 바로 아래 목록으로 떨어진다는 지적, 제목을 20~30% 키우고
+  // 소제목은 한 줄로 줄임(22→28, 부제 문구도 짧게 교체).
+  title: { fontSize: 28, fontFamily: typography.displayFontFamily, color: '#FFFFFF', letterSpacing: -0.3, textAlign: 'center' },
   subtitle: { fontSize: 13.5, lineHeight: 19, fontFamily: typography.bodyFontFamily, color: 'rgba(255,255,255,0.65)', textAlign: 'center', maxWidth: '85%', alignSelf: 'center' },
   rows: { gap: spacing.lg },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },

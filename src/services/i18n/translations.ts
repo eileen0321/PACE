@@ -246,16 +246,16 @@ export const translations = {
 
     onboarding: {
       overlayTitle: 'Rest, Earn, Watch',
-      overlaySubtitle: 'PACE turns your rest time into credits — a small reward for taking a break.',
+      overlaySubtitle: 'Rest fuels your watch time.',
       row1Title: 'Rest tracking',
-      row1Desc: 'Flip your phone face-down and rest time gets recorded.',
+      row1Desc: 'Flip your phone over and rest time is recorded.',
       row2Title: 'Earn credits',
       row2Desc: 'Rest time earns you credits.',
       row3Title: 'Keep watching',
       row3Desc: 'Spend credits to keep watching.',
       row4Title: 'Sleep Mode',
-      row4Desc: 'Shorts wind down automatically after your set time.',
-      tapToContinue: 'Tap anywhere to continue',
+      row4Desc: 'Keeps your late-night watching in check.',
+      tapToContinue: 'Tap to get started',
     },
 
     paywall: {
@@ -546,15 +546,15 @@ export const translations = {
 
     onboarding: {
       overlayTitle: '쉬고, 모으고, 이어보기',
-      overlaySubtitle: '쉬는 만큼 크레딧으로 돌려드려요 — 잠깐의 휴식에 드리는 작은 보상이에요.',
+      overlaySubtitle: '휴식이 시청을 만듭니다.',
       row1Title: '휴식 측정',
-      row1Desc: '폰 화면이 바닥을 향하게 뒤집어 놓으면 휴식 시간이 기록됩니다.',
+      row1Desc: '폰을 뒤집어 두면 휴식 시간이 기록됩니다.',
       row2Title: '크레딧 적립',
       row2Desc: '휴식 시간만큼 크레딧을 획득합니다.',
       row3Title: '연속 시청',
-      row3Desc: '크레딧을 사용해 시청을 이어갈 수 있습니다.',
+      row3Desc: '크레딧으로 시청을 이어갈 수 있습니다.',
       row4Title: '취침 모드',
-      row4Desc: '설정한 시간 이후 쇼츠 시청을 줄여줍니다.',
+      row4Desc: '늦은 밤 시청 습관을 관리합니다.',
       tapToContinue: '아무 곳이나 탭하면 계속돼요',
     },
 

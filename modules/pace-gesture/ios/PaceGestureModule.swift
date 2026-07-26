@@ -376,6 +376,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastAnalyze: TimeInterval = 0
   private var logTick = 0
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
+  private var armed = true // 과발화 방지: 발화 후 손이 프레임에서 빠져야(no-hand/작아짐) 다시 true
   private let windowSec: TimeInterval = 0.6
   private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
@@ -502,6 +503,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     guard let obs = obsOpt else {
       samples.removeAll()
+      armed = true // 손이 프레임에서 빠짐 → 재무장(다음 손짓 1회 허용)
       if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
       return
     }
@@ -519,17 +521,21 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let bw = maxX - minX, bh = maxY - minY
     let size = CGFloat((bw * bw + bh * bh).squareRoot())
     if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f pts=%d n=%d", Double(size), xs.count, samples.count + 1)) } // 크기+점수
-    guard size >= minHandSize else { return } // 너무 작으면(먼 배경) 무시 — 안드 MIN_HAND_SIZE=0.03
+    guard size >= minHandSize else { armed = true; return } // 너무 작으면(먼 배경/손 빠짐) 무시 + 재무장
 
     let t = now
     samples.append((t, size))
     samples.removeAll { t - $0.t > windowSec } // 창(500ms) 밖 제거
     guard samples.count >= 2, let oldest = samples.first else { return }
 
-    // 창 안 최고령(가장 오래된) 크기 대비 현재 크기가 growthRatio 이상 = "손이 급히 다가옴"(안드와 동일).
-    if size >= oldest.size * growthRatio {
+    // 창 안 최고령(가장 오래된) 크기 대비 현재 크기가 growthRatio 이상 = "손이 급히 다가옴".
+    // ⚠️ 과발화 방지(사용자 "한 손짓에 여러 번 넘어감"): refractory만으로는 부족 — 손이 프레임에 계속
+    //    있으면 창이 갱신되며 반복 발화됨. "발화 후 손이 한 번 빠져야(no-hand/작아짐) 재무장(armed)"
+    //    게이트를 둬 한 제스처=한 번만 넘어가게 한다.
+    if armed && size >= oldest.size * growthRatio {
       guard now - lastFire > refractorySec else { return }
       lastFire = now
+      armed = false // 손이 빠질 때까지 재발화 금지
       samples.removeAll() // 트리거 후 이력 초기화
       onDiag("👋 WAVE!")
       DispatchQueue.main.async { self.onWave() }

@@ -35,6 +35,15 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
   cbRef.current = callbacks; // 매 렌더 최신 콜백 유지(stale closure 방지)
   const modRef = useRef<GestureModule | null>(null);
   const runningRef = useRef(false);
+  const lastNextRef = useRef(0);
+  // 과발화 안전망(사용자 "한 손짓에 여러 번 넘어감"): 네이티브 재무장 게이트에 더해, JS에서도 직전
+  // 넘김 후 1.5초 내 재호출은 무시한다(연속/누적 이벤트가 여러 영상을 순삭하는 것 방지).
+  const fireNext = () => {
+    const nowMs = Date.now();
+    if (nowMs - lastNextRef.current < 1500) return;
+    lastNextRef.current = nowMs;
+    cbRef.current.onNext();
+  };
 
   // 마운트: 네이티브 모듈 로드 + 이벤트 리스너 등록. 감지 start는 아래 headDetectActive effect가 제어.
   // (로컬 Expo 모듈은 상대경로 require가 Metro에서 안 잡혀 requireNativeModule을 직접 쓴다. 마운트
@@ -49,9 +58,9 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     }
     modRef.current = mod;
     const subs = [
-      mod.addListener('onHeadNod', () => cbRef.current.onNext()),
-      mod.addListener('onSnap', () => cbRef.current.onNext()),
-      mod.addListener('onHandWave', () => cbRef.current.onNext()),
+      mod.addListener('onHeadNod', () => fireNext()),
+      mod.addListener('onSnap', () => fireNext()),
+      mod.addListener('onHandWave', () => fireNext()),
       mod.addListener('onDiag', (p) => cbRef.current.onDiag?.(p?.kind ?? '', p?.text ?? '')),
       mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)),
     ];

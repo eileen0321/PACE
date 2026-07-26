@@ -35,7 +35,12 @@ export async function pushUnsyncedSessions(userId: string): Promise<void> {
     status: s.status,
   }));
 
-  await statsApi.pushSessions(payload);
+  // 감사 발견(#5): 예전엔 반환값을 무시하고 무조건 전부 markSynced 했다 — 서버가 일부만 수락(malformed/
+  // 중복 거부로 synced < 보낸 수)하면 거부된 세션이 로컬에서 synced로 표시돼 영영 재전송 안 돼 통계가
+  // 조용히 유실됐다. 서버가 어떤 id를 거부했는지 안 주므로, "전부 수락(synced === 보낸 수)"일 때만 마킹하고
+  // 아니면 마킹하지 않아 다음 sync에서 전부 재시도한다(세션 id는 UUID라 서버가 이미 받은 건 upsert로 무시).
+  const result = await statsApi.pushSessions(payload);
+  if (result && typeof result.synced === 'number' && result.synced < payload.length) return;
   await markSynced(sessions.map((s) => s.id));
 }
 

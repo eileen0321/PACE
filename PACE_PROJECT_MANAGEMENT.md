@@ -1068,6 +1068,79 @@ Feature Guide" → 이 화면 뒤에 `BluetoothOnboardingSheet`(진짜 Auto Mode
   onboarding 종료(순수 정보 제공). 진짜 프리미엄 게이팅+실토글은 `BluetoothOnboardingSheet`
   하나(홈에서 세션 시작 직전에만 뜸)에만 남아있음 — 중복 진입점 제거로 오히려 더 명확해짐.
 - 1페이지 하단 문구 "Tap to get started"(`onboarding.tapToContinue`) → **"Next"/"다음"**으로 변경
+
+### 2026-07-27 새벽 — Windows 세션 (사장님 취침 전 마지막 정리 + 전수 테스트, 요약)
+
+사장님이 "밤새 전수 테스트해, 중간중간 git 올려서 맥이랑 논의하고" 지시 후 취침. 실기기(Galaxy Note20)
+기준으로 아래 전부 라이브 재현·수정·검증 완료, 커밋/푸시 완료(맥 세션과 워킹트리 공유 중이라 서로의
+변경이 상대 커밋에 함께 실림 — 정상, 유실 아님):
+
+**오늘 밤 최대 발견 — 오버레이/자동재생/손짓이 전부 한 원인으로 동시에 죽었었음**: 재빌드를 반복하는
+사이 `PaceAccessibilityService`가 시스템에 의해 조용히 비활성화됨(재설치마다 반복되는 이미 알려진
+패턴, `[[feedback_reenable_accessibility_after_reinstall]]` 메모리 참고 — 이번이 세 번째 반복이라
+그 메모리에 재발 방지 문구 추가함). 이거 하나가: (1) 접근성 기반 실시간 포그라운드 감지가 죽어
+`ForegroundAppWatcher`(UsageStatsManager 폴링)만 남고, (2) 스와이프 디스패치(제스처든 볼륨키든
+전부 접근성 경유)가 전부 실패하는 상태를 동시에 만들었음.
+
+**추가로 발견한 진짜 코드 버그(접근성 복구와 별개)**: `ForegroundAppWatcher.kt`의 `STALENESS_MS`가
+6초였는데, 이벤트 기반 추적(77-80행)은 이미 그 자체로 완전해서(진짜 이탈만 갱신) 이 6초 타임아웃은
+사실 "가만히 한 영상을 6초 넘게 보기만 해도 오버레이가 사라지는" 오탐만 유발하고 있었음 — 300초로
+완화. **실기기 60초 무조작 방치로 직접 재현 검증**(수정 전이었다면 진작 사라졌을 상황에서 계속
+떠 있음 확인).
+
+**빌드 관련**: `PaceOverlayModule.kt`의 `start()`가 위치 인자 9개로 늘어나 Expo Modules API 위치 인자
+한도(8개)를 넘겨 컴파일이 깨져있던 것을 `StartSessionOptions : Record` 객체 하나로 묶어 해결(향후
+옵션이 더 늘어도 같은 패턴 유지하면 재발 안 함). Metro 캐시 손상("Unable to deserialize cloned
+data")으로 Metro 자체가 멈춰있던 것도 발견해 재시작으로 해결 — 이번에도 "앱이 멈췄다"의 진짜 원인은
+앱이 아니라 Metro였음(과거 RC 로그 스팸 건과 같은 클래스의 사고).
+
+**Google 로그인**: 실기기 SHA-1이 잘못 전달됐던 최초 진단을 정정(전역 디버그 키스토어가 아니라
+`android/app/debug.keystore` 프로젝트 전용 키스토어 사용 — `build.gradle:102`), 올바른 SHA-1
+(`5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`)로 재확인 후에도 실패해 로그로
+추적한 결과 Play Services 자체의 내부 브로커 오류(`Unknown calling package name
+'com.google.android.gms'`, 기기 캐시 문제)였음 — `pm clear com.google.android.gms`로 해결(사장님
+승인 하에 진행). **부작용**: 이 클리어로 기기의 YouTube 로그인도 풀림 — Pace 문제 아니고 기기에서
+재로그인 필요(다음 세션 확인 사항으로 남김). 이후 구글 로그인 자체는 성공했으나 `__DEV__` 빌드가
+`EXPO_PUBLIC_API_BASE_URL`이 아니라 별도 `EXPO_PUBLIC_API_BASE_URL_DEV`를 쓰는데 이게 `.env`에
+없어 `localhost:8080`(실기기에서 닿을 수 없음)으로 폴백하던 것도 발견해 Railway URL로 채움.
+
+**UX 감사 대화 중 발견한 실제 버그**: Settings→Auth 로그인 후 무조건 `router.replace('/(tabs)/home')`
+해서 Settings에서 로그인해도 Home으로 튕기고 화면 전환도 번쩍였음 — 어디서 왔든 그냥 `router.back()`
+으로 정정(이 화면은 항상 push로만 진입해 콜드스타트 경로가 아님, `src/app/index.tsx` 확인). 로그아웃
+시 `user`를 먼저 `null`로 비웠다가 게스트 로그인 네트워크 왕복을 기다리는 구조라 "-"가 잠깐 노출됐던
+것도 로컬 게스트를 먼저 낙관적으로 반영하도록 `useUserStore.ts` 수정.
+
+**Focus 탭/Extend Time 정책 이슈**: Focus 탭의 "Extend Time"(+10/20/30m)이 광고/프리미엄 게이팅 전혀
+없이 `useDailyBonusStore.addMinutes`를 무제한 호출해 Daily Limit을 완전히 무력화하는 구멍이라 삭제.
+**주의**: 이후 별도 감사에서 Home `LimitReachedOverlay`/오버레이 펼침카드의 비슷한 "+5·10·20·30분"
+연장도 같은 기준으로 버그로 오판했었는데, 사장님이 정정(위 §6 "2026-07-27" 항목 참고) — **Daily
+Limit 자유 연장은 의도된 설계**이니 다시 건드리지 말 것. Focus Session 자체의 연장(`FocusSessionExtendModal`)
+만 게이팅 대상.
+
+**IA 재구성(사장님 지시)**: Settings "기본 세션 설정" 5항목을 "세션 길이"(Focus Session 지속시간+
+Daily Limit)/"휴식 & 수면 감지"(휴식 알림+취침 타이머+수면 감지 시간)로 분리, "고급 취침모드"→
+"수면 감지 시간"으로 개명(민감도라는 이름도 거창하다는 지적으로 재수정), "기본" 접두어 전부 제거.
+Weekly Attendance를 Settings→Focus로 이동("매일 확인하는 상태"라 Focus 성격에 더 맞음). 안드로이드
+보호 서비스는 `__DEV__`로 감싸 상용 빌드에서 숨기고 맨 아래로 이동(기능은 유지 — 오늘 밤 사고들의
+자가진단 경로라 개발 중엔 필요). Focus 탭에 손짓/볼륨키(플랫폼 공용, `PaceVolumeKeyModule.swift`
+확인함) 핸즈프리 상태+토글 신규 추가. Home 하단 빠른 설정 3번째 칸을 Sleep Timer→Focus Session
+지속시간으로 교체. Home 알림 섹션에서 한도 도달 알림(이미 항상 뜨는 전체화면 차단과 중복)/휴식 알림
+(간격 설정과 이중 스위치) 토글 제거, 남은시간 알림만 유지. Focus 탭의 죽은 "Healthy Pause/Mindful"
+(예전 30편 한도 시스템 의존, 그 시스템 삭제 후 트리거 자체가 없어짐) 완전 삭제.
+
+**비주얼**: `AppHeader`(공용, 전 탭 영향) 타이틀 24→32px + 여백 확대. `SessionHeroCard`의
+"Watched Today"(2줄 스택) vs "REST"(1줄)가 `alignItems:center` 기준으로 안 맞던 것을 REST도
+라벨+값 2줄 구조로 맞추고 `flex-start` 정렬로 수정. `home.tsx`의 섹션 라벨이 카드(24px 인셋)와
+다르게 28px로 어긋나 있던 것 통일, 섹션 라벨 폰트도 Settings(12px)와 다르게 10px이던 것 통일.
+"흰색 하단 네비바"는 재현 시도 결과 **일시적 시스템 상태였음**(재실행 후 재현 안 됨, 네이티브 테마
+자체는 이미 올바르게 고정돼 있음 확인 — styles.xml의 NoActionBar+transparent 유지).
+
+**전수 테스트(취침 직전)**: 실제 세션 시작→오버레이 알약 표시(FOCUS ON, 카운트다운 정상 44→27분
+실측)→YouTube 강제 이탈 후 60초 무조작 방치(오버레이 생존 확인, staleness 수정 검증)→앱 복귀 시
+Home으로 정상 리다이렉트 + 세션 유지(黑화면 없음, Active 배지 확인)→Stats/Settings/Focus 탭 전부
+정상 렌더 확인→Android 보호 서비스 4항목 전부 정상("연결됨"/"실행 중"). **남은 이슈**: YouTube
+자체 로그인 깨짐(Pace 문제 아님, 기기에서 재로그인 필요), RC 오퍼링 미설정(기존 D7 블로커, 무해한
+반복 경고만 남음).
   (이제 항상 2페이지로 이어지는 1단계라 "시작하기"는 부정확했음). 2페이지 전용 `onboarding.
   tapToFinish`("Tap to finish"/"탭하여 완료") 신규 추가.
 

@@ -6,7 +6,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
-import { getOrphanedSessions, closeOrphanedSession, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
+import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
 import { useSessionStore } from '../store/useSessionStore';
 import { useTimerStore } from '../store/useTimerStore';
@@ -209,6 +209,48 @@ export default function RootLayout() {
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
+
+  // 2026-07-27 밤 맥 세션 전수감사 발견(#1 블로커, Windows 인계) — overlay/index.tsx의
+  // keepSessionAliveOnUnmountRef가 "화면만 Home으로 바꾸고 세션은 유지"하려고 네이티브 종료 호출을
+  // 건너뛰는데, 그 unmount cleanup 안에 있던 DB 세션 종료(endSession) 호출까지 같이 건너뛰게
+  // 만들어버렸다. 그 결과 리다이렉트가 걸릴 때마다(=거의 매 세션 시작 직후) 그 세션의 viewing_sessions
+  // 행이 duration_seconds=0/ended_at=NULL로 영원히 열린 채 남고, getTodayUsageMinutes()는 이 값을
+  // 그대로 합산하므로 실사용 시간이 전혀 반영 안 됐다 — remainingMinutes가 항상 가득 차 있어서
+  // Daily Limit이 프로세스가 죽지 않는 한(=정상 사용 내내) 사실상 무력화된 상태였다(직접 실기기로
+  // 재현 확인: Stats "이번주 시청"이 세션 진행 중 계속 그대로였음, 오버레이 알약 카운트다운은
+  // 정상이었는데도). 위 콜드스타트 전용 orphan 정리(overlays consumeExpired 1회)와 별개로,
+  // 포그라운드로 돌아올 때마다 "네이티브가 진짜로 세션을 끝냈다"는 신호를 확인해서 그 순간 열려있는
+  // 세션 행을 정확한 사유/경과시간으로 닫는다. nativeExpiry가 null이면(=아직 진짜로 안 끝남) 절대
+  // 손대지 않는다 — 콜드스타트 블록과 달리 여기선 "프로세스가 죽었을 가능성"을 가정하지 않으므로,
+  // 아직 유효하게 진행 중인 세션을 여기서 성급하게 닫으면 안 된다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const closeSessionOnNativeExpiry = async () => {
+      const userId = useUserStore.getState().user?.id;
+      if (!userId) return;
+      try {
+        const nativeExpiry = await overlayService.consumeExpired().catch(() => null);
+        if (!nativeExpiry) return; // 아직 진짜로 안 끝남 — 콜드스타트 정리 블록이 따로 처리할 몫
+        const openSessions = await getOrphanedSessions(userId); // "고아"가 아니라 그냥 ended_at IS NULL 조회
+        if (!openSessions.length) return;
+        const endedAtMs = nativeExpiry.sleepOnsetAtMs ?? Date.now();
+        const endedAtIso = new Date(endedAtMs).toISOString();
+        for (const session of openSessions) {
+          const startedAtMs = new Date(session.startedAt).getTime();
+          const durationSeconds = Math.max(0, Math.round((endedAtMs - startedAtMs) / 1000));
+          await endSessionRow(session.id, durationSeconds, session.videosWatched ?? 0, nativeExpiry.reason, nativeExpiry.sleepOnsetAtMs ? endedAtIso : undefined);
+        }
+        useSessionStore.getState().finish();
+      } catch {
+        // 실패해도 다음 포그라운드 복귀에 재시도 — 앱 사용 자체를 막지 않음.
+      }
+    };
+    closeSessionOnNativeExpiry();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') closeSessionOnNativeExpiry();
+    });
+    return () => sub.remove();
+  }, []);
 
   // 실기기(Galaxy Note20, 시스템 라이트 모드)에서 하단 내비게이션 바 영역이 흰색으로 보였던 진짜
   // 원인은 android/styles.xml의 Theme.AppCompat.DayNight가 시스템 라이트/다크를 따라가던 것 —

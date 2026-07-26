@@ -17,10 +17,10 @@ try {
   console.warn('[rewardedAd] react-native-google-mobile-ads 네이티브 모듈 미링크(재빌드 필요) — 보상형 광고 비활성화:', e);
 }
 
-// AdBanner.tsx와 동일한 이유로 지금은 테스트 광고 단위 ID — 배포 전 AdMob 콘솔에서 발급받은 진짜
-// 보상형 광고 단위 ID로 교체 필요(테스트 ID로 배포하면 실제 보상형 광고가 하나도 안 뜬다).
+// 2026-07-26 — AdMob 앱 승인 완료, 실제 보상형 광고 단위 ID로 교체(이 기능은 Android 전용이라
+// iOS 단위 ID는 불필요, isRewardedAdSupportedPlatform() 참고).
 function getAdUnitId(): string {
-  return TestIds!.REWARDED;
+  return 'ca-app-pub-3201481146134957/5534238136';
 }
 
 export const rewardedAdAvailable = Boolean(RewardedAd && RewardedAdEventType && AdEventType && TestIds);

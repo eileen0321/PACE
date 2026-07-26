@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { colors } from '../../constants/theme';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 
@@ -21,10 +21,14 @@ try {
   console.warn('[AdBanner] react-native-google-mobile-ads 네이티브 모듈 미링크(재빌드 필요) — 배너 비활성화:', e);
 }
 
-// 지금은 구글 공식 테스트 광고 단위 ID(TestIds.ADAPTIVE_BANNER)로 붙여뒀다 — 실제 배포 전에 AdMob
-// 콘솔에서 발급받은 진짜 광고 단위 ID로 반드시 교체해야 한다(테스트 ID로 낸 채 배포하면 광고가
-// 하나도 안 뜬다).
-const adModuleAvailable = Boolean(BannerAd && BannerAdSize && TestIds);
+// 2026-07-26 — AdMob 앱 승인 완료, 실제 배너 광고 단위 ID로 교체(테스트ID였던 TestIds.ADAPTIVE_BANNER
+// 대신). 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있어 그 사이엔 onAdFailedToLoad로 조용히 숨김.
+const BANNER_UNIT_ID = Platform.select({
+  android: 'ca-app-pub-3201481146134957/1435065235',
+  ios: 'ca-app-pub-3201481146134957/9222201702',
+  default: TestIds?.ADAPTIVE_BANNER,
+});
+const adModuleAvailable = Boolean(BannerAd && BannerAdSize && BANNER_UNIT_ID);
 
 export function AdBanner() {
   const [failed, setFailed] = useState(false);
@@ -41,14 +45,14 @@ export function AdBanner() {
     return () => setHeight(0);
   }, [visible, setHeight]);
 
-  if (!visible || !BannerAd || !BannerAdSize || !TestIds) return null;
+  if (!visible || !BannerAd || !BannerAdSize || !BANNER_UNIT_ID) return null;
 
   const handleLayout = (e: LayoutChangeEvent) => setHeight(e.nativeEvent.layout.height);
 
   return (
     <View style={styles.container} onLayout={handleLayout}>
       <BannerAd
-        unitId={TestIds.ADAPTIVE_BANNER}
+        unitId={BANNER_UNIT_ID}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         onAdFailedToLoad={() => setFailed(true)}
       />

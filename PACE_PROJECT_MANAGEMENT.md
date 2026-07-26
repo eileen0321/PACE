@@ -22,9 +22,12 @@
 
 ## 1. 현재 상태 요약 (2026-07-25)
 
-- 출시 전 단계. **결제(RC 키 없음) / 로그인(백엔드 미배포) / iOS 차단기능(entitlement
-  미승인) / 심사 계정 미설정** 4개가 실제 출시를 막는 핵심 블로커 — 전부 사장님 결정·
-  계정·키가 필요하고 코드로는 못 고침 (아래 2-A).
+- 출시 전 단계. **로그인(백엔드 미배포) / iOS 차단기능(entitlement 미승인) / 심사 계정
+  미설정** 3개가 실제 출시를 막는 핵심 블로커 — 전부 사장님 결정·계정·키가 필요하고
+  코드로는 못 고침 (아래 2-A). **결제(RC 키)와 AdMob 테스트ID는 2026-07-26 해결됨**(D1/D10) —
+  단, App Store Connect/Play Console에 실제 구독 상품(가격/구독그룹)이 등록돼 있고
+  RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는 **별도 미확인** — SDK 키가
+  있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함, 다음 확인 필요.
 - Android: 기능적으로 대체로 안정. 블루투스 핸즈프리 죽은 UI 정리(B1) 완료, BOOT_COMPLETED(B3)도
   "재부팅 시 활성 세션 복구" 범위로 완료. 단 B3 조사 중 더 근본적인 이슈 발견 — Daily Limit 추적이
   상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 시작한 세션에만 묶여 있음(제품 결정 필요,
@@ -42,7 +45,7 @@
 
 | # | 문제 | 필요한 조치 | 근거 |
 |---|---|---|---|
-| D1 | 구독 결제 100% 비활성 (RC iOS/Android SDK 키 둘 다 `.env` 비어있음) | RevenueCat 대시보드 → Project → API Keys에서 `appl_...`/`goog_...` 발급 후 `.env`에 입력 | MAC_SESSION_HANDOFF §4-4 |
+| D1 | ~~구독 결제 100% 비활성~~ | ✅ 완료(2026-07-26) — RC iOS/Android SDK 키 발급받아 `.env`에 입력 완료(`goog_jWJgxcRyNFIieGvcyigYvAXBJag`/`appl_XXEGQCLYicODnWDWOaAsEioAIgm`). Metro 재시작 후 실기기 재검증 필요 | MAC_SESSION_HANDOFF §4-4 |
 | D2 | 백엔드(Railway) 미배포 → 구글/애플 로그인 전부 실패(게스트만 가능) | Railway 배포 + `EXPO_PUBLIC_API_BASE_URL`에 배포 URL 입력 | MAC_SESSION_HANDOFF §2 |
 | D3 | iOS Screen Time(Family Controls) entitlement 미승인 → 핵심 차단 기능 iOS에서 무동작 | 이번 주 결정 필요: (a) entitlement 신청 후 대기 vs (b) iOS에서 기능 숨기고 우선 출시 | QA_FULL_REVIEW B1 |
 | D4 | 심사 리뷰어 화이트리스트 빈 배열(`src/constants/reviewers.ts`) | 제출용 테스트 계정 이메일 추가 | QA_FULL_REVIEW B4 |
@@ -51,6 +54,7 @@
 | D7 | (2026-07-26 신규) Google 소셜 로그인 — 코드는 이미 완성돼 있음(`src/services/auth/google.ts`+`useUserStore.ts`, zen-master 패턴 이식, jlpt-master와 별개 프로젝트지만 동일 설계). **막힌 건 코드가 아니라 설정값**: `.env`의 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`/`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`가 빈 플레이스홀더, `app.json`의 `@react-native-google-signin/google-signin` 플러그인에 `iosUrlScheme`도 없음 | Google Cloud Console에서 Pace 전용 OAuth 클라이언트를 **새로 발급**해야 함(패키지명 `com.strides7.pace` 기준) — jlpt-master/zen-master의 기존 `WEB_CLIENT_ID`/iOS 클라이언트ID/`iosUrlScheme`는 **절대 재사용 금지**(다른 앱 전용, 재사용하면 로그인이 조용히 실패하거나 다른 앱 계정과 충돌). 이건 Claude가 코드로 대신할 수 없음(계정 접근 필요) — 사장님이 콘솔에서 발급 후 값만 넘겨주면 됨 | 2026-07-26 로그 참고 |
 | D8 | (2026-07-26 신규, 사장님 요청이었으나 스펙 미확정이라 보류) "고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로 추가해달라는 요청 — 뭘 "고급"으로 만들지 구체 스펙이 아직 없음(현재 수면감지는 10분 무진동 고정 임계값 하나뿐, 사용자 설정 UI 자체가 없음) | 제품 결정 필요 — 임시 제안(확정 아님): 프리미엄 한정으로 무진동 임계값을 5~20분 사이 직접 조절 + 블루투스 탈착 보조신호 사용 여부 토글 정도가 "코드로 바로 만들 수 있는" 최소 범위. 사장님이 원하는 그림이 이거랑 다르면 다시 정의 필요 | 2026-07-26 로그 참고 |
 | D9 | (2026-07-26 신규, 사장님 요청이었으나 기존 동작 회귀 위험 있어 보류) "리모컨 지원"을 프리미엄 전용으로 가둬달라는 요청 — 그런데 핑거스냅/손짓/블루투스 볼륨키 Auto Mode는 **이미 전체 사용자에게 배포돼 실제로 쓰이고 있는 기존 기능**(오늘 밤에도 이걸로 여러 버그를 고침). 지금 프리미엄 뒤로 가두면 기존 사용자 입장에선 "되던 기능이 갑자기 막힘"으로 보일 회귀임 | 제품 결정 필요: (a) 신규 사용자만 프리미엄 게이팅하고 기존 사용자는 유지(grandfather) vs (b) 전체 게이팅하되 출시 공지로 미리 안내 vs (c) 이번엔 게이팅 보류(현 상태 유지) — 방향 정해지면 코드 자체는 간단함(`useSubscriptionStore.isPremium` 체크 하나 추가) | 2026-07-26 로그 참고 |
+| D10 | ~~AdMob 테스트 광고 단위 ID~~ | ✅ 완료(2026-07-26) — AdMob 앱 심사 승인됨, Android/iOS 앱 등록 + 배너(양쪽)·보상형(Android) 광고 단위 실제 발급받아 `app.json`(androidAppId/iosAppId), `AdBanner.tsx`, `rewardedAd.ts`에 실제 ID로 교체 완료. `npx tsc --noEmit` 통과. 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있음 — 실기기에서 광고 실제로 뜨는지 확인 필요 | 2026-07-26 로그 참고 |
 
 ### 2-B. Android 담당(Windows 세션) — 코드로 해결 가능
 
@@ -369,3 +373,29 @@ true면(`_layout.tsx`에서 부팅 시 + 구매/복원 시 네이티브에 동�
 (둘 다 독립적으로 "쉬는시간(Rest Time)" 표시를 추가한 것이 겹침) — Mac 쪽의 더 최근·완결된 버전
 (`restSeconds` prop + 아이콘 있는 별도 행)을 채택하고 이쪽의 구버전(`useFlipStore` 직접 참조 버전)은
 버림. rebase로 정리 후 push 완료.
+
+### 2026-07-26 — Windows 세션 (다른 인스턴스, 사장님과 함께 계정 작업)
+
+**D1(RevenueCat 키) 완료**: 사장님이 RevenueCat 대시보드(API keys → SDK API keys)에서 직접 발급 —
+`.env`에 `EXPO_PUBLIC_RC_ANDROID_KEY=goog_jWJgxcRyNFIieGvcyigYvAXBJag`,
+`EXPO_PUBLIC_RC_IOS_KEY=appl_XXEGQCLYicODnWDWOaAsEioAIgm` 추가. Metro 재시작 후 실제
+`Purchases.configure()` 호출되는지 확인 필요(아직 이 세션에서 실기기 검증 못 함).
+
+**D10(신규, AdMob 테스트ID) 완료**: AdMob 앱 심사 승인 확인 후 사장님이 직접 콘솔에서 Android/iOS
+앱 등록 + 배너(양쪽 플랫폼)·보상형(Android, `rewardedAd.ts`가 Android 전용이라 iOS 단위는 발급 안 함)
+광고 단위 4개 생성:
+- Android App ID `ca-app-pub-3201481146134957~4795871538` / 배너 `.../1435065235` / 보상형 `.../5534238136`
+- iOS App ID `ca-app-pub-3201481146134957~6000041915` / 배너 `.../9222201702`
+
+`app.json`(androidAppId/iosAppId), `src/components/home/AdBanner.tsx`(`Platform.select`로 플랫폼별
+실제 배너ID), `src/services/ads/rewardedAd.ts`(Android 실제 보상형ID)에 반영, `TestIds` 관련 참조는
+네이티브 모듈 미링크 시 폴백 용도로만 남김. `npx tsc --noEmit` 통과.
+
+**미검증**: 새 광고 단위 활성화까지 최대 1시간 소요(AdMob 자체 안내) — 오늘 출시 전 실기기에서 배너/
+보상형 광고가 실제로 로드되는지(현재는 "새 단위라 아직 채워지지 않음"과 "설정 실수"를 구분 못 함)
+확인 필요.
+
+**참고**: 이 세션과 별개로 같은 날 밤 다른 Windows 세션 인스턴스가 §6 "2026-07-26 (새벽)" 항목의
+Focus Session 무료한도/보상형광고 기능을 이미 구현해뒀음(`rewardedAd.ts`는 그 세션이 만든 파일, 이
+세션은 그 파일의 테스트ID만 실제ID로 교체) — 두 세션이 같은 날 각각 계정작업/코드작업으로 정확히
+맞아떨어짐.

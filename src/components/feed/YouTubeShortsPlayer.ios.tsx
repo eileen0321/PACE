@@ -85,6 +85,10 @@ const INJECTED_JS = `
         }
       } catch (e) {}
     }
+    // 첫 2초간 빠르게 unMute — 유튜브가 페이지 로드 직후 음소거로 시작해 "탭하여 음소거 해제" 팝업이
+    // 잠깐 뜨는 것을 최소화. ytUnmute는 getElementById+isMuted라 가벼움(예전 perf 문제였던 broad
+    // querySelectorAll 아님) → 빠른 폴링 안전.
+    var fastU = 0; var fastUT = setInterval(function () { ytUnmute(); if (++fastU > 20) clearInterval(fastUT); }, 100);
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });

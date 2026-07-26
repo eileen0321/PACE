@@ -380,7 +380,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms마다 추론(더 촘촘히 → 빠른 손짓도 잡게)
+  private let analyzeIntervalSec: TimeInterval = 0.2 // 200ms(5회/초) — 100ms는 CPU과다로 영상 첫재생 버벅임. 손짓은 ~0.5s라 5회/초로 충분.
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave
@@ -495,7 +495,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let dx = wrist.location.x - mcp.location.x
     let dy = wrist.location.y - mcp.location.y
     let size = CGFloat((dx * dx + dy * dy).squareRoot())
-    onDiag(String(format: "hand=%.3f n=%d", Double(size), samples.count + 1)) // 손 잡힘 + 크기
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f n=%d", Double(size), samples.count + 1)) } // 손 잡힘 + 크기(로그 스팸 감소)
     guard size >= minHandSize else { return } // 너무 작으면(먼 배경) 무시 — 안드 MIN_HAND_SIZE=0.03
 
     let t = now

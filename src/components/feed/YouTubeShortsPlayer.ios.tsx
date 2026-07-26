@@ -118,7 +118,11 @@ const INJECTED_JS = `
     tryAudible();
     // 검증용 진단: 초반 씹힘(seeking/stalled) 사라졌는지 + 음소거 팝업 요소 확인. 검증 후 제거.
     ['pause', 'playing', 'waiting', 'stalled', 'seeking'].forEach(function (ev) {
-      v.addEventListener(ev, function () { send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' rs=' + v.readyState }); });
+      v.addEventListener(ev, function () {
+        var buf = 0; try { buf = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0; } catch (e) {}
+        // buf-t가 크면 버퍼 충분(무해), 0에 가까우면 진짜 언더런. rs<3이면 재생 멈춤.
+        send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' buf=' + buf.toFixed(1) + ' rs=' + v.readyState });
+      });
     });
     // 음소거 팝업/아이콘의 실제 요소를 기기에서 잡는다(.ytp-unmute가 안 먹으므로) — 로드 3.5초 뒤 보이는
     // "음소거" 관련 요소를 가장 안쪽까지 파고들어 태그+클래스 체인을 로그. 이 클래스로 다음 빌드에서 CSS 타겟.

@@ -15,6 +15,7 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useFlipStore } from '../../store/useFlipStore';
+import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { overlayService, autoNextService } from '../../services/platform';
 import { showRewardedAd } from '../../services/ads/rewardedAd';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
@@ -283,10 +284,15 @@ export default function OverlaySessionScreen() {
   // 모은 크레딧을 광고 대신(또는 광고와 나란히) 써서 Focus Session 한도를 늘린다. 1크레딧 = 영상 1편
   // 연장(적립도 1분=1크레딧으로 단순한 1:1이라 소비도 동일 비율로 맞춤). 전액을 한 번에 쓴다 —
   // 부분 사용 UI(슬라이더 등)까지는 과했다고 판단, "모은 만큼 이어본다"는 단순한 약속이 지금 카피와도
-  // 맞음.
+  // 맞음. 2026-07-26 추가 — 매일 출석 보너스(useAttendanceStore.bonusCredits, 매일 리셋 안 되는
+  // 별도 지갑)도 같은 자리에서 합산해서 함께 쓴다.
   const restCredits = useFlipStore((s) => s.credits);
+  const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
+  const totalCredits = restCredits + bonusCredits;
   const onUseCredits = () => {
-    const spent = useFlipStore.getState().spendCredits(restCredits);
+    const spentRest = useFlipStore.getState().spendCredits(restCredits);
+    const spentBonus = useAttendanceStore.getState().spendBonusCredits(bonusCredits);
+    const spent = spentRest + spentBonus;
     if (spent <= 0) return;
     autoNextService.extendAutoNextCap(spent).catch(() => {});
     setShowCapModal(false);
@@ -400,13 +406,13 @@ export default function OverlaySessionScreen() {
                 <Text style={styles.capModalBtnPrimaryText}>{t('overlay.watchAdForMore', { extend: 20 })}</Text>
               )}
             </Pressable>
-            {restCredits > 0 && (
+            {totalCredits > 0 && (
               <Pressable
                 style={[styles.capModalBtn, styles.capModalBtnCredits]}
                 onPress={onUseCredits}
                 disabled={watchingAd}
               >
-                <Text style={styles.capModalBtnCreditsText}>{t('overlay.useCreditsForMore', { credits: restCredits })}</Text>
+                <Text style={styles.capModalBtnCreditsText}>{t('overlay.useCreditsForMore', { credits: totalCredits })}</Text>
               </Pressable>
             )}
             <Pressable style={styles.capModalBtn} onPress={() => setShowCapModal(false)} disabled={watchingAd}>

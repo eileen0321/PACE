@@ -17,9 +17,11 @@ import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
+import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
+import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { colors, typography } from '../constants/theme';
@@ -47,6 +49,16 @@ export default function RootLayout() {
   const syncSettingsFromServer = useSettingsStore((s) => s.syncFromServer);
   const initSubscription = useSubscriptionStore((s) => s.init);
   const loadDailyBonus = useDailyBonusStore((s) => s.load);
+
+  // 2026-07-26 사용자 지시("매일 출석하기") — 부팅마다 오늘 처음 앱을 연 것인지 확인, 맞으면 크레딧
+  // 지급 + 축하 팝업. checkInIfNeeded()가 내부에서 "오늘 이미 출석했으면 no-op"을 보장하므로 여기서
+  // 매 부팅마다 불러도 하루 1번만 실제로 지급된다.
+  const [checkInEarned, setCheckInEarned] = useState<number | null>(null);
+  useEffect(() => {
+    useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
+      if (checkedIn) setCheckInEarned(earned);
+    }).catch(() => {});
+  }, []);
 
   // Flip Mode(스펙 §4-A) — 앱이 떠 있는 동안 전역으로 "내려놓은 시간(쉬는시간)"을 측정한다.
   // iOS(CMMotionManager)/Android(SensorManager) 둘 다 실제 감지, 포그라운드에서만 동작(§4-A 제약).
@@ -192,6 +204,11 @@ export default function RootLayout() {
             <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />
           </Stack>
           <ToastHost />
+          <DailyCheckInModal
+            visible={checkInEarned !== null}
+            earned={checkInEarned ?? 0}
+            onDismiss={() => setCheckInEarned(null)}
+          />
           {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
           {(updatePhase === 'downloading' || updatePhase === 'reloading') && (
             <View style={styles.updateOverlay} pointerEvents="auto">

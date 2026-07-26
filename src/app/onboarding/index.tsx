@@ -14,7 +14,7 @@ import { spacing, typography } from '../../constants/theme';
 // presentation: 'transparentModal'로 등록 — 실제로 화면 위에 얹히는 오버레이). 아이콘은 이모지
 // 대신 참고 이미지처럼 흰색 단색 라인 아이콘(Feather)으로 통일 — 사용자가 이모지 조합을 "촌스럽다"고
 // 지적함.
-const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Title' | 'onboarding.row2Title' | 'onboarding.row3Title' | 'onboarding.row4Title'; descKey: 'onboarding.row1Desc' | 'onboarding.row2Desc' | 'onboarding.row3Desc' | 'onboarding.row4Desc' }[] = [
+const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Title' | 'onboarding.row2Title' | 'onboarding.row3Title' | 'onboarding.row4Title' | 'onboarding.row5Title'; descKey: 'onboarding.row1Desc' | 'onboarding.row2Desc' | 'onboarding.row3Desc' | 'onboarding.row4Desc' | 'onboarding.row5Desc' }[] = [
   // 2026-07-26 사용자 지적 — "휴식 측정"은 폰을 아무렇게나 내려놓는 게 아니라 정확히 뒤집어서(화면이
   // 바닥을 향하게) 놔야 기록되는 Flip Mode(useFlipStore.onFaceDown, 가속도계 기반 방향 감지)다.
   // Feather에 "뒤집힌 폰" 전용 아이콘은 없어 스마트폰 아이콘(smartphone)으로 대체 — 정확한 방향
@@ -27,6 +27,8 @@ const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Tit
   // 않음.
   { icon: 'bar-chart-2', titleKey: 'onboarding.row3Title', descKey: 'onboarding.row3Desc' },
   { icon: 'moon', titleKey: 'onboarding.row4Title', descKey: 'onboarding.row4Desc' },
+  // 2026-07-26 사용자 지시("매일 출석하기") — useAttendanceStore.checkInIfNeeded() 실제 기능 소개.
+  { icon: 'calendar', titleKey: 'onboarding.row5Title', descKey: 'onboarding.row5Desc' },
 ];
 
 export default function OnboardingScreen() {
@@ -83,7 +85,7 @@ const styles = StyleSheet.create({
   // 소제목은 한 줄로 줄임(22→28, 부제 문구도 짧게 교체).
   title: { fontSize: 28, fontFamily: typography.displayFontFamily, color: '#FFFFFF', letterSpacing: -0.3, textAlign: 'center' },
   subtitle: { fontSize: 13.5, lineHeight: 19, fontFamily: typography.bodyFontFamily, color: 'rgba(255,255,255,0.65)', textAlign: 'center', maxWidth: '85%', alignSelf: 'center' },
-  rows: { gap: spacing.lg },
+  rows: { gap: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   iconWrap: { width: 40, alignItems: 'center' },
   rowText: { flex: 1, gap: 2 },

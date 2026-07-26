@@ -23,6 +23,11 @@ export const STORAGE_KEYS = {
   // 죽어 있었다. 이제 이 값을 세션 시작마다(home.tsx startSession) 다시 읽어 Enable을 골랐던
   // 사용자는 매 세션 자동으로 Auto Mode가 켜지게 한다.
   autoModeOptIn: 'pace_auto_mode_opt_in',
+  // 2026-07-26 사용자 지시("매일 출석하기") — 하루 1회 앱 실행 시 출석 체크 + 크레딧 지급
+  // (useAttendanceStore.ts). 날짜 문자열 배열(최근 이력)과 마지막 출석일, 누적 출석 크레딧을
+  // 하나로 묶어 저장 — Flip Mode의 credits(오늘 쉰 시간 기반, 매일 리셋)와 달리 이건 매일 리셋되지
+  // 않는 "적립 지갑"이라 별도 스토어로 분리했다.
+  attendance: 'pace_attendance',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.
@@ -31,4 +36,5 @@ export const USER_SCOPED_KEYS: string[] = [
   STORAGE_KEYS.authUser,
   STORAGE_KEYS.premiumIsPremium,
   STORAGE_KEYS.premiumExpiresAt,
+  STORAGE_KEYS.attendance,
 ];

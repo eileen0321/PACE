@@ -12,6 +12,7 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useAttendanceStore, getLast7Days } from '../../store/useAttendanceStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -82,6 +83,8 @@ export default function SettingsScreen() {
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
+  const attendanceHistory = useAttendanceStore((s) => s.history);
+  const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
@@ -246,6 +249,33 @@ export default function SettingsScreen() {
               <Text style={styles.logoutRowText}>{t('settings.logout')}</Text>
             </Pressable>
           )}
+        </View>
+
+        {/* 1.5 Weekly Attendance — 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui 만들어봐") */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('settings.weeklyAttendance')}</Text>
+          <GlassSurface style={[styles.card, styles.singleCard]}>
+            <View style={styles.attendanceRow}>
+              {getLast7Days(attendanceHistory).map((day) => (
+                <View key={day.date} style={styles.attendanceDay}>
+                  <Text style={styles.attendanceDayLabel}>{day.dayLabel}</Text>
+                  <View
+                    style={[
+                      styles.attendanceDot,
+                      day.attended && styles.attendanceDotFilled,
+                      day.isToday && styles.attendanceDotToday,
+                    ]}
+                  >
+                    {day.attended && <Feather name="check" size={12} color="#0B0C0F" />}
+                  </View>
+                </View>
+              ))}
+            </View>
+            <View style={styles.attendanceFooter}>
+              <Feather name="star" size={12} color={colors.successLight} />
+              <Text style={styles.attendanceFooterText}>{t('settings.attendanceBonusCredits', { n: bonusCredits })}</Text>
+            </View>
+          </GlassSurface>
         </View>
 
         {/* 2. Session Defaults — Pace는 데모 로컬 state 대신 실제 useSettingsStore에 직결 */}
@@ -636,6 +666,16 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderRadius: radius.card, paddingHorizontal: 20 },
   singleCard: { paddingVertical: 20 },
   accountCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  // 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui") — 요일 7칸, 출석한 날은 채운 원+체크,
+  // 오늘은 테두리로 강조. 하단에 누적 보너스 크레딧(useAttendanceStore.bonusCredits) 표시.
+  attendanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  attendanceDay: { alignItems: 'center', gap: 6 },
+  attendanceDayLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilySemibold, color: colors.textTertiary },
+  attendanceDot: { width: 28, height: 28, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  attendanceDotFilled: { backgroundColor: colors.successLight, borderColor: colors.successLight },
+  attendanceDotToday: { borderColor: colors.primary, borderWidth: 1.5 },
+  attendanceFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
+  attendanceFooterText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },
   accountLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, flex: 1 },
   avatar: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: colors.primary, fontFamily: typography.displayFontFamily, fontSize: 16 },

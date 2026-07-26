@@ -169,6 +169,8 @@ export const translations = {
       account: 'Account',
       premium: 'Premium',
       manageSub: 'Manage Subscription',
+      weeklyAttendance: 'Weekly Attendance',
+      attendanceBonusCredits: '{{n}} bonus credits banked',
       sessionDefaults: 'Session Defaults',
       defaultSleep: 'Default Sleep Timer',
       defaultSleepDesc: 'Stop playback after duration',
@@ -255,7 +257,15 @@ export const translations = {
       row3Desc: 'See how much you watch and rest.',
       row4Title: 'Sleep Mode',
       row4Desc: 'Keeps your late-night watching in check.',
+      row5Title: 'Daily check-in',
+      row5Desc: 'Get credits every day just for opening the app.',
       tapToContinue: 'Tap to get started',
+    },
+
+    checkIn: {
+      title: "You're checked in!",
+      message: '+{{earned}} rest credits added for opening PACE today.',
+      dismiss: 'Nice',
     },
 
     paywall: {
@@ -473,6 +483,8 @@ export const translations = {
       account: '계정',
       premium: '프리미엄',
       manageSub: '구독 관리',
+      weeklyAttendance: '주간 출석',
+      attendanceBonusCredits: '보너스 크레딧 {{n}}개 보유 중',
       sessionDefaults: '기본 세션 설정',
       defaultSleep: '기본 취침 예약',
       defaultSleepDesc: '설정 시간 이후 시청 차단',
@@ -555,7 +567,15 @@ export const translations = {
       row3Desc: '영상을 본 시간과 쉬는 시간을 확인하세요.',
       row4Title: '취침 모드',
       row4Desc: '늦은 밤 시청 습관을 관리합니다.',
-      tapToContinue: '아무 곳이나 탭하면 계속돼요',
+      row5Title: '매일 출석하기',
+      row5Desc: '매일 앱을 열면 크레딧을 받으세요.',
+      tapToContinue: '탭하여 시작하기',
+    },
+
+    checkIn: {
+      title: '출석 완료!',
+      message: '오늘 PACE를 열어서 휴식 크레딧 +{{earned}}이 적립됐어요.',
+      dismiss: '확인',
     },
 
     paywall: {

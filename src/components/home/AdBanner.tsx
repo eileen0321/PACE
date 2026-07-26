@@ -21,13 +21,15 @@ try {
   console.warn('[AdBanner] react-native-google-mobile-ads 네이티브 모듈 미링크(재빌드 필요) — 배너 비활성화:', e);
 }
 
-// 2026-07-26 — AdMob 앱 승인 완료, 실제 배너 광고 단위 ID로 교체(테스트ID였던 TestIds.ADAPTIVE_BANNER
-// 대신). 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있어 그 사이엔 onAdFailedToLoad로 조용히 숨김.
-const BANNER_UNIT_ID = Platform.select({
+// 2026-07-26 사용자 지시 — 평소(개발/테스트)엔 테스트 광고 ID를 쓰고, 실제 광고 ID는 출시 빌드에서만
+// 켠다: 자기 폰에서 실 광고를 반복 로드/클릭하면 AdMob "invalid traffic"으로 계정이 정지될 수 있어서.
+// 출시 때만 EXPO_PUBLIC_USE_REAL_ADS=true로 빌드 → 실 단위 ID. (앱 ID는 실제로 둬도 테스트 광고엔 무방.)
+const USE_REAL_ADS = process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true';
+const REAL_BANNER_UNIT_ID = Platform.select({
   android: 'ca-app-pub-3201481146134957/1435065235',
   ios: 'ca-app-pub-3201481146134957/9222201702',
-  default: TestIds?.ADAPTIVE_BANNER,
 });
+const BANNER_UNIT_ID = USE_REAL_ADS ? REAL_BANNER_UNIT_ID : TestIds?.ADAPTIVE_BANNER;
 const adModuleAvailable = Boolean(BannerAd && BannerAdSize && BANNER_UNIT_ID);
 
 export function AdBanner() {

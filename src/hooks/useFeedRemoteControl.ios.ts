@@ -63,18 +63,20 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision) + 핑거스냅(raw 오디오 DSP)을 함께 시작, 꺼지면 정지.
-  // Focus Session 동안만 켜짐(안드로이드 setAutoMode에서 snap+handwave 함께 켜는 것과 동일).
-  // 2026-07-26(2차): 스냅을 SoundAnalysis→raw DSP(안드 이식)로 재작성해 크래시가 사라져 'both' 복귀.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision) 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
+  // ⚠️ 2026-07-26 실기기 결정: 핑거스냅('snap', AVAudioEngine 마이크)은 WebView(유튜브) 오디오와
+  // 충돌 시 engine.start가 Swift try/catch로 못 잡는 ObjC NSException(-10868 "Failed to initialize
+  // active nodes in input chain")을 던져 앱이 계속 죽는다(실기기 로그 확인). 오디오 세션을 안 건드리는
+  // 방식으로 재작성하기 전까지 스냅은 비활성 → 'wave'만. 다음 넘김은 손짓 + 볼륨키(리모컨) + 자동넘김.
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('both').catch((err) => {
+      mod.start('wave').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
+        console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

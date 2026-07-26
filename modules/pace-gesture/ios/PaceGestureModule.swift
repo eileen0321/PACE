@@ -187,6 +187,8 @@ private final class SnapDetector {
       // ⚠️ 실기기 발견: setActive 직후 input.outputFormat(forBus:0)이 sampleRate=0으로 뜨는 경우가 있다
       // (엔진 미준비 상태). 커스텀 포맷/precomputed sr에 의존하지 말고, 탭 포맷을 nil로 넘겨 노드가
       // 실행 시점의 실제 포맷을 쓰게 하고, 샘플레이트는 매 버퍼(buffer.format)에서 읽는다.
+      // ⚠️ 재시도 시 기존 탭이 남아있으면 installTap이 크래시('nullptr == Tap()') → 항상 먼저 제거.
+      input.removeTap(onBus: 0)
       engine.prepare()
       input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
         self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))

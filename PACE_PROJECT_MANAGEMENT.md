@@ -1475,3 +1475,23 @@ tryAudible는 기능이라 보존. 상세 위치는 감사 리포트에 파일:�
 보고 "iOS 기능 죽음"이라 반복 오판했으나, iOS 피드가 `focusSessionDurationMinutes`(feed:249,267 자동종료)·
 `sleepStillnessMinutes`(feed:115)를 **직접** 소비한다. **페이월 3개 혜택 iOS에서 다 실효 → 허위광고 아님, 페이월
 손대지 말 것.** i18n도 키층 339/339 완벽, QuickControlsGrid 영어 하드코딩은 "번역 시 타일 오버플로" 때문의 의도.
+
+### 2026-07-27 낮 — Windows 세션: 위 Android 도메인 3건(HIGH2/MEDIUM5/LOW-MED6) 전부 수정 완료 (`6a8e87f`)
+
+**✅ HIGH2 (겹치는 세션 이중집계)**: `home.tsx`의 `onSelectPlatform`에 running 세션 가드 추가 — 이미
+`useSessionStore.getState().status === 'running'`이면 새 세션/네이티브 서비스를 다시 시작하지 않고
+`launchPlatformApp(platform)`만 다시 불러 해당 앱을 전면으로 재소환한다(세션·오버레이·DB row는 그대로 유지).
+두 번째 open row가 생길 경로 자체를 없앴다.
+
+**✅ MEDIUM5 (consumeExpired 이중소비 레이스)**: 제안하신 "소비 소유자 1곳 통일" 대신 더 작은 변경으로
+해결 — `overlayService.android.ts`의 `consumeExpired()`를 공유 in-flight promise로 감쌌다. 같은 AppState
+'active' 전이에 반응해 4곳(`_layout.tsx`:148,232 / `overlay/index.tsx`:246,289)이 동시에 호출해도 네이티브는
+실제로 1번만 읽히고 전부 같은 Promise/결과를 공유해서 받는다 — 서로 다른(겹치지 않는) 전이는 그 Promise가
+`.finally`로 정리된 뒤라 여전히 각자 새로 읽는다. 호출부 구조(4곳)는 그대로 두고 레이스만 근본적으로 제거.
+
+**✅ LOW/MED6 (진행 중 세션 duration_seconds=0 → 일일예산 침묵 리셋)**: `statsRepository.getTodayUsageMinutes()`
+쿼리를 수정 — `ended_at IS NULL`인 행(=진행 중)은 `duration_seconds` 대신 `started_at`~`now` 실제 경과초를
+그 자리에서 계산해 합산한다(정상 종료 경로와 동일하게 4시간/14400초 상한 적용, 청소 안 된 채 오래 열린 행이
+있어도 합계가 무한정 커지지 않게). Home/Stats의 "오늘 사용량"이 세션 진행 중에도 이제 실시간으로 정확함.
+
+tsc clean, 3건 다 커밋 `6a8e87f`로 push 완료. **오늘 밤 출시 전 안드 도메인 감사 항목 전부 소진.**

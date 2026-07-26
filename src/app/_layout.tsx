@@ -237,7 +237,10 @@ export default function RootLayout() {
         const endedAtIso = new Date(endedAtMs).toISOString();
         for (const session of openSessions) {
           const startedAtMs = new Date(session.startedAt).getTime();
-          const durationSeconds = Math.max(0, Math.round((endedAtMs - startedAtMs) / 1000));
+          // 감사 MEDIUM3(2026-07-27) — 콜드스타트 정리 경로(위)와 동일하게 4h 상한을 둔다. 예전엔 이
+          // 전경 경로만 clamp가 없어, sleepOnsetAtMs 없이 reason만 온 경우 endedAtMs=now라 오래 열려있던
+          // 세션이 통짜 wall-clock으로 기록돼 통계/일일한도를 오염시킬 수 있었다.
+          const durationSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
           await endSessionRow(session.id, durationSeconds, session.videosWatched ?? 0, nativeExpiry.reason, nativeExpiry.sleepOnsetAtMs ? endedAtIso : undefined);
         }
         useSessionStore.getState().finish();

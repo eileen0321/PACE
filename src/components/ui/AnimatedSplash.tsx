@@ -23,16 +23,17 @@ const DURATION_MS = 600;
 // 직후 이 컴포넌트가 이어받아 애니메이션 브랜딩을 보여준 뒤 스스로 사라진다(_layout.tsx에서 최상단
 // Stack 위에 절대배치로 마운트).
 export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
-  const iconScale = useSharedValue(0.8);
-  const iconOpacity = useSharedValue(0);
+  // 로고는 처음부터 딱 떠 있게(opacity 1, scale 1) — 예전엔 0→1/0.8→1로 떠올라 "아이콘이 번쩍"처럼
+  // 보였다(사장님 지적). 애니메이션은 텍스트/로딩바만.
+  const iconScale = useSharedValue(1);
+  const iconOpacity = useSharedValue(1);
   const shimmerX = useSharedValue(-1);
   const textOpacity = useSharedValue(0);
   const textY = useSharedValue(10);
   const barX = useSharedValue(-1);
 
   useEffect(() => {
-    iconScale.value = withDelay(40, withSpring(1, { stiffness: 260, damping: 22 }));
-    iconOpacity.value = withDelay(40, withTiming(1, { duration: 120 }));
+    // 로고 등장 애니메이션 제거(번쩍임 원인) — 처음부터 떠 있음. 시머만 유지.
     shimmerX.value = withRepeat(withTiming(1, { duration: 550, easing: Easing.linear }), -1, false);
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));

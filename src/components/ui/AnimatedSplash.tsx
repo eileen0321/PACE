@@ -9,6 +9,7 @@ import Animated, {
   withDelay,
   withRepeat,
   withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
@@ -16,25 +17,38 @@ import { colors, radius, typography } from '../../constants/theme';
 const ICON = require('../../../assets/splash-icon.png');
 const DURATION_MS = 600;
 
-// 2026-07-26 재작성 — 앱 실행 "번쩍임" 해결. 네이티브 런치스크린(expo-splash: 박스없는 splash-icon.png,
-// 화면중앙 120px, 배경 #060709)과 "완전히 동일한 첫 프레임"을 갖도록 이 스플래시도 로고를 화면 중앙에
-// 120px·박스 없이 고정 표시한다. 그러면 [아이콘 확대(iOS 시스템)] → [런치 로고] → [이 스플래시 로고]가
-// 같은 위치·크기라 끊김 없이 하나로 이어진다(예전엔 로고가 박스+위쪽+opacity0→1이라 점프·번쩍였음).
-// 브랜딩(PACE 텍스트/로딩바)만 로고 아래에 절대배치로 페이드인 — 로고는 미동 없음.
+// healthy-shorts-assistant(4) Splash.tsx 이식(사용자 명시적 지시, 2026-07-21) — Framer Motion의
+// spring/shimmer/tracking-in 애니메이션을 react-native-reanimated로 재구현. expo-splash-screen의
+// 정적 네이티브 스플래시(assets/splash-icon.png, app.json 설정)가 폰트 로딩까지만 담당하고, 그
+// 직후 이 컴포넌트가 이어받아 애니메이션 브랜딩을 보여준 뒤 스스로 사라진다(_layout.tsx에서 최상단
+// Stack 위에 절대배치로 마운트).
 export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
+  const iconScale = useSharedValue(0.8);
+  const iconOpacity = useSharedValue(0);
+  const shimmerX = useSharedValue(-1);
   const textOpacity = useSharedValue(0);
   const textY = useSharedValue(10);
   const barX = useSharedValue(-1);
 
   useEffect(() => {
+    iconScale.value = withDelay(40, withSpring(1, { stiffness: 260, damping: 22 }));
+    iconOpacity.value = withDelay(40, withTiming(1, { duration: 120 }));
+    shimmerX.value = withRepeat(withTiming(1, { duration: 550, easing: Easing.linear }), -1, false);
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));
     barX.value = withRepeat(withSequence(withTiming(1, { duration: 260, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
 
     const timer = setTimeout(onComplete, DURATION_MS);
     return () => clearTimeout(timer);
-  }, [barX, onComplete, textOpacity, textY]);
+  }, [barX, iconOpacity, iconScale, onComplete, shimmerX, textOpacity, textY]);
 
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: iconOpacity.value,
+    transform: [{ scale: iconScale.value }],
+  }));
+  const shimmerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: shimmerX.value * 130 }, { rotate: '20deg' }],
+  }));
   const textStyle = useAnimatedStyle(() => ({
     opacity: textOpacity.value,
     transform: [{ translateY: textY.value }],
@@ -45,14 +59,23 @@ export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
 
   return (
     <Animated.View exiting={FadeOut.duration(400)} style={styles.container}>
-      {/* 로고: 런치스크린과 동일 — 화면 중앙, 120px, 박스/애니메이션 없음(미동 없이 이어짐). */}
-      <Image source={ICON} style={styles.icon} />
+      <View style={styles.brandBlock}>
+        {/* 2026-07-22 수정: 원본 의도는 "원 안 중앙에 아이콘". 기존엔 glow가 top:38% 절대위치로 화면
+            위에 떠 있고 아이콘은 flex로 아래에 있어 둘이 따로 놀았다 → glow를 아이콘 뒤 중앙에 겹쳐
+            아이콘을 감싸는 오라로 만든다. */}
+        <View style={styles.iconArea}>
+          <View style={styles.glow} />
+          <Animated.View style={[styles.iconWrap, iconStyle]}>
+            <Image source={ICON} style={styles.icon} />
+            <Animated.View style={[styles.shimmer, shimmerStyle]} />
+          </Animated.View>
+        </View>
 
-      {/* 브랜딩 텍스트: 로고 아래 절대배치로 페이드인(로고 위치는 안 건드림). */}
-      <Animated.View style={[styles.textBlock, textStyle]}>
-        <Text style={styles.title}>PACE</Text>
-        <Text style={styles.subtitle}>Dopamine Loop Guard</Text>
-      </Animated.View>
+        <Animated.View style={textStyle}>
+          <Text style={styles.title}>PACE</Text>
+          <Text style={styles.subtitle}>Dopamine Loop Guard</Text>
+        </Animated.View>
+      </View>
 
       <View style={styles.barTrack}>
         <Animated.View style={[styles.barFill, barStyle]}>
@@ -78,11 +101,35 @@ const styles = StyleSheet.create({
     zIndex: 110,
     backgroundColor: '#060709',
     alignItems: 'center',
-    justifyContent: 'center', // 로고를 화면 정중앙에(런치스크린과 동일)
+    justifyContent: 'center', // 원+아이콘 브랜드 블록을 화면 정중앙에(로딩바는 아래 절대고정)
   },
-  icon: { width: 120, height: 120 },
-  // 텍스트는 화면 중앙 로고 아래에 절대배치 — 로고를 위로 밀지 않게.
-  textBlock: { position: 'absolute', top: '50%', marginTop: 84, alignItems: 'center' },
+  // 아이콘(112)을 감싸는 256 원 오라. iconArea가 256 정사각 + 중앙정렬이라 glow는 그 영역을 꽉 채운
+  // 원이 되고 iconWrap이 정중앙에 온다 → "원 안 중앙 아이콘".
+  iconArea: { width: 256, height: 256, alignItems: 'center', justifyContent: 'center' },
+  glow: {
+    position: 'absolute',
+    width: 256,
+    height: 256,
+    borderRadius: 128,
+    backgroundColor: `${colors.primary}26`,
+  },
+  brandBlock: { alignItems: 'center', gap: 24 },
+  iconWrap: {
+    width: 112,
+    height: 112,
+    borderRadius: 32,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  icon: { width: '100%', height: '100%' },
+  shimmer: {
+    position: 'absolute',
+    top: -40,
+    bottom: -40,
+    width: 40,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
   title: {
     fontSize: 30,
     fontFamily: typography.bodyFontFamilyExtrabold,
@@ -102,7 +149,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   barTrack: {
-    position: 'absolute',
+    position: 'absolute', // 브랜드 블록 중앙정렬과 분리 — 로딩바는 하단 고정
     bottom: 90,
     alignSelf: 'center',
     width: 160,

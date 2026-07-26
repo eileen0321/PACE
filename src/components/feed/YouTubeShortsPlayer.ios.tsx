@@ -61,38 +61,18 @@ const INJECTED_JS = `
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
     // 음소거 아이콘(unmute 버튼)만 "정확히" 클릭해 유튜브 내부 음소거 상태를 동기화 → "탭하여 음소거
     // 해제" 오버레이 제거(사용자 지시). 숨기거나 다른 요소 건드리지 않음 — aria-label로 그 버튼만 콕.
-    // 진단: 음소거 관련 요소가 실제로 어떤 tag/class/aria-label인지 화면에 보고(선택자를 정확히 맞추려고).
-    function reportMuteEls() {
-      try {
-        // 모든 button/role=button 덤프(aria-label + class) — 음소거 버튼을 로그로 정확히 식별.
-        var btns = document.querySelectorAll('button, [role="button"]');
-        var out = [];
-        for (var i = 0; i < btns.length && out.length < 10; i++) {
-          var n = btns[i];
-          var al = n.getAttribute('aria-label') || n.getAttribute('title') || '';
-          var cl = (n.className || '').toString().slice(0, 24);
-          out.push('[' + al.slice(0, 24) + '|' + cl + ']');
-        }
-        send({ type: 'domlog', text: 'BTNS(' + btns.length + '): ' + out.join(' ') });
-      } catch (e) {}
-    }
+    // 유튜브 "탭하여 음소거 해제" 버튼 = 클래스 .ytp-unmute (aria-label 비어있어 클래스로 잡음, 실기기
+    // 로그로 확인). 이걸 클릭하면 유튜브 내부 음소거 상태가 풀리고 팝업이 사라진다. 소리 확인 후에만.
     function tapUnmute() {
       try {
-        var b = document.querySelector('[aria-label*="음소거 해제" i], [aria-label*="음소거를 해제" i], [aria-label*="unmute" i]');
-        if (b) {
-          var r = b.getBoundingClientRect();
-          var opts = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-          b.dispatchEvent(new MouseEvent('mousedown', opts));
-          b.dispatchEvent(new MouseEvent('mouseup', opts));
-          b.dispatchEvent(new MouseEvent('click', opts));
-          b.click();
-        }
+        var b = document.querySelector('.ytp-unmute');
+        if (b) { b.click(); }
       } catch (e) {}
     }
     var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(function () { tapUnmute(); reportMuteEls(); }, ms); }); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(tapUnmute, ms); }); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });

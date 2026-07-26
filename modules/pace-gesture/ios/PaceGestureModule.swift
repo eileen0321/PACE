@@ -379,9 +379,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
   private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
   private let windowSec: TimeInterval = 0.6
-  private let growthRatio: CGFloat = 1.32         // 비율 게이트(과발화는 armed 재무장+JS 1.5s 디바운스도 막음)
-  private let minGrowthDelta: CGFloat = 0.10      // 절대 증가량 게이트 — 1.28 비율만으론 손이 프레임서 살짝 커져도(0.33→0.42) 오발화("지맘대로 넘어감"). "실제로 크게 다가온" 것만 통과시켜 지터 거름
-  private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
+  private let growthRatio: CGFloat = 1.3          // 너클 폭이 1.3배 커짐 = 손이 다가옴. 안정적 지표라 지터 오발화 없음(재무장+JS디바운스도 방어)
+  private let minHandSize: CGFloat = 0.02         // 너클 폭 스케일(바운딩박스보다 작음) — 너무 멀면 무시
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
   private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms(10회/초) — 200ms로 낮췄더니 0.6s창 샘플부족으로 손짓 감지율 급락. 촘촘히 유지.
 
@@ -511,18 +510,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     if lockedOri == nil { lockedOri = usedOri; onDiag("HAND FOUND ori=\(usedOri.rawValue)") } // 첫 감지 방향 고정+로그
 
-    // 손 "크기" = 신뢰도 높은 "모든 관절점"의 바운딩박스 대각선. 실기기 로그로 확정: iOS Vision은 손목
-    // (wrist) 신뢰도가 자주 0이라 손목↔MCP만 쓰면 대부분 프레임이 버려져 감지율이 급락했다. 바운딩박스는
-    // 손목 하나가 빠져도 나머지 점들로 크기를 재므로 훨씬 강건하다. 손이 다가오면 박스가 커짐(=손짓).
-    let allPts = (try? obs.recognizedPoints(.all)) ?? [:]
-    var xs: [CGFloat] = []; var ys: [CGFloat] = []
-    for (_, p) in allPts where p.confidence > 0.3 { xs.append(p.location.x); ys.append(p.location.y) }
-    guard xs.count >= 3, let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
-      if logTick % 6 == 0 { onDiag("hand few-pts \(xs.count)") }; return
+    // 손 "크기" = 검지MCP ↔ 새끼MCP(너클 폭). ⚠️ 실기기 로그로 확정: "모든 점 바운딩박스"는 감지점
+    // 개수(pts 13~21)가 프레임마다 바뀌며 크기가 0.29↔0.73으로 요동쳐(손끝 지터) 성장 감지가 오작동했다.
+    // 너클(MCP)은 손가락 끝과 달리 팔 구조라 안정적이고 항상 함께 잡혀, 손이 다가올 때만 폭이 커진다.
+    // 두 너클을 못 잡으면(신뢰도 낮음) no-hand로 취급(재무장) — 잡힐 때만 안정적으로 판정.
+    guard
+      let imcp = try? obs.recognizedPoint(.indexMCP),
+      let lmcp = try? obs.recognizedPoint(.littleMCP),
+      imcp.confidence > 0.3, lmcp.confidence > 0.3
+    else {
+      armed = true
+      if logTick % 6 == 0 { onDiag("hand no-knuckle") }
+      return
     }
-    let bw = maxX - minX, bh = maxY - minY
-    let size = CGFloat((bw * bw + bh * bh).squareRoot())
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f pts=%d n=%d armed=%@", Double(size), xs.count, samples.count + 1, armed ? "1" : "0")) }
+    let kdx = imcp.location.x - lmcp.location.x, kdy = imcp.location.y - lmcp.location.y
+    let size = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f n=%d armed=%@", Double(size), samples.count + 1, armed ? "1" : "0")) }
     // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
     // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
     if !armed && size < lastFireSize * 0.75 { armed = true }
@@ -537,7 +540,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // ⚠️ 과발화 방지(사용자 "한 손짓에 여러 번 넘어감"): refractory만으로는 부족 — 손이 프레임에 계속
     //    있으면 창이 갱신되며 반복 발화됨. "발화 후 손이 한 번 빠져야(no-hand/작아짐) 재무장(armed)"
     //    게이트를 둬 한 제스처=한 번만 넘어가게 한다.
-    if armed && size >= oldest.size * growthRatio && (size - oldest.size) >= minGrowthDelta {
+    if armed && size >= oldest.size * growthRatio {
       guard now - lastFire > refractorySec else { return }
       lastFire = now
       armed = false // 손이 뒤로 빠질(크기 25%↓) 때까지 재발화 금지

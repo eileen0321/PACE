@@ -34,12 +34,13 @@ export function RemoteClickIllustration() {
   return (
     <View style={styles.wrap}>
       <Animated.View style={iconStyle}>
-        <Feather name="bluetooth" size={16} color={colors.textSecondary} />
+        <Feather name="bluetooth" size={22} color={colors.textSecondary} />
       </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { width: 34, height: 20, alignItems: 'center', justifyContent: 'center' },
+  // 2026-07-27 사용자 지적("아이콘 더 키우라니까") — SnapPulse/GestureFlick과 동일하게 확대.
+  wrap: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
 });

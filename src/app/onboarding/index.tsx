@@ -138,6 +138,16 @@ export default function OnboardingScreen() {
                   <Text style={styles.rowDesc}>{t('handsFreeSheet.nextShort')}</Text>
                 </View>
               </View>
+              {/* 2026-07-27 사용자 지적("핸즈프리 설명은 어디로 갔어") — BluetoothOnboardingSheet.tsx엔
+                  있던 4번째 행(핸즈프리 모드가 Focus Session 내내 켜져 있다는 설명)이 이 가이드
+                  페이지엔 빠져있었다 — 두 화면이 같은 내용을 보여줘야 하므로 추가. */}
+              <View style={styles.row}>
+                <View style={styles.gestureStage}><Feather name="play-circle" size={22} color={colors.textSecondary} /></View>
+                <View style={styles.rowText}>
+                  <Text style={styles.rowTitle}>{t('handsFreeSheet.handsFreeModeLabel')}</Text>
+                  <Text style={styles.rowDesc}>{t('handsFreeSheet.staysOnLabel')}</Text>
+                </View>
+              </View>
             </View>
 
             <Text style={styles.scopeNote}>{t('handsFreeSheet.scopeNote')}</Text>
@@ -163,7 +173,8 @@ const styles = StyleSheet.create({
   rows: { gap: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   iconWrap: { width: 40, alignItems: 'center' },
-  gestureStage: { width: 40, alignItems: 'center' },
+  // 2026-07-27 사용자 지적("아이콘 더 키우라니까") — 일러스트 자체를 56x50으로 키운 것에 맞춰 확대.
+  gestureStage: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   rowText: { flex: 1, gap: 2 },
   rowTitle: { fontSize: 16, fontFamily: typography.bodyFontFamilyBold, color: '#FFFFFF' },
   rowDesc: { fontSize: 13, lineHeight: 18, fontFamily: typography.bodyFontFamily, color: 'rgba(255,255,255,0.6)' },

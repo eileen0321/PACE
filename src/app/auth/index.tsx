@@ -26,7 +26,12 @@ export default function AuthScreen() {
   const signInWithApple = useUserStore((s) => s.signInWithApple);
   const [busy, setBusy] = useState(false);
 
-  const goHome = () => router.replace('/(tabs)/home');
+  // 2026-07-27 사용자 지적 — "/auth"는 콜드 스타트 경로가 아니라 항상 Settings(로그아웃 행) 또는
+  // Paywall("로그인 필요" 안내)에서 push로 들어온다(src/app/index.tsx 콜드 스타트는 onboarding/home만
+  // 감, 이 화면을 절대 안 거침). 그런데 로그인 성공 후 무조건 router.replace('/(tabs)/home')을 불러
+  // 어디서 왔든 Home으로 강제 이동시켰다 — Settings에서 로그인했는데 Home으로 튕기고, 스택을
+  // replace하는 전환이라 화면이 번쩍였다. 항상 오는 곳이 있으므로 그냥 뒤로 돌아가면 된다.
+  const goHome = () => router.back();
 
   const onGoogle = async () => {
     setBusy(true);

@@ -48,7 +48,9 @@ export function SnapPulseIllustration() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { width: 40, height: 36, alignItems: 'center', justifyContent: 'center' },
-  icon: { width: 36, height: 36 },
+  // 2026-07-27 사용자 지적("손짓/블루투스 아이콘 더 키우라니까") — 40x36/34x20 컨테이너가 너무
+  // 작아 잘 안 보였다는 재지적, 세 일러스트(스냅/손짓/리모컨) 전부 한 단계 키움.
+  wrap: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: 50, height: 50 },
   flash: { position: 'absolute' },
 });

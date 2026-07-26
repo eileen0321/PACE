@@ -112,10 +112,10 @@ const styles = StyleSheet.create({
   body: { fontSize: 13, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 19, marginBottom: spacing.md },
   scopeNote: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textTertiary, marginTop: spacing.sm },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },
-  // 2026-07-26 — 각 줄의 손짓 일러스트가 서로 다른 내부 크기(스냅 40x36, 손짓 40x36, 리모컨
-  // 34x20, Feather 아이콘 16x16)를 가져서 그대로 두면 줄마다 라벨 시작 위치가 어긋난다. 모든
-  // 줄의 아이콘을 이 고정 크기 스테이지 안에 가운데 정렬해 라벨이 항상 같은 x에서 시작하게 한다.
-  iconStage: { width: 40, height: 36, alignItems: 'center', justifyContent: 'center' },
+  // 2026-07-26 — 각 줄의 손짓 일러스트가 서로 다른 내부 크기를 가져서 그대로 두면 줄마다 라벨
+  // 시작 위치가 어긋난다. 모든 줄의 아이콘을 이 고정 크기 스테이지 안에 가운데 정렬해 라벨이 항상
+  // 같은 x에서 시작하게 한다. 2026-07-27 — 아이콘 자체를 56x50으로 키워서 스테이지도 맞춰 확대.
+  iconStage: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
   actionArrow: { color: colors.textTertiary },
   enableBtn: { marginTop: spacing.md, backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.sm + 2, alignItems: 'center' },

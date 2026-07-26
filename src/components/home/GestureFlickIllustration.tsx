@@ -19,7 +19,7 @@ const OPEN_ICON = require('../../../assets/hand-open-icon.png');
 const CYCLE_MS = 2600;
 const SWAP_MS = 420;
 const HOLD_MS = 550;
-const RISE = 10;
+const RISE = 14; // 2026-07-27 아이콘 확대(56x50)에 맞춰 이동 거리도 비례해서 키움
 
 // 2026-07-26 사용자 정정 1차 — "가로젓는 게 아니잖아, 훠이는" — 손이 폰 옆을 스쳐 지나가는 좌우
 // 이동은 틀렸다. 2차 정정 — "아래는 주먹에서 시작해서 폰 위로 가면 손 펴있는 모습이라고, 왜
@@ -59,7 +59,7 @@ export function GestureFlickIllustration() {
   return (
     <View style={styles.wrap}>
       {/* 맨 뒤: 폰 실루엣 — 고정, 손이 그 위로 내려와 덮는다 */}
-      <Svg width={13} height={22} viewBox="0 0 13 22" style={styles.phone}>
+      <Svg width={18} height={30} viewBox="0 0 13 22" style={styles.phone}>
         <Rect x={1} y={1} width={11} height={20} rx={3} fill={colors.card} stroke={colors.textTertiary} strokeWidth={1.3} />
       </Svg>
       {/* 맨 앞: 아래쪽 주먹 → 편 손으로 열리며 위로 올라와 폰 위를 덮음(좌우 이동 없음) */}
@@ -80,9 +80,10 @@ export function GestureFlickIllustration() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { width: 40, height: 36, alignItems: 'center', justifyContent: 'center' },
+  // 2026-07-27 사용자 지적("아이콘 더 키우라니까") — SnapPulse/RemoteClick과 동일하게 확대.
+  wrap: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   phone: { position: 'absolute' },
-  handHover: { position: 'absolute', top: 13 },
-  hand: { width: 16, height: 19 },
+  handHover: { position: 'absolute', top: 18 },
+  hand: { width: 22, height: 26 },
   handOverlay: { position: 'absolute' },
 });

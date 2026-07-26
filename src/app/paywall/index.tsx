@@ -73,12 +73,14 @@ export default function PaywallScreen() {
       .finally(() => setPurchasing(false));
   };
 
-  // 2026-07-26 사용자 지시 — 프리미엄 혜택(광고 제거/자동넘김 무제한/리모컨/고급 취침모드)을 명시적으로
+  // 2026-07-26 사용자 지시 — 프리미엄 혜택(광고 제거/자동넘김 무제한/고급 취침모드)을 명시적으로
   // 나열. 예전엔 RC 상품 목록만 덩그러니 보여줘서 "돈 내면 뭐가 좋아지는지" 자체가 안 보였다.
+  // 2026-07-27 사용자 지시로 핸즈프리 컨트롤(손짓/블루투스 리모컨) 게이팅을 다시 무료로 풀면서
+  // benefitRemoteControl 삭제 — 이제 실제로 무료 혜택이라 페이월에 남겨두면 "안 되는 걸 된다고
+  // 광고"의 반대(되는 걸 유료라고 광고)로 또 다른 허위광고 문제가 된다.
   const benefits = [
     t('paywall.benefitNoAds'),
     t('paywall.benefitUnlimitedAutoNext'),
-    t('paywall.benefitRemoteControl'),
     t('paywall.benefitAdvancedSleepMode'),
   ];
 

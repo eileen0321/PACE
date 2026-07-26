@@ -1,4 +1,4 @@
-import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
@@ -14,62 +14,46 @@ import { bottomSheetPadding, colors, radius, spacing, typography } from '../../c
 // 인앱 Next/Prev 버튼도 이미 삭제됐다(#B26). 그런데 이 시트의 "Enable" 버튼 자체는 지우면 안 된다
 // — Android에서 실제로 동작하는 건 핑거스냅/손 밀어내기/자동재생 워처로 이뤄진 Auto Mode(Focus
 // Session, PaceSnapDetector/PaceHandWaveDetector — PACE_ARCHITECTURE.md 참고)이고, 이 시트가
-// 그걸 처음 켜는 유일한 진입점이다. 그래서 컴포넌트를 통째로 숨기는 대신 Android에서만 실제로
-// 벌어지는 일(제스처 기반 핸즈프리)로 문구를 바꿨다 — iOS는 이 store/service 경로가 여전히 스텁
-// (bluetoothService.ios.ts)이라 기존 Bluetooth 헤드셋 문구를 그대로 둔다(변경 없음).
+// 그걸 처음 켜는 유일한 진입점이다. 그래서 컴포넌트를 통째로 숨기는 대신 실제로 벌어지는 일
+// (제스처 기반 핸즈프리)로 문구를 바꿨다.
+// 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애 — 이어폰 안 되잖아") — iOS 분기도
+// "Bluetooth 헤드셋 버튼" 문구를 그대로 뒀었는데(당시 B1은 Android 스코프였음), 이건 iOS에서도
+// 똑같이 거짓임(§2-C C5, useBluetoothStore/bluetoothService.ios.ts가 100% no-op 스텁 — 눌러도
+// 토스트만 뜸). 이제 플랫폼 분기 자체를 없애고 양쪽 다 Android와 동일하게 핑거스냅/손짓 문구로
+// 통일 — PaceGestureModule.swift(2026-07-26 밤 Mac 세션 커밋)로 iOS도 핑거스냅/손짓 인식 자체는
+// 실제로 동작하니, 이 Home 진입점(Enable 버튼)이 그 엔진을 실제로 켜는지는 별개 배선 문제로
+// C5에 남겨둔다(문구를 거짓으로 만들지 않는 것과 배선을 고치는 것은 다른 작업).
 export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
   visible: boolean;
   onEnable: () => void;
   onDismiss: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const isAndroid = Platform.OS === 'android';
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onDismiss} />
       <View style={[styles.sheet, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
         <View style={styles.handle} />
         <View style={styles.iconWrap}>
-          <Feather name={isAndroid ? 'zap' : 'headphones'} size={22} color={colors.primary} />
+          <Feather name="zap" size={22} color={colors.primary} />
         </View>
         <Text style={styles.title}>Hands-Free Control</Text>
         <Text style={styles.body}>
-          {isAndroid
-            ? "Go hands-free without a headset — Pace can advance Shorts from a finger snap or a hand wave."
-            : 'Use your Bluetooth headset to control Shorts without touching your screen.'}
+          Go hands-free without a headset — Pace can advance Shorts from a finger snap or a hand wave.
         </Text>
 
-        {isAndroid ? (
-          <>
-            <View style={styles.actionRow}>
-              <Feather name="mic" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Finger snap <Text style={styles.actionArrow}>→</Text> Next Short</Text>
-            </View>
-            <View style={styles.actionRow}>
-              <Feather name="camera" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Hand wave <Text style={styles.actionArrow}>→</Text> Next Short</Text>
-            </View>
-            <View style={styles.actionRow}>
-              <Feather name="play-circle" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Auto Mode <Text style={styles.actionArrow}>→</Text> Hands-free for your Focus Session</Text>
-            </View>
-          </>
-        ) : (
-          <>
-            <View style={styles.actionRow}>
-              <Feather name="skip-forward" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Next button <Text style={styles.actionArrow}>→</Text> Next Short</Text>
-            </View>
-            <View style={styles.actionRow}>
-              <Feather name="skip-back" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Previous button <Text style={styles.actionArrow}>→</Text> Previous Short</Text>
-            </View>
-            <View style={styles.actionRow}>
-              <Feather name="play" size={16} color={colors.textSecondary} />
-              <Text style={styles.actionLabel}>Play / Pause <Text style={styles.actionArrow}>→</Text> Toggle Focus Session</Text>
-            </View>
-          </>
-        )}
+        <View style={styles.actionRow}>
+          <Feather name="mic" size={16} color={colors.textSecondary} />
+          <Text style={styles.actionLabel}>Finger snap <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+        </View>
+        <View style={styles.actionRow}>
+          <Feather name="camera" size={16} color={colors.textSecondary} />
+          <Text style={styles.actionLabel}>Hand wave <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+        </View>
+        <View style={styles.actionRow}>
+          <Feather name="play-circle" size={16} color={colors.textSecondary} />
+          <Text style={styles.actionLabel}>Auto Mode <Text style={styles.actionArrow}>→</Text> Hands-free for your Focus Session</Text>
+        </View>
 
         <Pressable onPress={onEnable} style={styles.enableBtn}>
           <Text style={styles.enableBtnText}>Enable</Text>

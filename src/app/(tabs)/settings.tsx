@@ -32,14 +32,15 @@ import type { UserSettings } from '../../types/models';
 // 수신함으로 교체 필수 — 지금은 버튼이 죽어있는 것보다 우선 연결해두고 나중에 주소만 바꾸면 됨.
 const SUPPORT_EMAIL = 'support@pace.app';
 
-// 2026-07-25 B1 — faqQ3/A3("Bluetooth 이어폰 리모컨 버튼으로 Shorts를 넘기거나 Focus Session을
-// 켠다")는 capabilities.supportsHandsFreeControl이 지키는 것과 똑같은 약속이라 Android에서는 같은
-// 이유로 거짓이다(하드웨어 미디어 버튼 라우팅이 OS 레벨에서 불가능 확정 — capabilities.ts 주석
-// 참고). iOS는 이 FAQ를 그대로 유지(기존 동작 무변경).
+// 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애") — faqQ3/A3가 예전엔 "Bluetooth 이어폰
+// 리모컨 버튼으로 Shorts를 넘긴다"는, capabilities.supportsHandsFreeControl(하드웨어 미디어 버튼
+// 라우팅, Android=불가능 확정)과 동일한 약속이라 이 플래그로 Android에서만 숨겼었다. 지금은 문구를
+// 실제로 동작하는 핑거스냅/손짓(PaceSnapDetector/PaceHandWaveDetector, Android 검증 완료)으로
+// 바꿨으므로 그 하드웨어 버튼 플래그로 게이팅하는 게 더 이상 안 맞음 — 플랫폼 구분 없이 항상 노출.
 const FAQ_KEYS: [TranslationKey, TranslationKey][] = [
   ['settings.faqQ1', 'settings.faqA1'],
   ['settings.faqQ2', 'settings.faqA2'],
-  ...(capabilities.supportsHandsFreeControl ? [['settings.faqQ3', 'settings.faqA3'] as [TranslationKey, TranslationKey]] : []),
+  ['settings.faqQ3', 'settings.faqA3'],
   ['settings.faqQ4', 'settings.faqA4'],
   ['settings.faqQ5', 'settings.faqA5'],
 ];

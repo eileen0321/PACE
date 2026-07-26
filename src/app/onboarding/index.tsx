@@ -13,11 +13,16 @@ import type { TranslationKey } from '../../services/i18n';
 // healthy-shorts-assistant(4) Onboarding.tsx 이식(2026-07-21) 이후 사용자 지적(2026-07-25,
 // "부팅 타임 가이드 페이지 너무 촌스러운거 아냐?") — 원형 아이콘 링 + 컬러 배지 필 + 체크마크
 // 불릿리스트 + 그라데이션 글로우 조합이 전형적인 "기능 소개 랜딩페이지" 템플릿처럼 읽힌다는 지적에
-// 따라 미니멀 텍스트 중심으로 재설계(사용자 선택). 그래픽 요소를 걷어내고 큰 타이포 타이틀 +
-// 짧은 한 줄 설명 + 얇은 색상 액센트 바만 남긴다.
-const SLIDE_ACCENTS = ['#818CF8', '#34D399', '#F59E0B'] as const;
-type SlideKey = 0 | 1 | 2;
-const SLIDE_KEYS: SlideKey[] = [0, 1, 2];
+// 따라 미니멀 텍스트 중심으로 재설계했었다(그래픽 요소 제거 + 큰 타이포 타이틀 + 한 줄 설명).
+//
+// 2026-07-26 사용자 지시 — Pinterest 참고 이미지 기준 "아이콘 + 제목 + 한 줄 설명" 카드 형태로 재구성,
+// 내용도 새 보상 흐름(휴식 측정 → 크레딧 적립 → 연속 시청 → 취침 모드) 4장으로 전면 교체. 이모지
+// 아이콘만 쓰고 원형 배지/링/그라데이션은 다시 넣지 않는다(위 2026-07-25 지적이 정확히 그 장식들을
+// 겨냥한 것이었으므로) — 순수 텍스트 레이아웃에 아이콘 한 줄만 추가하는 선에서 그친다.
+const SLIDE_ACCENTS = ['#5EEAD4', '#818CF8', '#34D399', '#A78BFA'] as const;
+const SLIDE_ICONS = ['🏖️', '⭐', '▶️', '🌙'] as const;
+type SlideKey = 0 | 1 | 2 | 3;
+const SLIDE_KEYS: SlideKey[] = [0, 1, 2, 3];
 
 export default function OnboardingScreen() {
   const { t } = useTranslation();
@@ -56,9 +61,11 @@ export default function OnboardingScreen() {
       </View>
 
       <Animated.View key={slideKey} entering={SlideInRight.duration(220)} exiting={SlideOutLeft.duration(160)} style={styles.slideBody}>
-        <View style={[styles.accentBar, { backgroundColor: accent }]} />
         <Text style={styles.featureLabel}>{t('onboarding.featureLabel', { n })}</Text>
-        <Text style={styles.title}>{t(`onboarding.slide${n}Title` as TranslationKey)}</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.icon}>{SLIDE_ICONS[slideKey]}</Text>
+          <Text style={styles.title}>{t(`onboarding.slide${n}Title` as TranslationKey)}</Text>
+        </View>
         <Text style={styles.description}>{t(`onboarding.slide${n}Description` as TranslationKey)}</Text>
       </Animated.View>
 
@@ -84,11 +91,12 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   brandLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, color: colors.textPrimary },
   skipText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textTertiary },
-  slideBody: { flex: 1, justifyContent: 'center', gap: spacing.md, paddingBottom: spacing.xl },
-  accentBar: { width: 28, height: 4, borderRadius: 2 },
-  featureLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, letterSpacing: 1, color: colors.textTertiary },
-  title: { fontSize: 34, lineHeight: 40, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
-  description: { fontSize: 16, lineHeight: 24, fontFamily: typography.bodyFontFamily, color: colors.textSecondary, maxWidth: '90%' },
+  slideBody: { flex: 1, justifyContent: 'center', gap: spacing.sm, paddingBottom: spacing.xl },
+  featureLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, letterSpacing: 1, color: colors.textTertiary, marginBottom: spacing.xs },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  icon: { fontSize: 30, lineHeight: 34 },
+  title: { fontSize: 26, lineHeight: 32, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.3, flexShrink: 1 },
+  description: { fontSize: 15, lineHeight: 22, fontFamily: typography.bodyFontFamily, color: colors.textSecondary, maxWidth: '92%' },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.lg, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
   dots: { flexDirection: 'row', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border },

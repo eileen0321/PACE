@@ -14,6 +14,7 @@ import { useSessionStore } from '../../store/useSessionStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useFlipStore } from '../../store/useFlipStore';
 import { overlayService, autoNextService } from '../../services/platform';
 import { showRewardedAd } from '../../services/ads/rewardedAd';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
@@ -278,6 +279,20 @@ export default function OverlaySessionScreen() {
     });
   };
 
+  // 2026-07-26 사용자 지시("휴식 시간 → 크레딧 적립 → 크레딧으로 이어보기") — Flip Mode(폰 내려놓기)로
+  // 모은 크레딧을 광고 대신(또는 광고와 나란히) 써서 Focus Session 한도를 늘린다. 1크레딧 = 영상 1편
+  // 연장(적립도 1분=1크레딧으로 단순한 1:1이라 소비도 동일 비율로 맞춤). 전액을 한 번에 쓴다 —
+  // 부분 사용 UI(슬라이더 등)까지는 과했다고 판단, "모은 만큼 이어본다"는 단순한 약속이 지금 카피와도
+  // 맞음.
+  const restCredits = useFlipStore((s) => s.credits);
+  const onUseCredits = () => {
+    const spent = useFlipStore.getState().spendCredits(restCredits);
+    if (spent <= 0) return;
+    autoNextService.extendAutoNextCap(spent).catch(() => {});
+    setShowCapModal(false);
+    useToastStore.getState().show(t('overlay.autoNextExtendedToast', { extend: spent }));
+  };
+
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —
   // 여기서는 dev 시뮬레이터에서 데모 영상이 끝나면 다음 영상으로 넘어가는 흉내만 낸다.
   useEffect(() => {
@@ -373,7 +388,7 @@ export default function OverlaySessionScreen() {
         <View style={styles.capModalBackdrop}>
           <View style={styles.capModalCard}>
             <Text style={styles.capModalTitle}>{t('overlay.autoNextCapReachedTitle')}</Text>
-            <Text style={styles.capModalMessage}>{t('overlay.autoNextCapReachedMessage', { cap: 30, extend: 20 })}</Text>
+            <Text style={styles.capModalMessage}>{t('overlay.autoNextCapReachedMessage', { cap: 30 })}</Text>
             <Pressable
               style={[styles.capModalBtn, styles.capModalBtnPrimary, watchingAd && styles.capModalBtnDisabled]}
               onPress={onWatchAdForMore}
@@ -385,6 +400,15 @@ export default function OverlaySessionScreen() {
                 <Text style={styles.capModalBtnPrimaryText}>{t('overlay.watchAdForMore', { extend: 20 })}</Text>
               )}
             </Pressable>
+            {restCredits > 0 && (
+              <Pressable
+                style={[styles.capModalBtn, styles.capModalBtnCredits]}
+                onPress={onUseCredits}
+                disabled={watchingAd}
+              >
+                <Text style={styles.capModalBtnCreditsText}>{t('overlay.useCreditsForMore', { credits: restCredits })}</Text>
+              </Pressable>
+            )}
             <Pressable style={styles.capModalBtn} onPress={() => setShowCapModal(false)} disabled={watchingAd}>
               <Text style={styles.capModalBtnText}>{t('overlay.notNow')}</Text>
             </Pressable>
@@ -446,5 +470,7 @@ const styles = StyleSheet.create({
   capModalBtnPrimary: { backgroundColor: colors.primary },
   capModalBtnDisabled: { opacity: 0.7 },
   capModalBtnPrimaryText: { color: colors.background, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
+  capModalBtnCredits: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)' },
+  capModalBtnCreditsText: { color: colors.successLight, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
   capModalBtnText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
 });

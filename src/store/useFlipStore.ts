@@ -30,14 +30,19 @@ function todayStr(): string {
 type Persisted = {
   date: string;
   putDownSeconds: number;
-  credits: number;
+  creditsSpent: number;
   flipStartMs: number | null; // 엎어놓은 시각(진행 중인 쉼) — kill 복구용으로 영속
 };
 
 type FlipState = {
   date: string;
-  putDownSeconds: number; // 오늘 내려놓은 총 시간(초)
-  credits: number; // 오늘 적립한 집중 크레딧
+  putDownSeconds: number; // 오늘 내려놓은 총 시간(초) — 소비와 무관하게 항상 정직한 실측 통계
+  // 2026-07-26 사용자 지시("크레딧을 사용해 이어보기") — credits는 putDownSeconds의 순수 함수
+  // (creditsFor)였는데, 그러면 크레딧을 쓴 뒤에도 다음 정산(settle)에서 putDownSeconds 기준으로
+  // 다시 계산돼 방금 쓴 만큼이 도로 채워지는(=소비가 무의미해지는) 버그가 된다. creditsSpent를
+  // 별도로 누적해서 credits = max(0, creditsFor(putDownSeconds) - creditsSpent)로 노출한다 —
+  // putDownSeconds 자체(Stats의 "오늘 쉰 시간" 실측치)는 손대지 않는다.
+  credits: number; // 오늘 사용 가능한 크레딧 잔액(적립 - 소비)
   isFaceDown: boolean;
   flipStartMs: number | null;
 
@@ -46,6 +51,13 @@ type FlipState = {
   onFaceUp: () => void;
   rollDateIfNeeded: () => void;
   resetToday: () => void;
+  /**
+   * Focus Session 무료 한도(PaceAccessibilityService.autoSwipeCap) 연장에 크레딧을 쓴다 — 보상형
+   * 광고와 동일한 extendAutoNextCap()을 부르되, 광고 대신 이 크레딧이 재원. 보유량 초과 요청은
+   * 보유량만큼만 쓰고 실제로 쓴 양을 반환(호출부가 그 값으로 extendAutoNextCap을 부름) — 잔액 0이면
+   * 0 반환(그냥 no-op, 에러 아님).
+   */
+  spendCredits: (amount: number) => number;
 };
 
 // 쓰기 직렬화(감사 M4) — fire-and-forget setItem들이 순서 뒤바뀌지 않게 체인으로 잇는다.
@@ -58,18 +70,24 @@ function creditsFor(seconds: number): number {
   return Math.floor(seconds / 60) * CREDIT_PER_MINUTE;
 }
 
+function availableCredits(putDownSeconds: number, creditsSpent: number): number {
+  return Math.max(0, creditsFor(putDownSeconds) - creditsSpent);
+}
+
 // 진행 중인 쉼(flipStartMs)을 정산 → 오늘로 롤오버 + 상한 적용 + 크레딧 재계산 + 영속.
 // 정산할 게 없으면 isFaceDown만 내린다. onFaceUp / load 복구 양쪽에서 재사용.
-function settle(cur: { date: string; putDownSeconds: number; flipStartMs: number | null }): Partial<FlipState> {
+function settle(cur: { date: string; putDownSeconds: number; creditsSpent: number; flipStartMs: number | null }): Partial<FlipState> {
   if (cur.flipStartMs == null) return { isFaceDown: false };
   const today = todayStr();
   // 자정을 넘겨 쉼이 이어졌으면 오늘 누적은 0에서 시작(어제 몫은 굳이 소급 배분하지 않음 — 단순/보수적).
-  const basePutDown = cur.date === today ? cur.putDownSeconds : 0;
+  const sameDay = cur.date === today;
+  const basePutDown = sameDay ? cur.putDownSeconds : 0;
+  const creditsSpent = sameDay ? cur.creditsSpent : 0;
   const rawElapsed = Math.max(0, Math.round((Date.now() - cur.flipStartMs) / 1000));
   const elapsed = Math.min(rawElapsed, MAX_REST_SECONDS); // 방치/밤샘 오검 상한
   const putDownSeconds = basePutDown + elapsed;
-  const credits = creditsFor(putDownSeconds);
-  persist({ date: today, putDownSeconds, credits, flipStartMs: null });
+  const credits = availableCredits(putDownSeconds, creditsSpent);
+  persist({ date: today, putDownSeconds, creditsSpent, flipStartMs: null });
   return { date: today, putDownSeconds, credits, isFaceDown: false, flipStartMs: null };
 }
 
@@ -90,7 +108,8 @@ export const useFlipStore = create<FlipState>((set, get) => ({
       const saved = raw ? (JSON.parse(raw) as Partial<Persisted>) : null;
       const sameDay = saved?.date === today;
       const putDownSeconds = sameDay ? saved?.putDownSeconds ?? 0 : 0;
-      const credits = sameDay ? saved?.credits ?? 0 : 0;
+      const creditsSpent = sameDay ? saved?.creditsSpent ?? 0 : 0;
+      const credits = availableCredits(putDownSeconds, creditsSpent);
 
       if (activeInMemory) {
         set({ date: today, putDownSeconds, credits }); // 오늘 누적만 반영, 진행 중 쉼 보존
@@ -101,17 +120,17 @@ export const useFlipStore = create<FlipState>((set, get) => ({
       if (saved?.flipStartMs != null) {
         if (sameDay) {
           // 같은 날 → 지금 콜드스타트(=앱을 다시 열었으니 face-up)에서 그 사이 경과를 정산(상한 적용).
-          set(settle({ date: saved.date || today, putDownSeconds, flipStartMs: saved.flipStartMs }));
+          set(settle({ date: saved.date || today, putDownSeconds, creditsSpent, flipStartMs: saved.flipStartMs }));
         } else {
           // 전날 이월된 진행 중 쉼 → stale로 보고 폐기(가짜 4h 적립 방지, 감사 C2). 오늘은 0부터.
           set({ date: today, putDownSeconds: 0, credits: 0, isFaceDown: false, flipStartMs: null });
-          persist({ date: today, putDownSeconds: 0, credits: 0, flipStartMs: null });
+          persist({ date: today, putDownSeconds: 0, creditsSpent: 0, flipStartMs: null });
         }
         return;
       }
 
       set({ date: today, putDownSeconds, credits, isFaceDown: false, flipStartMs: null });
-      if (!sameDay) persist({ date: today, putDownSeconds: 0, credits: 0, flipStartMs: null });
+      if (!sameDay) persist({ date: today, putDownSeconds: 0, creditsSpent: 0, flipStartMs: null });
     } catch {
       if (!activeInMemory) set({ date: todayStr(), putDownSeconds: 0, credits: 0, isFaceDown: false, flipStartMs: null });
     }
@@ -124,17 +143,19 @@ export const useFlipStore = create<FlipState>((set, get) => ({
     if (s.isFaceDown) return;
     const today = todayStr();
     const startMs = Date.now();
-    const putDownSeconds = s.date === today ? s.putDownSeconds : 0;
-    const credits = s.date === today ? s.credits : 0;
+    const sameDay = s.date === today;
+    const putDownSeconds = sameDay ? s.putDownSeconds : 0;
+    const creditsSpent = sameDay ? 0 : 0; // date 롤오버 시 소비 이력도 함께 리셋(새 날)
+    const credits = sameDay ? s.credits : 0;
     set({ isFaceDown: true, flipStartMs: startMs, date: today, putDownSeconds, credits });
-    persist({ date: today, putDownSeconds, credits, flipStartMs: startMs });
+    persist({ date: today, putDownSeconds, creditsSpent, flipStartMs: startMs });
   },
 
   // 집어듦 감지 → 진행 중인 쉼을 정산(누적+크레딧+영속). 진행 중 아니면 no-op.
   onFaceUp: () => {
     const s = get();
     if (!s.isFaceDown && s.flipStartMs == null) return;
-    set(settle(s));
+    set(settle({ date: s.date, putDownSeconds: s.putDownSeconds, creditsSpent: creditsFor(s.putDownSeconds) - s.credits, flipStartMs: s.flipStartMs }));
   },
 
   // 열린 채 자정을 넘겼을 때 표시/누적을 새 날로 롤오버(감사 H2). 진행 중 쉼은 유지(경과는 새 날에 정산).
@@ -143,12 +164,28 @@ export const useFlipStore = create<FlipState>((set, get) => ({
     const today = todayStr();
     if (s.date === today) return;
     set({ date: today, putDownSeconds: 0, credits: 0 });
-    persist({ date: today, putDownSeconds: 0, credits: 0, flipStartMs: s.flipStartMs });
+    persist({ date: today, putDownSeconds: 0, creditsSpent: 0, flipStartMs: s.flipStartMs });
   },
 
   resetToday: () => {
     const today = todayStr();
     set({ date: today, putDownSeconds: 0, credits: 0, isFaceDown: false, flipStartMs: null });
-    persist({ date: today, putDownSeconds: 0, credits: 0, flipStartMs: null });
+    persist({ date: today, putDownSeconds: 0, creditsSpent: 0, flipStartMs: null });
+  },
+
+  spendCredits: (amount) => {
+    const s = get();
+    const today = todayStr();
+    const sameDay = s.date === today;
+    const putDownSeconds = sameDay ? s.putDownSeconds : 0;
+    const currentCredits = sameDay ? s.credits : 0;
+    const spent = Math.max(0, Math.min(Math.floor(amount), currentCredits));
+    if (spent === 0) return 0;
+    const priorSpent = creditsFor(putDownSeconds) - currentCredits; // 이미 소비된 만큼 역산
+    const creditsSpent = priorSpent + spent;
+    const credits = currentCredits - spent;
+    set({ date: today, putDownSeconds, credits });
+    persist({ date: today, putDownSeconds, creditsSpent, flipStartMs: s.flipStartMs });
+    return spent;
   },
 }));

@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import type { QuickControlSheetKind } from '../../app/quick-control-sheet';
 
 // healthy-shorts-assistant(2) App.tsx "Quick Controls" 3단 그리드 포팅(App.tsx:401-456). focus.tsx
@@ -18,17 +19,24 @@ import type { QuickControlSheetKind } from '../../app/quick-control-sheet';
 export function QuickControlsGrid() {
   const router = useRouter();
   const { settings } = useSettingsStore();
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
 
-  const sleepLabel = settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : 'OFF';
+  const focusSessionLabel = `${settings.focusSessionDurationMinutes}m`;
   const limitLabel = `${settings.dailyLimitMinutes}m`;
   const breakLabel = settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : 'OFF';
 
   const openSheet = (kind: QuickControlSheetKind) => router.push({ pathname: '/quick-control-sheet', params: { kind } });
+  // 2026-07-27 사용자 지시 — Sleep Timer보다 매 세션 실제로 확인/조정하는 빈도가 높은 Focus Session
+  // 길이로 첫 타일을 교체(무료는 페이월 유도 지점 겸함, settings.tsx DefaultRow와 동일 게이팅).
+  const openFocusSessionDuration = () => {
+    if (!isPremium) { router.push('/paywall'); return; }
+    openSheet('focusSessionDuration');
+  };
 
   return (
     <View style={styles.wrap}>
       <View style={styles.grid}>
-        <Tile icon="moon" label="Sleep Timer" value={sleepLabel} onPress={() => openSheet('sleepTimer')} />
+        <Tile icon="zap" label="Focus Session" value={focusSessionLabel} onPress={openFocusSessionDuration} />
         <Tile icon="clock" label="Daily Limit" value={limitLabel} onPress={() => openSheet('dailyLimit')} />
         <Tile icon="coffee" label="Break Reminder" value={breakLabel} onPress={() => openSheet('breakReminder')} />
       </View>

@@ -262,29 +262,17 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 2. Session Defaults — Pace는 데모 로컬 state 대신 실제 useSettingsStore에 직결 */}
+        {/* 2. Session Length — 2026-07-27 사용자 지시: 기존 "기본 세션 설정" 5개 항목이 한 카드에
+            몰려있고 특히 "Sleep Timer"/"Advanced Sleep Mode"가 이름만 봐선 뭐가 다른지 구분이
+            안 된다는 지적으로 "얼마나 볼 수 있는지"(세션 길이) / "언제 알려주고 멈출지"(휴식 & 수면
+            감지) 두 카드로 재구성. */}
         <View>
-          <Text style={styles.sectionLabel}>{t('settings.sessionDefaults')}</Text>
+          <Text style={styles.sectionLabel}>{t('settings.sessionLength')}</Text>
           <GlassSurface style={styles.card}>
-            <DefaultRow
-              title={t('settings.defaultSleep')} desc={t('settings.defaultSleepDesc')}
-              value={settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.off')}
-              onPress={() => update({ sleepTimerMinutes: cycle(SLEEP_TIMER_OPTIONS, settings.sleepTimerMinutes ?? 0) || null })}
-            />
-            <DefaultRow
-              title={t('settings.defaultLimit')} desc={t('settings.defaultLimitDesc')}
-              value={`${settings.dailyLimitMinutes}m`} bordered
-              onPress={() => update({ dailyLimitMinutes: cycle(DAILY_LIMIT_OPTIONS, settings.dailyLimitMinutes) })}
-            />
-            <DefaultRow
-              title={t('settings.defaultBreak')} desc={t('settings.defaultBreakDesc')}
-              value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')} bordered
-              onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
-            />
             <DefaultRow
               title={t('settings.focusSessionDuration')}
               desc={isPremium ? t('settings.focusSessionDurationDesc') : t('settings.focusSessionDurationDescFree')}
-              value={`${settings.focusSessionDurationMinutes}m`} bordered
+              value={`${settings.focusSessionDurationMinutes}m`}
               onPress={() => {
                 // 2026-07-26 사용자 지시("무료일땐 10분 fix") — 무료는 값을 못 바꾸고 프리미엄
                 // 화면으로 안내(_layout.tsx의 enforceFreeFocusSessionDuration이 10분으로 계속
@@ -302,13 +290,37 @@ export default function SettingsScreen() {
               }}
             />
             <DefaultRow
+              title={t('settings.defaultLimit')} desc={t('settings.defaultLimitDesc')}
+              value={`${settings.dailyLimitMinutes}m`} bordered
+              onPress={() => update({ dailyLimitMinutes: cycle(DAILY_LIMIT_OPTIONS, settings.dailyLimitMinutes) })}
+            />
+          </GlassSurface>
+        </View>
+
+        {/* 2.5 Breaks & Sleep Detection — 취침 타이머(수동 카운트다운)와 수면 감지 민감도(자동
+            무진동 감지)는 이름이 비슷해 보여도 서로 다른 메커니즘이라, 같은 카드 안에서도 순서상
+            바로 붙여 나란히 비교되게 배치. */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('settings.remindersAndSleep')}</Text>
+          <GlassSurface style={styles.card}>
+            <DefaultRow
+              title={t('settings.defaultBreak')} desc={t('settings.defaultBreakDesc')}
+              value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')}
+              onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
+            />
+            <DefaultRow
+              title={t('settings.defaultSleep')} desc={t('settings.defaultSleepDesc')}
+              value={settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.off')} bordered
+              onPress={() => update({ sleepTimerMinutes: cycle(SLEEP_TIMER_OPTIONS, settings.sleepTimerMinutes ?? 0) || null })}
+            />
+            <DefaultRow
               title={t('settings.sleepStillness')}
               desc={isPremium ? t('settings.sleepStillnessDesc') : t('settings.sleepStillnessDescFree')}
               value={`${settings.sleepStillnessMinutes}m`} bordered
               onPress={() => {
-                // 2026-07-26 사장님 결정(D8) — 페이월이 광고하는 "Advanced Sleep Mode(customizable
-                // stillness sensitivity)"의 실제 구현. 무료는 위 Focus Session Duration과 동일한
-                // 패턴으로 값을 못 바꾸고 페이월로 안내(_layout.tsx의 enforceFreeFocusSessionDuration이
+                // 2026-07-26 사장님 결정(D8) — 페이월이 광고하는 커스터마이즈 가능한 무진동 감지
+                // 민감도의 실제 구현. 무료는 위 Focus Session Duration과 동일한 패턴으로 값을 못
+                // 바꾸고 페이월로 안내(_layout.tsx의 enforceFreeFocusSessionDuration이
                 // sleepStillnessMinutes도 10으로 계속 되돌림).
                 if (!isPremium) {
                   router.push('/paywall');
@@ -343,83 +355,6 @@ export default function SettingsScreen() {
             </View>
           </GlassSurface>
         </View>
-
-        {/* 4.6 Android Guard Services (Android 전용, 2026-07-22 사용자 지시로 Focus 탭에서 이전) */}
-        {Platform.OS === 'android' && (
-          <View>
-            <Text style={styles.sectionLabel}>{t('focus.androidGuardServices')}</Text>
-            <View style={[styles.card, styles.singleCard]}>
-              <Pressable style={styles.guardRow} onPress={() => !overlayReady && overlayService.requestOverlayPermission()}>
-                <View style={styles.guardLeft}>
-                  <Text style={styles.statusTitleSm}>{t('focus.overlayStatus')}</Text>
-                  <Text style={styles.guardDesc}>{t('focus.overlayStatusDesc')}</Text>
-                </View>
-                <View style={[styles.pulsePill, !overlayReady && styles.pulsePillWarning]}>
-                  <View style={[styles.pulseDot, !overlayReady && styles.pulseDotWarning]} />
-                  <Text style={[styles.pulsePillText, !overlayReady && styles.pulsePillTextWarning]}>
-                    {overlayReady ? t('focus.connected') : t('focus.notConnected')}
-                  </Text>
-                </View>
-              </Pressable>
-              <Pressable
-                style={[styles.guardRow, styles.guardRowBordered]}
-                onPress={() => !hasUsageAccessPermission && overlayService.requestForegroundDetectionPermission()}
-              >
-                <View style={styles.guardLeft}>
-                  <Text style={styles.statusTitleSm}>{t('focus.accessibilityStatus')}</Text>
-                  <Text style={styles.guardDesc}>{t('focus.accessibilityStatusDesc')}</Text>
-                </View>
-                <View style={[styles.pulsePill, !hasUsageAccessPermission && styles.pulsePillWarning]}>
-                  <View style={[styles.pulseDot, !hasUsageAccessPermission && styles.pulseDotWarning]} />
-                  <Text style={[styles.pulsePillText, !hasUsageAccessPermission && styles.pulsePillTextWarning]}>
-                    {hasUsageAccessPermission ? t('focus.running') : t('focus.permissionNeeded')}
-                  </Text>
-                </View>
-              </Pressable>
-              {/* Auto Next 실제 스와이프 — EXPO_PUBLIC_ENABLE_AUTO_NEXT=true 빌드에서만 노출(2026-07-18,
-                  Play 스토어 정책 결정 전까지 스토어 빌드에서는 항상 숨김). */}
-              {capabilities.supportsAutoNext && (
-                <Pressable
-                  style={[styles.guardRow, styles.guardRowBordered]}
-                  onPress={() => {
-                    if (hasAutoNextPermission) return;
-                    setShowAccessibilityOnboarding(true);
-                    notifyAccessibilityNeeded().catch(() => {});
-                  }}
-                >
-                  <View style={styles.guardLeft}>
-                    <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>
-                    <Text style={styles.guardDesc}>{t('focus.autoNextAccessibilityStatusDesc')}</Text>
-                  </View>
-                  <View style={[styles.pulsePill, !hasAutoNextPermission && styles.pulsePillWarning]}>
-                    <View style={[styles.pulseDot, !hasAutoNextPermission && styles.pulseDotWarning]} />
-                    <Text style={[styles.pulsePillText, !hasAutoNextPermission && styles.pulsePillTextWarning]}>
-                      {hasAutoNextPermission ? t('focus.running') : t('focus.permissionNeeded')}
-                    </Text>
-                  </View>
-                </Pressable>
-              )}
-              {/* 2026-07-26 사용자 지시(외부 AI 조언 반영) — 삼성 One UI가 접근성/오버레이/사용정보
-                  접근을 배터리 최적화로 조용히 회수하는 걸 이번 세션 내내 겪었다. "배터리 사용량
-                  최적화 제외"를 받아두면 회수 빈도가 줄어든다 — 위 세 행과 같은 guardRow 패턴. */}
-              <Pressable
-                style={[styles.guardRow, styles.guardRowBordered]}
-                onPress={() => !hasBatteryExemption && overlayService.requestBatteryOptimizationExemption()}
-              >
-                <View style={styles.guardLeft}>
-                  <Text style={styles.statusTitleSm}>{t('focus.batteryStatus')}</Text>
-                  <Text style={styles.guardDesc}>{t('focus.batteryStatusDesc')}</Text>
-                </View>
-                <View style={[styles.pulsePill, !hasBatteryExemption && styles.pulsePillWarning]}>
-                  <View style={[styles.pulseDot, !hasBatteryExemption && styles.pulseDotWarning]} />
-                  <Text style={[styles.pulsePillText, !hasBatteryExemption && styles.pulsePillTextWarning]}>
-                    {hasBatteryExemption ? t('focus.running') : t('focus.permissionNeeded')}
-                  </Text>
-                </View>
-              </Pressable>
-            </View>
-          </View>
-        )}
 
         {/* 5. Notifications */}
         <View>
@@ -516,6 +451,87 @@ export default function SettingsScreen() {
             </Pressable>
           </GlassSurface>
         </View>
+
+        {/* 9. Android Guard Services — 2026-07-27 사용자 지시: 일반 사용자에게 계속 노출할 만큼
+            자주 손댈 일이 없는 디버그 패널이라 판단, 맨 아래로 내리고 __DEV__(상용 빌드 제외)로
+            숨김. 다만 기능 자체(권한 재요청)는 그대로 남겨둠 — 오늘 밤 오버레이/손짓/서비스
+            소실 사고가 전부 이 권한들(오버레이/접근성/배터리 최적화)이 조용히 꺼진 게 원인이었어서,
+            개발 중 재현/복구용으로는 여전히 필요함. */}
+        {__DEV__ && Platform.OS === 'android' && (
+          <View>
+            <Text style={styles.sectionLabel}>{t('focus.androidGuardServices')}</Text>
+            <View style={[styles.card, styles.singleCard]}>
+              <Pressable style={styles.guardRow} onPress={() => !overlayReady && overlayService.requestOverlayPermission()}>
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.overlayStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.overlayStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !overlayReady && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !overlayReady && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !overlayReady && styles.pulsePillTextWarning]}>
+                    {overlayReady ? t('focus.connected') : t('focus.notConnected')}
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                style={[styles.guardRow, styles.guardRowBordered]}
+                onPress={() => !hasUsageAccessPermission && overlayService.requestForegroundDetectionPermission()}
+              >
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.accessibilityStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.accessibilityStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !hasUsageAccessPermission && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasUsageAccessPermission && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasUsageAccessPermission && styles.pulsePillTextWarning]}>
+                    {hasUsageAccessPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                  </Text>
+                </View>
+              </Pressable>
+              {/* Auto Next 실제 스와이프 — EXPO_PUBLIC_ENABLE_AUTO_NEXT=true 빌드에서만 노출(2026-07-18,
+                  Play 스토어 정책 결정 전까지 스토어 빌드에서는 항상 숨김). */}
+              {capabilities.supportsAutoNext && (
+                <Pressable
+                  style={[styles.guardRow, styles.guardRowBordered]}
+                  onPress={() => {
+                    if (hasAutoNextPermission) return;
+                    setShowAccessibilityOnboarding(true);
+                    notifyAccessibilityNeeded().catch(() => {});
+                  }}
+                >
+                  <View style={styles.guardLeft}>
+                    <Text style={styles.statusTitleSm}>{t('focus.autoNextAccessibilityStatus')}</Text>
+                    <Text style={styles.guardDesc}>{t('focus.autoNextAccessibilityStatusDesc')}</Text>
+                  </View>
+                  <View style={[styles.pulsePill, !hasAutoNextPermission && styles.pulsePillWarning]}>
+                    <View style={[styles.pulseDot, !hasAutoNextPermission && styles.pulseDotWarning]} />
+                    <Text style={[styles.pulsePillText, !hasAutoNextPermission && styles.pulsePillTextWarning]}>
+                      {hasAutoNextPermission ? t('focus.running') : t('focus.permissionNeeded')}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+              {/* 2026-07-26 사용자 지시(외부 AI 조언 반영) — 삼성 One UI가 접근성/오버레이/사용정보
+                  접근을 배터리 최적화로 조용히 회수하는 걸 이번 세션 내내 겪었다. "배터리 사용량
+                  최적화 제외"를 받아두면 회수 빈도가 줄어든다 — 위 세 행과 같은 guardRow 패턴. */}
+              <Pressable
+                style={[styles.guardRow, styles.guardRowBordered]}
+                onPress={() => !hasBatteryExemption && overlayService.requestBatteryOptimizationExemption()}
+              >
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.batteryStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.batteryStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !hasBatteryExemption && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasBatteryExemption && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasBatteryExemption && styles.pulsePillTextWarning]}>
+                    {hasBatteryExemption ? t('focus.running') : t('focus.permissionNeeded')}
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={showResetConfirm} transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)} statusBarTranslucent navigationBarTranslucent>

@@ -1,9 +1,10 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../constants/theme';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useBluetoothStore } from '../store/useBluetoothStore';
 import { useTranslation } from '../services/i18n';
 
 // 2026-07-25 사용자 지적("몇번을 말하는데 안고쳐") — QuickControlSheet를 RN <Modal>로 띄우는 한
@@ -20,8 +21,9 @@ import { useTranslation } from '../services/i18n';
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 const DAILY_LIMIT_OPTIONS = [15, 30, 45, 60, 90, 120];
 const BREAK_OPTIONS = [0, 10, 15, 20, 30];
+const FOCUS_SESSION_DURATION_OPTIONS = [5, 10, 20, 30, 60];
 
-export type QuickControlSheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder';
+export type QuickControlSheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder' | 'focusSessionDuration';
 
 export default function QuickControlSheetScreen() {
   const { kind } = useLocalSearchParams<{ kind: QuickControlSheetKind }>();
@@ -29,6 +31,7 @@ export default function QuickControlSheetScreen() {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const { settings, update } = useSettingsStore();
+  const bluetooth = useBluetoothStore();
   const close = () => router.back();
   const offLabel = t('focus.off');
 
@@ -51,14 +54,30 @@ export default function QuickControlSheetScreen() {
             selectedValue: settings.breakIntervalMinutes,
             onSelect: (v: number) => update({ breakIntervalMinutes: v }),
           }
-        : {
-            title: t('focus.sleepTimer'),
-            description: t('quickControl.sleepTimerDesc'),
-            icon: 'moon' as const,
-            options: SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
-            selectedValue: settings.sleepTimerMinutes ?? 0,
-            onSelect: (v: number) => update({ sleepTimerMinutes: v === 0 ? null : v }),
-          };
+        : kind === 'focusSessionDuration'
+          ? {
+              // 2026-07-27 사용자 지시 — Home 하단 빠른 설정의 Sleep Timer 자리를 Focus Session
+              // 길이로 교체(사용 빈도상 더 핵심 설정이라는 판단, settings.tsx DefaultRow와 동일 옵션/
+              // 부수효과 재사용). 프리미엄 게이팅은 QuickControlsGrid의 탭 핸들러가 이 화면을 열기
+              // 전에 이미 처리하므로(무료면 /paywall로 보냄) 여기 도달했다는 건 항상 프리미엄.
+              title: t('settings.focusSessionDuration'),
+              description: t('settings.focusSessionDurationDesc'),
+              icon: 'zap' as const,
+              options: FOCUS_SESSION_DURATION_OPTIONS.map((m) => ({ label: `${m}m`, value: m })),
+              selectedValue: settings.focusSessionDurationMinutes,
+              onSelect: (v: number) => {
+                update({ focusSessionDurationMinutes: v });
+                if (Platform.OS === 'android') bluetooth.setFocusSessionDurationMinutes(v);
+              },
+            }
+          : {
+              title: t('focus.sleepTimer'),
+              description: t('quickControl.sleepTimerDesc'),
+              icon: 'moon' as const,
+              options: SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
+              selectedValue: settings.sleepTimerMinutes ?? 0,
+              onSelect: (v: number) => update({ sleepTimerMinutes: v === 0 ? null : v }),
+            };
 
   return (
     <View style={styles.overlay}>

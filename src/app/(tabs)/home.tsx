@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
+import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
@@ -78,6 +79,15 @@ export default function HomeScreen() {
   const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
   useEffect(() => {
     loadLimitHits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ⚡ 쇼츠 큐를 홈 진입 시 미리 받아둔다(사용자가 홈 보는 동안 Vercel 콜드스타트+스크래핑이 끝남)
+  // → 피드 열면 "쇼츠 불러오는 중" 5초 대기 없이 즉시 첫 영상. loadInitial은 큐가 이미 있으면 no-op이라
+  // 피드의 중복 호출과 안전하게 공존. iOS 전용 기능이라 iOS에서만.
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    useShortsQueueStore.getState().loadInitial().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

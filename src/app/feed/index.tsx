@@ -125,7 +125,7 @@ export default function PaceFeedScreen() {
 
   // 2026-07-21 기기 디버깅: 까만화면이 "큐 0개"인지 vs "WebView 재생 실패"인지 로그로 가른다.
   useEffect(() => {
-    console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
+    if (__DEV__) console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
   }, [queue.length, current?.videoId, usingScrape, isLoading, error]);
 
   // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS).
@@ -203,6 +203,7 @@ export default function PaceFeedScreen() {
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
 
+
   // 2026-07-22 death-spiral 방지: 실기기에서 다수 영상이 login/consent 벽으로 재생 실패(onError/novideo)하면
   // onError→goNext가 큐를 통째로 순삭하며 무한 스킵→까만화면이 될 수 있다. 연속 실패를 세서 임계(6)를
   // 넘으면 스킵을 멈추고 에러 상태로 전환(사용자에게 재시도 UI). 재생이 실제로 되면(onProgress>0) 리셋.
@@ -267,13 +268,16 @@ export default function PaceFeedScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* 웹뷰를 시스템 상태바 아래로 내려 유튜브 자체 헤더가 상태바와 겹치지 않게 한다(사용자 지시).
           상단 insets.top만큼은 검은 스트립(상태바 영역), 그 아래로 영상+유튜브 UI. */}
+      {/* ⚠️ 프리로드(다음영상 미리로드)는 기기에서 YouTube WebView 2개가 디코더/대역폭 경합 → 재생 중
+          버퍼링 멈춤(stalled) + 손짓 카메라 불안정을 유발했다(실기기 로그 확정). 전환 간극보다 mid-play
+          멈춤이 더 나쁘므로 단일 플레이어로 유지한다. (next는 큐 프리페치/캐시로만 미리 확보.) */}
       {current && !feedBlocked && (
         <YouTubeShortsPlayer
           videoId={current.videoId}
           playing={playing}
           onProgress={handleProgress}
           onEnded={onEnded}
-          onError={handlePlayerError} // 재생 불가 영상 스킵 — 단 연속 실패는 가드가 잡음(death-spiral 방지)
+          onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onAudioDiag={(text) => setDiag((d) => ({ ...d, audio: text }))}
         />
       )}

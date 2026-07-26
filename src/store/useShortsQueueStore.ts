@@ -9,8 +9,15 @@ import { fetchShortsPage } from '../services/api/youtube';
 //  - 큐가 부족(<=REFILL_THRESHOLD)하면 nextPageToken으로 다시 받아 append(스케줄 재fetch)
 //  - watched는 영속해서 이미 본 Shorts가 재등장하지 않게 함
 const WATCHED_KEY = 'pace_watched_shorts';
+const QUEUE_KEY = 'pace_shorts_queue_v1'; // 큐 영속 — 재실행 시 콜드 네트워크 대기 없이 즉시 첫 영상 재생
 const REFILL_THRESHOLD = 3; // 남은 큐가 이 개수 이하가 되면 재fetch
 const MAX_WATCHED = 500; // watched 목록 상한(오래된 것부터 버림)
+const MAX_CACHED_QUEUE = 20; // 영속하는 큐 상한(용량 절약)
+
+// 큐+토큰을 AsyncStorage에 저장(백그라운드, 실패 무시). advance/refill/loadInitial 성공 시 호출.
+function persistQueue(queue: YouTubeShort[], token: string | null) {
+  AsyncStorage.setItem(QUEUE_KEY, JSON.stringify({ queue: queue.slice(0, MAX_CACHED_QUEUE), token })).catch(() => {});
+}
 
 type ShortsQueueState = {
   queue: YouTubeShort[];
@@ -55,11 +62,28 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
   current: () => get().queue[0] ?? null,
 
   loadInitial: async () => {
+    // 홈에서 prefetch로 이미 큐가 채워졌거나 로딩 중이면 재fetch 생략(피드 진입 즉시 재생).
+    if (get().queue.length > 0 || get().isLoading) return;
     set({ isLoading: true, error: null });
     try {
       // 영속된 watched 복원(재실행 시에도 이미 본 Shorts 제외).
       const rawWatched = await AsyncStorage.getItem(WATCHED_KEY).catch(() => null);
       const watchedIds: string[] = rawWatched ? JSON.parse(rawWatched) : [];
+
+      // ⚡ 캐시된 큐 먼저 복원 → 콜드 네트워크 대기 없이 즉시 첫 영상. 그 뒤 백그라운드로 더 받아 append.
+      // (이미 본 것은 제외. 캐시가 비었거나 없으면 아래 기존 블로킹 fetch 경로로.)
+      try {
+        const rawQueue = await AsyncStorage.getItem(QUEUE_KEY);
+        const cached = rawQueue ? (JSON.parse(rawQueue) as { queue: YouTubeShort[]; token: string | null }) : null;
+        const cachedQueue = (cached?.queue ?? []).filter((s) => !watchedIds.includes(s.videoId));
+        if (cachedQueue.length > 0) {
+          set({ queue: cachedQueue, watchedIds, nextPageToken: cached?.token ?? null, hasMore: true, isLoading: false });
+          get().refill().catch(() => {}); // 백그라운드 보충(실패해도 캐시로 계속 재생)
+          return;
+        }
+      } catch {
+        /* 캐시 파싱 실패 → 기존 경로 */
+      }
 
       let page = await fetchShortsPage({});
       let queue = dedupeAppend([], page.shorts, watchedIds);
@@ -84,6 +108,7 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
         return;
       }
       set({ queue, watchedIds, nextPageToken: token, hasMore, isLoading: false });
+      persistQueue(queue, token);
     } catch (e) {
       set({ isLoading: false, error: e instanceof Error ? e.message : 'YT_ERROR' });
     }
@@ -101,6 +126,7 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
     const nextHistory = [...history, finished].slice(-MAX_WATCHED);
     set({ queue: nextQueue, watchedIds: nextWatched, history: nextHistory });
     AsyncStorage.setItem(WATCHED_KEY, JSON.stringify(nextWatched)).catch(() => {});
+    persistQueue(nextQueue, get().nextPageToken);
     if (nextQueue.length <= REFILL_THRESHOLD) {
       get().refill().catch(() => {});
     }
@@ -125,6 +151,7 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       const page = await fetchShortsPage({ pageToken: nextPageToken });
       const merged = dedupeAppend(queue, page.shorts, watchedIds);
       set({ queue: merged, nextPageToken: page.nextPageToken, hasMore: !!page.nextPageToken, isRefilling: false });
+      persistQueue(merged, page.nextPageToken);
     } catch {
       set({ isRefilling: false });
     }

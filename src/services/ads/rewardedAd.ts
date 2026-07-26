@@ -17,10 +17,12 @@ try {
   console.warn('[rewardedAd] react-native-google-mobile-ads 네이티브 모듈 미링크(재빌드 필요) — 보상형 광고 비활성화:', e);
 }
 
-// 2026-07-26 — AdMob 앱 승인 완료, 실제 보상형 광고 단위 ID로 교체(이 기능은 Android 전용이라
-// iOS 단위 ID는 불필요, isRewardedAdSupportedPlatform() 참고).
+// 2026-07-26 사용자 지시 — 평소엔 테스트 광고, 실 ID는 출시 빌드(EXPO_PUBLIC_USE_REAL_ADS=true)만.
+// 자기 폰에서 실 광고 반복 시청은 AdMob invalid traffic(계정 정지) 위험. (Android 전용 기능.)
+const USE_REAL_ADS = process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true';
 function getAdUnitId(): string {
-  return 'ca-app-pub-3201481146134957/5534238136';
+  if (USE_REAL_ADS) return 'ca-app-pub-3201481146134957/5534238136';
+  return TestIds?.REWARDED ?? 'ca-app-pub-3940256099942544/5224354917'; // 구글 공식 테스트 리워드 유닛
 }
 
 export const rewardedAdAvailable = Boolean(RewardedAd && RewardedAdEventType && AdEventType && TestIds);

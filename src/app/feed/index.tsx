@@ -317,7 +317,11 @@ export default function PaceFeedScreen() {
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
-    onDiag: (kind, text) => setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })),
+    // 감사 발견 C1(2026-07-27) — onDiag는 WaveDetector가 초당 ~3회 emit한다. setDiag는 렌더도 안 되는
+    // diag state를 매번 새 객체로 갱신 → PaceFeedScreen(웹뷰 서브트리 포함) 전체가 초당 수회 리렌더 →
+    // 예전에 setProgress 제거로 고쳤던 영상 "씹힘/히치"·손짓 카메라 불안정이 그대로 재발하는 회귀 벡터.
+    // 릴리즈에선 완전히 끄고(__DEV__ false), dev에서만 진단 유지. 손짓 발화는 onHandWave라 이와 무관.
+    onDiag: (kind, text) => { if (__DEV__) setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })); },
   });
 
   // 볼륨키 → 다음 Short. ⚠️ 2026-07-26 사용자 지적: 볼륨키 하이재킹은 "블루투스 리모컨(에어팟/버즈/
@@ -369,7 +373,7 @@ export default function PaceFeedScreen() {
           onProgress={handleProgress}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
-          onAudioDiag={(text) => setDiag((d) => ({ ...d, audio: text }))}
+          onAudioDiag={(text) => { if (__DEV__) setDiag((d) => ({ ...d, audio: text })); }} // C1: 릴리즈 리렌더 폭풍 차단
         />
       )}
 

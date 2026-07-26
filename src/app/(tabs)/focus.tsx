@@ -9,7 +9,6 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -47,7 +46,6 @@ export default function FocusScreen() {
   const currentStreak = getCurrentStreak(attendanceHistory);
   const autoModeEnabled = useBluetoothStore((s) => s.autoModeEnabled);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
   // 2026-07-27 사용자 지시 — "손짓/볼륨키/블루투스 핸즈프리" 상태를 Focus 탭에 모아서 보여달라는
   // 요청. 실제 실행 방식은 플랫폼마다 다르지만(Android=카메라 손짓+볼륨키, iOS=볼륨키+카메라 손짓,
   // PaceVolumeKeyModule.swift 참고 — 둘 다 진짜 블루투스 "페어링"은 아니고 볼륨 버튼 입력을 가로채는
@@ -55,10 +53,11 @@ export default function FocusScreen() {
   const handsFreeMethods = Platform.OS === 'android'
     ? t('focus.handsFreeMethodsAndroid')
     : t('focus.handsFreeMethodsIos');
-  const onToggleHandsFree = () => {
-    if (!isPremium) { router.push('/paywall'); return; }
-    toggleAutoMode();
-  };
+  // 감사 발견 subscription-C1(2026-07-27) — 핸즈프리는 D9 결정 번복으로 "무료 개방"됐다(home.tsx는
+  // 세션 시작 시 무료로 auto-mode를 켜고, paywall도 benefitRemoteControl를 이미 제거). 그런데 여기 focus.tsx만
+  // 프리미엄 게이팅이 남아, home에서 무료로 켜진 auto-mode를 free 사용자가 Focus 탭에서 "끄려고" 탭하면
+  // 페이월로 튕겨 끌 수조차 없는 함정이었다. D9 무료정책에 맞춰 게이트 제거(공용코드 — Android도 동일 적용).
+  const onToggleHandsFree = () => { toggleAutoMode(); };
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -200,7 +199,7 @@ export default function FocusScreen() {
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              ) : isPremium ? (
+              ) : (
                 <Switch
                   value={autoModeEnabled}
                   onValueChange={onToggleHandsFree}
@@ -208,10 +207,6 @@ export default function FocusScreen() {
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              ) : (
-                <View style={styles.premiumTag}>
-                  <Text style={styles.premiumTagText}>{t('settings.premium')}</Text>
-                </View>
               )}
             </Pressable>
           </GlassSurface>

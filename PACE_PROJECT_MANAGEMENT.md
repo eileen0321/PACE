@@ -1038,3 +1038,16 @@ null이든 detach됐든 상관없이 매 틱 무조건 상태를 확인해 필�
 com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService && adb shell settings put secure
 accessibility_enabled 1`부터 먼저 실행**하는 습관화 필요(이 세션에서 이걸 안 지켜서 몇 시간을
 "삼성 탓/코드 버그"로 오인하며 허비함).
+
+### 2026-07-26 (밤2) — Mac 세션 (⚠️ 공통코드 동기화 경고 + 홈 재생버튼 축소)
+
+**⚠️⚠️ [양 세션 필독] 공통 코드는 반드시 즉시 푸시할 것.** 사장님 지적: 안드로이드(Windows 세션 로컬)에서
+수정한 공통 UI 변경들이 origin에 안 올라와 iOS 빌드에 반영이 안 됨("왜 이렇게 안 되어 있는 게 많아,
+공통 코드는 같이 가야지"). 확인 결과 Mac 로컬은 origin과 100% 동기(cffa398)인데, 예로 **홈
+PlatformPickerCard의 우측 재생버튼 축소**가 origin에 없었음(최신은 8c4d8a5의 52x52 largeButton).
+→ **Windows 세션: 커밋 안 하고 로컬에만 둔 공통 컴포넌트(src/components/**, src/app/(tabs)/**,
+스토어/훅 등 플랫폼 무관 코드) 변경을 전부 커밋·푸시할 것.** Mac도 마찬가지. 안 그러면 두 플랫폼
+UI/로직이 계속 갈라짐.
+
+**홈 재생버튼**: 사장님 지시로 `PlatformPickerCard.playButtonLarge` 52→40, 아이콘 22→18로 축소
+(안드로이드에 맞춤). ⚠️ Windows 세션이 이미 다른 값으로 줄였다면 푸시 후 값 reconcile 필요(간단).

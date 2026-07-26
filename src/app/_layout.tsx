@@ -272,8 +272,12 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
+  // ⚠️ 네이티브 스플래시 숨김은 여기(루트 레이아웃)가 아니라 AnimatedSplash의 onLayoutReady에서 한다 —
+  // 루트 레이아웃 시점엔 AnimatedSplash가 아직 안 그려져 있어 여기서 숨기면 갭(번쩍/끊김)이 생겼다.
+  // 폴백: AnimatedSplash가 어떤 이유로든 안 뜨는 경우(showAnimatedSplash=false)엔 여기서 숨긴다.
   const onLayoutRootView = useCallback(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+    if (fontsLoaded && !showAnimatedSplash) SplashScreen.hideAsync().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fontsLoaded]);
 
   // 스플래시: 네이티브 런치스크린은 "로고 없는 단색 #060709"(app.json splash에서 image 제거)로 두고,
@@ -322,7 +326,13 @@ export default function RootLayout() {
               </Text>
             </View>
           )}
-          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
+          {showAnimatedSplash && (
+            <AnimatedSplash
+              onComplete={() => setShowAnimatedSplash(false)}
+              // 네이티브 런치스크린은 이 JS 스플래시가 실제로 그려진 뒤에 숨긴다(갭/번쩍 방지).
+              onLayoutReady={() => SplashScreen.hideAsync().catch(() => {})}
+            />
+          )}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

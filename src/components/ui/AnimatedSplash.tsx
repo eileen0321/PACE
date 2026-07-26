@@ -21,7 +21,7 @@ const DURATION_MS = 600;
 // 로고를 opacity 0→1/scale로 "등장"시키면 그 순간이 번쩍인다. → 로고는 런치스크린과 똑같이(화면 중앙,
 // 120px, 박스 없음) 처음부터 떠 있고, 나머지 브랜딩 효과(글로우/시머/PACE 텍스트/로딩바)만 그 위에
 // 얹어 페이드인한다. 이러면 [iOS 아이콘 확대]→[런치 로고]→[스플래시 로고]가 미동 없이 이어진다.
-export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
+export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () => void; onLayoutReady?: () => void }) {
   const glowOpacity = useSharedValue(0);
   const shimmerX = useSharedValue(-1);
   const textOpacity = useSharedValue(0);
@@ -53,7 +53,13 @@ export function AnimatedSplash({ onComplete }: { onComplete: () => void }) {
   }));
 
   return (
-    <Animated.View exiting={FadeOut.duration(400)} style={styles.container}>
+    <Animated.View
+      exiting={FadeOut.duration(400)}
+      style={styles.container}
+      // ⭐ 네이티브 런치스크린은 "이 JS 스플래시가 실제로 그려진 뒤에" 숨겨야 갭(번쩍/끊김)이 없다.
+      // (reactnativeschool: onLayout 시점 = 첫 프레임 페인트 완료. 여기서 SplashScreen.hideAsync 호출.)
+      onLayout={onLayoutReady}
+    >
       {/* 로고: 런치스크린과 동일 — 화면 중앙, 120px, 박스/애니메이션 없음(미동 없이 이어짐). */}
       <View style={styles.iconArea}>
         {/* 글로우는 로고 뒤에서 은은히 페이드인(첫 프레임엔 없음 → 런치와 일치). */}

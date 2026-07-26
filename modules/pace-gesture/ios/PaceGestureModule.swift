@@ -74,11 +74,12 @@ public class PaceGestureModule: Module {
   // 짧은 창 안에서 급격히 커지는)" 모션을 감지한다(안드로이드와 동일한 모션-기반 휴리스틱, 특정 포즈
   // 분류 아님). Focus Session ON 동안만 켜져 게이팅됨(카메라 상시 구동 방지 — 배터리/프라이버시).
   private func startWave() {
+    NSLog("[pace-wave] startWave() called (SESSION ON→감지기 시작)")
     guard #available(iOS 14.0, *) else {
       sendEvent("onError", ["kind": "wave", "message": "Hand pose needs iOS 14+"])
       return
     }
-    if waveDetector != nil { return }
+    if waveDetector != nil { NSLog("[pace-wave] startWave: 이미 실행중(skip)"); return }
     let d = WaveDetector(
       onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
@@ -395,16 +396,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   }
 
   func start() {
-    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    let st = AVCaptureDevice.authorizationStatus(for: .video)
+    NSLog("[pace-wave] start() cam authStatus=%ld (0=notDet 1=restr 2=DENIED 3=authorized)", st.rawValue)
+    switch st {
     case .authorized:
       queue.async { self.configureAndRun() }
     case .notDetermined:
       AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
         guard let self = self else { return }
+        NSLog("[pace-wave] cam requestAccess granted=%@", granted ? "YES" : "NO")
         guard granted else { self.onError("camera permission denied"); return }
         self.queue.async { self.configureAndRun() }
       }
     default:
+      NSLog("[pace-wave] cam DENIED/RESTRICTED — 설정에서 카메라 켜야 함")
       onError("camera permission denied")
     }
   }

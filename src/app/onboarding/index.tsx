@@ -1,12 +1,13 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { useTranslation } from '../../services/i18n';
-import { spacing, typography } from '../../constants/theme';
+import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
+import { colors, spacing, typography } from '../../constants/theme';
 
 // 2026-07-26 사용자 지시 — Instagram Stories 제스처 가이드 참고 이미지 그대로: 스와이프로 넘기는
 // 3~4장 캐러셀이 아니라, 4개 항목을 한 화면에 전부 나열하고 화면 아무 곳이나 탭하면 닫히는 단일
@@ -14,7 +15,9 @@ import { spacing, typography } from '../../constants/theme';
 // presentation: 'transparentModal'로 등록 — 실제로 화면 위에 얹히는 오버레이). 아이콘은 이모지
 // 대신 참고 이미지처럼 흰색 단색 라인 아이콘(Feather)으로 통일 — 사용자가 이모지 조합을 "촌스럽다"고
 // 지적함.
-const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Title' | 'onboarding.row2Title' | 'onboarding.row3Title' | 'onboarding.row4Title' | 'onboarding.row5Title'; descKey: 'onboarding.row1Desc' | 'onboarding.row2Desc' | 'onboarding.row3Desc' | 'onboarding.row4Desc' | 'onboarding.row5Desc' }[] = [
+type RowTitleKey = 'onboarding.row1Title' | 'onboarding.row2Title' | 'onboarding.row3Title' | 'onboarding.row4Title' | 'onboarding.row5Title' | 'onboarding.row6Title';
+type RowDescKey = 'onboarding.row1Desc' | 'onboarding.row2Desc' | 'onboarding.row3Desc' | 'onboarding.row4Desc' | 'onboarding.row5Desc' | 'onboarding.row6Desc';
+const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: RowTitleKey; descKey: RowDescKey }[] = [
   // 2026-07-26 사용자 지적 — "휴식 측정"은 폰을 아무렇게나 내려놓는 게 아니라 정확히 뒤집어서(화면이
   // 바닥을 향하게) 놔야 기록되는 Flip Mode(useFlipStore.onFaceDown, 가속도계 기반 방향 감지)다.
   // Feather에 "뒤집힌 폰" 전용 아이콘은 없어 스마트폰 아이콘(smartphone)으로 대체 — 정확한 방향
@@ -29,12 +32,19 @@ const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Tit
   { icon: 'moon', titleKey: 'onboarding.row4Title', descKey: 'onboarding.row4Desc' },
   // 2026-07-26 사용자 지시("매일 출석하기") — useAttendanceStore.checkInIfNeeded() 실제 기능 소개.
   { icon: 'calendar', titleKey: 'onboarding.row5Title', descKey: 'onboarding.row5Desc' },
+  // 2026-07-26 사용자 지시("이 가이드가 계속 볼 수 있어야") — 이 개요 다음에 실제 Hands-Free
+  // Control 시트(제스처 애니메이션 포함)가 이어서 뜬다(아래 참고). 개요 목록에도 존재를 알린다.
+  { icon: 'zap', titleKey: 'onboarding.row6Title', descKey: 'onboarding.row6Desc' },
 ];
 
 export default function OnboardingScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // 2026-07-26 사용자 지시 — Settings "Replay Feature Guide"로 이 화면을 다시 볼 때, 실제 손짓
+  // 가이드(BluetoothOnboardingSheet, 애니메이션 포함)를 처음 한 번만 보고 다시는 못 보는 문제가
+  // 있었다 — 이 개요 화면을 탭해서 닫으면 바로 이어서 그 시트를 보여줘 언제든 다시 확인 가능하게 한다.
+  const [showHandsFree, setShowHandsFree] = useState(false);
 
   const finish = () => {
     AsyncStorage.setItem(STORAGE_KEYS.onboardingCompleted, 'true').catch(() => {});
@@ -42,43 +52,59 @@ export default function OnboardingScreen() {
     else router.replace('/(tabs)/home');
   };
 
+  // 이 화면 자체에는 세션/플랫폼 컨텍스트가 없어(홈 화면의 dismissOnboarding과 달리 세션을 막
+  // 시작하는 상황이 아님) "Turn On"은 다음 세션부터 자동으로 켜지도록 옵트인만 저장하고, 지금
+  // 당장 네이티브 감지기(카메라/마이크)를 켜지는 않는다 — 세션도 없는데 상시 감지가 도는 걸 방지.
+  const handleHandsFreeEnable = () => {
+    AsyncStorage.setItem(STORAGE_KEYS.autoModeOptIn, 'true').catch(() => {});
+    setShowHandsFree(false);
+    finish();
+  };
+  const handleHandsFreeDismiss = () => {
+    setShowHandsFree(false);
+    finish();
+  };
+
   return (
-    <Pressable style={styles.flex} onPress={finish}>
-      {/* 2026-07-26 사용자 지적("하단 내비게이션 바만 까맣다") — SafeAreaView로 감싸면 그 안쪽
-          콘텐츠 영역만 그라데이션이 그려지고, SafeAreaView 바깥(하단 제스처바/내비게이션 바 영역)은
-          이 화면의 배경이 전혀 안 닿아 시스템 기본 검정이 그대로 드러난다. quick-control-sheet.tsx가
-          같은 transparentModal edge-to-edge 문제를 고친 방식 그대로 따른다 — SafeAreaView로 감싸는
-          대신 그라데이션을 StyleSheet.absoluteFill로 화면 전체(시스템 바 영역까지)에 깔고, 콘텐츠는
-          insets를 직접 패딩으로 계산해 넣는다. */}
-      <LinearGradient colors={['rgba(30,41,80,0.97)', 'rgba(76,29,135,0.97)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-      <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl }]}>
-        <View style={styles.headerBlock}>
-          <Text style={styles.title}>{t('onboarding.overlayTitle')}</Text>
-          <Text style={styles.subtitle}>{t('onboarding.overlaySubtitle')}</Text>
-        </View>
+    <>
+      <Pressable style={styles.flex} onPress={() => setShowHandsFree(true)}>
+        {/* 2026-07-26 사용자 지시 — 이 화면 배경을 Hands-Free Control 온보딩 시트와 같은 색으로
+            맞춘다(기존 남색→보라 그라데이션 대신 colors.card 단색). */}
+        <View style={[StyleSheet.absoluteFill, styles.background]} />
+        <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl }]}>
+          <View style={styles.headerBlock}>
+            <Text style={styles.title}>{t('onboarding.overlayTitle')}</Text>
+            <Text style={styles.subtitle}>{t('onboarding.overlaySubtitle')}</Text>
+          </View>
 
-        <View style={styles.rows}>
-          {ROWS.map((row) => (
-            <View key={row.icon} style={styles.row}>
-              <View style={styles.iconWrap}>
-                <Feather name={row.icon} size={22} color="#FFFFFF" />
+          <View style={styles.rows}>
+            {ROWS.map((row) => (
+              <View key={row.icon} style={styles.row}>
+                <View style={styles.iconWrap}>
+                  <Feather name={row.icon} size={22} color="#FFFFFF" />
+                </View>
+                <View style={styles.rowText}>
+                  <Text style={styles.rowTitle}>{t(row.titleKey)}</Text>
+                  <Text style={styles.rowDesc}>{t(row.descKey)}</Text>
+                </View>
               </View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{t(row.titleKey)}</Text>
-                <Text style={styles.rowDesc}>{t(row.descKey)}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
+            ))}
+          </View>
 
-        <Text style={styles.dismissLabel}>{t('onboarding.tapToContinue')}</Text>
-      </View>
-    </Pressable>
+          <Text style={styles.dismissLabel}>{t('onboarding.tapToContinue')}</Text>
+        </View>
+      </Pressable>
+      <BluetoothOnboardingSheet visible={showHandsFree} onEnable={handleHandsFreeEnable} onDismiss={handleHandsFreeDismiss} />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  // 2026-07-26 — Hands-Free Control 온보딩 시트(colors.card)와 배경색을 맞췄다. 원래 남색→보라
+  // 그라데이션(rgba(30,41,80)→rgba(76,29,135))이었던 걸 이 화면 뒤에 바로 이어지는 시트와 톤이
+  // 통일되도록 단색으로 교체.
+  background: { backgroundColor: colors.card },
   container: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'center', gap: spacing.xl },
   headerBlock: { alignItems: 'center', gap: spacing.xs, marginBottom: spacing.sm },
   // 2026-07-26 사용자 지시 — 시선이 바로 아래 목록으로 떨어진다는 지적, 제목을 20~30% 키우고

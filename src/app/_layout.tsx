@@ -6,7 +6,11 @@ import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
-import { getOrphanedSessions, closeOrphanedSession } from '../database/repositories/sessionsRepository';
+import { getOrphanedSessions, closeOrphanedSession, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
+import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
+import { useSessionStore } from '../store/useSessionStore';
+import { useTimerStore } from '../store/useTimerStore';
+import type { ShortFormApp } from '../constants/apps';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
@@ -137,6 +141,43 @@ export default function RootLayout() {
           const startedAtMs = new Date(session.startedAt).getTime();
           const durationSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
           await closeOrphanedSession(session.id, durationSeconds, endedAtIso);
+        }
+        // 2026-07-26 사용자 지적("유튜브는 PIP로 계속 도는데 Pace 추적/오버레이는 안 살아남", "화면을
+        // 다시 키웠을 때 오버레이를 띄운다던지") — 삼성 배터리 최적화 등으로 프로세스 자체가
+        // 죽으면(위 orphan 정리 대상), YouTube 자체는 별개 프로세스라 계속 재생/PIP로 남아있을 수
+        // 있는데 Pace 쪽 추적만 끊긴 채 방치됐다. `nativeExpiry`가 null이면(=sleep_detected/
+        // daily_limit_reached처럼 정당하게 끝난 게 아니라 그냥 프로세스가 죽어서 끊긴 것) 그리고
+        // 고아 세션이 정확히 1개뿐이면(여러 개면 사용자가 이미 오래 떠나있었다는 뜻이라 자동 재개가
+        // 오히려 어색함) — 앱을 다시 열자마자(=화면을 다시 키운 순간) 같은 플랫폼으로 추적/오버레이를
+        // 즉시 재개한다. 완전히 새 세션으로 시작(남은시간은 오늘 실사용량 기준 새로 계산)하므로 기존
+        // "고아 세션 정리" 자체는 그대로 두고 그 위에 이어붙이는 형태.
+        if (Platform.OS === 'android' && !nativeExpiry && orphans.length === 1 && overlayService.supportsSystemOverlay) {
+          const settings = useSettingsStore.getState().settings;
+          const bonusMinutes = useDailyBonusStore.getState().extraMinutes;
+          const todayUsedMinutes = await getTodayUsageMinutes(userId);
+          const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + bonusMinutes - todayUsedMinutes);
+          if (remainingMinutes > 0) {
+            const platformApp = orphans[0].platformApp as ShortFormApp | null;
+            const newId = await startSessionRow(userId, platformApp);
+            useSessionStore.getState().start({ sessionId: newId, platformApp });
+            useTimerStore.getState().startSession({
+              sessionId: newId,
+              remainingMinutes,
+              sleepTimerMinutes: settings.sleepTimerMinutes,
+              breakIntervalMinutes: settings.breakIntervalMinutes,
+            });
+            overlayService.startSession({
+              dailyLimitMinutes: settings.dailyLimitMinutes,
+              remainingMinutes,
+              autoNext: settings.autoNext,
+              sleepTimerMinutes: settings.sleepTimerMinutes ?? 0,
+              breakIntervalMinutes: settings.breakIntervalMinutes,
+              notifyRemaining: settings.notifyRemaining,
+              notifyLimit: settings.notifyLimit,
+              notifyBreak: settings.notifyBreak,
+              hardBlockMode: settings.hardBlockMode,
+            }).catch(() => {});
+          }
         }
       } catch {
         // 정리 실패는 조용히 무시 — 다음 콜드스타트에 다시 시도되고, 앱 사용 자체를 막으면 안 됨.

@@ -285,6 +285,11 @@ export const translations = {
       row4Desc: 'Keeps your late-night watching in check.',
       row5Title: 'Daily check-in',
       row5Desc: '+5 credits just for opening the app.',
+      // 2026-07-26 사용자 지시 — "이 가이드가 계속 볼 수 있어야" Settings의 "Replay Feature Guide"가
+      // 이 개요 화면 다음에 실제 Hands-Free Control 시트(제스처 애니메이션 포함)도 이어서 보여주므로,
+      // 개요 목록에도 그 항목을 추가해 존재를 알린다.
+      row6Title: 'Hands-Free Control',
+      row6Desc: 'Advance Shorts with a hand wave or Bluetooth remote — no touching.',
       tapToContinue: 'Tap to get started',
     },
 
@@ -671,6 +676,8 @@ export const translations = {
       row4Desc: '늦은 밤 시청 습관을 관리합니다.',
       row5Title: '매일 출석하기',
       row5Desc: '앱을 열기만 해도 크레딧 5개를 받아요.',
+      row6Title: '핸즈프리 컨트롤',
+      row6Desc: '손짓이나 블루투스 리모컨으로 화면을 안 만지고도 다음 영상으로 넘길 수 있어요.',
       tapToContinue: '탭하여 시작하기',
     },
 

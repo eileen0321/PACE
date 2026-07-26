@@ -54,7 +54,6 @@ export default function PaceFeedScreen() {
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
   const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
-  const [progress, setProgress] = useState(0); // 현재 영상 재생 진행률(0~1) — 고개짓 카메라 게이팅용
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
@@ -108,7 +107,6 @@ export default function PaceFeedScreen() {
   // 현재 감지기는 핑거스냅(SoundAnalysis+AEC). 손짓(카메라 Vision)은 2단계로 pace-gesture에 추가 예정.
   // (고개짓 head-nod는 2026-07-23 "비현실적" 판단으로 계속 제외 — 'snap' 모드만 start.)
   const handsFreeDetectActive = isAutoMode;
-  void progress;
 
   useEffect(() => {
     loadInitial();
@@ -199,7 +197,6 @@ export default function PaceFeedScreen() {
 
   const goNext = () => {
     setStatus('PLAYING');
-    setProgress(0); // 다음 영상 → 진행률 리셋(고개짓 카메라 게이팅을 다시 1/2지점 대기로)
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
 
@@ -219,7 +216,9 @@ export default function PaceFeedScreen() {
   };
   const handleProgress = (p: number) => {
     if (p > 0 && errorStreakRef.current !== 0) errorStreakRef.current = 0; // 실제 재생되면 스트릭 리셋
-    setProgress(p);
+    // ⚠️ setProgress 제거 — progress state는 미사용(void progress, 카메라 게이팅은 isAutoMode로 이관)인데
+    //    매 500ms setState로 피드를 재렌더시켜 일부 영상에 주기적 히치("어떤건 씹힘")를 유발했다.
+    //    death-spiral 방지용 errorStreak 리셋만 남긴다.
   };
   const retryFeed = () => { errorStreakRef.current = 0; setFeedBlocked(false); loadInitial(); };
 

@@ -105,7 +105,7 @@ const INJECTED_JS = `
     } catch (e) {}
     function tryAudible() {
       v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); setTimeout(clearUnmutePopup, 1200); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); /* clearUnmutePopup 제거: mp.unMute()가 오디오 재버퍼링(씹힘) 유발 — 소리는 setter로 이미 남 */ }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백(audibleOk 아직 false라 통과)
       });
@@ -113,23 +113,31 @@ const INJECTED_JS = `
     // ⚡ 프리로드: 다음 영상 페이지를 미리 로드해 두면 넘길 때 전체 페이지 재로드 간극(="매 영상 처음 씹힘")이
     //   사라진다. 프리로드 인스턴스는 재생/소리 없이 페이지+<video>만 로드하고 정지 유지 → 활성화되면
     //   paceActivate로 처음부터 소리내어 재생. (활성화는 부모가 preload=false로 바뀌면 주입.)
-    window.paceActivate = function () {
-      if (window.__paceActivated) return; window.__paceActivated = true;
-      send({ type: 'domlog', text: 'ACTIVATE t=' + (v.currentTime || 0).toFixed(2) + ' rs=' + v.readyState });
-      try { v.currentTime = 0; } catch (e) {}
-      tryAudible();
-    };
-    if (window.__pacePreload) {
-      send({ type: 'domlog', text: 'PRELOAD ready rs=' + v.readyState });
-      v.muted = true; v.pause();
-      var pkeep = setInterval(function () { if (window.__paceActivated) { clearInterval(pkeep); return; } if (!v.paused) v.pause(); }, 200);
-    } else {
-      window.paceActivate();
-    }
-    // 검증용 진단(시뮬레이터 자가확인): 컷/전환 순간 이벤트 로깅. 검증 후 제거.
+    // 프리로드 제거됨 → 바로 소리내어 재생. ⚠️ 예전 paceActivate의 v.currentTime=0 시크가 "영상 초반
+    // 한 번 씹힘"의 원인이었다(시작하자마자 seek). 프리로드가 없으니 영상은 이미 0부터 시작 — 시크 안 함.
+    tryAudible();
+    // 검증용 진단: 초반 씹힘(seeking/stalled) 사라졌는지 + 음소거 팝업 요소 확인. 검증 후 제거.
     ['pause', 'playing', 'waiting', 'stalled', 'seeking'].forEach(function (ev) {
       v.addEventListener(ev, function () { send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' rs=' + v.readyState }); });
     });
+    // 음소거 팝업/아이콘의 실제 요소를 기기에서 잡는다(.ytp-unmute가 안 먹으므로) — 로드 3.5초 뒤 보이는
+    // "음소거" 관련 요소를 가장 안쪽까지 파고들어 태그+클래스 체인을 로그. 이 클래스로 다음 빌드에서 CSS 타겟.
+    setTimeout(function () {
+      try {
+        var all = document.querySelectorAll('button,div,span,[role="button"],[aria-label]');
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i]; if (el.offsetParent === null) continue;
+          var t = (el.textContent || ''); var al = (el.getAttribute && el.getAttribute('aria-label')) || '';
+          var hit = t.indexOf('음소거') >= 0 || al.indexOf('음소거') >= 0 || t.toLowerCase().indexOf('unmute') >= 0 || al.toLowerCase().indexOf('unmute') >= 0;
+          if (!hit) continue;
+          var target = el, moved = true;
+          while (moved) { moved = false; var kids = target.children; for (var k = 0; k < kids.length; k++) { var kt = (kids[k].textContent || '') + ((kids[k].getAttribute && kids[k].getAttribute('aria-label')) || ''); if (kids[k].offsetParent !== null && (kt.indexOf('음소거') >= 0 || kt.toLowerCase().indexOf('unmute') >= 0)) { target = kids[k]; moved = true; break; } } }
+          var p = target.parentElement, gp = p && p.parentElement;
+          send({ type: 'domlog', text: 'MUTEICON ' + target.tagName + '[' + (target.className || '') + '] al=' + ((target.getAttribute && target.getAttribute('aria-label')) || '').slice(0, 16) + ' p=[' + (p ? p.className : '') + '] gp=[' + (gp ? gp.className : '') + ']' });
+          break;
+        }
+      } catch (e) {}
+    }, 3500);
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
@@ -204,7 +212,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
         source={source}
         injectedJavaScript={INJECTED_JS}
         // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
-        injectedJavaScriptBeforeContentLoaded={`window.__pacePreload=${preload ? 'true' : 'false'};true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__pacePreload=${preload ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled

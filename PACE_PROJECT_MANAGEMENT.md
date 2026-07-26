@@ -619,3 +619,65 @@ Health Connect는 2026년 기준 정식 지원(Google Fit API는 2026년 내 폐
 확인. 시간대 게이트/수면 시각 정확도 수정은 코드 검토로 로직 확인 완료 — **밤 시간대 실제 재현
 테스트(22시~9시 사이에 실제로 무진동 10분 만들어 정확한 시각이 기록되는지)는 낮 시간이라 아직
 실기기로 못 함**, 다음 밤 세션에서 확인 권장.
+
+### 2026-07-26 (오후) — Mac 세션 (iOS Feed 버그 대량 수정 + 출시 전 수익화 감사)
+
+**iOS Pace Feed 실기기 디버깅 (사장님과 실시간, 이후 자율)** — 실기기 NSLog 콘솔 캡처
+(`devicectl --console`) + 시뮬레이터 자가테스트(`pace://feed` 딥링크 대신 임시 __DEV__ 리다이렉트,
+`simctl screenshot`/`log stream`)로 원인을 로그로 확정하며 수정. 주요 수정(전부 `.ios.tsx`/Swift):
+
+1. **매 영상 첫 소리 끊김("씹힘")** — VEV 이벤트 로깅으로 확정: 영상 재생 t≈1s에 **유튜브가 스스로
+   `video.muted=true`로 자동음소거 → 우리 코드가 되돌리는 왕복**이 오디오 컷의 원인. `volumechange`
+   반응은 이미 끊긴 뒤라 늦음 → **`muted` 프로퍼티 setter를 가로채(audibleOk 이후 muted=true 무시)**
+   유튜브의 음소거 호출 자체를 no-op화 → 왕복·컷 소멸(안드로이드 `.tsx`의 muted-setter override와 동일).
+2. **"탭하여 음소거 해제" 팝업/아이콘** — 팝업 텍스트가 `.html5-video-player`(플레이어 컨테이너, 영상
+   포함)에 있어 클릭/`display:none`하면 재생이 죽음(여러 번 겪음). 해결: (a) 재생 안정 후 `movie_player`
+   의 플레이어 API `unMute()`를 **1회만** 호출(setter가 실제 음소거를 막고 있어 컷 없음), (b) 작은
+   음소거 아이콘 `.ytp-unmute`만 CSS `display:none`(leaf 버튼이라 영상 무해). 시뮬레이터 스크린샷+VEV로
+   컷 없음 확인. (남은 초기 텍스트 플래시는 컨테이너라 못 지움 — 소리 우선 원칙.)
+3. **손짓(hand-wave) 감지율 낮음/"2번째 영상부터 안 됨"** — 두 원인:
+   - iOS Vision이 **손목(wrist) 신뢰도를 자주 0**으로 줘 손목↔MCP 거리 기반 크기측정이 대부분 프레임
+     버려짐 → **신뢰도>0.3인 모든 관절점의 바운딩박스 대각선**으로 크기 측정(손목 빠져도 강건).
+   - 새 영상 재생이 **AVCaptureSession을 interrupt**시키는데 관찰자가 없어 복구 안 됨 → `WasInterrupted`/
+     `InterruptionEnded`/`RuntimeError` 관찰자 추가해 자동 `startRunning` 복구. (orientation은 8방향
+     자동탐색→첫 감지 방향 lock; 실기기 `👋 WAVE!` 발화 로그로 동작 확인.)
+4. **넘길 때 페이지 재로드 간극("전환 씹힘")** — 다음 영상 preload(현재+next 2 WebView)를 구현해
+   시뮬레이터 로그로 즉시전환(`PRELOAD ready`→`ACTIVATE playing t=0.00`)까지 검증했으나, **실기기에선
+   YouTube WebView 2개가 디코더/대역폭 경합 → 재생 중 `stalled`(화면 멈췄다 재생)+손짓 카메라 불안정,
+   `absoluteFill`이 상태바-유튜브로고 겹침**까지 유발 → **preload 제거하고 단일 플레이어로 되돌림**.
+   전환 간극은 아키텍처 비용으로 감수(재생 중 멈춤이 더 나쁨). 큐 프리페치/영속으로만 완화.
+5. **쇼츠 로딩 5초** — `isLoading`("쇼츠 불러오는 중")은 Vercel 서버리스 콜드스타트를 피드 열 때 처음
+   깨워서였음 → **홈 mount에서 `loadInitial()` prefetch(iOS만)** + **큐 AsyncStorage 영속(재실행 즉시
+   재생)** + loadInitial에 큐존재/로딩중 가드. 커밋: `752c4fc`,`ae370ed` 외.
+
+관련 커밋: `61c2d94`,`752c4fc`,`ae370ed`,`af67f2b`,`f63d514`,`d4b46c8`,`02171a4`. 실기기(UDID
+00008120-…266BC01E) Release 설치됨.
+⚠️ **진단 로그 잔존**: `.ios.tsx`의 `VEV`/`domlog`/`PRELOAD`/`ACTIVATE`/`UNMUTE-once` send + Swift
+`PACEWAVE`/`PACEWV` NSLog가 아직 있음(사장님 복귀 실기기 재검증용으로 일부러 유지) — **App Store
+제출 빌드 전 반드시 제거**. 관련 위치는 서브에이전트 스캔 결과 참고(아래).
+
+**🔴 출시 전 수익화 감사(서브에이전트 2종, 읽기전용) — 사장님 조치 필요 블로커**:
+- **[BLOCKER] 광고: `EXPO_PUBLIC_USE_REAL_ADS`가 어디에도 설정 안 됨 + `eas.json` 부재** →
+  게이팅 로직 자체는 정확·fail-safe(`AdBanner.tsx:27`,`rewardedAd.ts:22`, 플래그 'true'일 때만 실ID)
+  이지만, 플래그가 안 켜져 **출시 빌드가 구글 테스트 광고를 그대로 송출 = 광고 수익 0**. 로컬
+  `expo run:ios --configuration Release`로 빌드하므로 EAS가 아니라 **빌드시 env로 실제 주입 필요**.
+  → 출시 빌드에서만 `EXPO_PUBLIC_USE_REAL_ADS=true` 되도록 빌드 방식 정해서 세팅 필요.
+- **[BLOCKER] 구독/IAP: RevenueCat 키 공백**(`.env`의 `EXPO_PUBLIC_RC_IOS_KEY`/`_ANDROID_KEY` 빈값)
+  → `useSubscriptionStore.init()`이 `Purchases.configure()`를 안 부름 → offerings=[] → **페이월이
+  빈 목록, 구독 구매 자체가 불가능**. → 실제 RC 공개 SDK 키(`appl_…`/`goog_…`) 세팅 + 양 플랫폼
+  구매/복원 실기기 테스트 필요. (App Store Connect/Play Console 구독 상품 등록 여부도 확인.)
+- **[HIGH] 실광고 테스트기기 커버리지**: 실ID 켠 뒤 내부/TestFlight 배포 시 오탭=AdMob 계정정지 위험.
+  `adsConfig.ts:16-18` 테스트기기 화이트리스트에 **안드 1대(Note20)뿐, iOS는 0대**. → 실광고 빌드를
+  내부 배포하려면 모든 테스터 기기ID(양 플랫폼) 등록 먼저. **당장은 플래그가 꺼져있어 안전**(실광고 미송출).
+- **[HIGH] 페이월 문구-실제 게이팅 불일치(App Review 리젝 위험)**: 페이월이 광고하는 4개 혜택 중
+  "핸즈프리(손짓/BT 리모컨)"·"고급 취침모드"는 **`isPremium`으로 전혀 안 가둬짐**(현재 `isPremium`
+  소비처는 광고배너 숨김·무료 Focus 10분 제한뿐). 없는 잠금을 광고하는 셈 → **D9(리모컨 프리미엄
+  게이팅) 결정과 직결**. 결정: (a) 두 기능 실제 게이팅 vs (b) 페이월 문구에서 제거. 코드 자체는
+  `isPremium` 체크 하나라 간단하나 **제품/마케팅 결정이라 자율 수정 안 함**.
+- **[MEDIUM→수정완료] 보상광고 로드 무한대기** — no-fill 시 프라미스 미해결로 모달 스피너 영구 대기
+  → 20초 타임아웃 추가(`rewardedAd.ts`). **[LOW→수정완료]** `purchase()`에 `restore()와 동일 RC 가드
+  추가. 커밋 `7297386`.
+- 리뷰어 우회(`s7.reviewer@gmail.com`→isPremium 강제)는 의도된 심사용, 정상.
+
+**남은 자율작업 큐**: (1) 사장님 복귀 후 실기기로 위 Feed 수정들(소리컷/손짓/음소거아이콘) 최종 확인
+→ OK면 (2) 진단 로그 일괄 제거 후 클린 빌드. (3) 위 수익화 블로커는 사장님 계정/결정 필요.

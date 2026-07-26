@@ -40,8 +40,10 @@ const DAY_INDEX_KEYS: TranslationKey[] = [
 // 라우팅, Android=불가능 확정)과 동일한 약속이라 이 플래그로 Android에서만 숨겼었다. 지금은 문구를
 // 실제로 동작하는 핑거스냅/손짓(PaceSnapDetector/PaceHandWaveDetector, Android 검증 완료)으로
 // 바꿨으므로 그 하드웨어 버튼 플래그로 게이팅하는 게 더 이상 안 맞음 — 플랫폼 구분 없이 항상 노출.
+// 2026-07-26 사용자 지적("전체 화면 차단 안 하잖아") 감사 — Q1 답변만 플랫폼별로 실제 동작이 달라
+// (Android=오버레이 차단, iOS=오버레이 자체가 불가능해 Live Activity 알림뿐) 별도 답변 키로 분리.
 const FAQ_KEYS: [TranslationKey, TranslationKey][] = [
-  ['settings.faqQ1', 'settings.faqA1'],
+  ['settings.faqQ1', Platform.OS === 'ios' ? 'settings.faqA1Ios' : 'settings.faqA1'],
   ['settings.faqQ2', 'settings.faqA2'],
   ['settings.faqQ3', 'settings.faqA3'],
   ['settings.faqQ4', 'settings.faqA4'],

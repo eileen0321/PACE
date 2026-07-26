@@ -257,7 +257,13 @@ export const translations = {
       rateAppUnavailable: 'App review is not available on this device yet.',
       helpCenterTitle: 'Help Center',
       faqQ1: 'What does Daily Limit do?',
-      faqA1: 'Once you reach your daily limit, Pace shows a full-screen block over YouTube and similar apps until the next day.',
+      // 2026-07-26 사용자 지적("전체 화면 차단 안 하잖아") 반영 — 실제 동작(LimitReachedOverlay.tsx/
+      // useLimitHitStore.ts) 재확인: 1·2차는 "+5min" 버튼으로 언제든 연장 가능하고, 3차부터는 아예
+      // 막지 않고 1~3초 자동 소멸 토스트만 뜬다 — "다음 날까지 차단"은 실제와 다른 과장된 문구였다.
+      faqA1: 'When you reach your daily limit, Pace shows a block screen over YouTube and similar apps — you can extend it 5 minutes at a time. After a few extensions in one day, Pace stops interrupting and just shows a brief reminder instead.',
+      // iOS는 다른 앱 위에 오버레이를 띄울 수 없어(overlayService.ios.ts) 위 Android 문구가 아예
+      // 거짓 — Live Activity/알림뿐, 실제 차단 기능 자체가 없다. 플랫폼별로 분리해 정직하게 표시.
+      faqA1Ios: "iOS can't overlay other apps, so Pace can't actually block YouTube. Instead it shows your remaining time on the Lock Screen / Dynamic Island and sends reminders as you approach your limit — it's a nudge, not a hard block.",
       faqQ2: 'What is a Focus Session?',
       faqA2: 'Turn it on to let Pace advance to the next short for a duration you choose. It always stops on its own — never runs indefinitely.',
       faqQ3: 'What does Hands-Free Control do?',
@@ -662,7 +668,8 @@ export const translations = {
       rateAppUnavailable: '이 기기에서는 앱 평가 기능을 사용할 수 없어요.',
       helpCenterTitle: '도움말',
       faqQ1: '일일 한도(Daily Limit)는 어떻게 동작하나요?',
-      faqA1: '일일 한도에 도달하면 다음 날이 될 때까지 YouTube 등에 전체화면 차단이 표시돼요.',
+      faqA1: '일일 한도에 도달하면 YouTube 등에 차단 화면이 표시돼요 — 5분 단위로 연장할 수 있어요. 하루에 몇 번 연장하고 나면 더는 막지 않고 짧은 알림만 보여드려요.',
+      faqA1Ios: 'iOS는 다른 앱 위에 화면을 띄울 수 없어서 Pace가 YouTube를 실제로 막을 순 없어요. 대신 잠금화면/다이나믹 아일랜드에 남은 시간을 보여주고 한도에 가까워지면 알림을 보내드려요 — 강제 차단이 아니라 알려드리는 방식이에요.',
       faqQ2: '포커스 세션(Focus Session)이 뭔가요?',
       faqA2: '켜두면 정해둔 시간 동안만 다음 영상으로 넘어가요. 무한정 계속되지 않고 항상 스스로 멈춰요.',
       faqQ3: '핸즈프리 컨트롤은 뭘 하나요?',

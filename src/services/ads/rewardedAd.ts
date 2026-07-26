@@ -42,9 +42,13 @@ export function showRewardedAd(): Promise<RewardedAdResult> {
     const finish = (result: RewardedAdResult) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeoutId);
       unsubscribers.forEach((u) => u());
       resolve(result);
     };
+    // 로드 타임아웃 — 노필(no-fill) 등으로 LOADED/ERROR가 끝내 안 오면 프라미스가 영영 안 풀려
+    // 모달의 "광고 보는 중" 스피너가 무한 대기한다(감사 발견). 20초 안에 아무 이벤트도 없으면 실패 처리.
+    const timeoutId = setTimeout(() => finish('failed'), 20000);
 
     unsubscribers.push(
       rewarded.addAdEventListener(RewardedAdEventType!.LOADED, () => {

@@ -92,6 +92,7 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   },
 
   purchase: async (pkg) => {
+    if (!RC_KEY) throw new Error('RC_NOT_CONFIGURED'); // restore()와 동일 가드 — RC 미설정 시 미구성 SDK 호출 방지
     const { customerInfo } = await Purchases.purchasePackage(pkg);
     await applyCustomerInfo(customerInfo, set, get);
   },

@@ -125,7 +125,7 @@ export default function PaceFeedScreen() {
 
   // 2026-07-21 기기 디버깅: 까만화면이 "큐 0개"인지 vs "WebView 재생 실패"인지 로그로 가른다.
   useEffect(() => {
-    console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
+    if (__DEV__) console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
   }, [queue.length, current?.videoId, usingScrape, isLoading, error]);
 
   // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS).

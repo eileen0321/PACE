@@ -24,13 +24,27 @@ export async function getTodayUsageMinutes(userId: string): Promise<number> {
   return Math.floor((row?.total ?? 0) / 60);
 }
 
+// 감사 LOW/MED6와 동일한 결함 — Stats 탭 "이번 주 시청"/요일별 그래프도 getWeeklyStats() 하나로
+// 이번 주 총합을 내는데, 여기도 duration_seconds만 더해 진행 중인 세션의 실제 경과시간이 빠져
+// 있었다(오늘 항목만 영향, 지난 날짜엔 열린 행이 있을 수 없음). getTodayUsageMinutes와 동일한
+// 경과초 계산 + 4시간 상한을 여기도 적용해 "이번 주" 합계와 "최장 연속 시청"이 진행 중에도 정확하게.
 export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
     `SELECT date(started_at, 'localtime') as date,
-            SUM(duration_seconds) / 60 as total_minutes,
+            SUM(
+              CASE WHEN ended_at IS NULL
+                THEN MIN(14400, MAX(0, CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)))
+                ELSE duration_seconds
+              END
+            ) / 60 as total_minutes,
             SUM(videos_watched) as total_videos,
-            MAX(duration_seconds) as longest
+            MAX(
+              CASE WHEN ended_at IS NULL
+                THEN MIN(14400, MAX(0, CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)))
+                ELSE duration_seconds
+              END
+            ) as longest
      FROM viewing_sessions
      WHERE user_id = ? AND date(started_at, 'localtime') >= date('now', '-6 days', 'localtime')
      GROUP BY date(started_at, 'localtime')

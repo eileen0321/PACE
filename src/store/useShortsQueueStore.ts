@@ -62,6 +62,8 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
   current: () => get().queue[0] ?? null,
 
   loadInitial: async () => {
+    // 홈에서 prefetch로 이미 큐가 채워졌거나 로딩 중이면 재fetch 생략(피드 진입 즉시 재생).
+    if (get().queue.length > 0 || get().isLoading) return;
     set({ isLoading: true, error: null });
     try {
       // 영속된 watched 복원(재실행 시에도 이미 본 Shorts 제외).

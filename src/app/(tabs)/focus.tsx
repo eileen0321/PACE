@@ -177,12 +177,30 @@ export default function FocusScreen() {
         <View>
           <Text style={styles.sectionLabel}>{t('focus.handsFreeSection')}</Text>
           <GlassSurface style={styles.card}>
-            <Pressable style={styles.interventionRow} onPress={onToggleHandsFree}>
+            {/* 2026-07-27(Mac 밤샘 감사) — iOS는 Android와 실행구조가 근본적으로 다르다. iOS 핸즈프리
+                (볼륨키+카메라 손짓)는 Pace Feed 화면 안에서 useFeedRemoteControl.ios/제스처로 "항상"
+                동작하며, 이 토글(useBluetoothStore=네이티브 SharedPreferences)과는 무관하다. 예전엔 iOS에서도
+                Android용 토글을 그대로 노출해 (1)프리미엄 결제 유도 (2)가짜 "켜짐" 토스트 (3)refresh 시
+                autoModeEnabled=false 스텁값으로 다시 꺼짐 — 결제해도 아무것도 안 되는 기만이었다. iOS에선
+                "피드에서 항상 켜짐"을 비활성 스위치로 정직하게 표시(사용자에게 보여줄 개념은 동일, 기만 제거). */}
+            <Pressable
+              style={styles.interventionRow}
+              onPress={Platform.OS === 'ios' ? undefined : onToggleHandsFree}
+              disabled={Platform.OS === 'ios'}
+            >
               <View style={{ flex: 1 }}>
                 <Text style={styles.interventionTitle}>{t('focus.handsFreeMode')}</Text>
                 <Text style={styles.interventionSub}>{handsFreeMethods}</Text>
               </View>
-              {isPremium ? (
+              {Platform.OS === 'ios' ? (
+                <Switch
+                  value
+                  disabled
+                  trackColor={{ true: colors.primary, false: '#262626' }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor="#262626"
+                />
+              ) : isPremium ? (
                 <Switch
                   value={autoModeEnabled}
                   onValueChange={onToggleHandsFree}

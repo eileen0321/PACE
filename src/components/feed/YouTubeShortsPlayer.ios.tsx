@@ -78,6 +78,13 @@ const INJECTED_JS = `
       });
     }
     tryAudible();
+    // 팝업이 뜨는 순간 바로 클릭해 깜빡임 최소화 — 영상 로드 직후 3초간 100ms마다 .ytp-unmute를 잡아 클릭.
+    // (소리 확인된 뒤에만. 상시 MutationObserver는 유튜브가 DOM을 계속 바꿔 CPU 낭비라 짧은 폴링만.)
+    var fastTries = 0;
+    var fastPoll = setInterval(function () {
+      if (audibleOk) { var ub = document.querySelector('.ytp-unmute'); if (ub) ub.click(); }
+      if (++fastTries > 30) clearInterval(fastPoll);
+    }, 100);
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });

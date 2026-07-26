@@ -1428,3 +1428,50 @@ remaining 계산도 맞음(안드 #1처럼 0으로 새지 않음). **Windows 세
 - 🟢 [정보] aps-environment=development(EAS가 archive 시 production 리맵 — 프로드 푸시 한번 확인). track-player는
   iOS에서 실제 미사용(실제 핸즈프리는 PaceGesture Swift) — UIBackgroundModes 불필요가 맞음. 원하면 의존성 제거로
   바이너리 슬림 가능. ATT 없음 = 비개인화 광고 설정으로 올바름(개인화 전환 시엔 문자열+ATT 호출 필수).
+
+**감사2~5 결과 (2026-07-27 낮, Mac 하루종일 전수검사) — 안전건 즉시수정 완료분:**
+- ✅ C1(피드): 렌더 안 되는 diag setState가 초당 3회 전체 리렌더 → `__DEV__` 차단(릴리즈 "씹힘" 회귀방지).
+- ✅ subscription-C1(focus.tsx): 핸즈프리 프리미엄 게이트 제거 — D9 무료정책 정합(무료 사용자가 켜진 걸 못 끄던 함정). **공용코드 — Android도 동일 적용됨.**
+- ✅ MEDIUM4(data): flushWatchTime이 실제 세그먼트 시각 기록 → sleep_detected 역전행(started_at>ended_at)+자정 오귀속 해소.
+- ✅ HIGH1(data): PRAGMA user_version 마이그레이션 도입 — 스키마 변경 시 기존 설치 침묵 데이터유실 방지(방어적, 현재 DB 무해).
+- ✅ MEDIUM3(data): 전경 orphan 정리에도 4h clamp(콜드스타트와 일관).
+- ✅ B1(sub): init에서 캐시로 isPremium seed — 유료 사용자 콜드런치 광고오노출 해소.
+
+**🔴 [사장님 필독 — 운영 경고, 코드버그 아님] 광고 A1:** `adsConfig.ts`의 TEST_DEVICE_IDS에 **iOS 기기가 하나도
+없다**(안드 Note20 1대뿐). 실광고 게이팅(EXPO_PUBLIC_USE_REAL_ADS)은 dev/preview 빌드만 보호 — **production
+빌드(TestFlight/스토어)를 아이폰에서 열면 진짜 광고가 뜬다.** 거기서 광고를 한 번이라도 탭하면 무효 트래픽 →
+AdMob 밴(사장님 최대 우려). **철칙: TestFlight/프로덕션 빌드에선 절대 광고 탭 금지.** 또는 아이폰 IDFA를
+adsConfig.ts에 등록. (dev 빌드는 항상 테스트광고라 안전 — 이건 확정.)
+
+**🟠 [사장님/선택] SKAdNetworkItems 추가(iOS 광고수익 최적화), track-player 미사용 의존성 제거(바이너리 슬림) — 둘 다 비필수.**
+
+**🔴🟠 [Windows 세션 — Android 도메인 데이터 정합성 3건] (Mac이 확인, Android 네이티브/오버레이라 Mac이 못 고침):**
+- **HIGH2 겹치는 세션 이중집계**: Android는 overlay가 세션을 열어둔 채 Home으로 redirect(keepSessionAlive)하는데,
+  home.tsx `onSelectPlatform`이 "이미 running 세션 있는지" 검사를 안 해 두 번째 플랫폼 탭 시 두 번째 open row 생성 →
+  나중에 둘 다 같은 endedAtMs로 닫혀 겹치는 구간 이중집계. **수정방향**: startSession 전에 running이면 재사용/차단.
+- **MEDIUM5 consumeExpired 이중소비 레이스**: `_layout.tsx`(148,232)+`overlay/index.tsx`(246,289) 4곳이 consume-once
+  값을 각자 읽어, 먼저 읽은 쪽이 이기고 나머지는 null → sleep_detected가 app_restarted로 오기록되고 수면배너 유실
+  가능. **수정방향**: 소비 소유자를 1곳으로 통일하고 결과를 전파.
+- **LOW/MED6 안드 #1 부분수정**: 진행 중 open 세션은 duration_seconds=0이라 getTodayUsageMinutes가 0으로 침묵 →
+  Home 복귀·재탭마다 JS 일일예산이 사실상 리셋. **수정방향**: remainingMinutes 계산 시 현재 open 세션 경과분 가산
+  (또는 네이티브 authoritative remaining 사용).
+
+**🟡 [Mac/피드 — 기기 테스트 필요, 작동 중 손짓 회귀 위험이라 미수정·문서화만]:**
+- H2: 네트워크 실패(지하철/데드존) 시 injectedJS가 안 돌아 novideo도 error도 안 와 검은화면 영구 → 영상당 15초
+  워치독으로 handlePlayerError 호출 권장(단 느린-로딩 영상 오스킵 안 되게 15초 이상 보수적으로).
+- M1/M3: 백그라운드 복귀 후 status/playing 실제재생과 desync → active 복귀 시 pacePlay 재주입 or playing을 웹뷰 실제
+  재생이벤트에 바인딩. keep-awake/수면가드/일일한도가 stale state에 게이팅되는 문제의 뿌리.
+- M4: 일일한도 tick의 watchedThisSession/nextBreakIn이 deps 변경 시 리셋 → 중복 저시간알림·시간 누수. ref로 보존 권장
+  (iOS 피드에선 deps가 세션 중 거의 안 변해 실발생 드묾).
+- M5: 세션 빠른 on/off/on 시 이전 AVCaptureSession stop 완료 전 새 session start → 순간 카메라 2개. 토글 디바운스로
+  해결하되 **작동 중 손짓 회귀 없게 조심**.
+- L1: SnapDetector에 오디오 인터럽션 옵저버 없음(통화 후 마이크 안 살아남) — 현재 snap 비활성이라 잠재적.
+
+**⚠️ [제출 직전, 사장님 피드 확인 후] H1 진단로그 전량 제거**: VEV/domlog/MUTEBLOCKS/MUTEICON/PACEWV/PACESNAP/
+PACEWAVE/NSLog + Swift nativeLog Function(+YouTubeShortsPlayer.ios 호출부). muted-setter override/`.ytp-unmute` CSS/
+tryAudible는 기능이라 보존. 상세 위치는 감사 리포트에 파일:라인 전부 있음.
+
+**✅ [오탐 정정 — 중요] D1/D2/#3/#4는 전부 오탐**: 여러 에이전트가 bluetoothService.ios/overlayService.ios **스텁만**
+보고 "iOS 기능 죽음"이라 반복 오판했으나, iOS 피드가 `focusSessionDurationMinutes`(feed:249,267 자동종료)·
+`sleepStillnessMinutes`(feed:115)를 **직접** 소비한다. **페이월 3개 혜택 iOS에서 다 실효 → 허위광고 아님, 페이월
+손대지 말 것.** i18n도 키층 339/339 완벽, QuickControlsGrid 영어 하드코딩은 "번역 시 타일 오버플로" 때문의 의도.

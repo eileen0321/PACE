@@ -1526,3 +1526,15 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 전환(Pace↔YouTube) 모두 ~1초 내 정확히 반영되고 15초 이상 연속 관찰해도 정확함을 확인. 커밋
 `e4228db`. (부가 발견: 진단 중 `a11y`가 항상 null이었음 — PaceAccessibilityService가 비활성 상태로
 보임, 기존에 알려진 "재설치 후 접근성 꺼짐" 이슈와 일치하는 것으로 추정, 새 버그 아님.)
+
+### 2026-07-27 (계속) — Windows 세션 (3차 감사 — 접근성 XML 패키지 동기화 누락 발견/수정)
+
+위 버그 고치면서 같은 파일군(`ForegroundAppWatcher.kt`)을 훑다가 발견 — `SupportedApps.PACKAGES`와
+`src/constants/supportedApps.ts`는 둘 다 2026-07-18에 한국 리전 TikTok 실제 패키지명
+(`com.ss.android.ugc.trill`)을 추가해뒀는데, `accessibility_service_config.xml`의 `packageNames`
+속성만 그때 안 바뀌고 3개(youtube/instagram/`com.zhiliaoapp.musically`)로 남아있었다 — 이 파일 자체
+주석에 "반드시 동기화"라고 적혀있었는데 그 원칙이 안 지켜진 것. **영향**: 한국 리전 TikTok에서
+`PaceAccessibilityService`의 실시간 이벤트(onAccessibilityEvent)가 전혀 안 들어와 포그라운드 감지가
+느린 UsageStatsManager 폴백에만 의존하게 됨(오버레이 표시가 즉각적이지 않고 지연/불안정할 수 있음).
+4번째 패키지 추가해 동기화, 재빌드+실기기 설치 후 크래시 없음 및 방금 고친 오버레이 숨김 버그도
+여전히 정상임을 재확인. 커밋 `8ae21a6`.

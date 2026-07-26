@@ -62,6 +62,13 @@ public class PaceGestureModule: Module {
       return false
     }
 
+    // 블루투스 오디오(에어팟/버즈/BT 리모컨) 연결 여부 — AVAudioSession.currentRoute 기반.
+    // 볼륨키→다음 넘김을 "BT 연결 시에만" 켜기 위해 피드가 사용(사용자 지시: 폰 볼륨키로는 안 넘어가게).
+    // 기존 useBluetoothStore.isConnected(iOS 스텁, 항상 false) 대체 — 그 스텁 때문에 볼륨키가 영영 비활성이었음.
+    Function("isBluetoothAudioConnected") { () -> Bool in
+      return self.isBluetoothAudioConnected()
+    }
+
     OnDestroy {
       self.snapDetector?.stop()
       self.headDetector?.stop()

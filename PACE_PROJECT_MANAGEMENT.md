@@ -1367,3 +1367,30 @@ Time 삭제 후 iOS 피드에 안드로이드 오버레이가 하던 기능들�
   소비→`flushWatchTime('sleep_detected', 잠든시각)` 기록(feed/index.tsx:108-114) → 홈 "…잠드셨습니다" 배너
   iOS에서도 뜨고 페이월 "Advanced Sleep Mode" 실효. **수면 패리티 온전, 조치 불필요.**
 - ✅ 알림/온보딩/페이월 게이팅/광고배너/비수면 통계 = 패리티 격차 없음 확인.
+
+### 2026-07-27 (이어서) — Windows 세션 ("이거 말고 다른거 더 확인해" 2차 감사 — 🔴 Mac 세션 확인 필요 항목 있음)
+
+에이전트 위임 2차 전체 감사 결과. 안전한 건 바로 고쳤고(아래), **두 건은 방향/작업 필요라 사장님께
+먼저 보고만 하고 미착수 — 다음에 다시 잊지 않도록 여기 기록**:
+
+**🔴 [HIGH, Mac 세션 담당] iOS `feed/index.tsx`(Pace Feed)는 안에 있는 동안 Daily Limit이 전혀
+집행 안 됨.** `overlayService.ios.ts`는 `remainingMinutes`(Live Activity용)만 쓰고 나머지 필드는
+전부 무시 — feed 화면 자체에 `todayUsageMinutes` vs `dailyLimitMinutes` 실시간 체크가 없다.
+`LimitReachedOverlay`는 `home.tsx`에만 마운트돼 있어 Home 탭으로 돌아가야만 한도 도달 팝업이 뜬다.
+즉 iOS에서 Pace Feed 안에만 머물면 하루 한도가 사실상 없다(Android는 네이티브 오버레이가 남은시간
+0분에서 실제로 막음 — 플랫폼 패리티 깨짐). **미결정**: JS만으로(feed 안에 sleepBlackout과 같은 패턴의
+한도-도달 블랙아웃/팝업 추가) Windows 세션이 구현할지, Mac 세션이 iOS 네이티브 관점에서 다르게
+풀지 사장님 지시 대기 중.
+
+**🟡 [MEDIUM, Android] 세션 중 오버레이 펼침카드에서 Sleep Timer를 바꿔도 실제 타이머는 안 바뀜.**
+`overlay/index.tsx`의 `onCycleSleepTimer`가 JS 설정만 갱신하고, 네이티브(`PaceOverlayModule`/
+`PaceOverlayService.kt`)엔 `updateRemaining`만 있고 `sleepTimerRemainingMinutes`를 세션 중 갱신하는
+경로가 없다 — 화면 숫자는 바뀌는데 실제 카운트다운은 세션 시작 시점 값 그대로 돈다. 작은 수정(Kotlin에
+`updateSleepTimer` 액션 추가)인데 착수 여부 사장님 확인 대기.
+
+**바로 고침(안전한 정리만)**: iOS 진단용 `console.log` 3곳(`useVolumeNext.ios.ts`,
+`YouTubeShortsPlayer.ios.tsx` 2곳)을 `__DEV__`로 감쌈 — 릴리즈 빌드에 안 찍히게(완전 삭제는 안 함,
+Mac이 제스처 디버깅에 아직 쓸 수 있어서). 커밋 `deae4de`/`4e9a1ba`.
+
+**손 안 댐(우선순위 낮음)**: `quick-control-sheet.tsx`의 이제 호출자 없는 `sleepTimer` 분기,
+`feed/index.tsx`의 렌더 안 되는 `diag` state — 둘 다 실사용 영향 없고 후자는 Mac 디버깅용일 수 있어 보존.

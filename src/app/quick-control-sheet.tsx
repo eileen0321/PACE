@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../constants/theme';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { useTranslation } from '../services/i18n';
 
 // 2026-07-25 사용자 지적("몇번을 말하는데 안고쳐") — QuickControlSheet를 RN <Modal>로 띄우는 한
 // navigationBarTranslucent/statusBarTranslucent를 다 켜도 하단 내비게이션 바가 흰색으로 남는
@@ -26,14 +27,16 @@ export default function QuickControlSheetScreen() {
   const { kind } = useLocalSearchParams<{ kind: QuickControlSheetKind }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   const { settings, update } = useSettingsStore();
   const close = () => router.back();
+  const offLabel = t('focus.off');
 
   const config =
     kind === 'dailyLimit'
       ? {
-          title: 'Daily Limit',
-          description: 'Set healthy boundaries for shorts platforms',
+          title: t('focus.dailyLimit'),
+          description: t('quickControl.dailyLimitDesc'),
           icon: 'clock' as const,
           options: DAILY_LIMIT_OPTIONS.map((m) => ({ label: `${m}m`, value: m })),
           selectedValue: settings.dailyLimitMinutes,
@@ -41,18 +44,18 @@ export default function QuickControlSheetScreen() {
         }
       : kind === 'breakReminder'
         ? {
-            title: 'Break Reminder',
-            description: 'Take short breaks during your session',
+            title: t('focus.breakReminder'),
+            description: t('quickControl.breakReminderDesc'),
             icon: 'coffee' as const,
-            options: BREAK_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m })),
+            options: BREAK_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
             selectedValue: settings.breakIntervalMinutes,
             onSelect: (v: number) => update({ breakIntervalMinutes: v }),
           }
         : {
-            title: 'Sleep Timer',
-            description: 'Stop and lock short session automatically',
+            title: t('focus.sleepTimer'),
+            description: t('quickControl.sleepTimerDesc'),
             icon: 'moon' as const,
-            options: SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? 'OFF' : `${m}m`, value: m })),
+            options: SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
             selectedValue: settings.sleepTimerMinutes ?? 0,
             onSelect: (v: number) => update({ sleepTimerMinutes: v === 0 ? null : v }),
           };

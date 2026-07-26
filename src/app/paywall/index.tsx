@@ -1,4 +1,5 @@
-import { Alert, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Alert, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
@@ -16,6 +17,11 @@ export default function PaywallScreen() {
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const { offerings, purchase, restore, init, initError, isReady } = useSubscriptionStore();
+  // 2026-07-26 감사 발견 — purchase/restore 버튼 둘 다 진행 중 상태 가드가 없어서, 응답이 오기 전
+  // 빠르게 두 번 탭하면 Purchases.purchasePackage()/restorePurchases()가 동시에 두 번 나갈 수
+  // 있었다(이중 결제 위험). 하나의 플래그로 두 액션을 함께 막는다 — 동시에 둘 다 누를 이유가
+  // 없으므로 굳이 따로 안 나눔.
+  const [purchasing, setPurchasing] = useState(false);
 
   const blockIfNotSignedIn = (): boolean => {
     const notSignedIn = !user || user.isGuest || !user.email;
@@ -34,17 +40,22 @@ export default function PaywallScreen() {
   // (2) 실제 실패/성공 둘 다 이전엔 피드백이 전혀 없었다(성공 시 아무 반응 없음) — 번역 키 추가해서
   //     명확히 알려준다.
   const onPurchase = (pkg: (typeof offerings)[number]) => {
+    if (purchasing) return;
     if (blockIfNotSignedIn()) return;
+    setPurchasing(true);
     purchase(pkg)
       .then(() => Alert.alert(t('paywall.purchaseSuccessTitle'), t('paywall.purchaseSuccessMessage')))
       .catch((e: { userCancelled?: boolean | null; message?: string } | undefined) => {
         if (e?.userCancelled) return;
         Alert.alert(t('paywall.title'), e?.message ?? String(e));
-      });
+      })
+      .finally(() => setPurchasing(false));
   };
 
   const onRestore = () => {
+    if (purchasing) return;
     if (blockIfNotSignedIn()) return;
+    setPurchasing(true);
     restore()
       .then(() => {
         const hasPremiumNow = useSubscriptionStore.getState().isPremium;
@@ -58,7 +69,8 @@ export default function PaywallScreen() {
         // 던진다 — 예전엔 여기까지 와서 완전히 조용히 사라졌다(버튼 눌러도 아무 반응 없음).
         const msg = e?.message === 'RC_NOT_CONFIGURED' ? t('paywall.notConfigured') : t('paywall.restoreFailed');
         Alert.alert(t('paywall.title'), msg);
-      });
+      })
+      .finally(() => setPurchasing(false));
   };
 
   // 2026-07-26 사용자 지시 — 프리미엄 혜택(광고 제거/자동넘김 무제한/리모컨/고급 취침모드)을 명시적으로
@@ -94,7 +106,7 @@ export default function PaywallScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable style={styles.package} onPress={() => onPurchase(item)}>
+          <Pressable style={[styles.package, purchasing && styles.packageDisabled]} onPress={() => onPurchase(item)} disabled={purchasing}>
             <Text style={styles.packageTitle}>{item.product.title}</Text>
             <Text style={styles.packagePrice}>{item.product.priceString}</Text>
           </Pressable>
@@ -115,8 +127,8 @@ export default function PaywallScreen() {
           )
         }
         ListFooterComponent={
-          <Pressable style={styles.restoreBtn} onPress={onRestore}>
-            <Text style={styles.restoreText}>{t('paywall.restore')}</Text>
+          <Pressable style={styles.restoreBtn} onPress={onRestore} disabled={purchasing}>
+            {purchasing ? <ActivityIndicator color={colors.textSecondary} /> : <Text style={styles.restoreText}>{t('paywall.restore')}</Text>}
           </Pressable>
         }
       />
@@ -135,6 +147,7 @@ const styles = StyleSheet.create({
   benefitCheck: { color: colors.success, fontFamily: typography.bodyFontFamilyBold, fontSize: 13 },
   benefitText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1, lineHeight: 18 },
   package: { backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.md },
+  packageDisabled: { opacity: 0.5 },
   packageTitle: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   packagePrice: { color: colors.textSecondary, marginTop: 4 },
   empty: { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.lg },

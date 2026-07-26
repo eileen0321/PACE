@@ -5,7 +5,8 @@ import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import { autoNextService, bluetoothService, syncAutoNextBuildFlag } from '../services/platform';
+import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
+import { getOrphanedSessions, closeOrphanedSession } from '../database/repositories/sessionsRepository';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
@@ -115,6 +116,32 @@ export default function RootLayout() {
       await loadSettings();
       syncSettingsFromServer().catch(() => {});
     })();
+    // 2026-07-26 감사 발견(재부팅/강제종료/크래시 예외처리 감사) — overlay/index.tsx의 세션 종료
+    // DB write는 컴포넌트 unmount cleanup에 묶여 있어서, 프로세스가 재부팅·강제종료·크래시로 죽으면
+    // 그 정리가 아예 안 돌고 viewing_sessions 행이 ended_at=NULL로 영원히 고아가 된다(시청 시간
+    // 유실 + 내보내기에 유령 행 계속 남음). 콜드스타트마다 1회 확인해서 정리 — initUser()가 끝나
+    // user.id가 확정된 뒤에만 의미가 있으므로 settingsReady에 이어붙인다. Android는 겸사겸사
+    // overlayService.consumeExpired()도 1회 불러 native 쪽 만료 사유(sleep_detected 등)를 실제로
+    // "소비"한다 — 안 그러면 다음 세션 시작(PaceOverlayService의 ACTION_START)이 그 사유를 아무도
+    // 안 읽은 채 조용히 리셋해버린다(감사 발견 원문 참고).
+    settingsReady.then(async () => {
+      const userId = useUserStore.getState().user?.id;
+      if (!userId) return;
+      try {
+        const orphans = await getOrphanedSessions(userId);
+        if (!orphans.length) return;
+        const nativeExpiry = Platform.OS === 'android' ? await overlayService.consumeExpired().catch(() => null) : null;
+        const endedAtMs = nativeExpiry?.sleepOnsetAtMs ?? Date.now();
+        const endedAtIso = new Date(endedAtMs).toISOString();
+        for (const session of orphans) {
+          const startedAtMs = new Date(session.startedAt).getTime();
+          const durationSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
+          await closeOrphanedSession(session.id, durationSeconds, endedAtIso);
+        }
+      } catch {
+        // 정리 실패는 조용히 무시 — 다음 콜드스타트에 다시 시도되고, 앱 사용 자체를 막으면 안 됨.
+      }
+    });
     const subscriptionReady = initSubscription();
     // 2026-07-26 사용자 지시("무료일땐 Focus Session 10분 고정") — loadSettings()가 먼저 끝나야
     // (그래야 focusSessionDurationMinutes가 저장된 실제 값으로 채워짐) 아래 강제 적용이 방금 로드된

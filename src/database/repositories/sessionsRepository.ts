@@ -49,6 +49,40 @@ export async function getLatestSleepDetectedSession(userId: string): Promise<Vie
   };
 }
 
+// 2026-07-26 감사 발견(재부팅/강제종료/크래시 예외처리 감사) — overlay/index.tsx의 startSession()/
+// endSession() 짝은 React 컴포넌트의 마운트/언마운트 생명주기에 묶여 있어서, 프로세스가 재부팅·
+// 강제종료·크래시로 죽으면 unmount cleanup(끝맺음 DB write)이 아예 안 돈다. 그러면 이 세션 행은
+// ended_at이 영원히 NULL로 남아 통계/내보내기에서 "유령 행"이 되고, 실제 시청 시간도 조용히
+// 유실된다(코드 어디에도 이걸 감지·정리하는 로직이 없었음). 다음 콜드스타트 때 이 함수로 찾아서
+// closeOrphanedSession()으로 정리한다(_layout.tsx에서 1회 호출).
+export async function getOrphanedSessions(userId: string): Promise<ViewingSession[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM viewing_sessions WHERE user_id = ? AND ended_at IS NULL`,
+    [userId]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    durationSeconds: r.duration_seconds,
+    videosWatched: r.videos_watched,
+    platformApp: r.platform_app,
+    status: r.status,
+  }));
+}
+
+// endSession()과 별개 함수로 둔 이유: endSession()은 "지금 이 프로세스가 방금 끝낸 세션"을 의미상
+// 전제하지만(sleep_detected의 endedAtOverride처럼 현재 세션 상태를 아는 호출부가 씀), 이건 "이전
+// 프로세스가 놓고 간 세션을 뒤늦게 정리"하는 별개 의미라 구분한다. 실제 SQL 동작은 endSession과 동일.
+export async function closeOrphanedSession(sessionId: string, durationSeconds: number, endedAtIso: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE viewing_sessions SET ended_at = ?, duration_seconds = ?, status = 'app_restarted' WHERE id = ?`,
+    [endedAtIso, durationSeconds, sessionId]
+  );
+}
+
 export async function getUnsyncedSessions(userId: string): Promise<ViewingSession[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(

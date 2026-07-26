@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
+import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(3) App.tsx의 "DYNAMIC LOADING SEQUENCE TRANSITION OVERLAY"를 이식
@@ -20,16 +21,17 @@ export function ConnectingOverlay({ visible, platformName, platformFullTitle, on
   platformFullTitle: string;
   onComplete: () => void;
 }) {
+  const { t } = useTranslation();
   const isAndroid = Platform.OS === 'android';
   const steps = isAndroid
     ? [
-        { n: 1, label: 'Starting Session...' },
-        { n: 2, label: 'Overlay ON' },
-        { n: 3, label: `Opening ${platformFullTitle}` },
+        { n: 1, label: t('connecting.starting') },
+        { n: 2, label: t('connecting.overlayOn') },
+        { n: 3, label: t('connecting.opening', { platform: platformFullTitle }) },
       ]
     : [
-        { n: 1, label: 'Starting Pace Player' },
-        { n: 2, label: 'Loading Feed...' },
+        { n: 1, label: t('connecting.startingPlayer') },
+        { n: 2, label: t('connecting.loadingFeed') },
       ];
   const maxStep = steps.length;
   const [step, setStep] = useState(0);
@@ -56,7 +58,7 @@ export function ConnectingOverlay({ visible, platformName, platformFullTitle, on
       <GlassSurface style={styles.backdrop} intensity={30} fallbackColor="rgba(0,0,0,0.9)">
         <View style={styles.glow} pointerEvents="none" />
         <ActivityIndicator size="large" color={colors.primary} style={styles.spinner} />
-        <Text style={styles.title}>{platformName} Selected</Text>
+        <Text style={styles.title}>{t('connecting.selectedTitle', { platform: platformName })}</Text>
         <View style={styles.checklist}>
           {steps.map((item) => (
             <View key={item.n} style={styles.checkRow}>

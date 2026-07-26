@@ -54,7 +54,10 @@ export type UserSettings = {
 
 // 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService
 // 무진동 감지). 'sleep_timer_expired'(사용자가 직접 설정한 카운트다운)와는 다른 별개 사유.
-export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop';
+// 'app_restarted' — 2026-07-26 감사 발견(재부팅/강제종료/크래시 예외처리 감사) 대응: 프로세스가
+// 중간에 죽어(overlay/index.tsx의 unmount cleanup이 못 돌아서) ended_at이 영원히 NULL로 남는 "고아"
+// 세션을 다음 콜드스타트 때 정리할 때 쓰는 사유 — 실제 종료 원인을 알 수 없을 때의 폴백.
+export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop' | 'app_restarted';
 
 export type ViewingSession = {
   id: string;

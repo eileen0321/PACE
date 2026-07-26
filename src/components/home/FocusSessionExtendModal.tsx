@@ -20,6 +20,11 @@ export const FOCUS_SESSION_EXTEND_MINUTES = 5;
 export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boolean; onDismiss: () => void }) {
   const { t } = useTranslation();
   const [watchingAd, setWatchingAd] = useState(false);
+  // 2026-07-26 감사 발견 — onWatchAd는 watchingAd로 막혀 있었지만 onUseCredits는 아무 가드가 없었다.
+  // spendCredits/spendBonusCredits 자체는 잔액을 넘게 못 쓰도록 clamp돼 있어 마이너스가 되진
+  // 않지만, onDismiss()가 실제로 모달을 없애기 전(부모 state 갱신 1틱 지연) 빠르게 두 번 탭하면
+  // 보유 크레딧을 의도한 것보다 2배(최대 FOCUS_SESSION_EXTEND_MINUTES*2)까지 써버릴 수 있었다.
+  const [usingCredits, setUsingCredits] = useState(false);
   const restCredits = useFlipStore((s) => s.credits);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const totalCredits = restCredits + bonusCredits;
@@ -40,6 +45,8 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
   };
 
   const onUseCredits = () => {
+    if (usingCredits) return;
+    setUsingCredits(true);
     const need = FOCUS_SESSION_EXTEND_MINUTES;
     const spentRest = useFlipStore.getState().spendCredits(Math.min(need, restCredits));
     const spentBonus = useAttendanceStore.getState().spendBonusCredits(Math.min(need - spentRest, bonusCredits));
@@ -60,7 +67,7 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
         </View>
         <Text style={styles.title}>{t('home.focusSessionTimedOutTitle')}</Text>
         <Text style={styles.message}>{t('home.focusSessionTimedOutMessage', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
-        <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd}>
+        <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd || usingCredits}>
           {watchingAd ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
@@ -71,12 +78,12 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
           )}
         </Pressable>
         {totalCredits >= FOCUS_SESSION_EXTEND_MINUTES && (
-          <Pressable style={[styles.btn, styles.btnCredits]} onPress={onUseCredits} disabled={watchingAd}>
+          <Pressable style={[styles.btn, styles.btnCredits, usingCredits && styles.btnDisabled]} onPress={onUseCredits} disabled={watchingAd || usingCredits}>
             <Feather name="star" size={16} color={colors.successLight} />
             <Text style={styles.btnCreditsText}>{t('home.useCreditsToExtend', { credits: FOCUS_SESSION_EXTEND_MINUTES, extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
           </Pressable>
         )}
-        <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd}>
+        <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd || usingCredits}>
           <Text style={styles.dismissText}>{t('overlay.notNow')}</Text>
         </Pressable>
       </View>

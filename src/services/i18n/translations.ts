@@ -85,6 +85,14 @@ export const translations = {
       restTimeSub: 'Time your phone rested face-down',
       restCredits: 'Credits earned',
       restCreditsSub: '+5 credits per 10 minutes of rest',
+      // 2026-07-26 감사 발견 — WeeklyGraphCard.tsx가 t() 없이 통째로 하드코딩돼 있었음(요일 라벨도
+      // 자체 영문 배열, stats.day* 기존 키를 안 씀).
+      weeklyGraphTitle: 'Weekly Usage Graph',
+      weeklyAverageLabel: 'Weekly Average',
+      tapBarHint: 'Tap a bar for details',
+      minutesShort: '{{n}} min',
+      todayFooterLabel: 'Today ({{day}})',
+      goalUnderLabel: 'Goal: Under {{n}} min',
     },
 
     focus: {
@@ -356,6 +364,44 @@ export const translations = {
       sleepBlackout: 'Looks like you dozed off · tap to exit',
     },
 
+    // 2026-07-26 감사 발견 — quick-control-sheet.tsx(Home 빠른 설정에서 여는 Daily Limit/Break
+    // Reminder/Sleep Timer 선택 시트)가 t() 없이 하드코딩돼 있었음. 제목은 focus.dailyLimit/
+    // breakReminder/sleepTimer, 'OFF'는 focus.off를 그대로 재사용 — 설명 문구만 이 시트 전용.
+    quickControl: {
+      dailyLimitDesc: 'Set healthy boundaries for shorts platforms',
+      breakReminderDesc: 'Take short breaks during your session',
+      sleepTimerDesc: 'Stop and lock short session automatically',
+    },
+
+    // 2026-07-26 감사 발견 — ConnectingOverlay.tsx(플랫폼 카드 탭 → 세션 시작 사이 체크리스트
+    // 애니메이션)가 t() 없이 통째로 하드코딩돼 있었음.
+    connecting: {
+      starting: 'Starting Session...',
+      overlayOn: 'Overlay ON',
+      opening: 'Opening {{platform}}',
+      startingPlayer: 'Starting Pace Player',
+      loadingFeed: 'Loading Feed...',
+      selectedTitle: '{{platform}} Selected',
+    },
+
+    // 2026-07-26 감사 발견 — 이번 세션에 새로 작성한 BluetoothOnboardingSheet.tsx 카피가 t() 없이
+    // 하드코딩된 채로 나갈 뻔했다(작성 당시엔 영문 카피만 확정, 뒤늦게 번역 배선).
+    handsFreeSheet: {
+      title: 'Focus Session Controls',
+      valueLine: 'Stay focused without touching your phone.',
+      bodyWithSnap: 'Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote\'s volume button.',
+      bodyWithoutSnap: 'Pace can advance Shorts from a hand wave or your Bluetooth remote\'s volume button.',
+      fingerSnapLabel: 'Finger snap',
+      handWaveLabel: 'Hand wave',
+      bluetoothRemoteLabel: 'Bluetooth remote',
+      nextShort: 'Next Short',
+      handsFreeModeLabel: 'Hands-free mode',
+      staysOnLabel: 'Stays on for your Focus Session',
+      scopeNote: 'Hands-free controls work during Focus Sessions.',
+      turnOn: 'Turn On',
+      notNow: 'Not Now',
+    },
+
     // 2026-07-26 감사 발견 — LimitReachedOverlay.tsx가 t() 없이 통째로 하드코딩돼 있었고, 그나마도
     // 같은 화면 안에서 영어("TAKE YOUR PACE", "Take your pace.", "Time well spent.")와 한국어가
     // 뒤섞여 있어(언어 설정 무관하게 항상 그대로 혼용 표시) 가장 자주 보이는 화면 중 하나가 늘
@@ -436,6 +482,12 @@ export const translations = {
       restTimeSub: '폰을 엎어둔 채 쉰 시간',
       restCredits: '적립 크레딧',
       restCreditsSub: '휴식 10분마다 +5 크레딧',
+      weeklyGraphTitle: '주간 사용 그래프',
+      weeklyAverageLabel: '주간 평균',
+      tapBarHint: '막대를 탭하면 상세 정보를 볼 수 있어요',
+      minutesShort: '{{n}}분',
+      todayFooterLabel: '오늘 ({{day}})',
+      goalUnderLabel: '목표: {{n}}분 이내',
     },
 
     focus: {
@@ -693,6 +745,37 @@ export const translations = {
       emptyQueueMessage: '표시할 Shorts가 없습니다.',
       loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
       sleepBlackout: '잠드신 것 같아요 · 탭하면 종료',
+    },
+
+    quickControl: {
+      dailyLimitDesc: '숏폼 시청에 건강한 경계선을 정하세요',
+      breakReminderDesc: '세션 중 짧게 쉬어가세요',
+      sleepTimerDesc: '설정 시간이 지나면 자동으로 세션을 멈추고 잠가요',
+    },
+
+    connecting: {
+      starting: '세션 시작 중...',
+      overlayOn: '오버레이 켜짐',
+      opening: '{{platform}} 여는 중',
+      startingPlayer: 'Pace 플레이어 시작 중',
+      loadingFeed: '피드 불러오는 중...',
+      selectedTitle: '{{platform}} 선택됨',
+    },
+
+    handsFreeSheet: {
+      title: '포커스 세션 컨트롤',
+      valueLine: '화면을 만지지 않고도 집중을 유지하세요.',
+      bodyWithSnap: '핑거스냅, 손짓, 또는 블루투스 리모컨의 볼륨 버튼으로 Shorts를 넘길 수 있어요.',
+      bodyWithoutSnap: '손짓 또는 블루투스 리모컨의 볼륨 버튼으로 Shorts를 넘길 수 있어요.',
+      fingerSnapLabel: '핑거스냅',
+      handWaveLabel: '손짓',
+      bluetoothRemoteLabel: '블루투스 리모컨',
+      nextShort: '다음 영상',
+      handsFreeModeLabel: '핸즈프리 모드',
+      staysOnLabel: 'Focus Session 동안 계속 유지',
+      scopeNote: '핸즈프리 기능은 Focus Session 중에만 동작해요.',
+      turnOn: '켜기',
+      notNow: '나중에',
     },
 
     limitReached: {

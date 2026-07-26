@@ -47,7 +47,12 @@ export default function OverlaySessionScreen() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [videoIndex, setVideoIndex] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
-  const endReasonRef = useRef<SessionEndStatus>('manual_stop');
+  // 2026-07-26 감사 발견 — 기본값이 'manual_stop'이면, Activity가 백그라운드 sleep-detect 직후
+  // Recents에서 스와이프돼 destroy될 때(=consumeExpired 효과가 AppState 'active' 전이를 한 번도
+  //못 받고 unmount) 실제로는 sleep_detected/daily_limit_reached였는데도 항상 manual_stop으로
+  // 잘못 기록됐다. null로 시작해 "아직 아무 종료 판정도 없었다"를 구분하고, unmount cleanup에서
+  // 이 값이 null이면 네이티브에 마지막으로 한 번 더 물어본 뒤에만 manual_stop으로 폴백한다.
+  const endReasonRef = useRef<SessionEndStatus | null>(null);
   // 2026-07-26 — sleep_detected일 때만 채워짐(네이티브가 무진동 임계값을 "넘긴" 시각이 아니라
   // 실제 "마지막으로 움직인" 시각, epoch ms) — 아래 cleanup에서 세션 ended_at을 정확히 기록하는 데 씀.
   const sleepOnsetAtMsRef = useRef<number | null>(null);
@@ -186,28 +191,41 @@ export default function OverlaySessionScreen() {
     return () => {
       clearInterval(tickInterval);
       if (sessionIdRef.current && user.id) {
-        // 2026-07-26 사용자 지적("1시 3분에 잠들었으면 실제 마지막으로 움직인 시각을 써야지") —
-        // sleep_detected면 네이티브가 무진동 임계값을 "넘긴" 시각(now) 대신 실제 마지막 움직임 시각
-        // (sleepOnsetAtMsRef, PaceOverlayService.markExpired 참고)을 세션 종료 시각으로 쓴다 — 그래야
-        // duration도, 홈 화면 수면 인사이트 배너("N시 N분에 잠드셨습니다")도 실제 잠든 시각에 가깝다.
-        const effectiveEndedAtMs = endReasonRef.current === 'sleep_detected' && sleepOnsetAtMsRef.current != null
-          ? sleepOnsetAtMsRef.current
-          : Date.now();
-        const durationSeconds = sessionStartedAtMsRef.current
-          ? Math.max(0, Math.round((effectiveEndedAtMs - sessionStartedAtMsRef.current) / 1000))
-          : 0;
         const sessionId = sessionIdRef.current;
         const userId = user.id;
-        const endReason = endReasonRef.current;
-        // 2026-07-26 — PaceAccessibilityService가 실제 재생위치 신호(끝남/되감김 감지)로 센 진짜
-        // 시청 편수를 읽는다(자동넘김이든 사용자가 직접 넘겼든 다 포함). iOS/접근성 꺼짐은 항상 0 —
-        // 예전엔 개발용 시뮬레이터의 videoIndex를 가짜로 흘려보내다 고쳐서 정직하게 0을 기록했는데
-        // (아래 원래 있던 주석 참고), 이제는 Android에서 진짜 값을 셀 수 있게 됐다. endSession()
-        // (네이티브 stop → 카운터 리셋) 호출 전에 먼저 읽어야 한다.
-        overlayService.getVideoWatchCount().then((videosWatched) => (
-          endSessionRow(sessionId, durationSeconds, videosWatched, endReason, new Date(effectiveEndedAtMs).toISOString())
-        )).then(() => pushUnsyncedSessions(userId)).catch(() => {});
-        logOverlayEvent(user.id, sessionIdRef.current, 'SESSION_STOP', endReasonRef.current).catch(() => {});
+        const startedAtMs = sessionStartedAtMsRef.current;
+        (async () => {
+          // 2026-07-26 감사 발견 — endReasonRef가 아직 null이면(tick 기반 daily-limit/sleep-timer
+          // 판정도, AppState 'active' 기반 consumeExpired 효과도 한 번도 못 돈 채 unmount) 네이티브에
+          // 마지막으로 한 번 더 물어본다 — Activity가 sleep-detect 직후 Recents에서 스와이프돼
+          // destroy될 때처럼, 실제로는 sleep_detected/daily_limit_reached인데 아무 판정도 못 받고
+          // 여기 도달하는 경우를 잡기 위해서다. 그래도 null이면(진짜 수동 종료) manual_stop.
+          if (endReasonRef.current == null && Platform.OS === 'android') {
+            const result = await overlayService.consumeExpired().catch(() => null);
+            if (result) {
+              endReasonRef.current = result.reason;
+              sleepOnsetAtMsRef.current = result.sleepOnsetAtMs;
+            }
+          }
+          const endReason = endReasonRef.current ?? 'manual_stop';
+          // 2026-07-26 사용자 지적("1시 3분에 잠들었으면 실제 마지막으로 움직인 시각을 써야지") —
+          // sleep_detected면 네이티브가 무진동 임계값을 "넘긴" 시각(now) 대신 실제 마지막 움직임 시각
+          // (sleepOnsetAtMsRef, PaceOverlayService.markExpired 참고)을 세션 종료 시각으로 쓴다 —
+          // 그래야 duration도, 홈 화면 수면 인사이트 배너도 실제 잠든 시각에 가깝다.
+          const effectiveEndedAtMs = endReason === 'sleep_detected' && sleepOnsetAtMsRef.current != null
+            ? sleepOnsetAtMsRef.current
+            : Date.now();
+          const durationSeconds = startedAtMs ? Math.max(0, Math.round((effectiveEndedAtMs - startedAtMs) / 1000)) : 0;
+          // 2026-07-26 — PaceAccessibilityService가 실제 재생위치 신호(끝남/되감김 감지)로 센 진짜
+          // 시청 편수를 읽는다(자동넘김이든 사용자가 직접 넘겼든 다 포함). iOS/접근성 꺼짐은 항상 0 —
+          // 예전엔 개발용 시뮬레이터의 videoIndex를 가짜로 흘려보내다 고쳐서 정직하게 0을 기록했는데
+          // (아래 원래 있던 주석 참고), 이제는 Android에서 진짜 값을 셀 수 있게 됐다. endSession()
+          // (네이티브 stop → 카운터 리셋) 호출 전에 먼저 읽어야 한다.
+          const videosWatched = await overlayService.getVideoWatchCount().catch(() => 0);
+          await endSessionRow(sessionId, durationSeconds, videosWatched, endReason, new Date(effectiveEndedAtMs).toISOString());
+          await pushUnsyncedSessions(userId);
+          logOverlayEvent(userId, sessionId, 'SESSION_STOP', endReason).catch(() => {});
+        })().catch(() => {});
       }
       timer.endSession();
       autoNextRuntime.stop();

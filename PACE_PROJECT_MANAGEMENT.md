@@ -29,7 +29,8 @@
   미확정, 보류)·**D11(신규, 진행 중)**. **D11**: 실기기 검증 중 RevenueCat `ConfigurationError`가
   실제로 확인됨(Play Store에 구독 상품 미등록) — Play Console 결제 프로필까지는 완료했으나 입금
   계좌 은행 확인(영업일 2~5일 소요) 대기 중이라 구독 상품 생성이 막혀 있음, 확인되는 대로 이어서
-  진행.
+  진행. **D11 대기 중 사장님 지시로 전수 감사 진행(§2-D E2/E3)**: i18n 하드코딩 9건 전부 수정,
+  슬립/재부팅/강제종료 예외처리 버그 2건(고아 세션 레코드, Android sleep-detect 오판정) 수정 완료.
   Settings에 게스트용 로그인 진입점도 신규 추가(이전엔 paywall에서 막혀야만 우회로 로그인 화면에
   도달할 수 있었음). **AdMob 실제ID 관련 안전장치 2건 추가**: (1) 다른 세션이 `EXPO_PUBLIC_
   USE_REAL_ADS` 빌드 플래그로 평소엔 테스트ID/출시빌드만 실ID를 쓰게 분리(`5c76cce`), (2) 이
@@ -88,13 +89,15 @@
 | C3 | Live Activity/다이나믹아일랜드 + 취침감지 블랙아웃 — **실기기 검증 안 됨**(시뮬레이터만 확인) | 진행 중 — 기기 필요 |
 | C4 | 위젯 익스텐션(`targets/widget`) 첫 서명 빌드 미검증 | 진행 중 |
 | C5 | (B1 조사 중 신규 발견) 전역 `useBluetoothStore`/`bluetoothService.ios.ts` 경로(Home/Settings/Stats의 "Bluetooth Hands-Free")가 iOS에서도 100% no-op 스텁 — "Enable"을 눌러도 토스트만 뜨고 실제로 아무것도 안 켜짐. Pace Feed 안의 별개 볼륨키 리모컨(`useFeedRemoteControl.ios.ts`, 07-22 수정으로 실동작 확인됨)과는 다른 죽은 경로 | 열림 — 신규, 정직성 이슈(가짜로 "동작하는 척" UI) |
-| C6 | (2026-07-26 신규) 사장님 전달 — **애플이 마이크 기반 핑거스냅 감지를 심사에서 허용하지 않음**을 통보받음 | ✅ 가이드/문구는 처리됨(Windows 세션) — `capabilities.supportsFingerSnap`(`Platform.OS === 'android'`)을 추가해 `BluetoothOnboardingSheet.tsx`의 "Finger snap" 행과 안내 문구를 iOS에서만 숨김. 어차피 iOS는 C5(no-op 스텁)+Pace Feed(`useFeedRemoteControl.ios.ts`가 `'wave'`만 start, snap 리스너는 등록만 하고 미가동)라 **실제 동작 변화는 없음**, 순수 안내 문구 정직성 수정. Android(`PaceSnapDetector`)는 실기기 검증된 정상 기능이라 구현/문구 그대로 유지 — **삭제 아님, 숨김뿐**. iOS 네이티브(`modules/pace-gesture`)에 혹시 남아있는 `'snap'` 모드 자체를 완전히 뽑아낼지는 Mac 세션 판단 필요(지금은 애초에 start 안 하므로 급하지 않음) | 2026-07-26 로그 참고 |
+| C6 | (2026-07-26 신규) 사장님 전달 — **애플이 마이크 기반 핑거스냅 감지를 심사에서 허용하지 않음**을 통보받음 | ✅ 처리됨 — `capabilities.supportsFingerSnap`을 추가해 `BluetoothOnboardingSheet.tsx`의 "Finger snap" 행/안내 문구를 게이트. **1차**는 Android만 true(iOS만 숨김)로 했으나, **2차 사장님 정정("iOS랑 통일성 있게 핑거스냅은 비활성화해서 유지")으로 두 플랫폼 다 `false`로 통일**(`capabilities.ts` 참고) — Android `PaceSnapDetector` 구현/네이티브 시작 호출은 삭제 없이 그대로 남겨둠(주석 처리, 향후 재활성화 대비). iOS는 어차피 C5(no-op 스텁)+Pace Feed(`'wave'`만 start)라 실제 동작 변화 없음 | 2026-07-26 로그 참고 |
 
 ### 2-D. 공통
 
 | # | 문제 | 상태 |
 |---|---|---|
 | E1 | RevenueCat 웹훅 로직 구현·단위테스트(8/8) 통과했지만 실배포 엔드포인트로 라이브 웹훅 호출 테스트는 한 번도 안 해봄 | 열림 (백엔드 배포 이후 순서) |
+| E2 | (2026-07-26 사장님 지시 "언어 전수 확인 + 예외처리 전수 테스트") i18n 감사 — Explore 에이전트로 en/ko 딕셔너리 자체는 292개 키 완전 대칭(누락 0) 확인됐으나, **컴포넌트 9개가 `t()`를 아예 안 써서 언어 설정과 무관하게 하드코딩 문자열이 나가고 있었음**(그중 `LimitReachedOverlay.tsx`는 같은 화면 안에 영/한이 섞여 있었음 — 가장 자주 보이는 일일한도 모달) | ✅ 9개 전부 수정 — `LimitReachedOverlay.tsx`(신규 `limitReached.*` 키 16개), `useSleepInsightStore.formatSleepInsight`(항상 한국어 → `home.sleepInsightMessage`), `useAttendanceStore.getLast7Days`(하드코딩 한글 요일 배열 → 기존 `stats.day*` 키 재사용, dayIndex 반환으로 리팩터), `_layout.tsx` OTA 강제업데이트 블로킹 화면, `useBluetoothStore` 토스트(Zustand 액션이라 `services/notifications`와 동일한 `translate()+currentLocale()` 패턴 적용), `feed/index.tsx` 세션 배지(기존에 있었지만 아무도 안 쓰던 `feed.focusSessionOnBadge`/`StartBadge` 연결), `BluetoothOnboardingSheet.tsx`(이번 세션에 새로 쓴 카피가 배선 안 된 채였음), `WeeklyGraphCard.tsx`, `ConnectingOverlay.tsx`, `quick-control-sheet.tsx`. `npx tsc --noEmit` 매 수정 후 통과 확인 |
+| E3 | (2026-07-26 같은 지시) 슬립/재부팅/강제종료 예외처리 감사 — Explore 에이전트가 file:line 단위로 추적, 표로 요약: 정상 동작(iOS sleep flush, Android reboot 네이티브 카운트다운 재개, JS 네트워크 재시도 큐) vs **버그 2건 발견** | ✅ 2건 다 수정 — **(1) 고아 세션 레코드**: `overlay/index.tsx`의 세션 종료 DB write가 컴포넌트 unmount cleanup에 묶여 있어, 프로세스가 재부팅/강제종료/크래시로 죽으면 그 정리가 안 돌고 `viewing_sessions.ended_at`이 영원히 NULL로 남아 시청시간 유실 + 통계/수면인사이트/내보내기에 유령 행이 계속 쌓였음(콜드스타트 시 재확인·정리 로직 자체가 코드 어디에도 없었음). `sessionsRepository.ts`에 `getOrphanedSessions`/`closeOrphanedSession` 추가, `_layout.tsx`가 콜드스타트마다 1회 확인해 새 상태값 `'app_restarted'`(SessionEndStatus에 추가)로 정리 + Android는 겸사겸사 `overlayService.consumeExpired()`도 이 시점에 소비(안 그러면 다음 세션 시작이 그 만료 사유를 아무도 안 읽은 채 조용히 리셋). **(2) Android sleep-detect 오판정**: Activity가 sleep-detect 직후 Recents에서 스와이프돼 destroy되면(=`consumeExpired` 효과가 AppState 'active' 전이를 한 번도 못 받음) `endReasonRef` 기본값이 `'manual_stop'`이라 실제로는 `sleep_detected`/`daily_limit_reached`인데 잘못 기록됐음. 기본값을 `null`로 바꾸고 unmount cleanup에서 null이면 네이티브에 마지막으로 한 번 더 물어본 뒤에만 `manual_stop`으로 폴백하도록 수정. `npx tsc --noEmit` 통과 |
 
 ---
 
@@ -706,3 +709,60 @@ Health Connect는 2026년 기준 정식 지원(Google Fit API는 2026년 내 폐
 
 **남은 자율작업 큐**: (1) 사장님 복귀 후 실기기로 위 Feed 수정들(소리컷/손짓/음소거아이콘) 최종 확인
 → OK면 (2) 진단 로그 일괄 제거 후 클린 빌드. (3) 위 수익화 블로커는 사장님 계정/결정 필요.
+
+### 2026-07-26 (저녁) — Windows 세션 (실기기 라이브 버그 3건 + 안드로이드 수익화 감사)
+
+사장님이 실기기로 실시간 테스트하며 지적한 버그 3건 + "외출하니 전기능 점검" 지시로 진행한 안드로이드
+전용 수익화 코드 감사 결과.
+
+**실기기 버그 3건 수정**:
+1. **핑거스냅 비활성화(iOS 통일)** — Mac 세션이 iOS에서 마이크 음소거 충돌로 핑거스냅을 뺐음
+   (`YouTubeShortsPlayer.ios.tsx` 관련 커밋). 안드로이드는 그 충돌이 없어 원래 살려뒀었는데, 사장님이
+   "iOS랑 통일성 있게 비활성화 유지"로 정정 — `capabilities.ts`의 `supportsFingerSnap`을
+   `Platform.OS === 'android'` → `false`로. `PaceOverlayService.setAutoMode()`의
+   `PaceSnapDetector.start()` 호출은 주석 처리만(삭제 아님, 재활성화 대비). UI는 이미
+   `capabilities.supportsFingerSnap` 가드로 `BluetoothOnboardingSheet.tsx`가 자동으로 문구 숨김.
+2. **"화면 작아졌다 커지면 오버레이가 없어짐"** — 스플릿스크린 리사이즈 등으로 시스템이
+   `SYSTEM_ALERT_WINDOW`를 조용히(예외 없이) 떼어내는 경우, `overlayView` 필드는 살아있어도
+   (showOverlay의 `if (overlayView != null) return` 가드 때문에) 재호출이 no-op으로 씹혀 영영 안
+   돌아왔음. 매 틱(60초)마다 `overlayView?.isAttachedToWindow`로 유령 상태를 감지해 자동 복구하도록
+   `PaceOverlayService.performTick()`에 self-heal 로직 추가.
+3. **"유튜브 닫으면 Pace가 까만 화면만 보여줌"** — 실제로는 크래시가 아니라 `/overlay` 화면의 DEV
+   SIMULATOR 목업(원래 프로덕션에 없어야 할 개발용 콘텐츠, 대부분 검은 배경)이 세션 중 YouTube→
+   뒤로가기/최근앱으로 Pace 복귀 시 다시 포커스를 받아 보였던 것. 안드로이드는 이미 진짜 네이티브
+   시스템 오버레이(알약)가 항상 떠 있어 이 화면이 다시 보일 필요가 없으므로, `useFocusEffect`로
+   화면이 재포커스될 때마다(세션 시작된 후에만) 곧바로 `/(tabs)/home`으로 리다이렉트.
+
+**부가**: `<Modal>`(RN)이 안드로이드에서 별도 네이티브 Window를 띄워 앱의 edge-to-edge 테마를
+상속 못 받아 하단 시스템 바가 흰색으로 보이던 문제를 `DailyCheckInModal`/`FocusSessionExtendModal`
+둘 다 `<Modal>` 대신 화면 내 절대위치 View로 교체해 해결(온보딩 화면과 동일 패턴). 출석 완료
+팝업은 사장님 피드백("설명 필요해? 사이즈 못 줄이냐") 반영해 불필요한 설명 문장 제거 + 카드 축소.
+
+**안드로이드 전용 수익화 코드 감사** (서브에이전트, 읽기전용 — Mac 세션의 iOS 중심 감사와 별개로
+안드로이드/공용 결제 코드 경로를 다시 훑음). 발견 후 전부 직접 수정·검증까지 완료:
+1. **[HIGH, 수정완료] `useSubscriptionStore.init()` — offerings 조회 실패가 정상 구독자를 무료로
+   강등시킬 수 있었음.** `getCustomerInfo()`가 entitlement를 정확히 확인해 `isPremium=true`를
+   설정한 바로 다음 줄에서 `getOfferings()`가(네트워크 문제 등, entitlement 상태와 무관한 이유로)
+   실패하면 같은 catch 블록이 로컬 캐시값으로 `isPremium`을 덮어썼음(캐시가 아직 최신이 아니거나
+   구독 이전 값이면 그대로 강등). `addCustomerInfoUpdateListener`도 offerings 성공 후에만 등록돼서
+   이후 어떤 RC 갱신으로도 스스로 복구가 안 됐음. `_layout.tsx`의 isPremium 구독 로직이 이 잘못된
+   `false` 전환에 반응해 **유료 사용자의 Focus Session 지속시간 설정을 실제로 10분으로 강제
+   초기화**하는 실질적 피해로 이어짐. getCustomerInfo/applyCustomerInfo/리스너등록을 독립된
+   try/catch로 분리해 offerings 실패가 절대 isPremium을 못 건드리게 수정.
+2. **[MEDIUM, 수정완료] 페이월 구매 버튼에 진행 중 가드 없음** — 빠른 더블탭 시
+   `Purchases.purchasePackage()`가 동시에 두 번 나갈 수 있어 이중 결제 위험. `purchasing` state로
+   구매/복원 버튼 둘 다 막고 로딩 표시(`paywall/index.tsx`).
+3. **[LOW, 수정완료] Focus Session 크레딧 연장 버튼도 동일한 더블탭 가드 없음** — 모달이 실제로
+   닫히기 전(부모 state 갱신 1틱 지연) 빠르게 두 번 탭하면 의도보다 최대 2배 크레딧 소비 가능.
+   `usingCredits` state로 가드 추가(`FocusSessionExtendModal.tsx`).
+- 그 외 점검해서 이상 없음 확인: `bluetoothService.setFocusSessionDurationMinutes` 호출 경로(우회
+  불가), `PaceOverlayService.kt` 네이티브 쪽엔 프리미엄 관련 로직 자체가 없음(JS가 유일한 진실원천),
+  `AdBanner` isPremium 게이팅 정상.
+- Mac 감사가 이미 찾은 항목(RC 키 공백/실광고 플래그 미배선/페이월 문구-게이팅 불일치)은 중복
+  보고 안 함 — 전부 계정/제품 결정 필요, 코드 문제 아님.
+
+검증: `npx tsc --noEmit` 통과. 1~2번(핑거스냅/오버레이 self-heal)은 `gradlew assembleDebug` 재빌드
++ 실기기 재설치 후 크래시 없음 확인. 3번(black-screen 리다이렉트)과 수익화 3건은 JS 전용 변경이라
+재빌드 불필요, Metro로 즉시 반영 — 3번은 실기기에서 홈 화면 정상 복귀 확인함. **미검증**: 수익화
+3건의 실제 결제 흐름(RC 키가 비어있어 이번 세션에선 진짜 구매/복원을 실기기로 재현 불가) —
+RC 키 세팅 후 재검증 필요.

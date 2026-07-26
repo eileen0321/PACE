@@ -1,6 +1,15 @@
 import { create } from 'zustand';
 import { bluetoothService } from '../services/platform';
 import { useToastStore } from './useToastStore';
+import { useSettingsStore } from './useSettingsStore';
+import { translate, resolveSystemLocale } from '../services/i18n';
+
+// notifications/index.ts의 currentLocale()과 동일한 패턴 — Zustand 액션은 컴포넌트가 아니라
+// useTranslation() 훅을 못 쓰므로, 호출 시점에 fresh하게 현재 언어를 읽어 translate()에 넘긴다.
+function currentLocale() {
+  const language = useSettingsStore.getState().settings.language;
+  return language === 'system' ? resolveSystemLocale() : language;
+}
 
 // 2026-07-19: Bluetooth Hands-Free Control 표시용 상태(Home 배지/Focus 카드/Settings 섹션 공용).
 // Android: 실제 스와이프/토글/토스트/카운터는 네이티브(PaceOverlayService MediaSession)가 자기
@@ -76,7 +85,7 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
     await bluetoothService.toggleAutoMode(next);
     set({ autoModeEnabled: next, autoToggleCount: get().autoToggleCount + 1 });
     // iOS는 네이티브 토스트가 없으므로(하드웨어 리모컨 미구현) 인앱 버튼 탭에서는 여기서 직접 표시.
-    useToastStore.getState().show(next ? '🎧 Focus Session Enabled' : '🎧 Focus Session Disabled');
+    useToastStore.getState().show(translate(currentLocale(), next ? 'home.focusSessionEnabledToast' : 'home.focusSessionDisabledToast'));
   },
 
   enableAutoModeForSession: async () => {

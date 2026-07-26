@@ -72,20 +72,33 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
       set({ isPremium: cached === '1', isReady: true });
       return;
     }
+    // 2026-07-26 감사 발견 — getCustomerInfo(entitlement 판정, 보안적으로 중요)와 getOfferings
+    // (구매 가능 상품 목록, 표시용일 뿐)를 하나의 try/catch로 묶어뒀었다. getCustomerInfo가 실제
+    // 유료 구독자의 isPremium=true를 이미 확정한 뒤에, 그 다음 줄 getOfferings()만 네트워크
+    // 문제 등으로 실패해도 catch 블록이 캐시값으로 isPremium을 다시 덮어써서(캐시가 아직 안
+    // 갱신됐거나 구독 이전 값이면) 유료 사용자가 그 세션 내내 무료로 강등되는 버그였다 — 게다가
+    // addCustomerInfoUpdateListener도 offerings 성공 이후에만 등록돼서 이후 어떤 RC 업데이트로도
+    // 스스로 복구되지 않았다. 두 호출을 독립된 try/catch로 분리 — offerings 실패는 절대
+    // isPremium을 건드리지 않는다.
     try {
       Purchases.configure({ apiKey: RC_KEY });
       const info = await Purchases.getCustomerInfo();
       await applyCustomerInfo(info, set, get);
-      const offerings = await Purchases.getOfferings();
-      set({ offerings: offerings.current?.availablePackages ?? [], initError: false });
       Purchases.addCustomerInfoUpdateListener((ci) => { applyCustomerInfo(ci, set, get).catch(() => {}); });
     } catch (e) {
       // 2026-07-21 감사 발견: 여기가 원래 빈 catch{}라 진단이 아예 불가능했고, paywall 화면은
       // "불러오는 중"만 무한히 보여줬다(기존 QA #6). 최소한 로그는 남기고, initError를 노출해
       // paywall이 재시도 UI를 보여줄 수 있게 한다.
-      console.warn('[useSubscriptionStore] init failed', e);
+      console.warn('[useSubscriptionStore] init (getCustomerInfo) failed', e);
       const cached = await AsyncStorage.getItem(STORAGE_KEYS.premiumIsPremium);
       set({ isPremium: cached === '1', initError: true });
+    }
+    try {
+      const offerings = await Purchases.getOfferings();
+      set({ offerings: offerings.current?.availablePackages ?? [] });
+    } catch (e) {
+      console.warn('[useSubscriptionStore] init (getOfferings) failed', e);
+      set({ initError: true });
     } finally {
       set({ isReady: true });
     }

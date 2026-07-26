@@ -2,10 +2,16 @@ import { useState } from 'react';
 import { StyleSheet, Text, View, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import type { DailyStats } from '../../types/models';
 
-const SUNDAY_FIRST = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONDAY_FIRST = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// 2026-07-26 감사 발견 — 요일 라벨이 자체 영문 배열(SUNDAY_FIRST/MONDAY_FIRST)로 하드코딩돼
+// 있었다. dayIndex(0=일~6=토, Date.getDay()와 동일)만 계산하고, 실제 라벨은 기존 stats.daySun..
+// daySat 키로 매핑한다(useAttendanceStore의 동일 감사 수정과 같은 패턴).
+const MONDAY_FIRST_INDICES = [1, 2, 3, 4, 5, 6, 0]; // 월~일 순서의 dayIndex
+const DAY_INDEX_KEYS: TranslationKey[] = [
+  'stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat',
+];
 
 // healthy-shorts-assistant(2) components/WeeklyGraph.tsx를 토씨 하나 안 틀리고 그대로 이식 — App.tsx의
 // Stats 탭(activeTab==="stats")이 StatsTab 뒤에 이 컴포넌트를 별도 카드로 덧붙인다(App.tsx:498-508,
@@ -14,7 +20,7 @@ const MONDAY_FIRST = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // 컴포넌트"로 잘못 판단해 삭제했었는데, 실제로는 App.tsx:32/503에서 진짜로 쓰이는 실제 컴포넌트였다
 // — 원본 재확인 후 복원. 데이터 소스는 원본의 고정 mock 배열 대신 useStatsStore().weeklyStats(SQLite
 // 집계)를 일~토 7칸으로 0-채움해서 사용.
-function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { day: string; minutes: number }[] {
+function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { dayIndex: number; minutes: number }[] {
   const byDate = new Map(weeklyStats.map((d) => [d.date, d.totalMinutes]));
   const today = new Date(todayStr + 'T00:00:00');
   // data.ts의 INITIAL_WEEKLY_DATA가 월요일부터 시작(Mon..Sun)이라 막대도 그 순서로 렌더된다 —
@@ -22,40 +28,40 @@ function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { day: str
   const monday = new Date(today);
   const isoDow = (today.getDay() + 6) % 7; // 0=Mon..6=Sun
   monday.setDate(today.getDate() - isoDow);
-  return MONDAY_FIRST.map((name, i) => {
+  return MONDAY_FIRST_INDICES.map((dayIndex, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const key = d.toISOString().slice(0, 10);
-    return { day: name, minutes: byDate.get(key) ?? 0 };
+    return { dayIndex, minutes: byDate.get(key) ?? 0 };
   });
 }
 
 export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) {
-  const [selectedDay, setSelectedDay] = useState<{ day: string; minutes: number } | null>(null);
+  const { t } = useTranslation();
+  const [selectedDay, setSelectedDay] = useState<{ dayIndex: number; minutes: number } | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const currentDayIndex = new Date(todayStr + 'T00:00:00').getDay();
-  const todayName = SUNDAY_FIRST[currentDayIndex];
   const weeklyData = buildWeekArray(weeklyStats, todayStr);
   const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), 60);
   const weeklyAvg = Math.round(weeklyData.reduce((acc, d) => acc + d.minutes, 0) / 7);
 
   return (
     <View>
-      <Text style={styles.outerTitle}>Weekly Usage Graph</Text>
+      <Text style={styles.outerTitle}>{t('stats.weeklyGraphTitle')}</Text>
       <View style={styles.outerCard}>
         <View style={styles.card}>
           <View style={styles.headerRow}>
             <View>
               <View style={styles.titleRow}>
                 <Feather name="calendar" size={13} color={colors.primary} />
-                <Text style={styles.title}>Weekly Average</Text>
+                <Text style={styles.title}>{t('stats.weeklyAverageLabel')}</Text>
               </View>
               <View style={styles.avgRow}>
                 <Text style={styles.avgValue}>{weeklyAvg}</Text>
-                <Text style={styles.avgUnit}>min</Text>
+                <Text style={styles.avgUnit}>{t('home.minUnit')}</Text>
                 <View style={styles.healthyBadge}>
                   <Feather name="trending-up" size={11} color={colors.successLight} />
-                  <Text style={styles.healthyText}>Healthy</Text>
+                  <Text style={styles.healthyText}>{t('stats.healthy')}</Text>
                 </View>
               </View>
             </View>
@@ -63,22 +69,22 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
               {selectedDay ? (
                 <View style={styles.tooltip}>
                   <Text style={styles.tooltipText}>
-                    {selectedDay.day}: <Text style={styles.tooltipStrong}>{selectedDay.minutes} min</Text>
+                    {t(DAY_INDEX_KEYS[selectedDay.dayIndex])}: <Text style={styles.tooltipStrong}>{t('stats.minutesShort', { n: selectedDay.minutes })}</Text>
                   </Text>
                 </View>
               ) : (
-                <Text style={styles.tapHint}>Tap a bar for details</Text>
+                <Text style={styles.tapHint}>{t('stats.tapBarHint')}</Text>
               )}
             </View>
           </View>
 
           <View style={styles.chartRow}>
             {weeklyData.map((d) => {
-              const isToday = d.day === todayName;
-              const isSelected = selectedDay?.day === d.day;
+              const isToday = d.dayIndex === currentDayIndex;
+              const isSelected = selectedDay?.dayIndex === d.dayIndex;
               const heightPct = Math.max(8, (d.minutes / maxMinutes) * 100);
               return (
-                <Pressable key={d.day} style={styles.barCol} onPress={() => setSelectedDay(d)}>
+                <Pressable key={d.dayIndex} style={styles.barCol} onPress={() => setSelectedDay(d)}>
                   <View style={styles.barTrack}>
                     <View style={[styles.barHoverRing, isSelected && styles.barHoverRingSelected]} />
                     <View
@@ -89,7 +95,7 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
                       ]}
                     />
                   </View>
-                  <Text style={[styles.dayLabel, isToday && styles.dayLabelToday]}>{d.day.slice(0, 1)}</Text>
+                  <Text style={[styles.dayLabel, isToday && styles.dayLabelToday]}>{t(DAY_INDEX_KEYS[d.dayIndex]).slice(0, 1)}</Text>
                 </Pressable>
               );
             })}
@@ -98,9 +104,9 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
           <View style={styles.footer}>
             <View style={styles.footerLeft}>
               <View style={styles.dot} />
-              <Text style={styles.footerText}>Today ({todayName})</Text>
+              <Text style={styles.footerText}>{t('stats.todayFooterLabel', { day: t(DAY_INDEX_KEYS[currentDayIndex]) })}</Text>
             </View>
-            <Text style={styles.footerText}>Goal: Under 60 min</Text>
+            <Text style={styles.footerText}>{t('stats.goalUnderLabel', { n: 60 })}</Text>
           </View>
         </View>
       </View>

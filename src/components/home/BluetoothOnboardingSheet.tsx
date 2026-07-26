@@ -3,6 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import { capabilities } from '../../services/platform/capabilities';
+import { useTranslation } from '../../services/i18n';
 import { SnapPulseIllustration } from './SnapPulseIllustration';
 import { GestureFlickIllustration } from './GestureFlickIllustration';
 import { RemoteClickIllustration } from './RemoteClickIllustration';
@@ -38,6 +39,7 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
   onDismiss: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onDismiss} />
@@ -53,40 +55,38 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
             2) 가장 중요한 "왜 써야 하는지"(혜택)가 안 보였음 → valueLine 한 줄 추가.
             3) 메커니즘 설명 앞의 "Go hands-free —"는 제목이 이미 커버하므로 중복 제거.
             4) 마지막에 "Focus Session 중에만 동작"이라는 스코프 고지를 명시적으로 한 번 더. */}
-        <Text style={styles.title}>Focus Session Controls</Text>
-        <Text style={styles.valueLine}>Stay focused without touching your phone.</Text>
+        <Text style={styles.title}>{t('handsFreeSheet.title')}</Text>
+        <Text style={styles.valueLine}>{t('handsFreeSheet.valueLine')}</Text>
         <Text style={styles.body}>
-          {capabilities.supportsFingerSnap
-            ? 'Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote\'s volume button.'
-            : 'Pace can advance Shorts from a hand wave or your Bluetooth remote\'s volume button.'}
+          {capabilities.supportsFingerSnap ? t('handsFreeSheet.bodyWithSnap') : t('handsFreeSheet.bodyWithoutSnap')}
         </Text>
 
         {capabilities.supportsFingerSnap && (
           <View style={styles.actionRow}>
             <View style={styles.iconStage}><SnapPulseIllustration /></View>
-            <Text style={styles.actionLabel}>Finger snap <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+            <Text style={styles.actionLabel}>{t('handsFreeSheet.fingerSnapLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
           </View>
         )}
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><GestureFlickIllustration /></View>
-          <Text style={styles.actionLabel}>Hand wave <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+          <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
         </View>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><RemoteClickIllustration /></View>
-          <Text style={styles.actionLabel}>Bluetooth remote <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+          <Text style={styles.actionLabel}>{t('handsFreeSheet.bluetoothRemoteLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
         </View>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><Feather name="play-circle" size={16} color={colors.textSecondary} /></View>
-          <Text style={styles.actionLabel}>Hands-free mode <Text style={styles.actionArrow}>→</Text> Stays on for your Focus Session</Text>
+          <Text style={styles.actionLabel}>{t('handsFreeSheet.handsFreeModeLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.staysOnLabel')}</Text>
         </View>
 
-        <Text style={styles.scopeNote}>Hands-free controls work during Focus Sessions.</Text>
+        <Text style={styles.scopeNote}>{t('handsFreeSheet.scopeNote')}</Text>
 
         <Pressable onPress={onEnable} style={styles.enableBtn}>
-          <Text style={styles.enableBtnText}>Turn On</Text>
+          <Text style={styles.enableBtnText}>{t('handsFreeSheet.turnOn')}</Text>
         </Pressable>
         <Pressable onPress={onDismiss} style={styles.laterBtn}>
-          <Text style={styles.laterBtnText}>Not Now</Text>
+          <Text style={styles.laterBtnText}>{t('handsFreeSheet.notNow')}</Text>
         </Pressable>
       </View>
     </Modal>

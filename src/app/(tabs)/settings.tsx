@@ -223,6 +223,15 @@ export default function SettingsScreen() {
               <Feather name="chevron-right" size={14} color="#818CF8" />
             </Pressable>
           </GlassSurface>
+          {/* 2026-07-26 사용자 지시 — 게스트가 로그인 화면(구글/애플 소셜 로그인, src/app/auth)으로
+              가는 직접 진입점이 Settings에 없어서, "구독 관리"를 눌러 paywall의 blockIfNotSignedIn에
+              막혀야만 우회로 로그인 화면을 보게 되는 문제가 있었다 — 게스트에게 직접 로그인 버튼 노출. */}
+          {user?.isGuest && (
+            <Pressable style={styles.logoutRow} onPress={() => router.push('/auth')}>
+              <Feather name="log-in" size={14} color="#818CF8" />
+              <Text style={[styles.logoutRowText, { color: '#818CF8' }]}>{t('auth.title')}</Text>
+            </Pressable>
+          )}
           {/* 2026-07-20 실기기 감사 중 발견: logout()을 호출하는 UI가 이 화면 어디에도 없었다 —
               이전엔 "설정 초기화" 버튼 하나가 로그아웃까지 겸하고 있었는데(문구와 안 맞는 부작용),
               그걸 정직한 데이터 초기화로 고치면서 로그아웃할 방법 자체가 사라질 뻔했다. 게스트는

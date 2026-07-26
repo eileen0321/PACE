@@ -2,7 +2,6 @@
 // 상위 코드는 반드시 이 배럴을 통해서만 import하고 Platform.OS를 직접 검사하지 않는다.
 export { autoNextService, syncAutoNextBuildFlag } from './autoNextService';
 export { overlayService } from './overlayService';
-export { screenTimeService } from './screenTimeService';
 export { bluetoothService } from './bluetoothService';
 export { capabilities, useCapabilities } from './capabilities';
 export type { AppCapabilities } from './capabilities';

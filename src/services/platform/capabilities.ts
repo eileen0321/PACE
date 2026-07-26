@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
 import { autoNextService } from './autoNextService';
 import { overlayService } from './overlayService';
-import { screenTimeService } from './screenTimeService';
 import { bluetoothService } from './bluetoothService';
 
 // 외부 리뷰 반영(2026-07-17): 개별 서비스마다 capability 플래그를 흩어두는 대신, 상위 UI가 한 곳만
@@ -12,9 +11,6 @@ export type AppCapabilities = {
   supportsSystemOverlay: boolean;
   /** iOS Live Activity/Dynamic Island. Android는 항상 false — Overlay가 그 역할을 대신한다. */
   supportsLiveActivity: boolean;
-  supportsAppBlocking: boolean;
-  /** iOS Screen Time(FamilyControls)로 실제 숏폼을 차단할 수 있는가. 2026-07-18 iOS 전략 확정. */
-  supportsScreenTimeControl: boolean;
   /** Pace Feed(자체 플레이어 대체 피드)를 쓸 수 있는가. iOS의 핵심 대체 경로 — 모든 플랫폼에서 동작 가능. */
   supportsPaceFeed: boolean;
   /**
@@ -39,8 +35,6 @@ export const capabilities: AppCapabilities = {
   supportsAutoNext: autoNextService.supportsAutoNext,
   supportsSystemOverlay: overlayService.supportsSystemOverlay,
   supportsLiveActivity: !overlayService.supportsSystemOverlay,
-  supportsAppBlocking: true, // Android(Accessibility 차단화면)/iOS(FamilyControls) 둘 다 지원
-  supportsScreenTimeControl: screenTimeService.supportsScreenTimeControl,
   // Pace Feed는 expo-video 기반이라 플랫폼 무관하게 가능하지만, 제품상 iOS의 "차단 대체 출구"로
   // 우선 노출한다(Android는 오버레이가 실제 피드에 직접 개입하므로 대체 피드 필요성이 낮음).
   supportsPaceFeed: Platform.OS === 'ios',

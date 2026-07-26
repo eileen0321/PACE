@@ -22,18 +22,21 @@
 
 ## 1. 현재 상태 요약 (2026-07-25)
 
-- 출시 전 단계. **로그인(백엔드 미배포) / iOS 차단기능(entitlement 미승인) / 심사 계정
-  미설정** 3개가 실제 출시를 막는 핵심 블로커 — 전부 사장님 결정·계정·키가 필요하고
-  코드로는 못 고침 (아래 2-A). **결제(RC 키)와 AdMob 테스트ID는 2026-07-26 해결됨**(D1/D10) —
-  단, App Store Connect/Play Console에 실제 구독 상품(가격/구독그룹)이 등록돼 있고
-  RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는 **별도 미확인** — SDK 키가
-  있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함, 다음 확인 필요.
+- 출시 전 단계. **로그인(백엔드 미배포)**만 남은 실제 출시 블로커 — Railway 배포가
+  필요하고 코드로는 못 고침 (아래 2-A D2). **결제(RC 키)/AdMob 테스트ID/iOS 차단기능/심사
+  계정 4개는 2026-07-26 전부 해결됨**(D1/D3/D4/D10 — D3는 "기능 삭제", D4는 jlpt-master
+  리뷰어 계정 재사용으로 해결) — 단, App Store Connect/Play Console에 실제 구독 상품(가격/
+  구독그룹)이 등록돼 있고 RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는
+  **별도 미확인** — SDK 키가 있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함,
+  다음 확인 필요. Settings에 게스트용 로그인 진입점도 신규 추가(이전엔 paywall에서 막혀야만
+  우회로 로그인 화면에 도달할 수 있었음).
 - Android: 기능적으로 대체로 안정. 블루투스 핸즈프리 죽은 UI 정리(B1) 완료, BOOT_COMPLETED(B3)도
   "재부팅 시 활성 세션 복구" 범위로 완료. 단 B3 조사 중 더 근본적인 이슈 발견 — Daily Limit 추적이
   상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 시작한 세션에만 묶여 있음(제품 결정 필요,
   아래 2-B/6 참고).
 - iOS: 2026-07-24 Mac 세션에서 Live Activity·취침감지 구현 완료(실기기 검증 대기).
-  Screen Time 차단은 여전히 완전히 죽어있음(entitlement 문제).
+  Screen Time 차단 기능은 2026-07-26 사장님 결정으로 전면 삭제됨(엔티틀먼트 미승인 + 죽은
+  코드였음) — 더 이상 "차단 기능" 자체가 iOS 스코프에 없음, Pace Feed가 유일한 대체 출구.
 - Home/온보딩/스플래시 UI 리디자인이 **로컬에 커밋 안 된 상태**로 존재 — 코드상 완결돼
   보이나 실기기 스모크 테스트 전. (아래 진행 로그 참고)
 
@@ -47,8 +50,8 @@
 |---|---|---|---|
 | D1 | ~~구독 결제 100% 비활성~~ | ✅ 완료(2026-07-26) — RC iOS/Android SDK 키 발급받아 `.env`에 입력 완료(`goog_jWJgxcRyNFIieGvcyigYvAXBJag`/`appl_XXEGQCLYicODnWDWOaAsEioAIgm`). Metro 재시작 후 실기기 재검증 필요 | MAC_SESSION_HANDOFF §4-4 |
 | D2 | 백엔드(Railway) 미배포 → 구글/애플 로그인 전부 실패(게스트만 가능) | Railway 배포 + `EXPO_PUBLIC_API_BASE_URL`에 배포 URL 입력 | MAC_SESSION_HANDOFF §2 |
-| D3 | iOS Screen Time(Family Controls) entitlement 미승인 → 핵심 차단 기능 iOS에서 무동작 | 이번 주 결정 필요: (a) entitlement 신청 후 대기 vs (b) iOS에서 기능 숨기고 우선 출시 | QA_FULL_REVIEW B1 |
-| D4 | 심사 리뷰어 화이트리스트 빈 배열(`src/constants/reviewers.ts`) | 제출용 테스트 계정 이메일 추가 | QA_FULL_REVIEW B4 |
+| D3 | ~~iOS Screen Time(Family Controls) entitlement 미승인~~ | ✅ 완료(2026-07-26) — 사장님 결정: (b) 기능 삭제. `screenTimeService.ios/android.ts`, `ScreenTimeService` 타입, `capabilities.supportsScreenTimeControl`/`supportsAppBlocking`, `modules/pace-screentime` 네이티브 모듈 전부 삭제(어차피 UI 어디서도 호출 안 하던 죽은 인프라였음). iOS의 차단 대체 출구는 Pace Feed로 계속 유지. `npx tsc --noEmit` 통과 | QA_FULL_REVIEW B1 |
+| D4 | ~~심사 리뷰어 화이트리스트 빈 배열~~ | ✅ 완료(2026-07-26) — 사장님 결정: jlpt-master(`src/config/reviewers.ts`)가 이미 구글 플레이 콘솔에 제출해둔 실제 테스트 계정(`s7.reviewer@gmail.com`)을 그대로 재사용. `src/constants/reviewers.ts`에 반영 | QA_FULL_REVIEW B4 |
 | D5 | 지원 이메일이 placeholder(`support@pace.app`, `settings.tsx:33`) | 실제 수신 가능한 메일함으로 교체 | QA_FULL_REVIEW B5 |
 | D6 | (B3 조사 중 신규 발견) Daily Limit 추적이 상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 "YouTube with PACE"를 눌러 세션을 시작한 경우에만 동작함 — 유저가 그냥 일반 YouTube 앱을 직접 열어서 보면 Pace는 그 시청을 아예 감지 못함(재부팅 여부와 무관, 앱의 기존 설계) | 제품 결정 필요: (a) 현재 "opt-in 세션" 모델 유지(문서화·마케팅에 명시) vs (b) Android UsageStatsManager 등으로 상시 감시 추가(배터리/권한/Play정책 트레이드오프 있음) | B3 로그, §6 참고 |
 | D7 | (2026-07-26 신규) Google 소셜 로그인 — 코드는 이미 완성돼 있음(`src/services/auth/google.ts`+`useUserStore.ts`, zen-master 패턴 이식, jlpt-master와 별개 프로젝트지만 동일 설계). **막힌 건 코드가 아니라 설정값**: `.env`의 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`/`EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`가 빈 플레이스홀더, `app.json`의 `@react-native-google-signin/google-signin` 플러그인에 `iosUrlScheme`도 없음 | Google Cloud Console에서 Pace 전용 OAuth 클라이언트를 **새로 발급**해야 함(패키지명 `com.strides7.pace` 기준) — jlpt-master/zen-master의 기존 `WEB_CLIENT_ID`/iOS 클라이언트ID/`iosUrlScheme`는 **절대 재사용 금지**(다른 앱 전용, 재사용하면 로그인이 조용히 실패하거나 다른 앱 계정과 충돌). 이건 Claude가 코드로 대신할 수 없음(계정 접근 필요) — 사장님이 콘솔에서 발급 후 값만 넘겨주면 됨 | 2026-07-26 로그 참고 |

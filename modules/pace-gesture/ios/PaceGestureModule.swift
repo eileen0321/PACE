@@ -380,7 +380,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.2 // 200ms(5회/초) — 100ms는 CPU과다로 영상 첫재생 버벅임. 손짓은 ~0.5s라 5회/초로 충분.
+  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms(10회/초) — 200ms로 낮췄더니 0.6s창 샘플부족으로 손짓 감지율 급락. 촘촘히 유지.
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave

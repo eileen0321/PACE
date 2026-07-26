@@ -4,10 +4,26 @@
     "appVersionSource": "local"
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_USE_REAL_ADS": "false"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_USE_REAL_ADS": "false"
+      }
+    },
     "production": {
       "channel": "production",
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_USE_REAL_ADS": "true"
       }
     }
   },

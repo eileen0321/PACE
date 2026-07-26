@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 // ⚠️ 2026-07-22 감사 수정: expo-file-system/sharing/store-review를 top-level import하면, 이 네이티브
@@ -391,7 +392,7 @@ export default function SettingsScreen() {
             <ChevronRow title={t('settings.rateApp')} bordered onPress={handleRateApp} />
             <View style={[styles.row, styles.rowLast]}>
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>
-              <Text style={styles.versionValue}>1.0.0</Text>
+              <Text style={styles.versionValue}>{Constants.expoConfig?.version ?? '1.0.1'}</Text>
             </View>
           </GlassSurface>
         </View>

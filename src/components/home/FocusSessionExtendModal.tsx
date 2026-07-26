@@ -47,14 +47,21 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
   const onUseCredits = () => {
     if (usingCredits) return;
     setUsingCredits(true);
-    const need = FOCUS_SESSION_EXTEND_MINUTES;
-    const spentRest = useFlipStore.getState().spendCredits(Math.min(need, restCredits));
-    const spentBonus = useAttendanceStore.getState().spendBonusCredits(Math.min(need - spentRest, bonusCredits));
-    const spent = spentRest + spentBonus;
-    if (spent <= 0) return;
-    bluetoothService.extendFocusSession(spent).catch(() => {});
-    useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: spent }));
-    onDismiss();
+    // ⚠️ 감사 발견: usingCredits를 켠 뒤 리셋하는 경로가 없어서, 크레딧 1회 사용(또는 spent<=0 조기반환)
+    // 뒤로 Watch Ad/Use Credits 두 버튼이 영구 비활성됐다(모달은 if(!visible)return null이라 언마운트 안 됨
+    // → state 유지). try/finally로 항상 false로 되돌린다. spendCredits는 동기라 finally가 즉시 실행됨.
+    try {
+      const need = FOCUS_SESSION_EXTEND_MINUTES;
+      const spentRest = useFlipStore.getState().spendCredits(Math.min(need, restCredits));
+      const spentBonus = useAttendanceStore.getState().spendBonusCredits(Math.min(need - spentRest, bonusCredits));
+      const spent = spentRest + spentBonus;
+      if (spent <= 0) return;
+      bluetoothService.extendFocusSession(spent).catch(() => {});
+      useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: spent }));
+      onDismiss();
+    } finally {
+      setUsingCredits(false);
+    }
   };
 
   if (!visible) return null;

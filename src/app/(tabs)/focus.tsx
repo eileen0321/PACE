@@ -32,7 +32,7 @@ export default function FocusScreen() {
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, refresh } = useStatsStore();
-  const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
+  const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const [showPromptDemo, setShowPromptDemo] = useState(false);
 
   useEffect(() => {
@@ -46,8 +46,6 @@ export default function FocusScreen() {
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const remainingMinutes = Math.max(0, effectiveDailyLimitMinutes - todayUsageMinutes);
   const progressPct = Math.min(100, (todayUsageMinutes / Math.max(1, effectiveDailyLimitMinutes)) * 100);
-
-  const extendSession = (amount: number) => addBonusMinutes(amount);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -78,20 +76,12 @@ export default function FocusScreen() {
           </View>
         </LinearGradient>
 
-        {/* 2. Extend Time */}
-        <GlassSurface style={styles.extendCard}>
-          <View style={styles.extendLeft}>
-            <Feather name="clock" size={16} color="#818CF8" />
-            <Text style={styles.extendLabel}>{t('focus.extendTime')}</Text>
-          </View>
-          <View style={styles.extendChips}>
-            {[10, 20, 30].map((amt) => (
-              <Pressable key={amt} onPress={() => extendSession(amt)} style={styles.extendChip}>
-                <Text style={styles.extendChipText}>+{amt}m</Text>
-              </Pressable>
-            ))}
-          </View>
-        </GlassSurface>
+        {/* 2026-07-27 사용자 지시 — "Extend Time"(+10/20/30m) 섹션 삭제. 코드 확인 결과 광고/프리미엄
+            게이팅이 전혀 없는 useDailyBonusStore.addMinutes를 무제한으로 호출해, Daily Limit 자체를
+            완전히 무력화하는 구멍이었다(LimitReachedOverlay의 광고 기반 +5분과 같은 저장소를 공짜로
+            무한히 채울 수 있었음). Daily Limit을 늘리고 싶으면 Settings/Home에서 그 설정 자체를
+            의식적으로 바꾸는 게 맞다는 판단 — bonusMinutes(광고로 받은 보너스)는 계산에 여전히
+            반영되지만, 이 화면에서 직접 더하는 경로는 제거. */}
 
         {/* 3. Interventions & Shields */}
         {/* 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #13) — "15분마다 작동"이

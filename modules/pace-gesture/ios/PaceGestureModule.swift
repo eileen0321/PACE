@@ -382,7 +382,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let growthRatio: CGFloat = 1.3          // 너클 폭이 1.3배 커짐 = 손이 다가옴. 안정적 지표라 지터 오발화 없음(재무장+JS디바운스도 방어)
   private let minHandSize: CGFloat = 0.02         // 너클 폭 스케일(바운딩박스보다 작음) — 너무 멀면 무시
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms(10회/초) — 200ms로 낮췄더니 0.6s창 샘플부족으로 손짓 감지율 급락. 촘촘히 유지.
+  private let analyzeIntervalSec: TimeInterval = 0.16 // 160ms(≈6회/초) — SESSION ON이면 손짓 안 해도 Vision이
+  // 계속 돌아 영상 디코딩과 GPU/ANE 경합→간헐적 씹힘(사장님 확인). 너클 지표는 안정적이라 빈도 낮춰도 손짓
+  // 감지 유지됨(0.6s창에 3~4샘플이면 성장 판정 충분). 예전 200ms 실패는 노이즈 심한 바운딩박스 탓이었음.
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave
@@ -420,6 +422,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       return
     }
     session.addInput(input)
+    // 카메라 프레임레이트를 15fps로 제한 — 손짓엔 충분하고, 기본 30/60fps 캡처가 영상 디코딩과 GPU/ANE를
+    // 다퉈 간헐적 씹힘을 유발했다(사장님 확인). 캡처 자체 오버헤드를 절반 이하로 낮춘다.
+    if let range = device.activeFormat.videoSupportedFrameRateRanges.first,
+       range.minFrameRate <= 15, range.maxFrameRate >= 15,
+       (try? device.lockForConfiguration()) != nil {
+      device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 15)
+      device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 15)
+      device.unlockForConfiguration()
+    }
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true

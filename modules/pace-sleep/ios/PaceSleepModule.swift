@@ -27,7 +27,10 @@ public class PaceSleepModule: Module {
   private var routeObserver: NSObjectProtocol?
   // userAcceleration 크기(g) 임계값 — 이 이상이면 "움직임"으로 보고 타이머 리셋. 호흡에 의한 미세운동
   // (~0.01~0.02g)은 넘고, 깨어서 스크롤할 때(>0.05g)는 확실히 넘게 0.03으로 잡음(센서 노이즈 ~0.01 위).
-  private let MOTION_EPSILON = 0.03
+  // 2026-07-26 안드로이드 파리티: 안드는 TYPE_LINEAR_ACCELERATION에 1.0 m/s²(≈0.102 G)를 쓰는데 iOS는
+  // 0.03 G라 3.4배 더 민감 → 작은 움직임에도 무진동 타이머가 리셋돼 "잠듦" 판정이 안드보다 훨씬 어려웠다.
+  // 안드와 동일 민감도로 맞춘다(1.0 m/s² ÷ 9.81 ≈ 0.10 G). userAcceleration은 G 단위.
+  private let MOTION_EPSILON = 0.10
 
   public func definition() -> ModuleDefinition {
     Name("PaceSleep")

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { requireOptionalNativeModule } from 'expo-modules-core';
+
+// 임시 진단: WebView 로그를 NSLog로 흘려 devicectl --console로 캡처.
+const PaceGestureLog = requireOptionalNativeModule<{ nativeLog(msg: string): void }>('PaceGesture');
 
 // iOS 전용 Shorts 플레이어 (2026-07-21 사용자 지시: "IFrame 포기, 웹뷰로 다시 전환").
 //
@@ -60,14 +64,16 @@ const INJECTED_JS = `
     // 진단: 음소거 관련 요소가 실제로 어떤 tag/class/aria-label인지 화면에 보고(선택자를 정확히 맞추려고).
     function reportMuteEls() {
       try {
-        var all = document.querySelectorAll('[aria-label], [class*="mute" i], [title]');
-        var found = [];
-        for (var i = 0; i < all.length && found.length < 3; i++) {
-          var n = all[i];
-          var lab = (n.getAttribute('aria-label') || '') + '|' + (n.getAttribute('title') || '') + '|' + (n.className || '').toString().slice(0, 30);
-          if (/mute|음소거/i.test(lab)) { found.push(n.tagName.toLowerCase() + ' ' + lab.slice(0, 60)); }
+        // 모든 button/role=button 덤프(aria-label + class) — 음소거 버튼을 로그로 정확히 식별.
+        var btns = document.querySelectorAll('button, [role="button"]');
+        var out = [];
+        for (var i = 0; i < btns.length && out.length < 10; i++) {
+          var n = btns[i];
+          var al = n.getAttribute('aria-label') || n.getAttribute('title') || '';
+          var cl = (n.className || '').toString().slice(0, 24);
+          out.push('[' + al.slice(0, 24) + '|' + cl + ']');
         }
-        send({ type: 'audio', tag: 'muteEls', muted: found.length ? found.join(' ‖ ') : 'none' });
+        send({ type: 'domlog', text: 'BTNS(' + btns.length + '): ' + out.join(' ') });
       } catch (e) {}
     }
     function tapUnmute() {
@@ -180,8 +186,13 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           } catch {
             return;
           }
+          if (msg.type === 'domlog') {
+            try { PaceGestureLog?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
+            return;
+          }
           if (msg.type === 'audio') {
             const m = msg as any;
+            try { PaceGestureLog?.nativeLog?.(`AUDIO ${m.tag} muted=${m.muted}`); } catch {}
             onAudioDiag?.(`${m.tag} muted=${m.muted} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
             return;
           }

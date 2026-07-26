@@ -51,6 +51,11 @@ public class PaceGestureModule: Module {
       self.waveDetector = nil
     }
 
+    // 디버그: JS(WebView 등) 문자열을 NSLog로 흘려 devicectl --console로 캡처. (임시 진단용)
+    Function("nativeLog") { (msg: String) in
+      NSLog("PACEWV %@", msg)
+    }
+
     // 고개짓 지원 기기인지(TrueDepth). JS가 UI 노출 여부 판단에 사용.
     Function("isHeadGestureSupported") { () -> Bool in
       if #available(iOS 11.0, *) { return ARFaceTrackingConfiguration.isSupported }

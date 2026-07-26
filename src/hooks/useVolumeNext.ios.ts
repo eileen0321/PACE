@@ -28,7 +28,7 @@ export function useVolumeNext({ enabled, onNext }: { enabled: boolean; onNext: (
       return;
     }
     const sub = mod.addListener('onVolumeButton', () => {
-      console.log('[volumekey] 🔊 볼륨 버튼 → next');
+      if (__DEV__) console.log('[volumekey] 🔊 볼륨 버튼 → next');
       onNextRef.current();
     });
     mod.start().catch((err) => console.warn('[volumekey] start 실패:', String(err)));

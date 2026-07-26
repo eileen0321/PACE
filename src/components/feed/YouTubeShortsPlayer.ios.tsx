@@ -229,7 +229,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
         // 리다이렉트 차단: 앱 딥링크(youtube://)/앱스토어 등 non-http 스킴은 막아 WebView가 튕기지 않게.
         onShouldStartLoadWithRequest={(req) => {
           const ok = isAllowedNavigation(req.url);
-          if (!ok) console.log('[WV] 🚫 blocked nav', req.url.slice(0, 40));
+          if (!ok && __DEV__) console.log('[WV] 🚫 blocked nav', req.url.slice(0, 40));
           return ok;
         }}
         // 깨끗한 iPhone Safari UA — 기본 WebView UA는 유튜브가 임베드/웹뷰로 감지해 "앱에서 보기"로 막는다.
@@ -265,7 +265,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
             onError?.(msg.code ?? -1);
           } else if (msg.type === 'novideo') {
             // 12초간 <video> 없음(로그인/consent/차단 페이지) → 까만화면에 갇히지 말고 다음 영상으로 스킵.
-            console.log('[WV] novideo → skip', JSON.stringify(msg));
+            if (__DEV__) console.log('[WV] novideo → skip', JSON.stringify(msg));
             onError?.(-2);
           }
         }}

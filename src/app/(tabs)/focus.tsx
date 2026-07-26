@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -7,6 +8,8 @@ import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -32,6 +35,7 @@ const DAY_INDEX_KEYS: TranslationKey[] = [
 // Break Reminder/Healthy Pause 토글도 실제 useSettingsStore에 연결.
 export default function FocusScreen() {
   const { t } = useTranslation();
+  const router = useRouter();
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
@@ -41,6 +45,20 @@ export default function FocusScreen() {
   const attendanceHistory = useAttendanceStore((s) => s.history);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const currentStreak = getCurrentStreak(attendanceHistory);
+  const autoModeEnabled = useBluetoothStore((s) => s.autoModeEnabled);
+  const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  // 2026-07-27 사용자 지시 — "손짓/볼륨키/블루투스 핸즈프리" 상태를 Focus 탭에 모아서 보여달라는
+  // 요청. 실제 실행 방식은 플랫폼마다 다르지만(Android=카메라 손짓+볼륨키, iOS=볼륨키+카메라 손짓,
+  // PaceVolumeKeyModule.swift 참고 — 둘 다 진짜 블루투스 "페어링"은 아니고 볼륨 버튼 입력을 가로채는
+  // 방식) 사용자에게 보여줄 개념은 "핸즈프리 켜져 있나"라는 마스터 스위치 하나로 동일하다.
+  const handsFreeMethods = Platform.OS === 'android'
+    ? t('focus.handsFreeMethodsAndroid')
+    : t('focus.handsFreeMethodsIos');
+  const onToggleHandsFree = () => {
+    if (!isPremium) { router.push('/paywall'); return; }
+    toggleAutoMode();
+  };
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -152,6 +170,35 @@ export default function FocusScreen() {
           </View>
         </GlassSurface>
 
+        {/* 2026-07-27 사용자 지시 — 손짓/볼륨키/블루투스 리모컨 등 핸즈프리 관련 상태를 한곳에 모음.
+            마스터 스위치는 useBluetoothStore.autoModeEnabled(네이티브 SharedPreferences와 동기화된
+            실제 상태) — 켜면 두 입력 방식(제스처+볼륨키)이 함께 켜진다. 프리미엄 게이팅은
+            home.tsx의 onSelectPlatform과 동일 기준(D9). */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('focus.handsFreeSection')}</Text>
+          <GlassSurface style={styles.card}>
+            <Pressable style={styles.interventionRow} onPress={onToggleHandsFree}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.interventionTitle}>{t('focus.handsFreeMode')}</Text>
+                <Text style={styles.interventionSub}>{handsFreeMethods}</Text>
+              </View>
+              {isPremium ? (
+                <Switch
+                  value={autoModeEnabled}
+                  onValueChange={onToggleHandsFree}
+                  trackColor={{ true: colors.primary, false: '#262626' }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor="#262626"
+                />
+              ) : (
+                <View style={styles.premiumTag}>
+                  <Text style={styles.premiumTagText}>{t('settings.premium')}</Text>
+                </View>
+              )}
+            </Pressable>
+          </GlassSurface>
+        </View>
+
         {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로
             들어가므로(home.tsx, iOS) 집중화면의 진입 버튼은 중복이었다. dev Shorts POC 버튼도 함께 제거. */}
       </ScrollView>
@@ -200,4 +247,6 @@ const styles = StyleSheet.create({
   interventionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
   interventionTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   interventionSub: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8', marginTop: 2 },
+  premiumTag: { backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  premiumTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5 },
 });

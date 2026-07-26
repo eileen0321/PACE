@@ -109,6 +109,12 @@ export const translations = {
       breakReminderDesc: 'Forced stretch/rest notification cycle',
       preSessionBreathing: 'Pre-session Breathing',
       preSessionBreathingDesc: '15s respiration trigger before starting',
+      // 2026-07-27 사용자 지시 — 손짓/볼륨키(둘 다 useBluetoothStore.autoModeEnabled 하나로 묶임)
+      // 핸즈프리 상태를 Focus 탭에 표시.
+      handsFreeSection: 'Hands-Free Control',
+      handsFreeMode: 'Hands-Free Mode',
+      handsFreeMethodsAndroid: 'Hand-wave at the camera, or a Bluetooth remote’s volume button',
+      handsFreeMethodsIos: 'A Bluetooth remote’s volume button, or hand-wave in Pace Feed',
       shieldsSection: 'System Sync Shields',
       shieldYoutubeTitle: 'YouTube Shorts Block',
       shieldYoutubeDesc: 'Shield active on default browser',
@@ -519,6 +525,10 @@ export const translations = {
       breakReminderDesc: '일정 주기로 스트레칭·휴식 알림을 보내요',
       preSessionBreathing: 'Pre-session Breathing',
       preSessionBreathingDesc: '시작 전 15초 호흡 안내를 보여줘요',
+      handsFreeSection: '핸즈프리 컨트롤',
+      handsFreeMode: '핸즈프리 모드',
+      handsFreeMethodsAndroid: '카메라에 손짓하거나, 블루투스 리모컨의 볼륨 버튼으로 넘길 수 있어요',
+      handsFreeMethodsIos: '블루투스 리모컨의 볼륨 버튼이나, Pace Feed에서 손짓으로 넘길 수 있어요',
       shieldsSection: 'System Sync Shields',
       shieldYoutubeTitle: 'YouTube Shorts 차단',
       shieldYoutubeDesc: '기본 브라우저에서 Shield가 작동해요',

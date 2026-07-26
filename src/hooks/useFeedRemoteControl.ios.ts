@@ -63,17 +63,18 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision) + 핑거스냅(마이크)을 함께 시작, 꺼지면 정지.
-  // 스냅 세션은 .default 모드 + .mixWithOthers로 영상 오디오와 공존 시도. 크래시는 PaceExceptionCatcher가 막음.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작. 핑거스냅은 AEC 없이 영상 소리를 주워들어
+  // false 발화(영상이 멋대로 넘어감) → 피드 파괴. 안정 우선으로 'wave'만. (스냅 재개 시 주파수/ZCR
+  // 게이트로 영상 소리 걸러야 함 — 실기기 로그: 진짜 스냅 hilo>1.2, 영상 소리 hilo~0.16.)
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('both').catch((err) => {
+      mod.start('wave').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
+        console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

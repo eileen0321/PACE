@@ -177,7 +177,10 @@ export default function RootLayout() {
           <StatusBar style="light" />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="onboarding/index" />
+            {/* 2026-07-26 사용자 지시 — Instagram Stories 제스처 가이드 참고 이미지대로, 별도
+                풀스크린이 아니라 앱 위에 반투명 오버레이로 띄운다(quick-control-sheet와 동일한
+                transparentModal 패턴, 애니메이션만 슬라이드 대신 페이드). */}
+            <Stack.Screen name="onboarding/index" options={{ presentation: 'transparentModal', animation: 'fade' }} />
             <Stack.Screen name="auth/index" />
             <Stack.Screen name="paywall/index" options={{ presentation: 'modal' }} />
             {/* 2026-07-25 — RN Modal의 edge-to-edge 내비게이션 바 투명도 버그(expo/expo#39749) 회피용.

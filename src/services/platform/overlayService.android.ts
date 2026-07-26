@@ -35,6 +35,18 @@ try {
   console.warn('[overlayService.android] pace-overlay 네이티브 모듈 미링크(Dev Client 빌드 필요) — Overlay 비활성화:', e);
 }
 
+// 감사 MEDIUM5 — consumeExpired()의 동시 호출을 묶는 공유 in-flight promise (아래 consumeExpired 참고).
+let pendingConsumeExpired: Promise<{ reason: SessionEndStatus; sleepOnsetAtMs: number | null } | null> | null = null;
+
+async function readNativeExpiry() {
+  const result = PaceOverlay?.consumeExpired() ?? null;
+  if (!result) return null;
+  return {
+    reason: result.reason as SessionEndStatus,
+    sleepOnsetAtMs: result.sleepOnsetAtMs >= 0 ? result.sleepOnsetAtMs : null,
+  };
+}
+
 // Android 17+ Bubbles API 우선 전략(문서 "최신 플랫폼 트렌드 반영")은 별도 PaceBubbleService로
 // 후속 구현 예정 — 현재 네이티브 모듈은 레거시 TYPE_APPLICATION_OVERLAY 경로만 구현돼 있다.
 export const overlayService: OverlayService = {
@@ -90,12 +102,19 @@ export const overlayService: OverlayService = {
   },
 
   async consumeExpired() {
-    const result = PaceOverlay?.consumeExpired() ?? null;
-    if (!result) return null;
-    return {
-      reason: result.reason as SessionEndStatus,
-      sleepOnsetAtMs: result.sleepOnsetAtMs >= 0 ? result.sleepOnsetAtMs : null,
-    };
+    // 감사 MEDIUM5(2026-07-27, Mac→Windows 인계) — consumeExpired()는 네이티브 쪽 1회성 소비(consume-once)
+    // 읽기라, 같은 AppState 'active' 전이 하나에 반응해 _layout.tsx(콜드스타트 정리/전경 재확인 effect)와
+    // overlay/index.tsx(AppState 리스너/unmount 폴백) 총 4곳이 동시에 이걸 부르면 가장 먼저 읽은 곳만
+    // 진짜 사유를 받고 나머지는 전부 null을 받아 — sleep_detected 같은 진짜 사유가 사라지고 그중 한
+    // 호출부가 폴백으로 manual_stop을 기록하거나 수면 배너 자체가 유실될 수 있었다. 동시에 들어온
+    // 호출들을 네이티브를 1번만 실제로 읽는 공유 Promise로 묶어 전부 같은 결과를 받게 한다 — 서로 다른
+    // (겹치지 않는) AppState 전이는 그 Promise가 정리된 뒤라 여전히 각자 새로 읽는다.
+    if (!pendingConsumeExpired) {
+      pendingConsumeExpired = readNativeExpiry().finally(() => {
+        pendingConsumeExpired = null;
+      });
+    }
+    return pendingConsumeExpired;
   },
 
   async getVideoWatchCount() {

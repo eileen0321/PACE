@@ -301,6 +301,10 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
+        {/* 🐞 임시: 음소거 오버레이 요소 진단 — 정확한 선택자 맞춘 뒤 제거 */}
+        <View style={styles.diagBox} pointerEvents="none">
+          <Text style={styles.diagText}>🔊 {diag.audio}</Text>
+        </View>
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

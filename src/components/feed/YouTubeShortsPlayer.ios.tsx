@@ -57,6 +57,19 @@ const INJECTED_JS = `
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
     // 음소거 아이콘(unmute 버튼)만 "정확히" 클릭해 유튜브 내부 음소거 상태를 동기화 → "탭하여 음소거
     // 해제" 오버레이 제거(사용자 지시). 숨기거나 다른 요소 건드리지 않음 — aria-label로 그 버튼만 콕.
+    // 진단: 음소거 관련 요소가 실제로 어떤 tag/class/aria-label인지 화면에 보고(선택자를 정확히 맞추려고).
+    function reportMuteEls() {
+      try {
+        var all = document.querySelectorAll('[aria-label], [class*="mute" i], [title]');
+        var found = [];
+        for (var i = 0; i < all.length && found.length < 3; i++) {
+          var n = all[i];
+          var lab = (n.getAttribute('aria-label') || '') + '|' + (n.getAttribute('title') || '') + '|' + (n.className || '').toString().slice(0, 30);
+          if (/mute|음소거/i.test(lab)) { found.push(n.tagName.toLowerCase() + ' ' + lab.slice(0, 60)); }
+        }
+        send({ type: 'audio', tag: 'muteEls', muted: found.length ? found.join(' ‖ ') : 'none' });
+      } catch (e) {}
+    }
     function tapUnmute() {
       try {
         var b = document.querySelector('[aria-label*="음소거 해제" i], [aria-label*="음소거를 해제" i], [aria-label*="unmute" i]');
@@ -73,7 +86,7 @@ const INJECTED_JS = `
     var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(tapUnmute, ms); }); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(function () { tapUnmute(); reportMuteEls(); }, ms); }); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });

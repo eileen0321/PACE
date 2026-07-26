@@ -280,12 +280,12 @@ export default function OverlaySessionScreen() {
     });
   };
 
-  // 2026-07-26 사용자 지시("휴식 시간 → 크레딧 적립 → 크레딧으로 이어보기") — Flip Mode(폰 내려놓기)로
-  // 모은 크레딧을 광고 대신(또는 광고와 나란히) 써서 Focus Session 한도를 늘린다. 1크레딧 = 영상 1편
-  // 연장(적립도 1분=1크레딧으로 단순한 1:1이라 소비도 동일 비율로 맞춤). 전액을 한 번에 쓴다 —
-  // 부분 사용 UI(슬라이더 등)까지는 과했다고 판단, "모은 만큼 이어본다"는 단순한 약속이 지금 카피와도
-  // 맞음. 2026-07-26 추가 — 매일 출석 보너스(useAttendanceStore.bonusCredits, 매일 리셋 안 되는
-  // 별도 지갑)도 같은 자리에서 합산해서 함께 쓴다.
+  // 2026-07-26 사용자 지시("연속 시청 1분 = 1크레딧") — 크레딧 소비 단위를 "영상 1편"에서 "세션
+  // 1분"으로 재정의. 기존 "Extend Time" 칩(OverlayExpandedCard onExtend)과 동일한 경로로 실제
+  // 세션 시간(remainingMinutes)을 늘리고, 동시에 자동넘김 무료 한도(autoSwipeCap)도 같은 양만큼
+  // 늘려 이 모달이 뜬 원인(영상 편수 한도 도달) 자체도 함께 풀어준다 — 시간만 늘고 스와이프는 여전히
+  // 막혀 있는 상태가 안 되도록. 출석 보너스(useAttendanceStore.bonusCredits, 매일 리셋 안 되는 별도
+  // 지갑)와 오늘 쉬어서 모은 크레딧(useFlipStore.credits)을 합산해서 함께 쓴다.
   const restCredits = useFlipStore((s) => s.credits);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const totalCredits = restCredits + bonusCredits;
@@ -294,9 +294,12 @@ export default function OverlaySessionScreen() {
     const spentBonus = useAttendanceStore.getState().spendBonusCredits(bonusCredits);
     const spent = spentRest + spentBonus;
     if (spent <= 0) return;
+    useDailyBonusStore.getState().addMinutes(spent);
+    const newRemaining = useTimerStore.getState().addMinutes(spent);
+    overlayService.updateRemaining(newRemaining).catch(() => {});
     autoNextService.extendAutoNextCap(spent).catch(() => {});
     setShowCapModal(false);
-    useToastStore.getState().show(t('overlay.autoNextExtendedToast', { extend: spent }));
+    useToastStore.getState().show(t('overlay.creditsExtendedToast', { extend: spent }));
   };
 
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —

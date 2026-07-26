@@ -7,7 +7,7 @@ import { STORAGE_KEYS } from '../services/storage/keys';
 // 개념 — 출석 보너스는 안 써도 다음날로 이월되는 "적립 지갑"이라 여기서 독립적으로 관리하고,
 // 실제 소비(Focus Session 한도 연장)는 overlay/index.tsx가 두 잔액(Flip 크레딧 + 출석 보너스)을
 // 합산해서 처리한다.
-const DAILY_CHECKIN_CREDITS = 10; // 출석 1회당 지급량 — 스펙에 정확한 수치가 없어 임의 설정, 조정 가능
+const DAILY_CHECKIN_CREDITS = 5; // 2026-07-26 사용자 지시 — 출석 1회당 +5크레딧으로 확정(PACE_PROJECT_MANAGEMENT.md 참고)
 const HISTORY_DAYS_KEPT = 30; // 이력 배열이 무한정 안 커지게 최근 30일만 보관(주간 위젯은 7일만 씀)
 
 function todayStr(): string {

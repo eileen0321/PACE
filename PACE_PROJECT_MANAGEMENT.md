@@ -1355,3 +1355,15 @@ Time 삭제 후 iOS 피드에 안드로이드 오버레이가 하던 기능들�
   설치됨.** 원격 잠금해제 불가라 여기까지가 한계.
 - 아침 기기 확인 항목: 피드 첫영상 소리컷/음소거아이콘, 손짓(SESSION ON 상태서 카메라 권한), 스플래시 번쩍,
   구글 로그인, BT볼륨키 리모컨, 수면감지(밤새 테스트).
+
+**🌙 2차 패리티 전수감사(알림/통계/설정/온보딩/페이월) 결과:**
+- ✅ **#2 [HIGH] 해결(e63081f)** — Focus 탭 "핸즈프리 모드" 토글이 iOS에서 기만이었음: `bluetoothService.ios`는
+  placeholder 스텁(toggleAutoMode no-op, getState 항상 autoModeEnabled:false)이라, 프리미엄 결제 유도+가짜
+  "켜짐" 토스트+refresh 시 스냅백. 실제 iOS 핸즈프리(볼륨키+손짓)는 Pace Feed 안에서 이 토글과 무관하게
+  항상 동작. → iOS에선 "피드에서 항상 켜짐"을 비활성 스위치로 정직 표시(focus.tsx). **피드 게스처 게이팅은
+  절대 안 건드림**(작동 중인 손짓 보존).
+- ❌ **#3/#4 오탐** — 감사 에이전트가 "iOS 수면감지 없음"이라 했으나 이는 `overlayService.ios`(안드 네이티브
+  경로, iOS no-op)만 보고 **피드 기반 경로를 놓친 것**. 실제로 iOS는 `useSleepGuard.ios`가 `sleepStillnessMinutes`
+  소비→`flushWatchTime('sleep_detected', 잠든시각)` 기록(feed/index.tsx:108-114) → 홈 "…잠드셨습니다" 배너
+  iOS에서도 뜨고 페이월 "Advanced Sleep Mode" 실효. **수면 패리티 온전, 조치 불필요.**
+- ✅ 알림/온보딩/페이월 게이팅/광고배너/비수면 통계 = 패리티 격차 없음 확인.

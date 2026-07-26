@@ -11,6 +11,7 @@ import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { useSleepGuard } from '../../hooks/useSleepGuard';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -112,6 +113,18 @@ export default function PaceFeedScreen() {
   };
   // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지. stillnessMinutes=설정값(안드 parity, D8 프리미엄 조절).
   useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected, stillnessMinutes: sleepStillnessMinutes });
+
+  // 2026-07-27 iOS 수면감지 필수 전제 — 잠들면 화면을 안 만져서 iOS가 자동으로 화면을 끈다. 그러면
+  // AppState가 'active'가 아니게 돼 useSleepGuard의 무진동 tick이 그 훅 L54 가드에서 멈춰, 취침을 영영
+  // 못 잡았다(사용자 "몇시에 잤는지 안 뜸"의 실제 원인 — expo-keep-awake 미설치라 화면유지가 아예 없었음).
+  // 안드로이드는 네이티브 포그라운드 서비스라 화면 꺼져도 감지되지만 iOS는 CMMotionManager가 백그라운드에서
+  // 못 돌므로, 피드 재생 중엔 화면을 켜둬야 "켜둔 채 잠든 영상"을 감지→종료→잔 시각 기록할 수 있다(이
+  // 기능의 원래 의도와 일치). 정지/블랙아웃(수면감지·슬립타이머 발동)되면 즉시 해제해 배터리 낭비를 막는다.
+  useEffect(() => {
+    if (!playing || sleepBlackout) return;
+    activateKeepAwakeAsync('pace-feed').catch(() => {});
+    return () => { deactivateKeepAwake('pace-feed').catch(() => {}); };
+  }, [playing, sleepBlackout]);
 
   // iOS 슬립 타이머(2026-07-27, 안드로이드 parity) — 안드로이드는 오버레이 서비스가 "N분 재생 후 자동
   // 정지"하는데 iOS엔 그 타이머가 없었다(sleepTimerMinutes를 무시). 수면감지(무진동)와 별개로, 사용자가

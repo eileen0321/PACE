@@ -37,7 +37,8 @@ export function showRewardedAd(): Promise<RewardedAdResult> {
   return new Promise((resolve) => {
     let settled = false;
     let earned = false;
-    const rewarded = RewardedAd!.createForAdRequest(getAdUnitId());
+    // 감사 H1 — 배너와 동일하게 비개인화 광고로 요청(EEA UMP 동의 요건 회피, no-ATT 정합).
+    const rewarded = RewardedAd!.createForAdRequest(getAdUnitId(), { requestNonPersonalizedAdsOnly: true });
     const unsubscribers: Array<() => void> = [];
     const finish = (result: RewardedAdResult) => {
       if (settled) return;

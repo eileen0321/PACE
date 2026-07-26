@@ -56,6 +56,9 @@ export function AdBanner() {
       <BannerAd
         unitId={BANNER_UNIT_ID}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+        // 감사 H1(2026-07-27) — UMP 동의 플로우가 없어 EEA에서 개인화 광고는 정책 위반이 될 수 있다.
+        // 비개인화로 요청해 동의 없이도 안전하게 서빙(앱의 NSPrivacyTracking=false/ATT 미사용 정합).
+        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
         onAdFailedToLoad={() => setFailed(true)}
       />
     </View>

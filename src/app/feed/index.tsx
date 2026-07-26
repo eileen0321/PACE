@@ -97,8 +97,10 @@ export default function PaceFeedScreen() {
     const endMs = endedAtMs ?? Date.now();
     const durationSeconds = Math.max(0, Math.round((endMs - startedAt) / 1000)); // 잠든 시각까지의 실제 시청시간
     if (!uid || durationSeconds < 3) return; // 3초 미만(즉시 이탈/오탐)은 무시
-    startSession(uid, 'youtube')
-      .then((id) => endSession(id, durationSeconds, 0, status, endedAtMs ? new Date(endedAtMs).toISOString() : undefined))
+    // MEDIUM 4 수정 — 실제 세그먼트 시작·종료 시각을 그대로 기록해 started_at ≤ ended_at 보장 +
+    // duration_seconds == (ended_at − started_at) 정합. sleep_detected 역전행/자정 오귀속 해소.
+    startSession(uid, 'youtube', new Date(startedAt).toISOString())
+      .then((id) => endSession(id, durationSeconds, 0, status, new Date(endMs).toISOString()))
       .catch(() => {});
   };
 

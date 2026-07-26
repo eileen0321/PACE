@@ -6,13 +6,18 @@ import type { OverlayEventType, SessionEndStatus, ViewingSession } from '../../t
 // expo-sqlite 비동기 API(openDatabaseAsync/runAsync/getAllAsync)를 그대로 유지한다 — 2026-07-17 웹 조사
 // 결과 Expo 공식 문서가 권장하는 현재 방식이며, sync API(runSync 등)는 메인 스레드 블로킹 위험이 있어
 // 무거운 쿼리에는 권장되지 않는다(PACE_ARCHITECTURE.md "외부 리뷰 반영 3차" 참고).
-export async function startSession(userId: string, platformApp: string | null): Promise<string> {
+// 2026-07-27 감사 발견(MEDIUM 4) — startedAtOverride: iOS 피드의 flushWatchTime은 세그먼트가 끝난 뒤
+// (이탈/백그라운드/수면감지) 비로소 startSession→endSession을 부르는데, 예전엔 started_at을 호출 시점(now)
+// 으로 박아 넣어 (a) sleep_detected는 ended_at(잠든 시각=과거)보다 started_at(감지 시각=나중)이 커지는
+// 역전 행이 되고 (b) 자정 넘겨 본 세션(23:40~00:10)이 flush 시점(00:10) 기준으로 "다음날"에 잘못 귀속됐다.
+// 실제 세그먼트 시작 시각을 넘겨받아 started_at ≤ ended_at을 항상 만족시키고 날짜 귀속도 바로잡는다.
+export async function startSession(userId: string, platformApp: string | null, startedAtOverride?: string): Promise<string> {
   const db = await getDb();
   const id = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await db.runAsync(
     `INSERT INTO viewing_sessions (id, user_id, started_at, duration_seconds, videos_watched, platform_app, status, synced)
      VALUES (?, ?, ?, 0, 0, ?, NULL, 0)`,
-    [id, userId, new Date().toISOString(), platformApp]
+    [id, userId, startedAtOverride ?? new Date().toISOString(), platformApp]
   );
   return id;
 }

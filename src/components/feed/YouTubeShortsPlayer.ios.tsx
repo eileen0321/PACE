@@ -32,6 +32,8 @@ type Props = {
   onProgress?: (fraction: number) => void;
   /** 진단(임시): WebView 오디오 상태 — 무음 원인(소리 자동재생 차단 여부) 파악용. */
   onAudioDiag?: (text: string) => void;
+  /** 프리로드 모드 — 다음 영상 페이지를 미리 로드만(재생·소리 없음). 활성화(false 전환) 시 처음부터 재생. */
+  preload?: boolean;
 };
 
 // youtube.com/shorts 페이지의 실제 <video>에 붙어 ready/ended/progress를 RN으로 보내고 play/pause 전역함수 노출.
@@ -82,20 +84,51 @@ const INJECTED_JS = `
         });
       }
     } catch (e) {}
+    // 팝업("탭하여 음소거 해제")만 숨김: muted setter가 실제 음소거를 이미 막고 있어 오디오 상태는 계속
+    // false다. 그 상태에서 mp.unMute()는 유튜브 "플레이어 레벨" 음소거 플래그만 풀어(=팝업 제거) 실제
+    // 오디오는 안 건드린다(=컷 없음). 재생이 안정된 뒤 딱 1회만 호출. (setVolume은 볼륨 글리치라 안 씀.)
+    var popupCleared = false;
+    function clearUnmutePopup() {
+      if (popupCleared) return;
+      try {
+        var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        if (mp && typeof mp.unMute === 'function') { mp.unMute(); popupCleared = true; send({ type: 'domlog', text: 'UNMUTE-once t=' + (v.currentTime || 0).toFixed(2) }); }
+      } catch (e) {}
+    }
+    // "탭하여 음소거 해제"가 작은 아이콘(.ytp-unmute 버튼)으로 줄어 계속 남는 것도 CSS로 숨긴다.
+    // ⚠️ .ytp-unmute는 "버튼 leaf"라 숨겨도 영상 재생엔 무해(영상 컨테이너 .html5-video-player가 아님).
+    //    실제 오디오는 muted setter가 계속 false 유지 → 음소거 아이콘을 없애도 소리엔 영향 없음.
+    try {
+      var ust = document.createElement('style');
+      ust.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';
+      (document.head || document.documentElement).appendChild(ust);
+    } catch (e) {}
     function tryAudible() {
       v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); setTimeout(clearUnmutePopup, 1200); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백(audibleOk 아직 false라 통과)
       });
     }
-    tryAudible();
-    // 진단(임시): 매 영상 첫 소리 끊김의 정확한 원인 캡처 — 컷 순간 어떤 이벤트가 뜨는지 타임스탬프로 로깅.
-    // waiting/stalled=버퍼링 스톨, pause=누가 멈춤, seeking=재탐색, ratechange=속도변경. 원인 확정 후 제거.
-    ['pause', 'play', 'playing', 'waiting', 'stalled', 'seeking', 'seeked', 'ratechange', 'suspend', 'emptied', 'volumechange'].forEach(function (ev) {
-      v.addEventListener(ev, function () {
-        send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' paused=' + v.paused + ' rs=' + v.readyState });
-      });
+    // ⚡ 프리로드: 다음 영상 페이지를 미리 로드해 두면 넘길 때 전체 페이지 재로드 간극(="매 영상 처음 씹힘")이
+    //   사라진다. 프리로드 인스턴스는 재생/소리 없이 페이지+<video>만 로드하고 정지 유지 → 활성화되면
+    //   paceActivate로 처음부터 소리내어 재생. (활성화는 부모가 preload=false로 바뀌면 주입.)
+    window.paceActivate = function () {
+      if (window.__paceActivated) return; window.__paceActivated = true;
+      send({ type: 'domlog', text: 'ACTIVATE t=' + (v.currentTime || 0).toFixed(2) + ' rs=' + v.readyState });
+      try { v.currentTime = 0; } catch (e) {}
+      tryAudible();
+    };
+    if (window.__pacePreload) {
+      send({ type: 'domlog', text: 'PRELOAD ready rs=' + v.readyState });
+      v.muted = true; v.pause();
+      var pkeep = setInterval(function () { if (window.__paceActivated) { clearInterval(pkeep); return; } if (!v.paused) v.pause(); }, 200);
+    } else {
+      window.paceActivate();
+    }
+    // 검증용 진단(시뮬레이터 자가확인): 컷/전환 순간 이벤트 로깅. 검증 후 제거.
+    ['pause', 'playing', 'waiting', 'stalled', 'seeking'].forEach(function (ev) {
+      v.addEventListener(ev, function () { send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' rs=' + v.readyState }); });
     });
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
@@ -135,16 +168,26 @@ function isAllowedNavigation(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank';
 }
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props) {
+export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, preload }: Props) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  const wasPreloadRef = useRef<boolean>(!!preload);
   const source = useMemo(
     () => ({ uri: `https://www.youtube.com/shorts/${videoId}`, headers: { Cookie: CONSENT_COOKIE } }),
     [videoId]
   );
 
   // videoId가 바뀌면(다음 영상) 새 페이지 로드 → ready 리셋.
-  useEffect(() => { setReady(false); }, [videoId]);
+  useEffect(() => { setReady(false); wasPreloadRef.current = !!preload; }, [videoId]);
+
+  // 프리로드였다가 활성화(preload=false)되면 → 미리 로드해둔 영상을 처음부터 소리내어 재생.
+  // 이게 "다음 영상 즉시 재생"의 핵심 — 페이지가 이미 로드돼 있어 재로드 간극(씹힘)이 없다.
+  useEffect(() => {
+    if (!preload && wasPreloadRef.current) {
+      wasPreloadRef.current = false;
+      webRef.current?.injectJavaScript('window.paceActivate && window.paceActivate(); true;');
+    }
+  }, [preload]);
 
   // 재생/일시정지 반영.
   useEffect(() => {
@@ -160,6 +203,8 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
         ref={webRef}
         source={source}
         injectedJavaScript={INJECTED_JS}
+        // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
+        injectedJavaScriptBeforeContentLoaded={`window.__pacePreload=${preload ? 'true' : 'false'};true;`}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled

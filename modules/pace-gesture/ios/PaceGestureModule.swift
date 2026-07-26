@@ -444,11 +444,34 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
     }
     session.commitConfiguration()
+    // ⭐ 손짓이 "2번째 영상부터 안 되는" 원인: 새 영상 WebView가 재생을 시작하면 시스템 압력/미디어로
+    //   AVCaptureSession이 interrupted 되는데, 관찰자가 없어 자동 복구가 안 돼 카메라가 죽은 채 남는다.
+    //   interruption 종료/런타임 에러 시 세션을 다시 startRunning 해 손짓 감지를 살린다.
+    let nc = NotificationCenter.default
+    nc.addObserver(self, selector: #selector(sessionInterrupted(_:)), name: .AVCaptureSessionWasInterrupted, object: session)
+    nc.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)), name: .AVCaptureSessionInterruptionEnded, object: session)
+    nc.addObserver(self, selector: #selector(sessionRuntimeError(_:)), name: .AVCaptureSessionRuntimeError, object: session)
     session.startRunning()
     NSLog("[pace-wave] camera started (front, portrait+mirror)")
   }
 
+  @objc private func sessionInterrupted(_ n: Notification) {
+    let reason = (n.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? -1
+    NSLog("[pace-wave] session INTERRUPTED reason=%d", reason)
+    onDiag("cam interrupted r=\(reason)")
+  }
+  @objc private func sessionInterruptionEnded(_ n: Notification) {
+    NSLog("[pace-wave] interruption ended → restart")
+    onDiag("cam resume")
+    queue.async { if !self.session.isRunning { self.session.startRunning() } }
+  }
+  @objc private func sessionRuntimeError(_ n: Notification) {
+    NSLog("[pace-wave] runtime error → restart")
+    queue.async { if !self.session.isRunning { self.session.startRunning() } }
+  }
+
   func stop() {
+    NotificationCenter.default.removeObserver(self)
     queue.async {
       if self.session.isRunning { self.session.stopRunning() }
       for i in self.session.inputs { self.session.removeInput(i) }
@@ -484,18 +507,18 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     if lockedOri == nil { lockedOri = usedOri; onDiag("HAND FOUND ori=\(usedOri.rawValue)") } // 첫 감지 방향 고정+로그
 
-    // 손 "크기" = 손목 ↔ 중지뿌리(MCP) 거리(안드로이드와 동일 지표). 신뢰도 낮은 점은 버린다.
-    guard
-      let wrist = try? obs.recognizedPoint(.wrist),
-      let mcp = try? obs.recognizedPoint(.middleMCP)
-    else { onDiag("hand? no wrist/mcp"); return }
-    if wrist.confidence <= 0.3 || mcp.confidence <= 0.3 {
-      onDiag(String(format: "hand low-conf w=%.2f m=%.2f", wrist.confidence, mcp.confidence)); return
+    // 손 "크기" = 신뢰도 높은 "모든 관절점"의 바운딩박스 대각선. 실기기 로그로 확정: iOS Vision은 손목
+    // (wrist) 신뢰도가 자주 0이라 손목↔MCP만 쓰면 대부분 프레임이 버려져 감지율이 급락했다. 바운딩박스는
+    // 손목 하나가 빠져도 나머지 점들로 크기를 재므로 훨씬 강건하다. 손이 다가오면 박스가 커짐(=손짓).
+    let allPts = (try? obs.recognizedPoints(.all)) ?? [:]
+    var xs: [CGFloat] = []; var ys: [CGFloat] = []
+    for (_, p) in allPts where p.confidence > 0.3 { xs.append(p.location.x); ys.append(p.location.y) }
+    guard xs.count >= 3, let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else {
+      if logTick % 6 == 0 { onDiag("hand few-pts \(xs.count)") }; return
     }
-    let dx = wrist.location.x - mcp.location.x
-    let dy = wrist.location.y - mcp.location.y
-    let size = CGFloat((dx * dx + dy * dy).squareRoot())
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f n=%d", Double(size), samples.count + 1)) } // 손 잡힘 + 크기(로그 스팸 감소)
+    let bw = maxX - minX, bh = maxY - minY
+    let size = CGFloat((bw * bw + bh * bh).squareRoot())
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f pts=%d n=%d", Double(size), xs.count, samples.count + 1)) } // 크기+점수
     guard size >= minHandSize else { return } // 너무 작으면(먼 배경) 무시 — 안드 MIN_HAND_SIZE=0.03
 
     let t = now

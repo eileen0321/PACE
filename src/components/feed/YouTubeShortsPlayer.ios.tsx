@@ -35,23 +35,6 @@ type Props = {
 // 로그인/동의 벽으로 <video>가 늦게 뜨는 케이스), (2) 찾으면 즉시 v.play() 시도(실기기 자동재생), (3) 끝까지
 // <video>가 없으면 'novideo' 신호 → 부모가 스킵(까만화면에 갇히지 않게), (4) 페이지가 shorts가 아니면
 // (로그인/consent) 감지해 보고.
-// 유튜브 JS보다 먼저 실행 — HTMLMediaElement.muted 세터를 래핑해 유튜브의 "muted=true" 시도를 무시.
-// 음소거를 원천 차단(위 재생 로직이 audible-ok를 이미 확인).
-const BEFORE_CONTENT_JS = `
-(function () {
-  try {
-    var proto = HTMLMediaElement.prototype;
-    var d = Object.getOwnPropertyDescriptor(proto, 'muted');
-    if (d && d.set && d.get) {
-      var os = d.set, og = d.get;
-      Object.defineProperty(proto, 'muted', { configurable: true, enumerable: d.enumerable,
-        get: function () { return og.call(this); }, set: function () { os.call(this, false); } });
-    }
-  } catch (e) {}
-})();
-true;
-`;
-
 const INJECTED_JS = `
 (function () {
   function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
@@ -72,17 +55,18 @@ const INJECTED_JS = `
     // ⭐ 2026-07-26: mediaPlaybackRequiresUserAction=false라 "소리 자동재생"이 허용될 수 있다(리서치 확인).
     // 예전엔 무조건 muted=true로 시작해 매 영상 무음이었다 → 먼저 소리로 재생 시도. 차단되면(iOS 정책)
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
+    var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { ad('audible-ok'); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
-        v.muted = true; v.play().catch(function () {});
+        v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });
     }
     tryAudible();
-    // ⭐ 유튜브가 재생 후 다시 음소거하는 걸 즉시 되돌린다(사용자: "처음 소리 나왔다 다시 무음됨").
-    // audible-ok가 확인됐으므로 muted=false 강제가 안전.
-    v.addEventListener('volumechange', function () { if (v.muted) { v.muted = false; v.volume = 1.0; } });
+    // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
+    // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
+    v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
     function unmuteOnce() { v.muted = false; v.volume = 1.0; v.play().catch(function () {}); ad('gesture-unmute'); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
@@ -92,7 +76,7 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     var tick = 0;
     setInterval(function () {
-      if (v.muted) { v.muted = false; v.volume = 1.0; } // 유튜브가 몰래 음소거하면 계속 되돌림(폴백)
+      if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
       if ((++tick) % 3 === 0) ad('tick'); // 약 1.5s마다 오디오 상태 진단
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
@@ -143,7 +127,6 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       <WebView
         ref={webRef}
         source={source}
-        injectedJavaScriptBeforeContentLoaded={BEFORE_CONTENT_JS}
         injectedJavaScript={INJECTED_JS}
         style={styles.web}
         javaScriptEnabled

@@ -9,6 +9,7 @@ import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useSleepGuard } from '../../hooks/useSleepGuard';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
@@ -243,11 +244,12 @@ export default function PaceFeedScreen() {
     onDiag: (kind, text) => setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })),
   });
 
-  // 2026-07-22 감사 수정: 볼륨키(에어팟/버즈/다이소 BT 리모컨) → 다음 Short 훅이 추가됐지만 어느
-  // 화면에도 연결돼 있지 않아 기능이 죽어 있었다. 여기 피드에 연결 — Focus Session 동안만 볼륨버튼을
-  // "다음"으로 쓴다(그 외엔 정상 볼륨조절 유지). Android/시뮬은 no-op.
+  // 볼륨키 → 다음 Short. ⚠️ 2026-07-26 사용자 지적: 볼륨키 하이재킹은 "블루투스 리모컨(에어팟/버즈/
+  // 다이소 리모컨)이 실제로 연결됐을 때만" 해야 한다 — 폰만 있을 땐 볼륨키가 음량 조절이어야 하는데
+  // 세션 ON만으로 무조건 가로채 음량 조절을 막고 있었다. Focus Session ON && BT 오디오 연결됨일 때만 활성.
+  const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   useVolumeNext({
-    enabled: isAutoMode,
+    enabled: isAutoMode && isBluetoothConnected,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
   });
 

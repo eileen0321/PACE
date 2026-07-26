@@ -50,7 +50,7 @@
           "resizeMode": "contain",
           "backgroundColor": "#060709",
           "ios": {
-            "image": "./assets/splash-blank.png",
+            "image": "./assets/splash-icon.png",
             "imageWidth": 120,
             "resizeMode": "contain",
             "backgroundColor": "#060709"

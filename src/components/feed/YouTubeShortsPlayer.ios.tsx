@@ -26,6 +26,8 @@ type Props = {
   onError?: (code: number) => void;
   /** 재생 진행률(0~1) — 피드의 고개짓 카메라 배터리 게이팅용. */
   onProgress?: (fraction: number) => void;
+  /** 진단(임시): WebView 오디오 상태 — 무음 원인(소리 자동재생 차단 여부) 파악용. */
+  onAudioDiag?: (text: string) => void;
 };
 
 // youtube.com/shorts 페이지의 실제 <video>에 붙어 ready/ended/progress를 RN으로 보내고 play/pause 전역함수 노출.
@@ -49,19 +51,28 @@ const INJECTED_JS = `
     }
     window.pacePlay = function () { v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
-    v.muted = true; // 실기기 무음 자동재생 허용 조건(iOS는 제스처 없는 자동재생은 무음만 허용)
-    v.play().catch(function () {}); // 찾는 즉시 재생 시도
-    // 2026-07-22 감사수정: 무음으로 시작하되, 첫 사용자 탭(제스처) 때 소리를 켠다 — 스냅 AEC/볼륨키의
-    // 전제가 "영상 소리"라 무음이면 기능 전체가 무의미했다. 제스처가 있으므로 unmute 재생이 허용됨.
-    var unmuted = false;
-    function unmuteOnce() { if (unmuted) return; unmuted = true; v.muted = false; v.play().catch(function () {}); }
+    function ad(tag) { send({ type: 'audio', tag: tag, muted: v.muted, paused: v.paused, vol: v.volume }); }
+    // ⭐ 2026-07-26: mediaPlaybackRequiresUserAction=false라 "소리 자동재생"이 허용될 수 있다(리서치 확인).
+    // 예전엔 무조건 muted=true로 시작해 매 영상 무음이었다 → 먼저 소리로 재생 시도. 차단되면(iOS 정책)
+    // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
+    function tryAudible() {
+      v.muted = false; v.volume = 1.0;
+      v.play().then(function () { ad('audible-ok'); }).catch(function (e) {
+        send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
+        v.muted = true; v.play().catch(function () {});
+      });
+    }
+    tryAudible();
+    function unmuteOnce() { v.muted = false; v.volume = 1.0; v.play().catch(function () {}); ad('gesture-unmute'); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
     v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
     v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
+    var tick = 0;
     setInterval(function () {
+      if ((++tick) % 3 === 0) ad('tick'); // 약 1.5s마다 오디오 상태 진단
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
       if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
@@ -87,7 +98,7 @@ function isAllowedNavigation(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank';
 }
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress }: Props) {
+export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const source = useMemo(
@@ -135,6 +146,11 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'audio') {
+            const m = msg as any;
+            onAudioDiag?.(`${m.tag} muted=${m.muted} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
             return;
           }
           if (msg.type === 'ready') {

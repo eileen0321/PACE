@@ -31,6 +31,10 @@ type Props = {
   onEnded: () => void;
   onReady?: () => void;
   onError?: (code: number) => void;
+  /** 현재 영상 진행률(0~1) — 피드가 게이팅 등에 사용(co-session). */
+  onProgress?: (p: number) => void;
+  /** 진단: WebView 오디오 상태 문자열(muted/재생차단 등) — 무음 원인 파악용(임시). */
+  onAudioDiag?: (text: string) => void;
 };
 
 // 실제 <video> 엘리먼트에 리스너를 붙여 ready/ended/error를 RN으로 전달하고, play/pause를 위한
@@ -81,8 +85,13 @@ const INJECTED_JS = `
     // 무음 자동재생 정책 + 유튜브가 새 페이지마다 스스로 음소거 → "탭하여 음소거 해제"가 계속 뜬다.
     // WebView는 mediaPlaybackRequiresUserAction=false라 소리 자동재생이 허용되므로, 유튜브가 다시
     // 음소거해도 즉시 되돌리도록 지속 강제한다(volumechange 이벤트 + 아래 폴링 인터벌 둘 다).
-    function forceUnmute() { try { v.muted = false; v.volume = 1.0; } catch (e) {} }
+    function forceUnmute() { try { v.removeAttribute('muted'); v.muted = false; v.volume = 1.0; } catch (e) {} }
     forceUnmute();
+    // 진단: 실제 오디오 상태를 RN으로 보고(무음 원인이 muted인지 autoplay 차단인지 가른다).
+    function reportAudio(tag) { send({ type: 'audio', tag: tag, muted: v.muted, paused: v.paused, vol: v.volume, rs: v.readyState }); }
+    reportAudio('attach');
+    v.play().then(function () { reportAudio('play-ok'); }).catch(function (e) { send({ type: 'audio', tag: 'play-ERR', err: String(e && e.name), muted: v.muted }); });
+    setInterval(function () { reportAudio('tick'); }, 1500);
     v.addEventListener('volumechange', function () { if (v.muted) forceUnmute(); });
     v.addEventListener('play', forceUnmute);
     window.pacePlay = function () { forceUnmute(); v.play().catch(function () {}); };
@@ -99,6 +108,7 @@ const INJECTED_JS = `
       if (v.muted) forceUnmute(); // 유튜브가 몰래 음소거하면 계속 되돌림
       if (reportedEnded || !v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
+      send({ type: 'progress', p: v.duration ? t / v.duration : 0 });
       var nearEnd = t >= v.duration - 0.5;
       var loopedBack = lastKnownCurrentTime > 1 && t < lastKnownCurrentTime - 1;
       if (nearEnd || loopedBack) {
@@ -114,7 +124,7 @@ const INJECTED_JS = `
 true;
 `;
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError }: Props) {
+export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const source = useMemo(() => ({ uri: `https://www.youtube.com/shorts/${videoId}` }), [videoId]);
@@ -148,6 +158,15 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'progress') {
+            onProgress?.((msg as any).p ?? 0);
+            return;
+          }
+          if (msg.type === 'audio') {
+            const m = msg as any;
+            onAudioDiag?.(`${m.tag} muted=${m.muted} paused=${m.paused ?? '?'} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
             return;
           }
           if (msg.type === 'ready') {

@@ -48,7 +48,7 @@ export default function PaceFeedScreen() {
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
-  const [diag, setDiag] = useState<{ wave: string; snap: string }>({ wave: '—', snap: '—' }); // 디버그 오버레이(손짓/스냅 감지 수치)
+  const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
@@ -272,6 +272,7 @@ export default function PaceFeedScreen() {
           onProgress={handleProgress}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 단 연속 실패는 가드가 잡음(death-spiral 방지)
+          onAudioDiag={(text) => setDiag((d) => ({ ...d, audio: text }))}
         />
       )}
 
@@ -298,14 +299,11 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
-        {/* 🐞 임시 디버그 오버레이(2026-07-26) — 손짓/스냅이 안 돼서 Vision·마이크가 실제로 신호를
-            잡는지 화면에서 확인용. 세션 ON일 때만. 원인 확정 후 제거 예정. */}
-        {isAutoMode && (
-          <View style={styles.diagBox} pointerEvents="none">
-            <Text style={styles.diagText}>👋 {diag.wave}</Text>
-            <Text style={styles.diagText}>🫰 {diag.snap}</Text>
-          </View>
-        )}
+        {/* 🐞 임시 디버그 오버레이 — 무음/손짓 원인 확인용. 오디오는 항상, 손짓/스냅은 세션 ON일 때. */}
+        <View style={styles.diagBox} pointerEvents="none">
+          <Text style={styles.diagText}>🔊 {diag.audio}</Text>
+          {isAutoMode && <Text style={styles.diagText}>👋 {diag.wave}</Text>}
+        </View>
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

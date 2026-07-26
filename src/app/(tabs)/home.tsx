@@ -219,6 +219,14 @@ export default function HomeScreen() {
       setDismissedHitCount(0);
       return;
     }
+    // 감사 HIGH2(2026-07-27, Mac→Windows 인계) — 세션이 이미 running인데 카드를 또 탭하면(keepAlive
+    // 리다이렉트로 Home에 돌아온 뒤 재탭 등) startSession이 새 viewing_sessions 행을 또 만들어, 나중에
+    // 둘 다 같은 종료시각으로 닫히며 겹치는 구간이 이중집계됐다. 이미 running이면 새 세션/네이티브
+    // 서비스를 다시 시작하지 않고 해당 앱만 전면으로 다시 띄운다(세션·오버레이는 그대로 유지).
+    if (useSessionStore.getState().status === 'running') {
+      launchPlatformApp(platform).catch(() => {});
+      return;
+    }
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {
       if (seen) {
         startSession(platform);

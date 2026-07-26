@@ -60,8 +60,19 @@ export const useUserStore = create<UserState>((set, get) => ({
     googleAuth.configure();
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.authUser);
+      // 2026-07-27 감사 발견 — JSON.parse가 손상된 블롭에 throw하면 init()이 reject하는데, 이걸
+      // 기다리는 _layout.tsx의 settingsReady/subscriptionReady 체인엔 .catch가 없어 그 뒤에 걸린
+      // 무료 티어 강제 적용/고아 세션 정리가 전부 조용히 멈춘다 — useSettingsStore.load()에 이미
+      // 적용된 것과 동일한 패턴으로 parse만 따로 감싸 손상 시 게스트로 폴백한다.
+      let restoredUser: User | null = null;
       if (raw) {
-        const restoredUser: User = JSON.parse(raw);
+        try {
+          restoredUser = JSON.parse(raw);
+        } catch {
+          restoredUser = null;
+        }
+      }
+      if (restoredUser) {
         set({ user: restoredUser, isLoggedIn: true, isGuest: restoredUser.isGuest });
         identifyRcUser(restoredUser.email);
       } else {

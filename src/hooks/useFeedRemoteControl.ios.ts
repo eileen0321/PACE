@@ -63,21 +63,17 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
-  // ⚠️ 2026-07-26 최종 확정(실기기 로그 2회 검증): 핑거스냅 마이크(.playAndRecord)를 켜면 (1) WebView
-  // 영상 오디오가 route 인터럽트로 계속 깜빡이고("나왔다 안나왔다"), (2) AEC가 없어 마이크가 영상
-  // 소리를 그대로 주워들어(floor 0.002→0.04) 스냅 구분이 어렵다. iOS는 "안정적 영상 소리 vs 스냅
-  // 마이크"가 양립 불가(안드로이드는 오디오 구조가 달라 가능). 안정적 소리를 택해 스냅 제외 → 'wave'만.
-  // (크래시-세이프 인프라 PaceExceptionCatcher/스파이크 감지는 네이티브에 유지 — 향후 재시도 대비.)
+  // 감지 게이팅: active면 손짓(전면카메라 Vision) + 핑거스냅(마이크)을 함께 시작, 꺼지면 정지.
+  // 스냅 세션은 .default 모드 + .mixWithOthers로 영상 오디오와 공존 시도. 크래시는 PaceExceptionCatcher가 막음.
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('wave').catch((err) => {
+      mod.start('both').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
+        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

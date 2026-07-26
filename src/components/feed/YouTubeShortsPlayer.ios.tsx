@@ -55,28 +55,25 @@ const INJECTED_JS = `
     // ⭐ 2026-07-26: mediaPlaybackRequiresUserAction=false라 "소리 자동재생"이 허용될 수 있다(리서치 확인).
     // 예전엔 무조건 muted=true로 시작해 매 영상 무음이었다 → 먼저 소리로 재생 시도. 차단되면(iOS 정책)
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
-    // 소리는 나는데(v.muted=false) 유튜브 플레이어 내부 상태는 "음소거"라 "탭하여 음소거 해제" 오버레이가
-    // 계속 뜬다 → 유튜브 unmute 버튼/오버레이를 눌러 상태 동기화(=오버레이 제거). "소리 확인(audibleOk)"
-    // 후에만 실행 — 아니면 진짜 무음인 첫 영상에서 프롬프트를 숨겨 사용자가 탭해야 함을 모르게 됨.
-    function dismissUnmuteUI() {
+    // 음소거 아이콘(unmute 버튼)만 "정확히" 클릭해 유튜브 내부 음소거 상태를 동기화 → "탭하여 음소거
+    // 해제" 오버레이 제거(사용자 지시). 숨기거나 다른 요소 건드리지 않음 — aria-label로 그 버튼만 콕.
+    function tapUnmute() {
       try {
-        // 유튜브의 unmute 버튼을 클릭해 내부 음소거 상태 동기화 + 그래도 남는 "탭하여 음소거 해제"
-        // 오버레이 요소는 아예 숨긴다(아이콘이라 텍스트 매칭이 안 되니 aria-label/title/class로 넓게).
-        var nodes = document.querySelectorAll('button, [role="button"], a[aria-label], div[aria-label], [class*="unmute" i], [class*="mute" i]');
-        for (var i = 0; i < nodes.length; i++) {
-          var n = nodes[i];
-          var label = ((n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '') + ' ' + (n.className || '') + ' ' + ((n.textContent || '').slice(0, 24));
-          if (/unmute|음소거\\s*해제|tap to unmute|음소거를 해제/i.test(label)) {
-            try { n.click(); } catch (e2) {}
-            try { n.style.display = 'none'; n.style.visibility = 'hidden'; n.style.pointerEvents = 'none'; } catch (e3) {}
-          }
+        var b = document.querySelector('[aria-label*="음소거 해제" i], [aria-label*="음소거를 해제" i], [aria-label*="unmute" i]');
+        if (b) {
+          var r = b.getBoundingClientRect();
+          var opts = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+          b.dispatchEvent(new MouseEvent('mousedown', opts));
+          b.dispatchEvent(new MouseEvent('mouseup', opts));
+          b.dispatchEvent(new MouseEvent('click', opts));
+          b.click();
         }
       } catch (e) {}
     }
     var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(dismissUnmuteUI, ms); }); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(tapUnmute, ms); }); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });
@@ -85,7 +82,7 @@ const INJECTED_JS = `
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
-    function unmuteOnce() { audibleOk = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); dismissUnmuteUI(); ad('gesture-unmute'); }
+    function unmuteOnce() { audibleOk = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); tapUnmute(); ad('gesture-unmute'); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
@@ -94,7 +91,7 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     setInterval(function () {
       if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
-      if (audibleOk) dismissUnmuteUI(); // 오버레이가 다시 뜨면 계속 눌러 없앰
+      if (audibleOk) tapUnmute(); // 오버레이(unmute 버튼)가 있으면 그것만 클릭해 제거. 없으면 no-op.
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
       if (v.duration > 0) send({ type: 'progress', value: t / v.duration });

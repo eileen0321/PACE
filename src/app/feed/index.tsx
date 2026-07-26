@@ -48,6 +48,7 @@ export default function PaceFeedScreen() {
   const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const sleepTimerMinutes = useSettingsStore((s) => s.settings.sleepTimerMinutes); // iOS 슬립 타이머(안드 parity)
+  const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
@@ -79,28 +80,32 @@ export default function PaceFeedScreen() {
   // 안 잡히는 갭이 있었다. 이제 "피드가 포그라운드로 열려 있던 시간"을 세그먼트로 재서 이탈(언마운트)·
   // 백그라운드 전환·수면 감지 때 flush한다(안드 오버레이 세션 지속시간 기록과 동일 개념). 백그라운드
   // 시간은 세그먼트를 끊어(null) 제외하고, flush마다 세그먼트를 닫아 이중 집계를 막는다.
-  const flushWatchTime = (status: SessionEndStatus) => {
+  // endedAtMs: sleep_detected일 때 "실제 잠든 시각(=마지막 움직인 시각)"을 넘겨 DB ended_at을 그 시각으로
+  // 정확히 기록(안드로이드 markExpired의 PREF_SLEEP_ONSET_AT_MS와 동일 개념). 없으면 지금(now)으로 기록.
+  const flushWatchTime = (status: SessionEndStatus, endedAtMs?: number) => {
     const startedAt = watchSegmentStartRef.current;
     watchSegmentStartRef.current = null; // 세그먼트 종료 — 재개(active 복귀) 전까지 카운트 안 함
     if (startedAt == null) return;
     const uid = useUserStore.getState().user?.id;
-    const durationSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const endMs = endedAtMs ?? Date.now();
+    const durationSeconds = Math.max(0, Math.round((endMs - startedAt) / 1000)); // 잠든 시각까지의 실제 시청시간
     if (!uid || durationSeconds < 3) return; // 3초 미만(즉시 이탈/오탐)은 무시
     startSession(uid, 'youtube')
-      .then((id) => endSession(id, durationSeconds, 0, status))
+      .then((id) => endSession(id, durationSeconds, 0, status, endedAtMs ? new Date(endedAtMs).toISOString() : undefined))
       .catch(() => {});
   };
 
   // 취침 감지 강제 종료(스펙 §4-B) — 피드 시청 중 잠들면(무진동 지속, 이어폰 탈착 시 단축) 영상을 멈추고
   // 검은 풀스크린으로 덮어 밤새 재생을 막는다. iOS는 화면을 강제로 잠글 API가 없어(스펙 문서화) 영상
   // 정지 + WebView를 가리는 블랙아웃이 실질적 최선. DB엔 sleep_detected로 기록(홈 "…에 잠드셨습니다" 인사이트).
-  const onSleepDetected = () => {
+  // sleepOnsetAtMs = useSleepGuard가 계산한 "실제 잠든 시각(마지막 움직인 시각)". 그 시각으로 종료 기록.
+  const onSleepDetected = (sleepOnsetAtMs?: number) => {
     setStatus('PAUSED');
     setSleepBlackout(true);
-    flushWatchTime('sleep_detected'); // 잠들기까지의 시청 시간을 sleep_detected로 기록(세그먼트도 닫힘)
+    flushWatchTime('sleep_detected', sleepOnsetAtMs); // 잠든 실제 시각까지의 시청시간+ended_at 기록
   };
-  // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지(정지/블랙아웃 중엔 불필요).
-  useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected });
+  // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지. stillnessMinutes=설정값(안드 parity, D8 프리미엄 조절).
+  useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected, stillnessMinutes: sleepStillnessMinutes });
 
   // iOS 슬립 타이머(2026-07-27, 안드로이드 parity) — 안드로이드는 오버레이 서비스가 "N분 재생 후 자동
   // 정지"하는데 iOS엔 그 타이머가 없었다(sleepTimerMinutes를 무시). 수면감지(무진동)와 별개로, 사용자가

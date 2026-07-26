@@ -16,13 +16,18 @@ type SleepModule = {
   addListener(event: 'onAudioRouteLost', listener: () => void): { remove: () => void };
 };
 
-const SLEEP_STILLNESS_MS = 10 * 60 * 1000;
-const SLEEP_STILLNESS_SHORT_MS = 6 * 60 * 1000;
+const DEFAULT_STILLNESS_MINUTES = 10; // 설정 미지정 시(안드 free 기본과 동일)
 const TICK_MS = 20 * 1000; // 20초마다 검사
 
-export function useSleepGuard({ enabled, onSleep }: { enabled: boolean; onSleep: () => void }) {
+// 2026-07-27 안드로이드 parity — 예전엔 임계값이 10분 하드코딩이라 설정의 sleepStillnessMinutes(안드는
+// 사용, D8 프리미엄 조절 5~20분)를 무시했다. 이제 stillnessMinutes를 받아 임계값으로 쓴다. 오디오 라우트가
+// 끊기면(이어폰 탈착 등 보조 신호) 그 60%로 단축(기존 10→6분 비율 유지).
+export function useSleepGuard({ enabled, onSleep, stillnessMinutes }: { enabled: boolean; onSleep: (sleepOnsetAtMs?: number) => void; stillnessMinutes?: number }) {
   const onSleepRef = useRef(onSleep);
   onSleepRef.current = onSleep;
+  const mins = stillnessMinutes && stillnessMinutes > 0 ? stillnessMinutes : DEFAULT_STILLNESS_MINUTES;
+  const stillnessMs = mins * 60 * 1000;
+  const stillnessShortMs = Math.round(mins * 0.6) * 60 * 1000;
 
   useEffect(() => {
     if (!enabled) return;
@@ -48,11 +53,13 @@ export function useSleepGuard({ enabled, onSleep }: { enabled: boolean; onSleep:
       if (fired) return;
       if (AppState.currentState !== 'active') return; // 포그라운드(화면 켜진 시청 중)에서만 인정
       const still = m.millisSinceMotion();
-      const threshold = audioLost ? SLEEP_STILLNESS_SHORT_MS : SLEEP_STILLNESS_MS;
+      const threshold = audioLost ? stillnessShortMs : stillnessMs;
       if (still >= threshold) {
         fired = true;
         if (__DEV__) console.log('[sleep] 😴 무진동', Math.round(still / 1000), 's → 취침 감지 → 종료');
-        onSleepRef.current();
+        // ⭐ 안드 parity — 잠든 "실제 시각"은 임계값 넘긴 지금이 아니라 "마지막으로 움직인 시각"이다
+        //    (지금 - 무진동 지속시간). 그 시각을 onSleep에 넘겨 DB ended_at에 정확히 기록되게 한다.
+        onSleepRef.current(Date.now() - still);
       }
     }, TICK_MS);
 
@@ -61,5 +68,5 @@ export function useSleepGuard({ enabled, onSleep }: { enabled: boolean; onSleep:
       try { sub.remove(); } catch {}
       try { m.stop(); } catch {}
     };
-  }, [enabled]);
+  }, [enabled, stillnessMs, stillnessShortMs]);
 }

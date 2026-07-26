@@ -73,7 +73,7 @@
 | D8 | ~~"고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로~~ | ✅ 완료(2026-07-26 사장님 결정 — 페이월 문구-게이팅 불일치 감사에서 나온 "(a) 실제로 게이팅" 선택) — 무진동 수면감지 임계값을 프리미엄 전용 5~20분 조절로 구현. `UserSettings.sleepStillnessMinutes`(신규, 무료 기본 10) → `overlayService.startSession()` 새 파라미터로 전달 → `PaceOverlayService.kt`(`sleepStillnessMinutes` 인스턴스 필드, `EXTRA_SLEEP_STILLNESS_MINUTES`, persistState/restoreStateFromPrefs로 프로세스 재시작에도 보존, tick 계산의 `SLEEP_STILLNESS_MS` 고정값 대체, 5~20 `coerceIn` 이중 방어)까지 전체 배선. `_layout.tsx`의 `enforceFreeFocusSessionDuration`을 확장해 무료 전환 시 10분으로 강제 리셋(기존 Focus Session Duration과 동일 패턴). `settings.tsx` Session Defaults에 새 행 추가(무료면 페이월로). **네이티브 Kotlin 변경은 소스 레벨만 — 실제 gradle 빌드/실기기 검증은 아직 안 함**(다른 세션이 android 빌드 폴더를 쓰고 있을 수 있어 보류), 다음 세션에서 `gradlew assembleDebug` + 실기기 확인 필요 | 2026-07-26 로그 참고 |
 | D9 | ~~"리모컨 지원(핸즈프리 컨트롤)"을 프리미엄 전용으로~~ | ✅ 완료(2026-07-26 사장님 결정, "(a) 실제로 게이팅") — 페이월이 이미 광고 중이던 핸즈프리 컨트롤(핑거스냅/손짓/블루투스 리모컨)을 실제로 `isPremium` 게이팅. **Android**: `home.tsx`의 세션 시작 시 Auto Mode 자동 재개(`enableAutoModeForSession`) 앞에 `isPremium` 체크 추가, `BluetoothOnboardingSheet.tsx`의 "Turn On"이 무료면 `onEnable()` 대신 페이월로 이동(+ 프리미엄 락 배지 UI). **iOS**: 별도 발견 — iOS의 손짓/블루투스 리모컨은 이 시트의 토글과 무관하게 `feed/index.tsx`가 Focus Session(`isAutoMode`) 여부만으로 독립적으로 켜고 있어서 무료 사용자도 이미 전부 쓸 수 있었음(플랫폼 간 정책 불일치) — `handsFreeDetectActive`/`useVolumeNext`의 `enabled` 조건에 `isPremium`을 추가해 동일하게 게이팅. 기존 사용자 회귀 우려(grandfather 옵션)는 사장님이 언급 안 해 적용 안 함(전체 게이팅) | 2026-07-26 로그 참고 |
 | D10 | ~~AdMob 테스트 광고 단위 ID~~ | ✅ 완료(2026-07-26) — AdMob 앱 심사 승인됨, Android/iOS 앱 등록 + 배너(양쪽)·보상형(Android) 광고 단위 실제 발급받아 `app.json`(androidAppId/iosAppId), `AdBanner.tsx`, `rewardedAd.ts`에 실제 ID로 교체 완료. `npx tsc --noEmit` 통과. 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있음 — 실기기에서 광고 실제로 뜨는지 확인 필요 | 2026-07-26 로그 참고 |
-| D11 | (2026-07-26 실기기 검증 중 발견) RevenueCat `PurchasesError(code=ConfigurationError)` 실제 발생 — Play Store에 구독 상품이 하나도 등록 안 돼 있음. SDK 키(D1)만으론 결제 불가, 스토어 쪽 상품+RC Offering 연결까지 필요 | 🟢 **2026-07-27 은행 입금 확인 완료 — 수익 창출 설정 페이지 정상 열림(사장님 스크린샷 확인)**, 결제 프로필 막힘 해제됨. **다음 단계(사장님 직접, Claude 대신 불가)**: ① Play Console "제품 > 구독"에서 실제 구독 상품(상품 ID/가격/기간) 생성 → ② RevenueCat 대시보드에서 그 상품을 Offering/Package로 연결 → ③ 앱에서 `useSubscriptionStore`가 실제 오퍼링을 받아오는지 재검증(그동안 `ConfigurationError`였던 부분). iOS(App Store Connect) 구독 상품도 별도로 아직 미착수 — 오늘 밤 출시가 Android만이면 상관없지만 iOS도 같이면 이것도 급함. | 2026-07-26/27 로그 참고 |
+| D11 | (2026-07-26 실기기 검증 중 발견) RevenueCat `PurchasesError(code=ConfigurationError)` 실제 발생 — Play Store에 구독 상품이 하나도 등록 안 돼 있음. SDK 키(D1)만으론 결제 불가, 스토어 쪽 상품+RC Offering 연결까지 필요 | 🟡 **여전히 진행 중 — 2026-07-27 "수익 창출 설정"은 열렸지만 "정기 결제"(구독 상품 생성) 페이지는 별도로 막혀있음**: "Google Payments 판매자 계정을 설정해야 이 페이지에 액세스할 수 있습니다" 에러. 즉 은행 소액입금 확인 = 결제 프로필(사업자정보/카드명세서명) 완료였을 뿐이고, **구독 상품을 실제로 팔려면 별도의 "Google Payments 판매자 계정"(Merchant Account, 사업자등록증/세금정보/신원확인 등 추가 서류) 설정이 하나 더 필요**. Play Console 좌측 "Play Console 설정 > 결제 프로필" 또는 Google Payments Center(pay.google.com/business/console)에서 미완료 항목이 남아있는지 확인 필요 — 코드/설정으로 단축 불가, 사장님이 직접 처리해야 함. **다음 단계는 이 판매자 계정부터 마저 완료한 뒤에야** ① 구독 상품 생성 → ② RevenueCat Offering 연결 → ③ 앱 재검증 순서로 진행 가능. iOS(App Store Connect) 구독 상품도 별도 미착수. | 2026-07-26/27 로그 참고 |
 
 ### 2-B. Android 담당(Windows 세션) — 코드로 해결 가능
 
@@ -1495,3 +1495,27 @@ tryAudible는 기능이라 보존. 상세 위치는 감사 리포트에 파일:�
 있어도 합계가 무한정 커지지 않게). Home/Stats의 "오늘 사용량"이 세션 진행 중에도 이제 실시간으로 정확함.
 
 tsc clean, 3건 다 커밋 `6a8e87f`로 push 완료. **오늘 밤 출시 전 안드 도메인 감사 항목 전부 소진.**
+
+### 2026-07-27 (오전) — Windows 세션 (실기기 라이브 검증 — 🔴 새 버그 발견: 오버레이가 Pace 자체 화면 위에서도 안 숨겨짐)
+
+정적 코드 감사 3~4회차 이후, 실제로 Metro+실기기(Note20, S7.REVIEWER 계정)에 붙여서 앱을 켜고
+탭을 눌러가며 라이브 검증 진행. 크래시 없음(Home/Focus 탭 전부 정상 렌더, 오늘 데이터/수면 인사이트/
+주간 출석/핸즈프리 상태 다 정확), YouTube 위 오버레이 알약("Nm left / FOCUS ON")도 정상적으로 뜸 —
+**단, 세션이 켜진 채로 YouTube에서 Pace 앱 자체로 돌아오면 그 알약이 Pace의 자체 화면(Home 헤더 "WATCH
+WITH BALANCE" 문구, Focus 탭 헤더) 위에 계속 겹쳐서 떠있는 채로 20초 넘게 안 사라짐(사라지는지 여부를
+더 길게는 확인 못 함 — 세션 계속 켜진 채로 두고 다음 작업으로 넘어감).**
+
+**원인 추정(실기기 로그로 확정하진 못함, 코드 추적만)**: `PaceOverlayService.kt`의
+`foregroundPollRunnable`(1초 간격)이 포그라운드 앱을 확인해 `SupportedApps.PACKAGES`(YouTube/
+Instagram/TikTok)에 있을 때만 알약을 보이게 하는데, `ForegroundAppWatcher.getForegroundPackage()`
+내부의 `mostRecentlyUsedSupportedApp()`(최근 4초 이내 사용된 지원 앱이 있으면 그걸 최우선으로 덮어씀)가
+Pace로 실제로 전환한 뒤에도 "방금까지 유튜브를 썼다"는 과거 `lastTimeUsed` 값을 계속 최신으로 오인해
+`lastKnownForegroundPackage`를 유튜브로 되돌리는 것으로 보인다 — PIP 복귀 오탐(2026-07-26에 이걸
+해결하려고 넣은 로직)을 막으려던 방어 코드가, 반대로 "진짜로 유튜브를 떠난 경우"에 알약을 계속 유튜브로
+착각하게 만드는 부작용을 내는 것 같음. `PaceAccessibilityService`도 원인 후보 — packageNames 필터가
+Pace 자신은 절대 못 잡으므로, 접근성 쪽 신호가 살아있는 한 "Pace로 돌아왔다"는 걸 결코 직접 확인 못 함.
+
+**미해결 — 오늘 밤 출시 전 결정 필요**: 이건 네이티브(Kotlin) 코드라 JS 리로드로는 재현/수정 확인이
+안 되고, 실제 고치려면 재빌드+재설치 사이클이 필요(시간 소요). 크래시나 데이터 유실은 아니고 "세션
+켜둔 채 Pace 앱을 들여다볼 때 UI가 지저분해 보이는" 화면 품질 문제 — **오늘 밤은 알려진 이슈로 그냥
+출시하고 다음 업데이트에서 고칠지, 아니면 지금 재빌드 사이클 감수하고 고칠지 사장님 결정 대기.**

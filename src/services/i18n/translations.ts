@@ -246,9 +246,9 @@ export const translations = {
 
     onboarding: {
       overlayTitle: 'Rest, Earn, Watch',
-      overlaySubtitle: "Here's how PACE turns your downtime into more watch time.",
+      overlaySubtitle: 'PACE turns your rest time into credits — a small reward for taking a break.',
       row1Title: 'Rest tracking',
-      row1Desc: 'Put your phone down and rest time gets recorded.',
+      row1Desc: 'Flip your phone face-down and rest time gets recorded.',
       row2Title: 'Earn credits',
       row2Desc: 'Rest time earns you credits.',
       row3Title: 'Keep watching',
@@ -546,9 +546,9 @@ export const translations = {
 
     onboarding: {
       overlayTitle: '쉬고, 모으고, 이어보기',
-      overlaySubtitle: '쉬는 시간이 어떻게 더 긴 시청으로 이어지는지 알려드릴게요.',
+      overlaySubtitle: '쉬는 만큼 크레딧으로 돌려드려요 — 잠깐의 휴식에 드리는 작은 보상이에요.',
       row1Title: '휴식 측정',
-      row1Desc: '폰을 내려놓으면 휴식 시간이 기록됩니다.',
+      row1Desc: '폰 화면이 바닥을 향하게 뒤집어 놓으면 휴식 시간이 기록됩니다.',
       row2Title: '크레딧 적립',
       row2Desc: '휴식 시간만큼 크레딧을 획득합니다.',
       row3Title: '연속 시청',

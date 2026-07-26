@@ -766,3 +766,15 @@ Health Connect는 2026년 기준 정식 지원(Google Fit API는 2026년 내 폐
 재빌드 불필요, Metro로 즉시 반영 — 3번은 실기기에서 홈 화면 정상 복귀 확인함. **미검증**: 수익화
 3건의 실제 결제 흐름(RC 키가 비어있어 이번 세션에선 진짜 구매/복원을 실기기로 재현 불가) —
 RC 키 세팅 후 재검증 필요.
+
+### 2026-07-26 (오후, 이어서) — Mac 세션 (RC 키 배선 — 구독 블로커 부분해결)
+
+**[BLOCKER #2 진전] RevenueCat Public SDK 키를 `.env`에 배선함.** RC 대시보드(Apps)엔 앱/키가
+이미 있었고(문제는 대시보드가 아니라 앱 `.env`가 빈값이었음), 사장님이 Public API Key를 열어줘
+`.env` 13·14번에 입력: `EXPO_PUBLIC_RC_IOS_KEY=appl_XXEG…`, `EXPO_PUBLIC_RC_ANDROID_KEY=goog_jWJg…`
+(.env는 gitignore라 커밋 안 됨/안전, EXPO_PUBLIC이라 앱 번들에 인라인되는 공개 SDK 키). 
+- ⚠️ **EXPO_PUBLIC은 빌드시 인라인** → 값이 먹으려면 **리빌드 필요**(기존 설치본엔 아직 빈값).
+- **남은 확인(구독 완전 작동까지)**: (1) RC 대시보드 **Product catalog/Offerings에 구독 상품+오퍼링
+  구성**돼야 페이월이 목록을 받음(키만으론 부족), (2) **App Store Connect/Play Console에 구독 상품
+  실제 등록**, (3) 리빌드 후 페이월 열어 상품 뜨는지 + 샌드박스 구매/복원 실기기 테스트(양 플랫폼).
+>>>>>>> e790bf7 (docs(PM): RC Public SDK 키 .env 배선(구독 블로커 부분해결) + 남은 확인사항)

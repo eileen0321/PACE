@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
+import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useTranslation } from '../../services/i18n';
 import { colors, radius, spacing, typography } from '../../constants/theme';
+import { TERMS_OF_USE_URL, PRIVACY_POLICY_URL } from '../../constants/legal';
 
 // jlpt-master PremiumPaywallModal.tsx의 로직(로그인 필수 가드, 구매/복원 흐름)만 이식하고 비주얼
 // 처리는 이식하지 않는다 — 그라디언트/블러/컨페티는 기획서 "디자인 원칙"(No Gradients/No
@@ -129,9 +130,19 @@ export default function PaywallScreen() {
           )
         }
         ListFooterComponent={
-          <Pressable style={styles.restoreBtn} onPress={onRestore} disabled={purchasing}>
-            {purchasing ? <ActivityIndicator color={colors.textSecondary} /> : <Text style={styles.restoreText}>{t('paywall.restore')}</Text>}
-          </Pressable>
+          // App Store Guideline 3.1.2 — 자동갱신 구독은 자동갱신 고지 + 이용약관(EULA) + 개인정보처리방침
+          // 링크가 바이너리 안에 있어야 한다(없으면 거의 자동 거부). URL은 constants/legal.ts 참고.
+          <View>
+            <Pressable style={styles.restoreBtn} onPress={onRestore} disabled={purchasing}>
+              {purchasing ? <ActivityIndicator color={colors.textSecondary} /> : <Text style={styles.restoreText}>{t('paywall.restore')}</Text>}
+            </Pressable>
+            <Text style={styles.autoRenewNotice}>{t('paywall.autoRenewNotice')}</Text>
+            <View style={styles.legalRow}>
+              <Text style={styles.legalLink} onPress={() => Linking.openURL(TERMS_OF_USE_URL).catch(() => {})}>{t('paywall.termsOfUse')}</Text>
+              <Text style={styles.legalDot}> · </Text>
+              <Text style={styles.legalLink} onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => {})}>{t('paywall.privacyPolicy')}</Text>
+            </View>
+          </View>
         }
       />
     </SafeAreaView>
@@ -159,4 +170,8 @@ const styles = StyleSheet.create({
   retryText: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
   restoreBtn: { paddingVertical: spacing.md, alignItems: 'center' },
   restoreText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
+  autoRenewNotice: { color: colors.textSecondary, fontSize: 10, lineHeight: 15, textAlign: 'center', paddingHorizontal: spacing.md, opacity: 0.75 },
+  legalRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.md },
+  legalLink: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 12, textDecorationLine: 'underline' },
+  legalDot: { color: colors.textSecondary, fontSize: 12 },
 });

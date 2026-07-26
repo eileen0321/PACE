@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { PRIVACY_POLICY_URL } from '../../constants/legal';
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
@@ -389,6 +390,8 @@ export default function SettingsScreen() {
           <GlassSurface style={styles.card}>
             <ChevronRow title={t('settings.replayGuide')} onPress={() => router.push('/onboarding')} />
             <ChevronRow title={t('settings.helpCenter')} bordered onPress={() => setShowHelpCenter(true)} />
+            {/* App Store Guideline 5.1.1(i) — 계정 생성 앱은 개인정보처리방침 링크가 앱 내에 있어야 한다. */}
+            <ChevronRow title={t('settings.privacyPolicy')} bordered onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => {})} />
             <ChevronRow title={t('settings.rateApp')} bordered onPress={handleRateApp} />
             <View style={[styles.row, styles.rowLast]}>
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>

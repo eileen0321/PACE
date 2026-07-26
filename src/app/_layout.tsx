@@ -354,8 +354,9 @@ export default function RootLayout() {
             <Stack.Screen name="quick-control-sheet" options={{ presentation: 'transparentModal', animation: 'slide_from_bottom' }} />
             {/* iOS Pace Feed(자체 대체 피드 플레이어) — 2026-07-18 iOS 전략 확정. 풀스크린 재생. */}
             <Stack.Screen name="feed/index" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
-            {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. dev/shorts-poc.tsx의 __DEV__ 가드 참고. */}
-            <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />
+            {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. 화면 자체는 __DEV__ 스텁이지만
+                라우트 등록도 릴리즈에선 아예 빼서 pace://dev/shorts-poc 도달 자체를 막는다(감사 M1, 2026-07-27). */}
+            {__DEV__ && <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />}
           </Stack>
           <ToastHost />
           <DailyCheckInModal

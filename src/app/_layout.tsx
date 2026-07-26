@@ -26,6 +26,7 @@ import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
+import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { useTranslation } from '../services/i18n';
@@ -275,10 +276,11 @@ export default function RootLayout() {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
 
-  // 2026-07-26: AnimatedSplash(JS 애니메이션 스플래시) 제거 — 정적 네온 스플래시(박스 없음)가 뜬 뒤
-  // 이 레이어가 "로고를 둥근 사각 박스에 넣고 opacity 0→1로 페이드인 + 위치도 위쪽"으로 다시 그려
-  // "박스 없는 로고→빈 화면 깜빡→박스 있는 로고 점프" 번쩍임을 만들었다(사장님 지적). 정적 스플래시
-  // 하나만 남겨 깔끔하게. (expo-splash-screen이 폰트 로딩까지 정적 네온 로고를 보여주고 페이드 종료.)
+  // 스플래시: 네이티브 런치스크린은 "로고 없는 단색 #060709"(app.json splash에서 image 제거)로 두고,
+  // 브랜딩 로고는 이 AnimatedSplash(JS)가 담당한다 → 앱 실행 시 "첫 아이콘이 잠깐 떴다 사라지는"
+  // 네이티브 런치 아이콘 플래시(사장님 지적)가 사라지고, 단색 배경에서 곧바로 애니메이션 스플래시
+  // 하나만 자연스럽게 뜬다. (expo-splash-screen은 폰트 로딩 동안 단색 #060709만 유지.)
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
 
   if (!fontsLoaded) return null;
 
@@ -320,6 +322,7 @@ export default function RootLayout() {
               </Text>
             </View>
           )}
+          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

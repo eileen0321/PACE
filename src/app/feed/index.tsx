@@ -47,6 +47,7 @@ export default function PaceFeedScreen() {
   const goToPrevious = useShortsQueueStore((s) => s.goToPrevious);
   const focusSessionDurationMinutes = useSettingsStore((s) => s.settings.focusSessionDurationMinutes);
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
+  const sleepTimerMinutes = useSettingsStore((s) => s.settings.sleepTimerMinutes); // iOS 슬립 타이머(안드 parity)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
   const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
@@ -100,6 +101,18 @@ export default function PaceFeedScreen() {
   };
   // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지(정지/블랙아웃 중엔 불필요).
   useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected });
+
+  // iOS 슬립 타이머(2026-07-27, 안드로이드 parity) — 안드로이드는 오버레이 서비스가 "N분 재생 후 자동
+  // 정지"하는데 iOS엔 그 타이머가 없었다(sleepTimerMinutes를 무시). 수면감지(무진동)와 별개로, 사용자가
+  // 설정한 sleepTimerMinutes가 지나면 무조건 정지+블랙아웃해 밤새 재생을 막는다. 정지 메커니즘은 수면감지와
+  // 동일(onSleepDetected 재사용). 재생 중일 때만 타이머를 돌리고, 정지/블랙아웃/설정 OFF면 끈다. 영상
+  // 넘김(advance)엔 playing이 안 바뀌어 타이머가 리셋되지 않는다(=세션 누적 시간 기준).
+  useEffect(() => {
+    if (!playing || sleepBlackout || !sleepTimerMinutes || sleepTimerMinutes <= 0) return;
+    const id = setTimeout(() => onSleepDetected(), sleepTimerMinutes * 60 * 1000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, sleepBlackout, sleepTimerMinutes]);
 
   // 2026-07-26 사용자 지시 "안드로이드와 동일하게": 안드로이드는 Session ON일 때 감지기(스냅/손짓)를
   // 한꺼번에 켠다(PaceOverlayService.setAutoMode → start snap/handwave). iOS도 동일하게 Focus Session

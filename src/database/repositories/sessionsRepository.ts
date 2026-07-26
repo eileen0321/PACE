@@ -117,27 +117,6 @@ export async function logOverlayEvent(userId: string, sessionId: string | null, 
   );
 }
 
-// 2026-07-21 밤 감사 발견 — Settings의 "Export Data" 행이 onPress 자체가 없어 완전히 죽어있었다.
-// Privacy 섹션이 "기기 로컬에만 저장됨"을 명시하는 만큼, 그 로컬 데이터를 사용자가 직접 파일로
-// 받아볼 수 있어야 문구와 실제 동작이 일치한다 — 세션 이력 전체(동기화 여부 무관, getUnsyncedSessions
-// 와 달리 필터 없음)를 내보낸다.
-export async function getAllSessionsForExport(userId: string): Promise<ViewingSession[]> {
-  const db = await getDb();
-  const rows = await db.getAllAsync<any>(
-    `SELECT * FROM viewing_sessions WHERE user_id = ? ORDER BY started_at DESC`,
-    [userId]
-  );
-  return rows.map((r) => ({
-    id: r.id,
-    startedAt: r.started_at,
-    endedAt: r.ended_at,
-    durationSeconds: r.duration_seconds,
-    videosWatched: r.videos_watched,
-    platformApp: r.platform_app,
-    status: r.status,
-  }));
-}
-
 // 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #5) — Settings의 "설정 초기화"가
 // "모든 맞춤형 제한 및 카운터 초기화"를 약속하면서 실제로는 logout()만 호출하고 있었다(로컬 게스트라
 // 재로그인 시 동일 데이터로 그대로 복귀 — 사실상 아무것도 안 지워짐). 진짜로 사용 기록을 지운다.

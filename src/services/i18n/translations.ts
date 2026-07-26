@@ -23,9 +23,6 @@ export const translations = {
       // "Active"로 영문 유지하는 기존 관례를 그대로 따라 손대지 않음. 큰 숫자/인사말/카드 내부
       // 레이아웃(SessionHeroCard/PlatformPickerCard/QuickControlsGrid/AppHeader)은 오버플로우를
       // 실제로 일으켰던 부분이라 이번에도 건드리지 않음 — 실기기 확인 후 필요하면 후속 작업.
-      youtubeShorts: 'YouTube',
-      instagramReels: 'Instagram Reels',
-      tiktokVideoLoop: 'TikTok Video Loop',
       minUnit: 'min',
       choosePlatform: 'Choose Platform',
       tapToStart: 'Tap to Start',
@@ -156,12 +153,6 @@ export const translations = {
       permissionNeeded: 'Permission Needed',
       extendTime: 'Extend Time',
       everyNMinutes: 'Every {{n}}m',
-      healthyPause: 'Mindful Pause',
-      after18Videos: 'After 18 videos',
-      demo: 'Demo',
-      timeToPause: 'Time to Pause',
-      timeToPauseBody: "You've watched {{n}} videos continuously. Take a 2 minute breathing break.",
-      continueMindfulWatch: 'Continue Mindful Watch',
       handsFreeEnabledToast: 'Hands-Free Shorts Enabled',
     },
 
@@ -331,8 +322,10 @@ export const translations = {
       notConfigured: 'Purchases are not available in this build.',
       benefitsTitle: "What you'll get",
       benefitNoAds: 'No banner or rewarded ads',
-      benefitUnlimitedAutoNext: 'Unlimited Focus Session (no daily video cap)',
-      benefitRemoteControl: 'Hands-free control (hand-wave / Bluetooth remote)',
+      // 2026-07-27 감사 발견 — 예전 문구("일일 영상 편수 무제한")는 그 편수 제한 시스템 자체가
+      // 이미 삭제된 뒤라 "없는 제한을 없애준다"고 광고하는 셈이었다. 실제 프리미엄 혜택인
+      // Focus Session 지속시간 커스터마이징(무료는 10분 고정)으로 정정.
+      benefitUnlimitedAutoNext: 'Custom Focus Session length (free is fixed at 10 minutes)',
       benefitAdvancedSleepMode: 'Advanced Sleep Mode (customizable stillness sensitivity)',
     },
 
@@ -453,9 +446,6 @@ export const translations = {
     tabs: { home: '홈', stats: '분석', focus: '집중', settings: '설정' },
 
     home: {
-      youtubeShorts: 'YouTube',
-      instagramReels: 'Instagram Reels',
-      tiktokVideoLoop: 'TikTok Video Loop',
       minUnit: '분',
       choosePlatform: '플랫폼 선택',
       tapToStart: '탭하여 시작',
@@ -568,12 +558,6 @@ export const translations = {
       permissionNeeded: '권한 필요',
       extendTime: '시간 연장',
       everyNMinutes: '{{n}}분마다 작동',
-      healthyPause: 'Mindful Pause',
-      after18Videos: '18개 시청 후 차단',
-      demo: '데모',
-      timeToPause: 'Time to Pause',
-      timeToPauseBody: '현재 {{n}}개의 숏폼 비디오를 연속 시청하셨습니다. 안전한 도파민 보존을 위해 잠시 눈을 감고 2분간 휴식하세요.',
-      continueMindfulWatch: '시청 이어나가기',
       handsFreeEnabledToast: '핸즈프리 Shorts 활성화됨',
     },
 
@@ -723,8 +707,7 @@ export const translations = {
       notConfigured: '이 빌드에서는 결제 기능을 사용할 수 없습니다.',
       benefitsTitle: '이런 게 좋아져요',
       benefitNoAds: '배너/보상형 광고 전부 제거',
-      benefitUnlimitedAutoNext: 'Focus Session 무제한(일일 횟수 제한 없음)',
-      benefitRemoteControl: '핸즈프리 조작(손짓/블루투스 리모컨)',
+      benefitUnlimitedAutoNext: 'Focus Session 시간 자유 설정(무료는 10분 고정)',
       benefitAdvancedSleepMode: '고급 취침모드(무진동 감지 민감도 직접 설정)',
     },
 

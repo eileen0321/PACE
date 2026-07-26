@@ -356,13 +356,16 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 5. Notifications */}
+        {/* 5. Notifications — 2026-07-27 사용자 지시로 limitAlert/breakReminder 알림 토글 제거.
+            notifyLimit은 한도 도달 시 항상 뜨는 전체화면 차단(옵트아웃 불가)과 중복이었고,
+            notifyBreak은 위 "Breaks & Sleep Detection"의 간격 설정(0=OFF)과 같은 걸 두 번 끄고
+            켜는 이중 스위치라 혼란만 줬다. notifyRemaining(남은시간 알림)만 다른 곳에 없는 정보라 유지 —
+            settings.notifyLimit/notifyBreak 필드 자체는 DB/타입에 남아있지만(다른 기존 세션 마이그레이션
+            영향 없게) UI에서만 제거, 네이티브는 이미 값이 있으면 그대로 존중하므로 무해. */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.notifications')}</Text>
           <GlassSurface style={styles.card}>
             <NotifRow title={t('settings.remainingAlert')} desc={t('settings.remainingAlertDesc')} value={settings.notifyRemaining} onChange={onToggleNotif('notifyRemaining')} />
-            <NotifRow title={t('settings.limitAlert')} desc={t('settings.limitAlertDesc')} value={settings.notifyLimit} onChange={onToggleNotif('notifyLimit')} bordered />
-            <NotifRow title={t('focus.breakReminder')} desc={t('settings.breakReminderAlertDesc')} value={settings.notifyBreak} onChange={onToggleNotif('notifyBreak')} bordered />
           </GlassSurface>
         </View>
 

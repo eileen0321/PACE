@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
@@ -30,7 +29,6 @@ export default function FocusScreen() {
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
-  const [showPromptDemo, setShowPromptDemo] = useState(false);
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -100,43 +98,11 @@ export default function FocusScreen() {
               ios_backgroundColor="#262626"
             />
           </View>
-          <View style={[styles.interventionRow, styles.interventionRowBordered]}>
-            <View>
-              <Text style={styles.interventionTitle}>{t('focus.healthyPause')}</Text>
-              <Text style={styles.interventionSub}>{t('focus.after18Videos')}</Text>
-            </View>
-            <View style={styles.interventionRight}>
-              <Pressable onPress={() => setShowPromptDemo(true)}>
-                <Text style={styles.demoLink}>{t('focus.demo')}</Text>
-              </Pressable>
-              <Switch
-                value={settings.preSessionBreathing}
-                onValueChange={(v) => update({ preSessionBreathing: v })}
-                trackColor={{ true: colors.primary, false: '#262626' }}
-              />
-            </View>
-          </View>
         </GlassSurface>
 
         {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로
             들어가므로(home.tsx, iOS) 집중화면의 진입 버튼은 중복이었다. dev Shorts POC 버튼도 함께 제거. */}
       </ScrollView>
-
-      {/* Demo Mindful Break Prompt Modal */}
-      <Modal visible={showPromptDemo} transparent animationType="fade" onRequestClose={() => setShowPromptDemo(false)} statusBarTranslucent navigationBarTranslucent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, styles.modalCardIndigo]}>
-            <View style={styles.modalIconIndigo}>
-              <Feather name="alert-circle" size={24} color={colors.primary} />
-            </View>
-            <Text style={styles.modalTitle}>{t('focus.timeToPause')}</Text>
-            <Text style={styles.modalBody}>{t('focus.timeToPauseBody', { n: 18 })}</Text>
-            <Pressable onPress={() => setShowPromptDemo(false)} style={styles.modalPrimaryBtn}>
-              <Text style={styles.modalPrimaryBtnText}>{t('focus.continueMindfulWatch')}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -163,34 +129,7 @@ const styles = StyleSheet.create({
   sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
 
-  extendCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  extendLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  extendLabel: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB', letterSpacing: 0.5, textTransform: 'uppercase' },
-  extendChips: { flexDirection: 'row', gap: 6 },
-  extendChip: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.chip, paddingHorizontal: spacing.sm, paddingVertical: 6 },
-  extendChipText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8', letterSpacing: 0.5 },
-
   interventionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
-  interventionRowBordered: { borderTopWidth: 1, borderTopColor: colors.borderSubtle, marginTop: spacing.xs, paddingTop: spacing.md },
   interventionTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   interventionSub: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8', marginTop: 2 },
-  interventionRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  demoLink: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, textDecorationLine: 'underline', letterSpacing: 0.5, textTransform: 'uppercase' },
-
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  modalCard: { width: '100%', maxWidth: 320, borderRadius: 28, padding: 24, alignItems: 'center', gap: spacing.md, borderWidth: 1 },
-  modalCardIndigo: { backgroundColor: colors.card, borderColor: `${colors.primary}66` },
-  modalIconIndigo: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primaryTint, borderWidth: 1, borderColor: `${colors.primary}33`, alignItems: 'center', justifyContent: 'center' },
-  modalTitle: { fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, textAlign: 'center' },
-  modalBody: { fontSize: 12, color: '#D1D5DB', textAlign: 'center', lineHeight: 18 },
-  modalPrimaryBtn: { width: '100%', backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.sm + 4, alignItems: 'center' },
-  modalPrimaryBtnText: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF', letterSpacing: 0.5, textTransform: 'uppercase' },
-
-  feedEntryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.md, marginBottom: spacing.sm },
-  devEntryBtn: { borderColor: 'rgba(245,158,11,0.25)', borderStyle: 'dashed' },
-  feedEntryLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
-  feedEntryTextWrap: { flex: 1 },
-  feedEntryIcon: { width: 36, height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)' },
-  feedEntryTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
-  feedEntrySub: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, marginTop: 2 },
 });

@@ -67,17 +67,19 @@ export function AppHeader({ userEmail }: { userEmail: string }) {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 12 },
+  // 2026-07-27 사용자 지시 — "PACE" 타이틀이 너무 작고 헤더 영역 자체도 왜소해 보인다는 지적으로
+  // 전반적으로 키움(wordmark 24→32, subtitle/motto도 비례해 살짝 키움, 상하 padding도 확대).
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 18 },
   // 2026-07-22 사용자 지시 — "PACE" 타이틀 위치/정렬 수정. wordmarkRow가 기존엔 magin-top 마이너스
   // 값으로 점(•)을 억지로 끌어올리는 방식이었는데, 폰트마다 baseline이 미묘하게 달라 실기기에서
   // PACE 대문자와 모토 텍스트가 어긋나 보였다 — flex 정렬(alignItems:'flex-end')로 두 텍스트의
   // 실제 하단선을 맞추는 방식으로 교체(고정폭 매직넘버 대신 상대 정렬).
   titleBlock: { flexShrink: 1 },
-  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
-  wordmark: { fontSize: 24, lineHeight: 26, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -1.2, textTransform: 'uppercase' },
-  mottoDot: { fontSize: 14, lineHeight: 18, color: colors.primary },
-  motto: { flexShrink: 1, fontSize: 11, lineHeight: 18, fontFamily: typography.bodyFontFamilySemibold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 1 },
-  subtitle: { color: colors.textTertiary, fontSize: 9, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 1.8, textTransform: 'uppercase', marginTop: 6 },
+  wordmarkRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  wordmark: { fontSize: 32, lineHeight: 34, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -1.4, textTransform: 'uppercase' },
+  mottoDot: { fontSize: 16, lineHeight: 22, color: colors.primary },
+  motto: { flexShrink: 1, fontSize: 12, lineHeight: 22, fontFamily: typography.bodyFontFamilySemibold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 1 },
+  subtitle: { color: colors.textTertiary, fontSize: 10, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 1.8, textTransform: 'uppercase', marginTop: 8 },
   avatarWrap: { alignItems: 'flex-end' },
   avatar: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 14, fontFamily: typography.bodyFontFamilyBold, color: colors.primary, letterSpacing: 0.7 },

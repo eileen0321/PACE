@@ -67,10 +67,15 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled,
           <Text style={styles.statValue}>{minutesWatched}m</Text>
         </View>
         <View style={styles.statDivider} />
-        {/* 쉬는시간(내려놓은 시간) — Flip Mode 누적. 사용시간(위 큰 숫자)과 짝을 이뤄 세션 상태에 표시. */}
+        {/* 쉬는시간(내려놓은 시간) — Flip Mode 누적. 사용시간(위 큰 숫자)과 짝을 이뤄 세션 상태에 표시.
+            2026-07-27 사용자 지적 — 왼쪽(Watched Today)은 라벨+값 2줄 스택인데 이쪽만 한 줄이라
+            bottomRow의 alignItems:'center' 기준으로 두 줄 블록 중간에 붕 떠 라벨/값 어느 쪽과도 안
+            맞았다. 같은 라벨-값 2줄 구조로 맞추고 아래 bottomRow도 flex-start로 상단 정렬. */}
         <View style={styles.restRight}>
-          <Text style={styles.restIcon}>🌙</Text>
-          <Text style={styles.restLabel}>REST </Text>
+          <View style={styles.statLabelRow}>
+            <Text style={styles.restIcon}>🌙</Text>
+            <Text style={styles.restLabel}>REST</Text>
+          </View>
           <Text style={styles.restValue}>{restLabel}</Text>
         </View>
       </View>
@@ -91,16 +96,16 @@ const styles = StyleSheet.create({
   percentLabel: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1, textTransform: 'uppercase', marginTop: 4 },
   track: { height: 8, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.pill, overflow: 'hidden', marginBottom: spacing.md },
   fill: { height: '100%', borderRadius: radius.pill },
-  bottomRow: { flexDirection: 'row', alignItems: 'center', paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  bottomRow: { flexDirection: 'row', alignItems: 'flex-start', paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
   statCol: { flex: 1, gap: 4 },
   statLabelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   dotWrap: { width: 8, height: 8, alignItems: 'center', justifyContent: 'center' },
   dotPing: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: colors.successLight },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
-  restRight: { flexDirection: 'row', alignItems: 'center' },
+  restRight: { alignItems: 'flex-end', gap: 4 },
   restIcon: { fontSize: 11, marginRight: 4 },
-  restLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1 },
-  restValue: { fontSize: 12, fontFamily: typography.displayFontFamily, color: '#818CF8', letterSpacing: 0.3 },
+  restLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 0.5, textTransform: 'uppercase' },
+  restValue: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8' },
   statLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 0.5, textTransform: 'uppercase' },
   statValue: { fontSize: 15, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB' },
   statDivider: { width: 1, alignSelf: 'stretch', backgroundColor: 'rgba(255,255,255,0.08)', marginHorizontal: spacing.md },

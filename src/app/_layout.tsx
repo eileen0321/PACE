@@ -27,6 +27,7 @@ import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { useTranslation } from '../services/i18n';
@@ -194,7 +195,7 @@ export default function RootLayout() {
       } catch {
         // 정리 실패는 조용히 무시 — 다음 콜드스타트에 다시 시도되고, 앱 사용 자체를 막으면 안 됨.
       }
-    });
+    }).catch(() => {}); // 감사 MED — settingsReady(=initUser) rejection 시 unhandled 방지
     const subscriptionReady = initSubscription();
     // 2026-07-26 사용자 지시("무료일땐 Focus Session 10분 고정") — loadSettings()가 먼저 끝나야
     // (그래야 focusSessionDurationMinutes가 저장된 실제 값으로 채워짐) 아래 강제 적용이 방금 로드된
@@ -202,7 +203,7 @@ export default function RootLayout() {
     Promise.all([settingsReady, subscriptionReady]).then(() => {
       const isPremium = useSubscriptionStore.getState().isPremium;
       enforceFreeFocusSessionDuration(isPremium);
-    });
+    }).catch(() => {}); // 감사 MED — 체인 rejection 시 unhandled 방지
     loadDailyBonus();
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
@@ -334,6 +335,7 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
+    <ErrorBoundary>
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#060709' }} onLayout={onLayoutRootView}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
@@ -382,6 +384,7 @@ export default function RootLayout() {
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
 

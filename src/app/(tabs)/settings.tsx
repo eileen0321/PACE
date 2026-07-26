@@ -12,7 +12,6 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
-import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -26,13 +25,6 @@ import { GlassSurface } from '../../components/ui/GlassSurface';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
-
-// getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
-// Date.getDay()와 동일)를 실제 번역 키로 매핑 — 요일 라벨이 언어 설정과 무관하게 하드코딩 한글로
-// 고정돼 있던 문제 수정.
-const DAY_INDEX_KEYS: TranslationKey[] = [
-  'stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat',
-];
 
 // 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애") — faqQ3/A3가 예전엔 "Bluetooth 이어폰
 // 리모컨 버튼으로 Shorts를 넘긴다"는, capabilities.supportsHandsFreeControl(하드웨어 미디어 버튼
@@ -87,9 +79,6 @@ export default function SettingsScreen() {
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
-  const attendanceHistory = useAttendanceStore((s) => s.history);
-  const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
-  const currentStreak = getCurrentStreak(attendanceHistory);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
@@ -222,45 +211,8 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* 1.5 Weekly Attendance — 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui 만들어봐"),
-            이후 "요즘 트렌드 UI냐"는 질문에 스트릭 숫자 강조 + 연속된 날끼리 이어지는 선으로 보강
-            (Duolingo류 스트릭 UI 패턴 — 단, Pace의 Flat/No-Gradient 원칙은 유지). */}
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.weeklyAttendance')}</Text>
-          <GlassSurface style={[styles.card, styles.singleCard]}>
-            {currentStreak > 0 && (
-              <View style={styles.attendanceStreakRow}>
-                <Feather name="zap" size={14} color={colors.successLight} />
-                <Text style={styles.attendanceStreakText}>{t('settings.attendanceStreak', { n: currentStreak })}</Text>
-              </View>
-            )}
-            <View style={styles.attendanceRow}>
-              {getLast7Days(attendanceHistory).map((day) => (
-                <View key={day.date} style={styles.attendanceDay}>
-                  <Text style={styles.attendanceDayLabel}>{t(DAY_INDEX_KEYS[day.dayIndex])}</Text>
-                  <View style={styles.attendanceDotColumn}>
-                    {/* 연속된 출석일끼리 칸 전체 폭의 바가 서로 맞닿아 하나의 선처럼 이어짐 —
-                        빠진 날은 바 자체가 없어 그 지점에서 자연스럽게 끊김. */}
-                    {day.attended && <View style={styles.attendanceConnector} />}
-                    <View
-                      style={[
-                        styles.attendanceDot,
-                        day.attended && styles.attendanceDotFilled,
-                        day.isToday && styles.attendanceDotToday,
-                      ]}
-                    >
-                      {day.attended && <Feather name="check" size={12} color="#0B0C0F" />}
-                    </View>
-                  </View>
-                </View>
-              ))}
-            </View>
-            <View style={styles.attendanceFooter}>
-              <Feather name="star" size={12} color={colors.successLight} />
-              <Text style={styles.attendanceFooterText}>{t('settings.attendanceBonusCredits', { n: bonusCredits })}</Text>
-            </View>
-          </GlassSurface>
-        </View>
+        {/* 2026-07-27 사용자 지시로 Weekly Attendance는 Focus 탭으로 이동(focus.tsx 참고) — 설정값이
+            아니라 "매일 확인하는 상태/습관 기록"이라 Settings보다 Focus의 실시간 상태 성격에 더 맞음. */}
 
         {/* 2. Session Length — 2026-07-27 사용자 지시: 기존 "기본 세션 설정" 5개 항목이 한 카드에
             몰려있고 특히 "Sleep Timer"/"Advanced Sleep Mode"가 이름만 봐선 뭐가 다른지 구분이
@@ -635,20 +587,6 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderRadius: radius.card, paddingHorizontal: 20 },
   singleCard: { paddingVertical: 20 },
   accountCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  // 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui") — 요일 7칸, 출석한 날은 채운 원+체크,
-  // 오늘은 테두리로 강조. 하단에 누적 보너스 크레딧(useAttendanceStore.bonusCredits) 표시.
-  attendanceStreakRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.md },
-  attendanceStreakText: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
-  attendanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  attendanceDay: { alignItems: 'center', gap: 6, flex: 1 },
-  attendanceDayLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilySemibold, color: colors.textTertiary },
-  attendanceDotColumn: { width: '100%', alignItems: 'center', justifyContent: 'center' },
-  attendanceConnector: { position: 'absolute', left: 0, right: 0, top: '50%', height: 2, marginTop: -1, backgroundColor: colors.successLight },
-  attendanceDot: { width: 28, height: 28, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
-  attendanceDotFilled: { backgroundColor: colors.successLight, borderColor: colors.successLight },
-  attendanceDotToday: { borderColor: colors.primary, borderWidth: 1.5 },
-  attendanceFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
-  attendanceFooterText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },
   accountLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, flex: 1 },
   avatar: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: colors.primary, fontFamily: typography.displayFontFamily, fontSize: 16 },

@@ -1213,3 +1213,21 @@ UI/로직이 계속 갈라짐.
   온보딩/홈 분기). 시나리오 자체는 양 플랫폼 동일함 — 문제는 "새로 추가한 컴포넌트 미푸시"뿐.
 - ⚠️ 앞으로 공통 컴포넌트(src/components/**, src/app/(tabs)/**, src/app/onboarding/**, 스토어/훅) 변경은
   플랫폼 무관하므로 **작업 즉시 커밋·푸시**. 안 그러면 사장님이 두 폰 번갈아 볼 때마다 "iOS엔 없네"가 반복됨.
+
+### 2026-07-27 — Windows 세션 ("현재 문제점 개선점 확인해" 감사 + 정책 오판 정정: Daily Limit 연장은 버그가 아님)
+
+전체 감사(에이전트 위임) 결과 발견분 중 죽은 코드는 바로 정리: `getAllSessionsForExport()`(Export Data
+버튼 삭제 후 호출자 0), `home.youtubeShorts`/`instagramReels`/`tiktokVideoLoop`(YouTube 전용 확정 후
+0참조), `paywall.benefitRemoteControl`(핸즈프리 무료 전환 후 0참조) 삭제. `paywall.benefitUnlimitedAutoNext`
+문구가 이미 없어진 "일일 영상 편수 무제한"을 광고하고 있어 실제 혜택(Focus Session 시간 자유 설정,
+무료는 10분 고정)으로 정정.
+
+**중요 정정 — Daily Limit 팝업(Home `LimitReachedOverlay`)/오버레이 펼침카드의 "+5·10·20·30분
+Extend"를 어제 focus.tsx의 "Extend Time" 삭제와 같은 기준(광고/프리미엄 게이팅 없는 한도 무력화
+구멍)으로 처음에 "버그"라고 잘못 판단했었다.** 사장님이 정정: **Focus Session은 Pace가 제공하는
+부가기능이라 연장에 광고/크레딧을 요구하는 게 맞지만(`FocusSessionExtendModal`이 이미 그렇게 함),
+Daily Limit은 Pace가 뭘 주는 게 아니라 그냥 원래 하던 YouTube 시청이 계속되는 것뿐이라 여기에 광고를
+끼워 넣으면 사용자가 그냥 앱을 이탈해버릴 뿐**("포커스가 광고 대상이지 쇼츠를 유튭앱으로 보는 것처럼
+보는 건 막는 대상이 아니잖아"). → **결론: Home 팝업/오버레이 펼침카드의 Daily Limit 자유 연장은
+의도된 설계이며 코드 변경 불필요.** 앞으로 이 둘을 다시 "구멍"으로 오인하지 말 것 — Focus Session
+연장(게이팅 대상)과 Daily Limit 연장(자유, 게이팅 대상 아님)을 혼동하는 게 이번 오판의 원인이었다.

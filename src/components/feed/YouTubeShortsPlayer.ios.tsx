@@ -59,42 +59,47 @@ const INJECTED_JS = `
     // ⭐ 2026-07-26: mediaPlaybackRequiresUserAction=false라 "소리 자동재생"이 허용될 수 있다(리서치 확인).
     // 예전엔 무조건 muted=true로 시작해 매 영상 무음이었다 → 먼저 소리로 재생 시도. 차단되면(iOS 정책)
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
-    // 음소거 아이콘(unmute 버튼)만 "정확히" 클릭해 유튜브 내부 음소거 상태를 동기화 → "탭하여 음소거
-    // 해제" 오버레이 제거(사용자 지시). 숨기거나 다른 요소 건드리지 않음 — aria-label로 그 버튼만 콕.
-    // 유튜브 "탭하여 음소거 해제" 버튼 = 클래스 .ytp-unmute (aria-label 비어있어 클래스로 잡음, 실기기
-    // 로그로 확인). 이걸 클릭하면 유튜브 내부 음소거 상태가 풀리고 팝업이 사라진다. 소리 확인 후에만.
-    var unmuteLogged = 0;
-    function tapUnmute() {
-      try {
-        // ⚠️ 클릭 금지(문서 클릭 리스너 트리거로 이벤트 루프/내비게이션 → "쇼츠 불러오기 실패" 유발했음).
-        // 소리는 이미 v.muted=false로 나므로, 보이는 "탭하여 음소거 해제" 팝업 요소를 CSS로 숨기기만 한다.
-        var all = document.querySelectorAll('div, span, button, [role="button"], a');
-        for (var i = 0; i < all.length; i++) {
-          var el = all[i];
-          if (el.offsetParent === null) continue; // 안 보이면 skip
-          var t = (el.textContent || '');
-          if (t.length > 40) continue; // 큰 컨테이너 말고 팝업 자체(짧은 텍스트)만
-          if (t.indexOf('음소거 해제') >= 0 || t.indexOf('음소거를 해제') >= 0 || t.toLowerCase().indexOf('unmute') >= 0 || (t.indexOf('탭하여') >= 0 && t.indexOf('음소거') >= 0)) {
-            if ((unmuteLogged++) % 10 === 0) send({ type: 'domlog', text: 'MUTEPOP ' + el.tagName + ' cls=' + (el.className || '').toString().slice(0, 40) + ' txt=' + t.slice(0, 24) });
-            el.style.setProperty('display', 'none', 'important');
-            break;
-          }
-        }
-      } catch (e) {}
-    }
+    // ⚠️ "탭하여 음소거 해제" 팝업을 클릭/숨김으로 없애려던 시도는 전부 실패·역효과였다:
+    //   - .ytp-unmute 클릭 → 문서 클릭 리스너 무한 트리거 → 이벤트 루프/내비게이션 → "쇼츠 불러오기 실패"
+    //   - 팝업 텍스트 요소 display:none → 그 요소가 영상 컨테이너를 포함 → 영상 멈추고 소리만 남음
+    //   결론: 팝업은 유튜브 UI라 건드리면 재생이 깨진다. 소리는 이미 나므로 팝업(껍데기)은 그냥 둔다.
     var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(tapUnmute, ms); }); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });
     }
     tryAudible();
+    // ── "탭하여 음소거 해제" 팝업 제거: CSS 주입만(안전). ───────────────────────────────
+    // 웹 리서치 결론: JS로 클릭/display:none 하면 유튜브 UI 컨테이너(영상 포함)를 건드려 재생이 깨진다.
+    // CSS <style>은 "지정 클래스에만" 적용돼 영상 컨테이너를 절대 못 건드리므로 안전. 잘못된 선택자는 무해(no-op).
+    try {
+      var st = document.createElement('style');
+      st.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon,.ytp-mute-effect,.ytp-large-play-button-bg{display:none!important}';
+      (document.head || document.documentElement).appendChild(st);
+    } catch (e) {}
+    // 진단(읽기전용, 클릭/숨김 없음): 보이는 "음소거 해제" 요소의 정확한 태그+클래스 체인을 로그로 확인.
+    // → 위 CSS가 못 잡으면 이 로그의 클래스로 선택자를 좁혀 다음 빌드에서 정확히 숨긴다.
+    setTimeout(function () {
+      try {
+        var all = document.querySelectorAll('div,span,button,[role="button"]');
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i]; if (el.offsetParent === null) continue;
+          var t = (el.textContent || ''); if (t.length > 30) continue;
+          if (t.indexOf('음소거 해제') >= 0 || (t.indexOf('탭하여') >= 0 && t.indexOf('음소거') >= 0) || t.toLowerCase().indexOf('unmute') >= 0) {
+            var p = el.parentElement, gp = p && p.parentElement;
+            send({ type: 'domlog', text: 'MUTEPOP tag=' + el.tagName + ' cls=[' + (el.className || '') + '] p=[' + (p ? p.className : '') + '] gp=[' + (gp ? gp.className : '') + '] txt=' + t.slice(0, 20) });
+            break;
+          }
+        }
+      } catch (e) {}
+    }, 2500);
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
-    function unmuteOnce() { audibleOk = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); tapUnmute(); ad('gesture-unmute'); }
+    function unmuteOnce() { audibleOk = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); ad('gesture-unmute'); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
@@ -103,7 +108,7 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     setInterval(function () {
       if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
-      if (audibleOk) tapUnmute(); // 오버레이(unmute 버튼)가 있으면 그것만 클릭해 제거. 없으면 no-op.
+
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
       if (v.duration > 0) send({ type: 'progress', value: t / v.duration });

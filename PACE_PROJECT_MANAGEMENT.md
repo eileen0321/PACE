@@ -1412,3 +1412,19 @@ remaining 계산도 맞음(안드 #1처럼 0으로 새지 않음). **Windows 세
 `activateKeepAwakeAsync('pace-feed')`, 정지/블랙아웃 시 해제 → 켜둔 채 잠든 영상을 화면 유지로 감지→
 종료→잔 시각 기록 가능. 안드로이드는 네이티브 포그라운드 서비스라 무관(패리티 유지). 네이티브 모듈
 추가라 재빌드(pod install) 필요 — 진행 중.
+
+### 2026-07-27 낮 — Mac 세션 하루종일 전수검사 (5도메인 심층감사)
+
+**감사1: 릴리즈 네이티브 설정 — BLOCKER 없음 ✅**
+- ✅ **광고 게이팅 안전**: `EXPO_PUBLIC_USE_REAL_ADS==='true'`일 때만 실광고. eas.json dev/preview=false, production=true.
+  로컬 `expo run:ios`는 var 미설정→TestIds. adsConfig.ts가 테스트기기 등록까지 해 이중 안전망. **디버그빌드에서
+  실광고 뜰 경로 없음**(사장님 최대 우려 해소).
+- ✅ 권한 사용설명(카메라/마이크/모션) 전부 있음·구체적. GADApplicationIdentifier 정상. 버전 1.0.1/빌드1 일관.
+  번들ID·URL스킴·구글 reversed-client-ID·Apple Sign In 전부 정상.
+- ✅ **[적용됨 342258a]** app.json ios에 `appleTeamId: 328BF833XS` 추가 — prebuild --clean 시 위젯 확장 서명실패 방지.
+- 🟡 **[사장님/선택] SKAdNetworkItems 없음** — 거부/크래시 아님. iOS 광고 설치기여(attribution)가 없어 AdMob
+  fill/eCPM(광고수익)에 불리. `app.json > ios.infoPlist.SKAdNetworkItems`에 구글 표준 SKAdNetwork ID 목록 추가
+  권장(순수 수익 최적화, 릴리즈 차단 아님). 사장님이 최신 구글 목록으로 넣을지 결정.
+- 🟢 [정보] aps-environment=development(EAS가 archive 시 production 리맵 — 프로드 푸시 한번 확인). track-player는
+  iOS에서 실제 미사용(실제 핸즈프리는 PaceGesture Swift) — UIBackgroundModes 불필요가 맞음. 원하면 의존성 제거로
+  바이너리 슬림 가능. ATT 없음 = 비개인화 광고 설정으로 올바름(개인화 전환 시엔 문자열+ATT 호출 필수).

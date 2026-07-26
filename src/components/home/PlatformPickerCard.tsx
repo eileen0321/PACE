@@ -17,7 +17,7 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 2026-07-22 사용자 지시 — "YouTube with PACE" 카드가 "그냥 열기" 카드와 시각적으로 너무
 // 비슷해서(제목+배지+상태줄만 다름) 실제로 뭐가 다른지 한눈에 안 들어온다는 지적. GUARDED 카드에만
 // 실제로 켜지는 부가기능(핸즈프리 컨트롤/포커스 세션)을 작은 칩으로 노출해 차별화.
-export function PlatformPickerCard({ title, badge, statusText, cover, gradientFrom, onPress, isActive, features }: {
+export function PlatformPickerCard({ title, badge, statusText, cover, gradientFrom, onPress, isActive, features, largeButton }: {
   title: string;
   badge: string;
   statusText: string;
@@ -26,6 +26,8 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
   onPress: () => void;
   isActive?: boolean;
   features?: string[];
+  /** 2026-07-26 사용자 지시 — 카드가 하나뿐인 화면(Home)에서는 이 유일한 재생 버튼을 더 크게. */
+  largeButton?: boolean;
 }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
@@ -70,8 +72,8 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
                   </View>
                 )}
               </View>
-              <View style={styles.playButton}>
-                <Ionicons name="play" size={14} color="#FFFFFF" style={styles.playIcon} />
+              <View style={[styles.playButton, largeButton && styles.playButtonLarge]}>
+                <Ionicons name="play" size={largeButton ? 22 : 14} color="#FFFFFF" style={styles.playIcon} />
               </View>
             </LinearGradient>
           </ImageBackground>
@@ -111,5 +113,6 @@ const styles = StyleSheet.create({
   featureChip: { borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingVertical: 2 },
   featureChipText: { fontSize: 8, fontFamily: typography.bodyFontFamilyBold, color: '#E5E7EB', letterSpacing: 0.3 },
   playButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  playButtonLarge: { width: 52, height: 52, borderRadius: 26 },
   playIcon: { marginLeft: 2 }, // 원본 ml-0.5(2px) — 삼각형 아이콘의 시각적 무게중심 보정
 });

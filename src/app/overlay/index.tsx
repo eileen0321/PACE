@@ -46,6 +46,11 @@ export default function OverlaySessionScreen() {
   const [expanded, setExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [videoIndex, setVideoIndex] = useState(0);
+  // 2026-07-26 사용자 지적("화면 작아지고 나면 앱화면이 까만색으로 보임") — 아래 useFocusEffect가
+  // Home으로 router.replace하기 전까지 이 화면의 DEV SIMULATOR 검은 배경이 한두 프레임 그대로
+  // 커밋돼 보인다(리다이렉트는 화면전환 애니메이션 뒤에야 완료됨). 리다이렉트가 걸리는 순간
+  // 이 값을 true로 올려 아래 렌더가 즉시 아무것도 안 그리게(null) 해서 그 검은 프레임 자체를 없앤다.
+  const [redirectingToHome, setRedirectingToHome] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   // 2026-07-26 감사 발견 — 기본값이 'manual_stop'이면, Activity가 백그라운드 sleep-detect 직후
   // Recents에서 스와이프돼 destroy될 때(=consumeExpired 효과가 AppState 'active' 전이를 한 번도
@@ -62,6 +67,14 @@ export default function OverlaySessionScreen() {
   // 시작됐는지"를 isSessionActive만으로 구분할 수 없다(0 도달로 자동종료된 순간에도 동일값이 됨).
   // 이 ref로 "startSession()이 실제로 호출됐는지"를 별도로 추적한다.
   const hasSessionStartedRef = useRef(false);
+  // 2026-07-26 감사 발견(치명적 회귀) — 아래 "black screen 리다이렉트"가 이 화면을 router.replace로
+  // 나가면서 컴포넌트를 언마운트시키는데, 그 언마운트 cleanup이 무조건 overlayService.endSession()
+  // (네이티브 ACTION_STOP — 알약/틱 알람/추적 전부 종료)을 불렀다 — 즉 "화면만 Home으로 바꾸고
+  // 세션은 그대로 두려던" 원래 의도와 정반대로, 리다이렉트할 때마다 진짜 세션을 죽이고 있었다
+  // (실기기 재현: 오버레이 알약이 사라지고 dumpsys alarm에 PaceTickReceiver reason=alarm_cancelled가
+  // 남음). 이 ref가 true면 cleanup이 "진짜 종료"가 아니라 "그냥 화면 전환"임을 알고 네이티브
+  // 종료/DB 세션-종료 기록을 스킵한다.
+  const keepSessionAliveOnUnmountRef = useRef(false);
 
   // 2026-07-22 실기기 검증 중 발견 — 세션이 콜드 스타트로 곧장 이 화면부터 시작된 경우(탭 화면을
   // 거치지 않아 네비게이션 히스토리가 비어있음) router.back()이 "GO_BACK 처리 안 됨" 개발자 경고를
@@ -83,6 +96,8 @@ export default function OverlaySessionScreen() {
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS === 'android' && overlayService.supportsSystemOverlay && hasSessionStartedRef.current) {
+        keepSessionAliveOnUnmountRef.current = true;
+        setRedirectingToHome(true);
         router.replace('/(tabs)/home');
       }
     }, [router])
@@ -190,6 +205,10 @@ export default function OverlaySessionScreen() {
 
     return () => {
       clearInterval(tickInterval);
+      // 2026-07-26 감사 발견(치명적 회귀, 위 keepSessionAliveOnUnmountRef 선언부 참고) — 위
+      // useFocusEffect가 "그냥 화면만 Home으로 바꾸는" 리다이렉트를 걸어둔 상태면, 아래 세션-종료
+      // 로직(DB 기록/네이티브 ACTION_STOP)을 전부 건너뛴다 — 실제로는 세션이 안 끝났으므로.
+      if (keepSessionAliveOnUnmountRef.current) return;
       if (sessionIdRef.current && user.id) {
         const sessionId = sessionIdRef.current;
         const userId = user.id;
@@ -303,6 +322,8 @@ export default function OverlaySessionScreen() {
   };
 
   const video = CURATED_VIDEOS[videoIndex];
+
+  if (redirectingToHome) return null;
 
   return (
     <View style={styles.container}>

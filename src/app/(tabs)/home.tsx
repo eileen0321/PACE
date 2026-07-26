@@ -209,13 +209,6 @@ export default function HomeScreen() {
     router.push({ pathname: '/overlay', params: { platform } });
   }, [connectingPlatform, router]);
 
-  // "YouTube"(그냥 열기) 카드 — Android는 Pace 추적 없이 유튜브 앱만 연다. iOS엔 "타 앱 위 오버레이"가
-  // 없으므로(그리고 launchPlatformApp이 non-Android no-op이라 버튼이 죽어 있었음 — 감사발견) 인앱
-  // Pace Feed로 보낸다.
-  const openPlainYoutube = useCallback(() => {
-    if (Platform.OS === 'ios') { router.push('/feed'); return; }
-    launchPlatformApp('youtube').catch(() => {});
-  }, [router]);
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
     if (isLimitReached) {
@@ -250,7 +243,7 @@ export default function HomeScreen() {
   // 판단해 "YouTube Only"로 MVP 방향 확정. Instagram/TikTok 카드는 완전히 제거하고, 대신 YouTube를
   // "그냥 열기"(추적/차단 없음) vs "PACE와 함께"(기존 세션 추적+오버레이+한도 집행) 두 모드로 분리 —
   // Pace의 핵심 가치(한도 집행)가 필요 없는 사용자도 존재할 수 있다는 판단.
-  const connectingCard = connectingPlatform ? { title: 'YouTube with PACE' } : null;
+  const connectingCard = connectingPlatform ? { title: 'Shorts with PACE' } : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -274,18 +267,13 @@ export default function HomeScreen() {
           </View>
         </View>
         <View style={styles.platformStack}>
+          {/* 2026-07-26 사용자 지시 — "그냥 열기"(추적 없음) 카드는 삭제, 단일 카드로 통합해
+              "Shorts with PACE"로 개명. 눌렀을 때 동작은 기존 "YouTube with PACE" 카드와 동일
+              (onSelectPlatform → Android 오버레이 / iOS Pace Feed 웹뷰). 카드가 하나뿐인 유일한
+              기본 액션이라 재생 버튼도 더 크게(styles.playButtonLarge, PlatformPickerCard 참고). */}
           <PlatformPickerCard
-            key="youtube-plain"
-            title="YouTube"
-            badge="OPEN"
-            statusText="▶ No tracking, just watch"
-            cover={YOUTUBE_COVER}
-            gradientFrom="rgba(220,38,38,0.35)"
-            onPress={openPlainYoutube}
-          />
-          <PlatformPickerCard
-            key="youtube-pace"
-            title="YouTube with PACE"
+            key="shorts-with-pace"
+            title="Shorts with PACE"
             badge="GUARDED"
             statusText={
               activeSessionPlatform === 'youtube'
@@ -296,13 +284,14 @@ export default function HomeScreen() {
                 // 노출하지 않는다. iOS는 기존 그대로.
                 : capabilities.supportsHandsFreeControl && isBluetoothConnected
                   ? '🎧 Hands-Free Ready'
-                  : '▶ Tracks time & enforces limits'
+                  : 'Track viewing time and build healthier habits.'
             }
             cover={YOUTUBE_COVER}
-            gradientFrom="rgba(88,86,214,0.35)"
+            gradientFrom="rgba(220,38,38,0.35)"
             onPress={() => onSelectPlatform('youtube')}
             isActive={activeSessionPlatform === 'youtube'}
             features={[...(capabilities.supportsHandsFreeControl ? ['🎧 Hands-Free'] : []), '⏱ Focus Session']}
+            largeButton
           />
         </View>
 

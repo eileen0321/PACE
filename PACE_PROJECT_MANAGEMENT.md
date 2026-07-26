@@ -850,3 +850,62 @@ reached처럼 정당하게 끝난 게 아니라 그냥 프로세스가 죽어서
 낮지만, **다음 세션에서 실기기로 직접 재현 검증 권장**: ①"YouTube with PACE"로 세션 시작 →
 ②최근 앱 목록에서 Pace를 위로 스와이프해 완전히 종료 → ③Pace를 다시 열기 → 오버레이가 자동으로
 다시 뜨는지 확인.
+
+### 2026-07-26 (밤) — Windows 세션 (오버레이 소실 — 세 번째 케이스 발견, 🔴 미해결로 남김)
+
+사장님이 실기기에서 또 오버레이 소실을 재현 — 이번엔 위 두 경우(①리사이즈로 뷰만 떨어짐,
+②프로세스 자체가 죽음) 어느 쪽도 아닌 **세 번째 케이스**였음을 실기기로 확인:
+
+- `ps -A`: 메인 프로세스는 살아있음(안 죽음).
+- `dumpsys activity services`: **`PaceOverlayService`가 서비스 목록에 아예 없음**(오버레이
+  서비스만 선택적으로 죽음, 프로세스는 안 건드림) — Samsung이 백그라운드 서비스를 개별적으로
+  솎아내는, 폰 전체 킬보다 더 교묘한 케이스.
+- `SharedPreferences`의 `session_active`는 여전히 `true`(stale) — JS DB 세션도 안 끝난 채(orphan
+  아님) 방치 상태라 위 자동 재개 로직(정확히 orphan 1개 조건)도 해당 안 됨.
+- **복구 시도 전부 실패**: `am start-foreground-service`로 `ACTION_TICK` 직접 발사 시도 →
+  `Error: Requires permission not exported` + `ServiceRecord`가 `app=null`인 유령 상태로만 등록됨
+  (adb로 비-export 서비스를 직접 못 깨움, 진짜 성공 아님). Pace 앱을 포그라운드로 가져와도(단순
+  Activity 재방문만으로는 서비스 재시작 트리거 없음) 저절로 안 살아남.
+- **당장의 해결**: 세션을 수동으로 새로 시작(YouTube with PACE 다시 탭)하면 즉시 정상 복구됨
+  (알약 재등장, 추적 재개) — 근본 수정은 아니고 임시 해결.
+
+**🔴 미해결 — 다음 세션 우선 조사 필요**: `PaceOverlayService`가 메인 프로세스는 안 죽었는데
+서비스만 독립적으로 죽는 조건을 아직 특정 못 함(로그 버퍼가 기기 시스템 노이즈로 몇 초 안에
+밀려나 버려 `onDestroy` 호출 시점을 못 잡음). 후보 원인: (a) Samsung 자체 메모리 관리가
+포그라운드 서비스라도 낮은 importance로 보고 개별 회수, (b) 알림 채널 importance가 낮게
+설정돼(`mImportance=2`, dumpsys notification 확인) 시스템이 "안 중요한 서비스"로 우선 정리 대상
+삼음, (c) YouTube의 PIP 전환 자체가 메모리 압박을 유발해 그 타이밍에 죽었을 가능성(정황상 이번
+재현도 PIP 들어갔다 나온 직후). AlarmManager 기반 `ACTION_TICK` 복구 경로(PaceTickReceiver)가
+이론상 있어야 하는데 자연 발동을 기다려도 살아나지 않았음 — 그 알람이 실제로 예약돼 있는지
+(`adb shell dumpsys alarm | grep strides7`) 다음 세션에서 먼저 확인 권장. 이번 자동 재개 기능은
+"프로세스 자체가 죽는" 경우만 커버하고 "서비스만 죽는" 이 케이스는 아직 커버 못 함 — 별도 감지
+방법(예: JS가 주기적으로 `overlayService`에 헬스체크 함수를 새로 만들어 물어보고 죽어있으면
+`startSession`을 다시 부르는 식)이 필요해 보이나 이번 세션엔 시간상 설계·구현 못 함.
+
+**🔴→✅ 정정: 위 "서비스만 죽는" 원인은 삼성이 아니라 이번 세션 제가 만든 회귀 버그였음, 수정 완료.**
+`dumpsys alarm`으로 직접 확인해보니 `PaceTickReceiver` 알람이 **`reason=alarm_cancelled`로 명시적
+취소**되고 있었다(자연 소멸이 아니라 누군가 명시적으로 취소 호출을 한 흔적) — 삼성의 불특정
+프로세스/서비스 킬이었다면 이 로그 자체가 안 남는다. 원인 추적: `/overlay/index.tsx`의 언마운트
+cleanup이 **무조건** `overlayService.endSession()`(네이티브 `ACTION_STOP` — 알약/틱 알람/포그라운드
+서비스 전부 종료)을 호출하고 있었는데, 바로 위(§ "오버레이 소실 재현") 세션에서 추가한 "black
+screen 리다이렉트"(포커스 재획득 시 `router.replace('/(tabs)/home')`로 이 화면을 나가는 것)가 이
+컴포넌트를 언마운트시켜서 **매번 정리 로직이 돌며 진짜 세션을 죽이고 있었다** — "화면만 Home으로
+바꾸고 세션은 유지하려던" 원래 의도와 정반대 결과. 즉 오늘 만든 기능이 오늘 만든 또 다른 기능을
+망가뜨린 자기 회귀였음.
+
+**수정**: `overlay/index.tsx`에 `keepSessionAliveOnUnmountRef`를 추가 — 위 리다이렉트가 걸리는
+순간(`router.replace` 직전) 이 ref를 `true`로 세팅하고, 언마운트 cleanup 맨 앞에서 이 값이 `true`면
+DB 세션-종료 기록/네이티브 `endSession()`/`useSessionStore.finish()`를 전부 건너뛴다(진짜 세션
+종료가 아니므로). **실기기로 직접 재현·검증 완료**: 세션 시작 → 최근 앱에서 Pace(/overlay 화면)로
+재진입해 리다이렉트 발동 → `dumpsys activity services`로 `PaceOverlayService`가 안 죽고
+`isForeground=true`로 계속 살아있음 확인, `dumpsys alarm`으로 새 틱 알람이 정상 예약돼 있음(취소
+안 됨) 확인, 알약 남은시간이 실제로 계속 줄어드는 것(30m→26m)까지 확인 — 이제 완전히 고쳐짐.
+
+부가로 사용자 지적("화면 작아지고 나면 앱화면이 까만색으로 보임") — 리다이렉트가 완료되기 전
+`/overlay`의 DEV SIMULATOR 검은 배경이 한두 프레임 그대로 커밋돼 보이는 잔상 문제도 같이 수정:
+리다이렉트가 걸리는 순간 `redirectingToHome` state를 같이 세팅해 렌더 자체를 `null`로 반환하게
+해서 그 검은 프레임 자체를 없앰(코드 검토로 타당성 확인, 단일 프레임이라 스크린샷으로는 있었는지
+자체를 검증할 수 없어 실기기 육안 확인 권장).
+
+검증: `npx tsc --noEmit` 통과, JS 전용 변경이라 재빌드 불필요. 세션 생존은 위처럼 `dumpsys`로 직접
+확인 완료 — **이번 세션에서 확인된 것 중 가장 확실하게 검증된 수정**.

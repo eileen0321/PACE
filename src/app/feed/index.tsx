@@ -301,11 +301,6 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
-        {/* 🐞 임시 디버그 오버레이 — 무음/손짓 원인 확인용. 오디오는 항상, 손짓/스냅은 세션 ON일 때. */}
-        <View style={styles.diagBox} pointerEvents="none">
-          <Text style={styles.diagText}>🔊 {diag.audio}</Text>
-          {isAutoMode && <Text style={styles.diagText}>👋 {diag.wave}</Text>}
-        </View>
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

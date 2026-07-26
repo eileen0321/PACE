@@ -55,10 +55,23 @@ const INJECTED_JS = `
     // ⭐ 2026-07-26: mediaPlaybackRequiresUserAction=false라 "소리 자동재생"이 허용될 수 있다(리서치 확인).
     // 예전엔 무조건 muted=true로 시작해 매 영상 무음이었다 → 먼저 소리로 재생 시도. 차단되면(iOS 정책)
     // 무음으로라도 재생하고 첫 탭에 소리를 켠다. audible-ok/blocked를 진단으로 보고해 실제 동작을 확인.
+    // 소리는 나는데(v.muted=false) 유튜브 플레이어 내부 상태는 "음소거"라 "탭하여 음소거 해제" 오버레이가
+    // 계속 뜬다 → 유튜브 unmute 버튼/오버레이를 눌러 상태 동기화(=오버레이 제거). "소리 확인(audibleOk)"
+    // 후에만 실행 — 아니면 진짜 무음인 첫 영상에서 프롬프트를 숨겨 사용자가 탭해야 함을 모르게 됨.
+    function dismissUnmuteUI() {
+      try {
+        var nodes = document.querySelectorAll('button, [role="button"], .ytp-unmute-icon, [class*="unmute" i]');
+        for (var i = 0; i < nodes.length; i++) {
+          var n = nodes[i];
+          var label = ((n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '') + ' ' + (n.className || '') + ' ' + (n.textContent || '').slice(0, 30);
+          if (/unmute|음소거\\s*해제|tap to unmute/i.test(label)) { n.click(); }
+        }
+      } catch (e) {}
+    }
     var audibleOk = false;
     function tryAudible() {
       v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); [300, 900, 1800].forEach(function (ms) { setTimeout(dismissUnmuteUI, ms); }); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
         v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
       });
@@ -74,10 +87,9 @@ const INJECTED_JS = `
     v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
     v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
-    var tick = 0;
     setInterval(function () {
       if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
-      if ((++tick) % 3 === 0) ad('tick'); // 약 1.5s마다 오디오 상태 진단
+      if (audibleOk) dismissUnmuteUI(); // 오버레이가 다시 뜨면 계속 눌러 없앰
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
       if (v.duration > 0) send({ type: 'progress', value: t / v.duration });

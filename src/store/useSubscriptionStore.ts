@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import Purchases, { type CustomerInfo, type PurchasesPackage } from 'react-native-purchases';
+import Purchases, { LOG_LEVEL, type CustomerInfo, type PurchasesPackage } from 'react-native-purchases';
 import { STORAGE_KEYS } from '../services/storage/keys';
 import { saveEntitlement, clearEntitlement } from '../database/repositories/subscriptionRepository';
 import { isReviewerEmail } from '../constants/reviewers';
@@ -81,6 +81,16 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
     // 스스로 복구되지 않았다. 두 호출을 독립된 try/catch로 분리 — offerings 실패는 절대
     // isPremium을 건드리지 않는다.
     try {
+      // 2026-07-26 밤 실기기 발견 — 디버그 빌드는 RC 기본 로그 레벨이 DEBUG라(공식 문서: "release는
+      // INFO, debug는 DEBUG가 기본"), 지금 RC 대시보드에 offering이 없어 매번 실패하는 "Error
+      // fetching offerings" 경고가 SDK 내부적으로 반복 로깅되며 Metro의 WebSocket 개발자도구 로그
+      // 채널로 그대로 쏟아졌다 — 그 물량이 `ws` 라이브러리의 프레임 버퍼 한도를 넘겨
+      // `WS_ERR_TOO_MANY_BUFFERED_PARTS`로 Metro Node 프로세스 자체가 죽는 사고로 이어졌다(오늘
+      // 하루 종일 반복된 "앱이 스플래시에서 멈춤"의 진짜 원인 — 앱이 아니라 Metro가 죽어있었음).
+      // ERROR만 남겨(그마저도 실제 실패 시 1회성이라 빈도 낮음, 반복되던 건 WARN 레벨의 "Billing
+      // Service disconnected" 재연결 시도 로그였음) 이 스팸을 원천 차단 — configure() 전에 호출해야
+      // 적용된다.
+      Purchases.setLogLevel(LOG_LEVEL.ERROR);
       Purchases.configure({ apiKey: RC_KEY });
       const info = await Purchases.getCustomerInfo();
       await applyCustomerInfo(info, set, get);

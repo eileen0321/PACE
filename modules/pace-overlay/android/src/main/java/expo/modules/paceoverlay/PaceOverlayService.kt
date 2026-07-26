@@ -919,8 +919,16 @@ class PaceOverlayService : Service() {
       // 자체는 살아있어도(showOverlay의 `if (overlayView != null) return` 가드 때문에 재호출이
       // no-op으로 씹힘) 실제로 화면에 붙어있지 않으면(isAttachedToWindow==false) 유령 상태로 간주해
       // 강제로 다시 띄운다.
-      if (overlayView != null && overlayView?.isAttachedToWindow != true) {
-        Log.w("PaceOverlay", "overlay view detached unexpectedly (resize?) — re-adding")
+      // 2026-07-26 밤 실기기 재현 — 서비스/알람/세션 전부 살아있는데(session_active=true, 틱도
+      // 정상 발동) 알약만 화면에서 사라진 케이스를 발견. 원래 이 체크는 `overlayView != null`일
+      // 때만(=참조는 있는데 떨어져나간 경우만) 복구했는데, `overlayView` 자체가 null인 경우(예:
+      // showOverlay 호출이 애초에 실패했거나, 다른 경로에서 null로만 리셋되고 재호출은 안 된 경우)는
+      // 이 조건이 거짓이 돼 아무 것도 안 했다 — "참조가 없으니 원래 없는 상태겠지"라고 안전하게
+      // 가정한 게 실제로는 안전하지 않았다. 이 틱이 도는 시점 자체가 이미 "세션이 활성"이라는
+      // 뜻이므로(그렇지 않으면 애초에 이 코드에 안 옴), overlayView가 null이든 detach됐든 상관없이
+      // 매 틱마다 무조건 상태를 확인해 필요하면 다시 띄운다.
+      if (overlayView?.isAttachedToWindow != true) {
+        Log.w("PaceOverlay", "overlay view missing (null=${overlayView == null}) — re-adding")
         overlayView = null
         showOverlay(remainingMinutes)
       }

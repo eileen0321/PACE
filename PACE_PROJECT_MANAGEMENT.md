@@ -909,3 +909,48 @@ DB 세션-종료 기록/네이티브 `endSession()`/`useSessionStore.finish()`�
 
 검증: `npx tsc --noEmit` 통과, JS 전용 변경이라 재빌드 불필요. 세션 생존은 위처럼 `dumpsys`로 직접
 확인 완료 — **이번 세션에서 확인된 것 중 가장 확실하게 검증된 수정**.
+
+또한 위 자가복구(self-heal) 로직 자체에도 허점을 발견해 같이 고침: `overlayView != null &&
+isAttachedToWindow != true`로만 체크해서 "참조가 detach된 경우"만 복구했는데, `overlayView`
+자체가 `null`인 경우(예: 다른 경로에서 null로만 리셋되고 재호출은 안 된 경우)는 조건 자체가
+거짓이 돼 방치됐다. 이 틱이 도는 시점 자체가 이미 세션 활성 상태라는 뜻이므로, `overlayView`가
+null이든 detach됐든 상관없이 매 틱 무조건 상태를 확인해 필요하면 다시 띄우도록 수정
+(`overlayView?.isAttachedToWindow != true`로 단순화). 실기기 재현(서비스/알람/세션 전부 정상인데
+알약만 안 보임) → 수정 → `gradlew assembleDebug` 재빌드+재설치 → 정상 작동 확인.
+
+### 2026-07-26 (밤, 이어서) — Windows 세션 (🔴🔴 오늘 하루 "앱 멈춤"의 진짜 정체 — Metro 서버가 반복적으로 크래시하고 있었음)
+
+사장님이 "원인은 해결 안 하냐"고 지적 — 정확한 지적이었다. 오늘 하루 종일 "앱이 스플래시에서
+안 넘어간다"를 매번 force-stop+재실행으로 회피만 했지, 왜 그런지 한 번도 제대로 안 봤다. 이번엔
+직접 확인:
+
+- `curl http://localhost:8081/index.bundle...` → **연결 자체가 실패**(exit 7). `Get-NetTCPConnection
+  -LocalPort 8081` → **아무 프로세스도 8081을 리슨하고 있지 않음**. 즉 **앱이 멈춘 게 아니라 Metro
+  서버 프로세스 자체가 죽어 있었다** — `SplashScreen.preventAutoHideAsync()`가 JS 로드 완료
+  (`hideAsync()`)를 기다리는데, 그 JS를 줄 Metro가 없으니 스플래시에서 영원히 대기한 것.
+- Metro의 stdout 로그를 확인해보니 원인이 명확했다:
+  ```
+  RangeError: Too many message fragments
+      at Receiver.getData (node_modules\ws\lib\receiver.js:451:14)
+  Emitted 'error' event on WebSocket instance ... code: 'WS_ERR_TOO_MANY_BUFFERED_PARTS'
+  Node.js v24.13.1  ← 프로세스 자체가 죽음(uncaught exception)
+  ```
+  직전 로그를 보면 RevenueCat SDK가 `WARN Billing Service disconnected` / `ERROR Error fetching
+  offerings`를 **`Purchases.setLogHandler` → Metro의 WebSocket 개발자도구 로그 채널로 계속
+  전달**하고 있었다 — 디버그 빌드는 RC 로그 레벨 기본값이 `DEBUG`(공식 문서: release는 INFO,
+  debug는 DEBUG)라 SDK 내부 로그가 전부 새어나갔고, 오늘 하루 수십 번의 재설치/재실행마다
+  이게 쌓이면서 결국 Metro가 쓰는 `ws` 라이브러리의 WebSocket 프레임 버퍼 한도를 넘겨
+  Node.js 프로세스 자체가 예외로 죽어버린 것 — **RC 대시보드에 아직 offering이 없어서(계정
+  설정 블로커, 위 §6 참고) 이 오류 자체가 반복 발생하는 게 근본 트리거**.
+- **수정**: `useSubscriptionStore.ts`의 `Purchases.configure()` 호출 직전에
+  `Purchases.setLogLevel(LOG_LEVEL.ERROR)` 추가 — `WARN` 이하 반복 로그를 원천 차단. RC
+  대시보드 미설정 문제 자체(§6, D-블로커)가 해결되기 전까지는 이 로그가 이따금 다시 뜰 수 있지만,
+  최소한 `WARN` 레벨의 "Billing Service disconnected" 반복 재연결 시도 스팸은 사라짐.
+- **⚠️ Mac 세션도 반드시 확인 — iOS도 같은 `useSubscriptionStore.ts`를 공유**하므로 RC 대시보드
+  offering 미설정 상태로 iOS 실기기/시뮬레이터에서 반복 테스트하면 (Metro 크래시까지 가진 않더라도)
+  똑같이 콘솔에 이 스팸이 쌓일 수 있음 — 이번 로그레벨 수정으로 iOS도 자동으로 완화됨(플랫폼
+  공용 파일이라 이식 불필요).
+
+검증: `npx tsc --noEmit` 통과, Metro 재시작 후 실기기 앱 정상 재로딩 확인(크래시 없음). **완전한
+해결은 아님** — 근본적으로는 D7(RC Offering/스토어 상품 등록, §6 참고)이 끝나야 이 오류 자체가
+안 뜬다. 이번 수정은 "오류가 나도 Metro까지 죽이지는 않게" 막은 완화책.

@@ -63,11 +63,11 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision) 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
-  // ⚠️ 2026-07-26 실기기 결정: 핑거스냅('snap', AVAudioEngine 마이크)은 WebView(유튜브) 오디오와
-  // 충돌 시 engine.start가 Swift try/catch로 못 잡는 ObjC NSException(-10868 "Failed to initialize
-  // active nodes in input chain")을 던져 앱이 계속 죽는다(실기기 로그 확인). 오디오 세션을 안 건드리는
-  // 방식으로 재작성하기 전까지 스냅은 비활성 → 'wave'만. 다음 넘김은 손짓 + 볼륨키(리모컨) + 자동넘김.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
+  // ⚠️ 2026-07-26 최종: 핑거스냅(마이크)은 인앱 영상재생과 근본 충돌한다 — 스냅용 .playAndRecord 세션을
+  // 켜면 (1) 매 영상이 시스템 레벨에서 무음이 되고 (2) engine.start ObjC 예외로 크래시(캐처로 크래시는
+  // 막았으나 무음은 못 막음). 마이크를 안 켜는 방식(예: 미디어세션 미터링)으로 재작성 전까지 스냅 제외.
+  // 크래시-세이프 인프라(PaceExceptionCatcher, 재시도, 스파이크 감지)는 재개 대비 네이티브에 남겨둠.
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;

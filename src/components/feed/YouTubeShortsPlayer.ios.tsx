@@ -60,11 +60,16 @@ const INJECTED_JS = `
     // 후에만 실행 — 아니면 진짜 무음인 첫 영상에서 프롬프트를 숨겨 사용자가 탭해야 함을 모르게 됨.
     function dismissUnmuteUI() {
       try {
-        var nodes = document.querySelectorAll('button, [role="button"], .ytp-unmute-icon, [class*="unmute" i]');
+        // 유튜브의 unmute 버튼을 클릭해 내부 음소거 상태 동기화 + 그래도 남는 "탭하여 음소거 해제"
+        // 오버레이 요소는 아예 숨긴다(아이콘이라 텍스트 매칭이 안 되니 aria-label/title/class로 넓게).
+        var nodes = document.querySelectorAll('button, [role="button"], a[aria-label], div[aria-label], [class*="unmute" i], [class*="mute" i]');
         for (var i = 0; i < nodes.length; i++) {
           var n = nodes[i];
-          var label = ((n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '') + ' ' + (n.className || '') + ' ' + (n.textContent || '').slice(0, 30);
-          if (/unmute|음소거\\s*해제|tap to unmute/i.test(label)) { n.click(); }
+          var label = ((n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '') + ' ' + (n.className || '') + ' ' + ((n.textContent || '').slice(0, 24));
+          if (/unmute|음소거\\s*해제|tap to unmute|음소거를 해제/i.test(label)) {
+            try { n.click(); } catch (e2) {}
+            try { n.style.display = 'none'; n.style.visibility = 'hidden'; n.style.pointerEvents = 'none'; } catch (e3) {}
+          }
         }
       } catch (e) {}
     }
@@ -80,7 +85,7 @@ const INJECTED_JS = `
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
-    function unmuteOnce() { v.muted = false; v.volume = 1.0; v.play().catch(function () {}); ad('gesture-unmute'); }
+    function unmuteOnce() { audibleOk = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); dismissUnmuteUI(); ad('gesture-unmute'); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });

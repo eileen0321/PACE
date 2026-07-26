@@ -25,7 +25,6 @@ import { useDailyBonusStore } from '../store/useDailyBonusStore';
 import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
-import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
@@ -276,11 +275,10 @@ export default function RootLayout() {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
 
-  // 2026-07-21: expo-splash-screen(네이티브, 정적)은 폰트 로딩 동안만 담당 — 그 직후 이
-  // JS 애니메이션 스플래시(AnimatedSplash)가 이어받아 브랜딩 애니메이션을 보여준 뒤 스스로
-  // 사라진다. Stack 콘텐츠는 이미 그 아래에서 마운트돼 있으니(라우팅 자체는 지연되지 않음)
-  // 순수하게 시각적 브랜딩 레이어일 뿐이다.
-  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
+  // 2026-07-26: AnimatedSplash(JS 애니메이션 스플래시) 제거 — 정적 네온 스플래시(박스 없음)가 뜬 뒤
+  // 이 레이어가 "로고를 둥근 사각 박스에 넣고 opacity 0→1로 페이드인 + 위치도 위쪽"으로 다시 그려
+  // "박스 없는 로고→빈 화면 깜빡→박스 있는 로고 점프" 번쩍임을 만들었다(사장님 지적). 정적 스플래시
+  // 하나만 남겨 깔끔하게. (expo-splash-screen이 폰트 로딩까지 정적 네온 로고를 보여주고 페이드 종료.)
 
   if (!fontsLoaded) return null;
 
@@ -314,7 +312,6 @@ export default function RootLayout() {
             earned={checkInEarned ?? 0}
             onDismiss={() => setCheckInEarned(null)}
           />
-          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
           {(updatePhase === 'downloading' || updatePhase === 'reloading') && (
             <View style={styles.updateOverlay} pointerEvents="auto">
               <ActivityIndicator size="large" color={colors.primary} />

@@ -31,6 +31,10 @@ type Props = {
   onEnded: () => void;
   onReady?: () => void;
   onError?: (code: number) => void;
+  /** 현재 영상 진행률(0~1) — 피드가 게이팅 등에 사용(co-session). */
+  onProgress?: (p: number) => void;
+  /** 진단: WebView 오디오 상태 문자열(muted/재생차단 등) — 무음 원인 파악용(임시). */
+  onAudioDiag?: (text: string) => void;
 };
 
 // 실제 <video> 엘리먼트에 리스너를 붙여 ready/ended/error를 RN으로 전달하고, play/pause를 위한
@@ -43,6 +47,29 @@ type Props = {
 // PaceAccessibilityService.kt(Auto Next, 실제 유튜브 앱 대상)에서 이미 검증된 것과 동일한 패턴 —
 // currentTime을 폴링해 "끝에 거의 도달"(nearEnd) 또는 "재생 위치가 갑자기 확 줄어듦"(loopedBack,
 // 루프로 처음으로 되감긴 것)을 감지해 우리가 직접 'ended'를 판정한다.
+// ⭐ 무음 근본 해결(2026-07-26 리서치): mediaPlaybackRequiresUserAction=false로 소리 자동재생은 허용되나
+// 유튜브 페이지 JS가 새 영상마다 <video>.muted=true를 강제해 "탭하여 음소거 해제"가 반복된다. 이걸
+// 유튜브 JS보다 먼저 실행되는 injectedJavaScriptBeforeContentLoaded에서 HTMLMediaElement.prototype의
+// muted 세터를 래핑해 "muted=true 시도를 항상 false로" 막는다 → 유튜브가 음소거를 못 한다. (풀페이지
+// WebView 유지, iframe 전환 없이 소리 확보.)
+const BEFORE_CONTENT_JS = `
+(function () {
+  try {
+    var proto = HTMLMediaElement.prototype;
+    var d = Object.getOwnPropertyDescriptor(proto, 'muted');
+    if (d && d.set && d.get) {
+      var origSet = d.set, origGet = d.get;
+      Object.defineProperty(proto, 'muted', {
+        configurable: true, enumerable: d.enumerable,
+        get: function () { return origGet.call(this); },
+        set: function () { origSet.call(this, false); }
+      });
+    }
+  } catch (e) {}
+})();
+true;
+`;
+
 const INJECTED_JS = `
 (function () {
   function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
@@ -58,8 +85,13 @@ const INJECTED_JS = `
     // 무음 자동재생 정책 + 유튜브가 새 페이지마다 스스로 음소거 → "탭하여 음소거 해제"가 계속 뜬다.
     // WebView는 mediaPlaybackRequiresUserAction=false라 소리 자동재생이 허용되므로, 유튜브가 다시
     // 음소거해도 즉시 되돌리도록 지속 강제한다(volumechange 이벤트 + 아래 폴링 인터벌 둘 다).
-    function forceUnmute() { try { v.muted = false; v.volume = 1.0; } catch (e) {} }
+    function forceUnmute() { try { v.removeAttribute('muted'); v.muted = false; v.volume = 1.0; } catch (e) {} }
     forceUnmute();
+    // 진단: 실제 오디오 상태를 RN으로 보고(무음 원인이 muted인지 autoplay 차단인지 가른다).
+    function reportAudio(tag) { send({ type: 'audio', tag: tag, muted: v.muted, paused: v.paused, vol: v.volume, rs: v.readyState }); }
+    reportAudio('attach');
+    v.play().then(function () { reportAudio('play-ok'); }).catch(function (e) { send({ type: 'audio', tag: 'play-ERR', err: String(e && e.name), muted: v.muted }); });
+    setInterval(function () { reportAudio('tick'); }, 1500);
     v.addEventListener('volumechange', function () { if (v.muted) forceUnmute(); });
     v.addEventListener('play', forceUnmute);
     window.pacePlay = function () { forceUnmute(); v.play().catch(function () {}); };
@@ -76,6 +108,7 @@ const INJECTED_JS = `
       if (v.muted) forceUnmute(); // 유튜브가 몰래 음소거하면 계속 되돌림
       if (reportedEnded || !v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
+      send({ type: 'progress', p: v.duration ? t / v.duration : 0 });
       var nearEnd = t >= v.duration - 0.5;
       var loopedBack = lastKnownCurrentTime > 1 && t < lastKnownCurrentTime - 1;
       if (nearEnd || loopedBack) {
@@ -91,7 +124,7 @@ const INJECTED_JS = `
 true;
 `;
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError }: Props) {
+export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const source = useMemo(() => ({ uri: `https://www.youtube.com/shorts/${videoId}` }), [videoId]);
@@ -112,6 +145,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       <WebView
         ref={webRef}
         source={source}
+        injectedJavaScriptBeforeContentLoaded={BEFORE_CONTENT_JS}
         injectedJavaScript={INJECTED_JS}
         style={styles.web}
         javaScriptEnabled
@@ -124,6 +158,15 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'progress') {
+            onProgress?.((msg as any).p ?? 0);
+            return;
+          }
+          if (msg.type === 'audio') {
+            const m = msg as any;
+            onAudioDiag?.(`${m.tag} muted=${m.muted} paused=${m.paused ?? '?'} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
             return;
           }
           if (msg.type === 'ready') {

@@ -63,11 +63,9 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
-  // ⚠️ 2026-07-26 최종: 핑거스냅(마이크)은 인앱 영상재생과 근본 충돌한다 — 스냅용 .playAndRecord 세션을
-  // 켜면 (1) 매 영상이 시스템 레벨에서 무음이 되고 (2) engine.start ObjC 예외로 크래시(캐처로 크래시는
-  // 막았으나 무음은 못 막음). 마이크를 안 켜는 방식(예: 미디어세션 미터링)으로 재작성 전까지 스냅 제외.
-  // 크래시-세이프 인프라(PaceExceptionCatcher, 재시도, 스파이크 감지)는 재개 대비 네이티브에 남겨둠.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작. 핑거스냅은 AEC 없이 영상 소리를 주워들어
+  // false 발화(영상이 멋대로 넘어감) → 피드 파괴. 안정 우선으로 'wave'만. (스냅 재개 시 주파수/ZCR
+  // 게이트로 영상 소리 걸러야 함 — 실기기 로그: 진짜 스냅 hilo>1.2, 영상 소리 hilo~0.16.)
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;

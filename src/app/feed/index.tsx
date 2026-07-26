@@ -9,6 +9,7 @@ import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useSleepGuard } from '../../hooks/useSleepGuard';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
 import { useTranslation } from '../../services/i18n';
@@ -48,7 +49,7 @@ export default function PaceFeedScreen() {
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
-  const [diag, setDiag] = useState<{ wave: string; snap: string }>({ wave: '—', snap: '—' }); // 디버그 오버레이(손짓/스냅 감지 수치)
+  const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
@@ -243,11 +244,12 @@ export default function PaceFeedScreen() {
     onDiag: (kind, text) => setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })),
   });
 
-  // 2026-07-22 감사 수정: 볼륨키(에어팟/버즈/다이소 BT 리모컨) → 다음 Short 훅이 추가됐지만 어느
-  // 화면에도 연결돼 있지 않아 기능이 죽어 있었다. 여기 피드에 연결 — Focus Session 동안만 볼륨버튼을
-  // "다음"으로 쓴다(그 외엔 정상 볼륨조절 유지). Android/시뮬은 no-op.
+  // 볼륨키 → 다음 Short. ⚠️ 2026-07-26 사용자 지적: 볼륨키 하이재킹은 "블루투스 리모컨(에어팟/버즈/
+  // 다이소 리모컨)이 실제로 연결됐을 때만" 해야 한다 — 폰만 있을 땐 볼륨키가 음량 조절이어야 하는데
+  // 세션 ON만으로 무조건 가로채 음량 조절을 막고 있었다. Focus Session ON && BT 오디오 연결됨일 때만 활성.
+  const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   useVolumeNext({
-    enabled: isAutoMode,
+    enabled: isAutoMode && isBluetoothConnected,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
   });
 
@@ -272,6 +274,7 @@ export default function PaceFeedScreen() {
           onProgress={handleProgress}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 단 연속 실패는 가드가 잡음(death-spiral 방지)
+          onAudioDiag={(text) => setDiag((d) => ({ ...d, audio: text }))}
         />
       )}
 
@@ -298,14 +301,6 @@ export default function PaceFeedScreen() {
           </Pressable>
         </View>
 
-        {/* 🐞 임시 디버그 오버레이(2026-07-26) — 손짓/스냅이 안 돼서 Vision·마이크가 실제로 신호를
-            잡는지 화면에서 확인용. 세션 ON일 때만. 원인 확정 후 제거 예정. */}
-        {isAutoMode && (
-          <View style={styles.diagBox} pointerEvents="none">
-            <Text style={styles.diagText}>👋 {diag.wave}</Text>
-            <Text style={styles.diagText}>🫰 {diag.snap}</Text>
-          </View>
-        )}
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

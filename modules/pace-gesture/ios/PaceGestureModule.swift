@@ -376,9 +376,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastAnalyze: TimeInterval = 0
   private var logTick = 0
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
-  private var armed = true // 과발화 방지: 발화 후 손이 프레임에서 빠져야(no-hand/작아짐) 다시 true
+  private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
+  private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
   private let windowSec: TimeInterval = 0.6
-  private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
+  private let growthRatio: CGFloat = 1.32         // 비율 게이트(과발화는 armed 재무장+JS 1.5s 디바운스도 막음)
+  private let minGrowthDelta: CGFloat = 0.10      // 절대 증가량 게이트 — 1.28 비율만으론 손이 프레임서 살짝 커져도(0.33→0.42) 오발화("지맘대로 넘어감"). "실제로 크게 다가온" 것만 통과시켜 지터 거름
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
   private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms(10회/초) — 200ms로 낮췄더니 0.6s창 샘플부족으로 손짓 감지율 급락. 촘촘히 유지.
@@ -520,7 +522,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     let bw = maxX - minX, bh = maxY - minY
     let size = CGFloat((bw * bw + bh * bh).squareRoot())
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f pts=%d n=%d", Double(size), xs.count, samples.count + 1)) } // 크기+점수
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f pts=%d n=%d armed=%@", Double(size), xs.count, samples.count + 1, armed ? "1" : "0")) }
+    // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
+    // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
+    if !armed && size < lastFireSize * 0.75 { armed = true }
     guard size >= minHandSize else { armed = true; return } // 너무 작으면(먼 배경/손 빠짐) 무시 + 재무장
 
     let t = now
@@ -532,10 +537,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // ⚠️ 과발화 방지(사용자 "한 손짓에 여러 번 넘어감"): refractory만으로는 부족 — 손이 프레임에 계속
     //    있으면 창이 갱신되며 반복 발화됨. "발화 후 손이 한 번 빠져야(no-hand/작아짐) 재무장(armed)"
     //    게이트를 둬 한 제스처=한 번만 넘어가게 한다.
-    if armed && size >= oldest.size * growthRatio {
+    if armed && size >= oldest.size * growthRatio && (size - oldest.size) >= minGrowthDelta {
       guard now - lastFire > refractorySec else { return }
       lastFire = now
-      armed = false // 손이 빠질 때까지 재발화 금지
+      armed = false // 손이 뒤로 빠질(크기 25%↓) 때까지 재발화 금지
+      lastFireSize = size // 재무장 판정 기준(이 크기의 75% 아래로 줄면 재무장)
       samples.removeAll() // 트리거 후 이력 초기화
       onDiag("👋 WAVE!")
       DispatchQueue.main.async { self.onWave() }

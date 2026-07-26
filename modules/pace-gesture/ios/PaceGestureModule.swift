@@ -378,6 +378,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
   private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
   private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
+  private var smoothedSize: CGFloat = 0 // EMA 평활된 손 크기(회전 오실레이션 제거). 손 없으면 0으로 리셋
   private let windowSec: TimeInterval = 0.6
   private let growthRatio: CGFloat = 1.3          // 너클 폭이 1.3배 커짐 = 손이 다가옴. 안정적 지표라 지터 오발화 없음(재무장+JS디바운스도 방어)
   private let minHandSize: CGFloat = 0.02         // 너클 폭 스케일(바운딩박스보다 작음) — 너무 멀면 무시
@@ -505,7 +506,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     guard let obs = obsOpt else {
       samples.removeAll()
-      armed = true // 손이 프레임에서 빠짐 → 재무장(다음 손짓 1회 허용)
+      armed = true; smoothedSize = 0 // 손 빠짐 → 재무장 + 평활 리셋
       if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
       return
     }
@@ -520,13 +521,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let lmcp = try? obs.recognizedPoint(.littleMCP),
       imcp.confidence > 0.3, lmcp.confidence > 0.3
     else {
-      armed = true
+      armed = true; smoothedSize = 0
       if logTick % 6 == 0 { onDiag("hand no-knuckle") }
       return
     }
     let kdx = imcp.location.x - lmcp.location.x, kdy = imcp.location.y - lmcp.location.y
-    let size = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f n=%d armed=%@", Double(size), samples.count + 1, armed ? "1" : "0")) }
+    let raw = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
+    // EMA 평활 — 너클 폭은 손 회전(좌우로 흔들면 원근단축)에 프레임마다 0.06↔0.15로 오실레이션해 오발화
+    // ("지맘대로 넘어감")했다. 평활로 빠른 진동을 죽이고 "지속적으로 다가오는" 추세만 남긴다(회전 무관).
+    smoothedSize = smoothedSize <= 0 ? raw : smoothedSize * 0.7 + raw * 0.3
+    let size = smoothedSize
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f n=%d armed=%@", Double(size), Double(raw), samples.count + 1, armed ? "1" : "0")) }
     // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
     // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
     if !armed && size < lastFireSize * 0.75 { armed = true }

@@ -43,6 +43,29 @@ type Props = {
 // PaceAccessibilityService.kt(Auto Next, 실제 유튜브 앱 대상)에서 이미 검증된 것과 동일한 패턴 —
 // currentTime을 폴링해 "끝에 거의 도달"(nearEnd) 또는 "재생 위치가 갑자기 확 줄어듦"(loopedBack,
 // 루프로 처음으로 되감긴 것)을 감지해 우리가 직접 'ended'를 판정한다.
+// ⭐ 무음 근본 해결(2026-07-26 리서치): mediaPlaybackRequiresUserAction=false로 소리 자동재생은 허용되나
+// 유튜브 페이지 JS가 새 영상마다 <video>.muted=true를 강제해 "탭하여 음소거 해제"가 반복된다. 이걸
+// 유튜브 JS보다 먼저 실행되는 injectedJavaScriptBeforeContentLoaded에서 HTMLMediaElement.prototype의
+// muted 세터를 래핑해 "muted=true 시도를 항상 false로" 막는다 → 유튜브가 음소거를 못 한다. (풀페이지
+// WebView 유지, iframe 전환 없이 소리 확보.)
+const BEFORE_CONTENT_JS = `
+(function () {
+  try {
+    var proto = HTMLMediaElement.prototype;
+    var d = Object.getOwnPropertyDescriptor(proto, 'muted');
+    if (d && d.set && d.get) {
+      var origSet = d.set, origGet = d.get;
+      Object.defineProperty(proto, 'muted', {
+        configurable: true, enumerable: d.enumerable,
+        get: function () { return origGet.call(this); },
+        set: function () { origSet.call(this, false); }
+      });
+    }
+  } catch (e) {}
+})();
+true;
+`;
+
 const INJECTED_JS = `
 (function () {
   function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
@@ -112,6 +135,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       <WebView
         ref={webRef}
         source={source}
+        injectedJavaScriptBeforeContentLoaded={BEFORE_CONTENT_JS}
         injectedJavaScript={INJECTED_JS}
         style={styles.web}
         javaScriptEnabled

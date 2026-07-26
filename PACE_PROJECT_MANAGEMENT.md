@@ -25,8 +25,11 @@
 - 출시 전 단계. **2-A(D1~D5, D7, D10) 사장님 결정/계정 필요 항목이 2026-07-26에 전부 해결됨** —
   로그인 백엔드(D2, Railway 실배포+`/auth/guest` 실호출 확인), 결제(D1, RC 키), AdMob(D10, 실제
   ID), iOS 차단기능(D3, 기능 삭제), 심사 계정(D4, jlpt-master 계정 재사용), 지원 이메일(D5, 실주소
-  교체), 구글 로그인(D7, OAuth 클라이언트 3종 발급). 남은 건 D6(제품 방향, 안 급함)·D8/D9(스펙
-  미확정, 보류)·**D11(신규, 진행 중)**. **D11**: 실기기 검증 중 RevenueCat `ConfigurationError`가
+  교체), 구글 로그인(D7, OAuth 클라이언트 3종 발급), 핸즈프리/고급취침모드 프리미엄 게이팅(D8/D9,
+  아래 참고). 남은 건 D6(제품 방향, 안 급함)·**D11(신규, 진행 중)**. **D8/D9 완료(2026-07-26 밤)**:
+  페이월이 광고하던 핸즈프리 컨트롤/고급 취침모드를 실제로 `isPremium` 게이팅(Android+iOS 둘 다) —
+  단 D8의 네이티브 Kotlin 변경(수면 임계값 5~20분 조절)은 **소스 레벨만, gradle 빌드/실기기 미검증**.
+  **D11**: 실기기 검증 중 RevenueCat `ConfigurationError`가
   실제로 확인됨(Play Store에 구독 상품 미등록) — Play Console 결제 프로필까지는 완료했으나 입금
   계좌 은행 확인(영업일 2~5일 소요) 대기 중이라 구독 상품 생성이 막혀 있음, 확인되는 대로 이어서
   진행. **D11 대기 중 사장님 지시로 전수 감사 진행(§2-D E2/E3)**: i18n 하드코딩 9건 전부 수정,
@@ -67,8 +70,8 @@
 | D5 | ~~지원 이메일이 placeholder~~ | ✅ 완료(2026-07-26) — `settings.tsx`의 `SUPPORT_EMAIL`을 실제 수신 이메일 `comfortstride7@gmail.com`으로 교체 | QA_FULL_REVIEW B5 |
 | D6 | (B3 조사 중 신규 발견) Daily Limit 추적이 상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 "YouTube with PACE"를 눌러 세션을 시작한 경우에만 동작함 — 유저가 그냥 일반 YouTube 앱을 직접 열어서 보면 Pace는 그 시청을 아예 감지 못함(재부팅 여부와 무관, 앱의 기존 설계) | 제품 결정 필요: (a) 현재 "opt-in 세션" 모델 유지(문서화·마케팅에 명시) vs (b) Android UsageStatsManager 등으로 상시 감시 추가(배터리/권한/Play정책 트레이드오프 있음) | B3 로그, §6 참고 |
 | D7 | ~~Google 소셜 로그인 OAuth 클라이언트 미발급~~ | ✅ 완료(2026-07-26) — Google Cloud Console "Pace-Server" 프로젝트(`pace-server-502818`, jlpt-master와 별개, 이미 YouTube Data API용으로 존재하던 프로젝트)에 Pace 전용 OAuth 클라이언트 3종 신규 발급: Android(패키지 `com.strides7.pace` + 로컬 debug 키스토어 SHA-1, **release SHA-1은 아직 미등록 — 출시 빌드 전 Play Console에서 받아 추가 필요**), Web(`...2ihg3c4bj03vj59smd48m8ef007kcrei...`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` + 백엔드 `GOOGLE_CLIENT_ID`로 사용 — ID 토큰 audience 검증용), iOS(`...fq9o0uudug7bh60ut88pr6atc97nkdqc...`, 번들ID `com.strides7.pace` + 팀ID `328BF833XS`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` + `app.json`의 `iosUrlScheme`로 사용). `.env`(로컬, gitignore)와 Railway `GOOGLE_CLIENT_ID`에 반영, 백엔드 재배포 후 `/auth/guest` 정상 재확인. **iOS `iosUrlScheme`는 네이티브 설정(Info.plist)이라 다음 iOS prebuild/빌드부터 실제 반영됨 — 아직 실기기 검증 안 함.** | 2026-07-26 로그 참고 |
-| D8 | (2026-07-26 신규, 사장님 요청이었으나 스펙 미확정이라 보류) "고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로 추가해달라는 요청 — 뭘 "고급"으로 만들지 구체 스펙이 아직 없음(현재 수면감지는 10분 무진동 고정 임계값 하나뿐, 사용자 설정 UI 자체가 없음) | 제품 결정 필요 — 임시 제안(확정 아님): 프리미엄 한정으로 무진동 임계값을 5~20분 사이 직접 조절 + 블루투스 탈착 보조신호 사용 여부 토글 정도가 "코드로 바로 만들 수 있는" 최소 범위. 사장님이 원하는 그림이 이거랑 다르면 다시 정의 필요 | 2026-07-26 로그 참고 |
-| D9 | (2026-07-26 신규, 사장님 요청이었으나 기존 동작 회귀 위험 있어 보류) "리모컨 지원"을 프리미엄 전용으로 가둬달라는 요청 — 그런데 핑거스냅/손짓/블루투스 볼륨키 Auto Mode는 **이미 전체 사용자에게 배포돼 실제로 쓰이고 있는 기존 기능**(오늘 밤에도 이걸로 여러 버그를 고침). 지금 프리미엄 뒤로 가두면 기존 사용자 입장에선 "되던 기능이 갑자기 막힘"으로 보일 회귀임 | 제품 결정 필요: (a) 신규 사용자만 프리미엄 게이팅하고 기존 사용자는 유지(grandfather) vs (b) 전체 게이팅하되 출시 공지로 미리 안내 vs (c) 이번엔 게이팅 보류(현 상태 유지) — 방향 정해지면 코드 자체는 간단함(`useSubscriptionStore.isPremium` 체크 하나 추가) | 2026-07-26 로그 참고 |
+| D8 | ~~"고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로~~ | ✅ 완료(2026-07-26 사장님 결정 — 페이월 문구-게이팅 불일치 감사에서 나온 "(a) 실제로 게이팅" 선택) — 무진동 수면감지 임계값을 프리미엄 전용 5~20분 조절로 구현. `UserSettings.sleepStillnessMinutes`(신규, 무료 기본 10) → `overlayService.startSession()` 새 파라미터로 전달 → `PaceOverlayService.kt`(`sleepStillnessMinutes` 인스턴스 필드, `EXTRA_SLEEP_STILLNESS_MINUTES`, persistState/restoreStateFromPrefs로 프로세스 재시작에도 보존, tick 계산의 `SLEEP_STILLNESS_MS` 고정값 대체, 5~20 `coerceIn` 이중 방어)까지 전체 배선. `_layout.tsx`의 `enforceFreeFocusSessionDuration`을 확장해 무료 전환 시 10분으로 강제 리셋(기존 Focus Session Duration과 동일 패턴). `settings.tsx` Session Defaults에 새 행 추가(무료면 페이월로). **네이티브 Kotlin 변경은 소스 레벨만 — 실제 gradle 빌드/실기기 검증은 아직 안 함**(다른 세션이 android 빌드 폴더를 쓰고 있을 수 있어 보류), 다음 세션에서 `gradlew assembleDebug` + 실기기 확인 필요 | 2026-07-26 로그 참고 |
+| D9 | ~~"리모컨 지원(핸즈프리 컨트롤)"을 프리미엄 전용으로~~ | ✅ 완료(2026-07-26 사장님 결정, "(a) 실제로 게이팅") — 페이월이 이미 광고 중이던 핸즈프리 컨트롤(핑거스냅/손짓/블루투스 리모컨)을 실제로 `isPremium` 게이팅. **Android**: `home.tsx`의 세션 시작 시 Auto Mode 자동 재개(`enableAutoModeForSession`) 앞에 `isPremium` 체크 추가, `BluetoothOnboardingSheet.tsx`의 "Turn On"이 무료면 `onEnable()` 대신 페이월로 이동(+ 프리미엄 락 배지 UI). **iOS**: 별도 발견 — iOS의 손짓/블루투스 리모컨은 이 시트의 토글과 무관하게 `feed/index.tsx`가 Focus Session(`isAutoMode`) 여부만으로 독립적으로 켜고 있어서 무료 사용자도 이미 전부 쓸 수 있었음(플랫폼 간 정책 불일치) — `handsFreeDetectActive`/`useVolumeNext`의 `enabled` 조건에 `isPremium`을 추가해 동일하게 게이팅. 기존 사용자 회귀 우려(grandfather 옵션)는 사장님이 언급 안 해 적용 안 함(전체 게이팅) | 2026-07-26 로그 참고 |
 | D10 | ~~AdMob 테스트 광고 단위 ID~~ | ✅ 완료(2026-07-26) — AdMob 앱 심사 승인됨, Android/iOS 앱 등록 + 배너(양쪽)·보상형(Android) 광고 단위 실제 발급받아 `app.json`(androidAppId/iosAppId), `AdBanner.tsx`, `rewardedAd.ts`에 실제 ID로 교체 완료. `npx tsc --noEmit` 통과. 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있음 — 실기기에서 광고 실제로 뜨는지 확인 필요 | 2026-07-26 로그 참고 |
 | D11 | (2026-07-26 실기기 검증 중 발견) RevenueCat `PurchasesError(code=ConfigurationError)` 실제 발생 — Play Store에 구독 상품이 하나도 등록 안 돼 있음. SDK 키(D1)만으론 결제 불가, 스토어 쪽 상품+RC Offering 연결까지 필요 | 🟡 진행 중 — Google Play Console 정기결제 메뉴가 "Google Payments 판매자 계정 설정 필요"로 막혀 있어 결제 프로필(사업자정보/카테고리/지원이메일 `comfortstride7@gmail.com`/카드명세서명 "PACE")까지 완료, **입금 계좌 등록 후 은행 소액 입금 확인 대기 중**(구글 측, 보통 영업일 2~5일, 코드/설정으로 단축 불가). 확인되는 대로 Play Console 구독 상품 생성 → RevenueCat Offering/Package 연결 이어서 진행. iOS(App Store Connect) 쪽 구독 상품도 별도로 아직 미착수 | 2026-07-26 로그 참고 |
 
@@ -1038,3 +1041,130 @@ null이든 detach됐든 상관없이 매 틱 무조건 상태를 확인해 필�
 com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService && adb shell settings put secure
 accessibility_enabled 1`부터 먼저 실행**하는 습관화 필요(이 세션에서 이걸 안 지켜서 몇 시간을
 "삼성 탓/코드 버그"로 오인하며 허비함).
+
+### 2026-07-26 (밤, 이어서) — Windows 세션 (D8/D9 실제 게이팅 구현 + Sign-In UI 재정비 + 온보딩 가이드 재설계 + FOCUS ON/OFF 동기화)
+
+사장님이 "출시 블로킹 이슈 찾아" → 페이월 문구-게이팅 불일치(§2-D E4 참고, 아래 신규 추가)를
+보고받고 "(a) 실제로 게이팅해, 그게 유료/무료 정책 아냐?"로 즉시 결정. D8/D9 위 표에 완료로
+반영된 내용 외 실행 중 추가로 나온 것들:
+
+**Sign-In 화면 재정비** — "UI 저딴식으로 만들거야?" 지적 반영. `src/app/auth/index.tsx`를 아이콘
+없는 텍스트 버튼 나열에서: 브랜드 헤더(아이콘+제목+가치 문장 `auth.subtitle` 신규) + Google 버튼에
+`Ionicons logo-google` 추가 + Apple 버튼을 커스텀 Pressable에서 `expo-apple-authentication`의
+공식 `AppleAuthenticationButton`으로 교체(§2-C **C2 겸사겸사 해결** — HIG 4.8 커스텀 버튼 리스크
+해소, Mac 세션 확인 바람) + Guest는 하단 보조 링크로 격하. Android는 기존처럼 Apple 버튼 자체가
+`Platform.OS==='ios'` 가드로 안 뜨고 Google+Guest만 노출 확인(이미 정상).
+
+**온보딩 가이드("Rest, Earn, Watch") 2페이지 재설계** — 애초에 이번 세션 초반에 Settings "Replay
+Feature Guide" → 이 화면 뒤에 `BluetoothOnboardingSheet`(진짜 Auto Mode 토글 있는 그 시트)를
+그대로 이어붙였는데, 사장님이 실제로 눌러보고 "켜져 있으면 오버레이/웹뷰에 session on이 떠야
+하는데 안 뜨잖아" 지적 — 당연한 결과였음(Settings에서 그냥 가이드 보는 중이라 활성 세션 자체가
+없어 확인할 화면이 없음). **"그냥 가이드는 가이드로 남기고, 진짜 켜는 건 오버레이/웹뷰에서"**로
+방향 정정 — `onboarding/index.tsx`를 완전히 새로 짬:
+- `BluetoothOnboardingSheet` 재사용을 그만두고, 같은 배경(`colors.card`)의 2페이지 탭-전환
+  구조로 인라인 구현. 1페이지: 기존 개요(6개 행, "Hands-Free Control" 행 포함). 2페이지: 손짓
+  일러스트 3종(`SnapPulseIllustration`/`GestureFlickIllustration`/`RemoteClickIllustration`) +
+  설명 — **실제 Auto Mode 토글/프리미엄 체크/AsyncStorage 부작용 전부 제거**, 탭하면 그냥
+  onboarding 종료(순수 정보 제공). 진짜 프리미엄 게이팅+실토글은 `BluetoothOnboardingSheet`
+  하나(홈에서 세션 시작 직전에만 뜸)에만 남아있음 — 중복 진입점 제거로 오히려 더 명확해짐.
+- 1페이지 하단 문구 "Tap to get started"(`onboarding.tapToContinue`) → **"Next"/"다음"**으로 변경
+  (이제 항상 2페이지로 이어지는 1단계라 "시작하기"는 부정확했음). 2페이지 전용 `onboarding.
+  tapToFinish`("Tap to finish"/"탭하여 완료") 신규 추가.
+
+**"SESSION ON" → "FOCUS ON" + 플랫폼 간 동기화 버그 발견·수정** — "싱크 안 맞잖아" 지적으로
+재조사한 결과, Android 네이티브 알약(`PaceOverlayService.kt:1521`, `applyAutoBadgeStyle()`)은
+`"SESSION ON"/"SESSION OFF"`(대칭 쌍)를 하드코딩하고 있었는데, iOS(`feed/index.tsx`, `feed.
+focusSessionOnBadge`/`focusSessionStartBadge`)는 `"SESSION ON"/"START SESSION"`(비대칭 —
+하나는 상태 라벨, 하나는 동작 유도 문구)이었음 — 플랫폼마다 다른 규칙이었던 게 진짜 "안 맞는"
+지점. 양쪽 다 **"FOCUS ON"/"FOCUS OFF"**(대칭 쌍)로 통일 — Kotlin 상수 직접 수정 + en/ko 번역
+키 둘 다 수정.
+
+**검증**: `npx tsc --noEmit` 매 변경 단계마다 통과(총 0건 에러). Kotlin 변경(D8 수면 임계값 배선,
+FOCUS ON/OFF 라벨) 3개 파일은 **소스 레벨만 확인 — gradle 빌드/실기기 미검증**(다른 세션이 android
+빌드 폴더 사용 중일 수 있어 이번엔 빌드 시도 안 함). **다음 세션 우선 확인**: (1) `gradlew
+assembleDebug` 빌드 성공 여부, (2) 실기기에서 무진동 5/10/15/20분 각각 실제로 그 시간만큼 걸려
+수면 판정되는지, (3) Android 알약이 실제로 "FOCUS ON/OFF"로 뜨는지, (4) 새 온보딩 2페이지 흐름
+육안 확인(1페이지 "Next" → 2페이지 손짓 애니메이션 → 탭하면 종료), (5) Sign-In 화면에서 Apple
+공식 버튼이 실제로 렌더되는지(iOS, Mac 세션).
+
+### 2026-07-26 (밤, 이어서2) — Windows 세션 (§2-D 신규 — 페이월 문구-게이팅 불일치 감사 발견분 기록)
+
+위 D8/D9 완료 처리의 근거가 된 감사 발견 — "출시 블로킹 이슈 찾아" 요청으로 기존 Mac/Windows
+양쪽 로그(§6의 "출시 전 수익화 감사"들)를 다시 훑어 교차검증한 결과, **Mac 세션이 이미 발견해뒀던
+[HIGH] 페이월 문구-게이팅 불일치**(`paywall/index.tsx`의 `benefitRemoteControl`/
+`benefitAdvancedSleepMode`가 `isPremium`으로 전혀 안 가둬짐 — 무료 유저도 이미 다 씀)를 코드로
+재확인(전체 `isPremium` 사용처 grep 결과 배너 숨김/Focus Session 10분 고정/Settings 표시뿐이었음)
+했고, 사장님께 (a)실제 게이팅 vs (b)페이월 문구 제거로 여쭤 (a) 확정 → 위 D8/D9로 실행함. 별도
+행 번호 없이 D8/D9에 흡수 처리(중복 방지).
+
+### 2026-07-26 (밤, 이어서3) — Windows 세션 (🔴 실사용 중 발견 — 주간 평균 0 버그 + UI 정리 3건)
+
+사장님이 "오늘만 44분 봤는데 주간 평균이 계속 0"이라고 실사용 중 보고 — 코드 추적으로 진짜 원인 확정:
+- **원인**: `stats.tsx`/`WeeklyGraphCard.tsx`가 "오늘" 날짜를 `new Date().toISOString().slice(0,10)`
+  (UTC 기준)로 계산하는데, DB 쪽(`statsRepository.ts`)은 SQLite `date(started_at, 'localtime')`로
+  기기 로컬 시간대 기준 날짜를 쓴다. 한국(UTC+9)은 자정~오전 9시 사이 UTC 날짜가 아직 전날이라, 이
+  시간대에 "오늘" 문자열이 실제 로컬 날짜보다 하루 늦게 잡혀 — 방금 기록된 오늘 세션이 `weeklyStats`
+  배열에서 "오늘"로 매칭이 안 돼 주간 평균/스트릭/베스트데이/요일별 그래프가 전부 어긋났다(0으로
+  보이거나 하루씩 밀림). `src/utils/date.ts`에 로컬 연/월/일 조합 헬퍼(`toLocalDateStr`) 신설,
+  `stats.tsx`+`WeeklyGraphCard.tsx`의 4개 발생지 전부 교체로 수정. **실기기(다음 세션)에서 자정~
+  오전 9시 사이에 재검증 필요** — 지금까지 낮 시간대 테스트로는 이 시간대 버그가 안 드러났었음.
+- **플랫폼 분석 삭제**: 앱이 YouTube 전용으로 확정된 뒤로 Stats의 "Platform Breakdown"(항상
+  YouTube 100%)과 Settings의 "연결된 앱"(YouTube/Instagram/TikTok 3행, 후자 둘은 이제 의미 없음)
+  섹션이 무의미한 표시라 사장님 지시로 통째로 삭제. `useStatsStore.platformBreakdown`/
+  `statsRepository.getTodayUsageByApp()`/`ConnectedAppRow`까지 사용처 없어진 코드 함께 제거(죽은
+  코드 안 남기기 원칙).
+- **글래스모피즘 미적용 버그**: "Home만 화려하고 Stats/Focus는 flat하다"는 지적 조사 중 진짜 버그
+  발견 — `GlassSurface.tsx`의 iOS 분기가 호출부 style(`styles.card`/`gridCard`/`divideCard`, 전부
+  `colors.card` 불투명 hex)을 그대로 BlurView에 씌우고 있어서, 불투명 배경이 블러를 완전히 덮어
+  iOS에서는 처음부터 블러 효과가 안 보이고 있었다(Stats/Focus 탭이 이미 GlassSurface로 감싸고
+  있었는데도 육안으로는 flat해 보인 이유). iOS 분기에서 `style` 뒤에 `{backgroundColor:
+  'transparent'}`를 덧씌워 블러가 실제로 비치게 수정 — Stats/Focus/Settings 전체에 일괄 적용됨.
+  겸사겸사 Focus 탭의 Extend Time/Interventions 카드(그동안 GlassSurface 자체를 안 씀)도 감싸고,
+  WeeklyGraphCard의 바깥/안쪽 카드도 GlassSurface로 전환.
+- **라벨 글자 크기**: Stats/Focus/Settings의 섹션 제목·카드 라벨(예: "WEEKLY USAGE GRAPH")이
+  9~10px로 과하게 작다는 지적 — 12~13px대로 일괄 확대(letterSpacing은 비례해 살짝 축소).
+- 홈의 "Shorts with PACE" 재생 버튼도 이전 세션에 52px로 키웠던 게 촌스럽다는 재지적으로 36px로
+  축소(`PlatformPickerCard.tsx`).
+- `npx tsc --noEmit` 전 구간 통과 확인. **실기기 검증 필요 항목**: 자정~오전9시 시간대 주간평균
+  재확인, iOS 블러 실제 렌더 확인(Mac 세션), Android 글래스 화면들 육안 확인.
+
+### 2026-07-26 (밤, 이어서4) — Windows 세션 (앱 기능 가이드에 Flip Mode 전용 페이지 추가)
+
+`onboarding/index.tsx`(설정 > 앱 기능 가이드)가 개요(0페이지) → 핸즈프리 안내(기존 1페이지) 2페이지
+구성이었는데, 사장님이 "쉬고 모으고 이어보기(개요) - 탭 - 휴식 측정 타이틀+폰이미지+크레딧 문구 -
+탭 - 포커스 세션 컨트롤" 순서를 요청 — 개요와 핸즈프리 안내 사이에 Flip Mode 전용 페이지를 새로
+끼워 3페이지 구성으로 변경(`page: 0|1|2`).
+- 새 1페이지: 제목 "휴식 측정"(기존 `onboarding.row1Title` 재사용), 사장님이 직접 제공한 폰 뒤집은
+  사진(`~/Downloads/폰이미지 (1).png`, RGBA 투명배경 확인 후 `assets/flip-phone.png`로 프로젝트에
+  추가), 신규 문구 `onboarding.flipCreditsDesc`("폰을 뒤집어 두면 크레딧을 얻을 수 있어요") 배치 —
+  나머지 페이지와 동일한 `colors.card` 배경 공유.
+- 페이지 전환/dismissLabel 로직을 3페이지 기준으로 수정("다음"→"다음"→"탭하여 완료").
+- `npx tsc --noEmit` 통과. **실기기 확인 필요**: 폰이미지가 다크 배경 위에서 실제로 잘 어울리는지
+  (투명 배경 가정이 맞는지) 육안 확인.
+
+### 2026-07-26 (밤, 이어서5) — Windows 세션 (Settings "Platform Configuration" 중복 박스 삭제 +
+Flip Mode 페이지 리디자인)
+
+- 사장님이 "플랫폼 구분 글자랑 박스를 없애라고, 오버레이 제어기가 뭐냐 왜 필요해"라고 지적 — 확인해
+  보니 Settings의 "Platform Configuration" 섹션(Android="오버레이 제어기", iOS="Pace Player" +
+  Ready/권한필요 배지)이, 바로 아래 있는 "Android Guard Services" 패널의 "오버레이 상태" 행과 완전히
+  같은 `overlayReady` 값을 중복 표시하고 있었다(iOS에서는 애초에 `hasOverlayPermission()`이 항상
+  true라 이 배지 자체가 무의미). 섹션 통째로 삭제, 이제 쓰이지 않는 `platformRow`/`readyTag`/
+  `readyTagText` 스타일도 함께 제거.
+- 방금 추가한 온보딩 Flip Mode 페이지(§2026-07-26 이어서4)에 대해 "폰이미지가 너무 늦게 나온다"
+  "촌스럽고 밋밋하다"는 재지적 — 원인은 (1) 레이아웃 순서가 제목→이미지→설명이라 이미지가 페이지의
+  가장 아래에 있었고, (2) 같은 가이드의 다른 페이지들(SnapPulse/GestureFlick/RemoteClick)은 전부
+  은은하게 움직이는 일러스트인데 이 사진만 정적이라 상대적으로 밋밋해 보였던 것. `FlipPhoneHero.tsx`
+  신설 — 이미지를 페이지 맨 위(제목보다 먼저)로 옮기고, 브랜드 컬러 라디얼 글로우 블롭 2겹을 뒤에
+  깔고, 사진 자체를 천천히 위아래로 떠 있게(gentle float + 약한 회전) 애니메이션 추가.
+- `npx tsc --noEmit` 통과. **실기기 확인 필요**: Guard Services 패널만으로 Android 오버레이 권한
+  상태가 충분히 전달되는지, Flip Mode 페이지의 글로우/플로트 애니메이션이 실기기에서 자연스러운지.
+
+### 2026-07-26 (밤, 이어서6) — Windows 세션 ("애니메이션 효과 못넣어?" + "트렌드에 맞게" — 웹 조사 반영)
+
+정적으로 남아있던 글로우 블롭에 breathing pulse를 추가했음에도 "트렌드에 맞게 안 되냐"는 재지적 —
+2026 모바일 UI 트렌드 웹 조사(Muzli/Tubik 블로그) 후 `FlipPhoneHero.tsx`를 한 단계 더 다듬음:
+(1) 정적 블롭 대신 천천히 회전하는 그라데이션 헤일로(halo) 링, (2) float 애니메이션의 이징을
+linear→`Easing.inOut(Easing.sin)`으로 교체해 더 유기적으로, (3) 페이지 진입 시 스프링 바운스
+등장 애니메이션(microinteraction) 추가. `npx tsc --noEmit` 통과. **실기기 확인 필요**: 회전
+그라데이션+스프링 진입이 저사양 Android에서도 끊김 없이 도는지.

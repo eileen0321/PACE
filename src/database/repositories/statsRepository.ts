@@ -1,5 +1,5 @@
 import { getDb } from '../db';
-import type { AppShieldTarget, DailyStats } from '../../types/models';
+import type { DailyStats } from '../../types/models';
 
 // 집계 전용 Repository — 쓰기는 sessionsRepository.ts, 이 파일은 읽기/GROUP BY만 담당.
 export async function getTodayUsageMinutes(userId: string): Promise<number> {
@@ -9,21 +9,6 @@ export async function getTodayUsageMinutes(userId: string): Promise<number> {
     [userId]
   );
   return Math.floor((row?.total ?? 0) / 60);
-}
-
-// 외부 리뷰 반영(2026-07-17): "YouTube 40m / Instagram 10m / TikTok 5m" 형태의 앱별 사용량 분석.
-// viewing_sessions.platform_app을 GROUP BY — overlay/index.tsx의 startSession()이 실제 platform_app을
-// 기록하면서 실사용 데이터로 채워진다(과거엔 항상 null이라 늘 빈 배열이었음, 이제는 아님).
-export async function getTodayUsageByApp(userId: string): Promise<{ app: AppShieldTarget | 'other'; minutes: number }[]> {
-  const db = await getDb();
-  const rows = await db.getAllAsync<{ platform_app: string | null; minutes: number }>(
-    `SELECT platform_app, SUM(duration_seconds) / 60 as minutes
-     FROM viewing_sessions
-     WHERE user_id = ? AND date(started_at, 'localtime') = date('now', 'localtime') AND platform_app IS NOT NULL
-     GROUP BY platform_app`,
-    [userId]
-  );
-  return rows.map((r) => ({ app: (r.platform_app as AppShieldTarget | null) ?? 'other', minutes: r.minutes ?? 0 }));
 }
 
 export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {

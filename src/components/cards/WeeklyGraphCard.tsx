@@ -3,7 +3,9 @@ import { StyleSheet, Text, View, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
+import { GlassSurface } from '../ui/GlassSurface';
 import type { DailyStats } from '../../types/models';
+import { toLocalDateStr } from '../../utils/date';
 
 // 2026-07-26 감사 발견 — 요일 라벨이 자체 영문 배열(SUNDAY_FIRST/MONDAY_FIRST)로 하드코딩돼
 // 있었다. dayIndex(0=일~6=토, Date.getDay()와 동일)만 계산하고, 실제 라벨은 기존 stats.daySun..
@@ -31,7 +33,7 @@ function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { dayIndex
   return MONDAY_FIRST_INDICES.map((dayIndex, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
+    const key = toLocalDateStr(d);
     return { dayIndex, minutes: byDate.get(key) ?? 0 };
   });
 }
@@ -39,7 +41,7 @@ function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { dayIndex
 export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) {
   const { t } = useTranslation();
   const [selectedDay, setSelectedDay] = useState<{ dayIndex: number; minutes: number } | null>(null);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toLocalDateStr(new Date());
   const currentDayIndex = new Date(todayStr + 'T00:00:00').getDay();
   const weeklyData = buildWeekArray(weeklyStats, todayStr);
   const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), 60);
@@ -48,8 +50,8 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
   return (
     <View>
       <Text style={styles.outerTitle}>{t('stats.weeklyGraphTitle')}</Text>
-      <View style={styles.outerCard}>
-        <View style={styles.card}>
+      <GlassSurface style={styles.outerCard}>
+        <GlassSurface style={styles.card}>
           <View style={styles.headerRow}>
             <View>
               <View style={styles.titleRow}>
@@ -108,19 +110,19 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
             </View>
             <Text style={styles.footerText}>{t('stats.goalUnderLabel', { n: 60 })}</Text>
           </View>
-        </View>
-      </View>
+        </GlassSurface>
+      </GlassSurface>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  outerTitle: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
+  outerTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
   outerCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 20 },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 24, padding: 24 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.lg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#8E8E93', letterSpacing: 1, textTransform: 'uppercase' },
+  title: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: '#8E8E93', letterSpacing: 0.5, textTransform: 'uppercase' },
   avgRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: spacing.xs },
   avgValue: { fontSize: 30, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
   avgUnit: { fontSize: 16, fontFamily: typography.bodyFontFamilyBold, color: '#8E8E93' },

@@ -11,6 +11,7 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
 import { capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
+import { GlassSurface } from '../../components/ui/GlassSurface';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -78,7 +79,7 @@ export default function FocusScreen() {
         </LinearGradient>
 
         {/* 2. Extend Time */}
-        <View style={styles.extendCard}>
+        <GlassSurface style={styles.extendCard}>
           <View style={styles.extendLeft}>
             <Feather name="clock" size={16} color="#818CF8" />
             <Text style={styles.extendLabel}>{t('focus.extendTime')}</Text>
@@ -90,7 +91,7 @@ export default function FocusScreen() {
               </Pressable>
             ))}
           </View>
-        </View>
+        </GlassSurface>
 
         {/* 3. Interventions & Shields */}
         {/* 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #13) — "15분마다 작동"이
@@ -98,7 +99,7 @@ export default function FocusScreen() {
             변경 가능)와 어긋나 있었다. 게다가 여기서 토글을 켜면 실제 설정값과 무관하게 항상 15로
             덮어써서 값이 흐트러졌다 — 라벨을 실제값으로 표시하고, 토글 ON 시에도 기본값(20)으로
             통일해 최소한 다른 화면과 어긋나지 않게 정정. */}
-        <View style={styles.card}>
+        <GlassSurface style={styles.card}>
           <View style={styles.interventionRow}>
             <View>
               <Text style={styles.interventionTitle}>{t('focus.breakReminder')}</Text>
@@ -128,7 +129,7 @@ export default function FocusScreen() {
               />
             </View>
           </View>
-        </View>
+        </GlassSurface>
 
         {/* 4. iOS Pace Feed / dev POC 진입 (2026-07-18 iOS 전략 확정 — PACE_ARCHITECTURE.md 참고).
             Pace Feed = iOS에서 YouTube Shorts를 순차 재생하는 자체 화면(iOS 전용).
@@ -202,7 +203,7 @@ const styles = StyleSheet.create({
   heroTrack: { height: 6, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.pill, overflow: 'hidden' },
   heroFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
 
-  sectionLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
+  sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
 
   extendCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

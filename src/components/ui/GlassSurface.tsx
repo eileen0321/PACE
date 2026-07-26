@@ -20,8 +20,12 @@ export function GlassSurface({
   children?: React.ReactNode;
 }) {
   if (Platform.OS === 'ios') {
+    // ⚠️ 감사 발견 — 호출부(stats.tsx 등)가 넘기는 styles.card/gridCard/divideCard가 전부
+    // colors.card(불투명 hex, 알파 없음)를 backgroundColor로 갖고 있어서, style을 그대로 BlurView에
+    // 씌우면 불투명 배경이 블러 위를 그대로 덮어 블러 효과가 아예 안 보였다(Home만 화려하고 Stats는
+    // 늘 flat하게 보이던 원인). style 배열 뒤에 투명 배경을 덧씌워 블러가 실제로 비치게 한다.
     return (
-      <BlurView intensity={intensity} tint={tint === 'dark' ? 'systemMaterialDark' : 'systemMaterialLight'} style={style}>
+      <BlurView intensity={intensity} tint={tint === 'dark' ? 'systemMaterialDark' : 'systemMaterialLight'} style={[style, { backgroundColor: 'transparent' }]}>
         {children}
       </BlurView>
     );

@@ -16,14 +16,18 @@ import { AppHeader } from '../../components/ui/AppHeader';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
-import { colors, gradients, radius, sourceColors, spacing, typography } from '../../constants/theme';
+import { colors, gradients, radius, spacing, typography } from '../../constants/theme';
 import type { DailyStats } from '../../types/models';
+import { toLocalDateStr } from '../../utils/date';
 
 // healthy-shorts-assistant(2) StatsTab.tsx(components/StatsTab.tsx)를 토씨 하나 안 틀리고 그대로
 // 이식 — 이전 버전은 완전히 다른 자체 구조("Insights" 대형 타이틀 + 연속기록/웰니스 요약/Platform
 // 비중/WeeklyGraphCard(구프로토타입 컴포넌트)/Wholesome Feed Breakdown)였는데, 실제 소스엔 그런
-// 섹션이 없다 — This Week Hero → Focus Score+Healthy Streak 2단 그리드 → Platform Breakdown(얇은
-// 가로 바) → Today's Behavior(3행) → Weekly Activity(요일별 바 리스트+목표선) → Best Day 카드 순.
+// 섹션이 없다 — This Week Hero → Focus Score+Healthy Streak 2단 그리드 → Today's Behavior(3행) →
+// Weekly Activity(요일별 바 리스트+목표선) → Best Day 카드 순.
+// 2026-07-26 사용자 지시 — 앱이 YouTube만 지원하기로 확정되면서(Home의 플랫폼 카드도 YouTube
+// 하나뿐) Platform Breakdown은 항상 YouTube 100%로만 나오는 무의미한 섹션이라 통째로 삭제
+// (store의 platformBreakdown 필드/getTodayUsageByApp 쿼리까지 전부 제거).
 // 원본은 4h 26m/82점/18%/31개 자동넘김/Mon-Sun 요일별 분/Best Day="Friday" 전부 하드코딩 데모
 // 숫자다(videosWatched/averageDuration만 실제 prop이었고 그마저 0이면 `|| 42`/`|| 31`로 가짜값
 // 대체). "가짜 데이터로 채우지 말라"는 지시에 따라:
@@ -34,7 +38,6 @@ import type { DailyStats } from '../../types/models';
 //    아니라 로컬 데이터만으로 계산해 매번 새로 구한다(별도 저장 없음). 사용 기록이 없으면 "아직 기록
 //    없음"으로 표시. "이번 주 일평균"은 그대로 별도 카드로 유지(다른 지표라 병존).
 //  - Healthy Streak: 실제 계산(computeStreak) 그대로 사용.
-//  - Platform Breakdown: getTodayUsageByApp() 실제 데이터, sourceColors 실제 플랫폼 강조색.
 //  - Today's Behavior: videosWatched/averageDuration 실제값. Longest Session도
 //    getWeeklyStats()가 이미 longestSessionSeconds를 리턴해서(과거엔 안 쓰던 필드) 오늘자 값을
 //    실제로 뽑아 쓴다.
@@ -48,7 +51,7 @@ export default function StatsScreen() {
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
-  const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
+  const { weeklyStats, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
   // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)", 양쪽 플랫폼 다 실제 계측.
@@ -71,11 +74,10 @@ export default function StatsScreen() {
     }, [user?.id, refresh])
   );
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toLocalDateStr(new Date());
   const totalMinutesThisWeek = weeklyStats.reduce((acc, d) => acc + d.totalMinutes, 0);
   const weeklyAvgMinutes = weeklyStats.length ? Math.round(totalMinutesThisWeek / weeklyStats.length) : 0;
   const streak = computeStreak(weeklyStats, todayStr);
-  const platformTotal = platformBreakdown.reduce((acc, p) => acc + p.minutes, 0);
   const todayEntry = weeklyStats.find((d) => d.date === todayStr);
   const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
   const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
@@ -131,30 +133,6 @@ export default function StatsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 3. PLATFORM BREAKDOWN */}
-        {platformBreakdown.length > 0 && (
-          <View>
-            <Text style={styles.sectionTitle}>{t('stats.platformBreakdown')}</Text>
-            <GlassSurface style={styles.card}>
-              {platformBreakdown.map((p) => {
-                const pct = platformTotal > 0 ? Math.round((p.minutes / platformTotal) * 100) : 0;
-                const accent = p.app in sourceColors ? sourceColors[p.app as keyof typeof sourceColors].accent : colors.textSecondary;
-                return (
-                  <View key={p.app} style={styles.barRow}>
-                    <View style={styles.barHeaderRow}>
-                      <Text style={styles.barLabel}>{PLATFORM_LABELS[p.app] ?? (p.app === 'other' ? t('stats.platformOther') : p.app)}</Text>
-                      <Text style={styles.barPct}>{pct}%</Text>
-                    </View>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: accent }]} />
-                    </View>
-                  </View>
-                );
-              })}
-            </GlassSurface>
-          </View>
-        )}
-
         {/* 4. TODAY'S BEHAVIOR */}
         <View>
           <Text style={styles.sectionTitle}>{t('stats.todaysBehavior')}</Text>
@@ -181,7 +159,7 @@ export default function StatsScreen() {
         {/* 5. WEEKLY ACTIVITY GRAPH WITH GOAL LINE */}
         <View>
           <Text style={styles.sectionTitle}>{t('stats.weeklyActivity')}</Text>
-          <View style={[styles.card, { gap: spacing.md }]}>
+          <GlassSurface style={[styles.card, { gap: spacing.md }]}>
             <View style={styles.goalLegendRow}>
               <Text style={styles.goalLegendLeft}>{t('stats.dailyLimitsAnalyser')}</Text>
               <View style={styles.goalLegendRight}>
@@ -218,7 +196,7 @@ export default function StatsScreen() {
                 })}
               </View>
             )}
-          </View>
+          </GlassSurface>
         </View>
 
         {/* 6. BEST DAY CARD */}
@@ -288,7 +266,7 @@ function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {
   let streak = 0;
   const cursor = new Date(todayStr + 'T00:00:00');
   for (let i = 0; i < 7; i++) {
-    const key = cursor.toISOString().slice(0, 10);
+    const key = toLocalDateStr(cursor);
     if ((byDate.get(key) ?? 0) > 0) {
       streak += 1;
       cursor.setDate(cursor.getDate() - 1);
@@ -322,13 +300,13 @@ const styles = StyleSheet.create({
 
   heroCard: { borderRadius: 24, padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSubtle, gap: 8 },
   heroGlow: { position: 'absolute', top: -60, right: -30, width: 192, height: 192, borderRadius: 96, backgroundColor: `${colors.primary}0D` },
-  heroLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#8E8E93', letterSpacing: 2.5, textTransform: 'uppercase' },
+  heroLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#8E8E93', letterSpacing: 2, textTransform: 'uppercase' },
   heroValue: { fontSize: 36, fontFamily: typography.displayFontFamily, color: colors.textPrimary, letterSpacing: -0.5 },
   heroTrend: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary, marginTop: 4 },
 
   grid2: { flexDirection: 'row', gap: spacing.sm },
   gridCard: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 16, justifyContent: 'space-between', gap: 16 },
-  gridLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase' },
+  gridLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 0.5, textTransform: 'uppercase' },
   gridValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   gridValueBig: { fontSize: 30, fontFamily: typography.displayFontFamily, color: colors.textPrimary, lineHeight: 30 },
   gridValueUnit: { fontSize: 11, fontFamily: typography.bodyFontFamilyBold, color: colors.successLight, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -336,14 +314,8 @@ const styles = StyleSheet.create({
   streakValueCol: { alignItems: 'flex-start' },
   streakValue: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.primary, lineHeight: 22 },
 
-  sectionTitle: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
+  sectionTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 20 },
-  barRow: { gap: 6, marginBottom: spacing.md },
-  barHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  barLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB' },
-  barPct: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
-  barTrack: { height: 6, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.pill, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)' },
-  barFill: { height: '100%', borderRadius: radius.pill },
 
   divideCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, paddingHorizontal: 20 },
   behaviorRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 18 },
@@ -353,10 +325,10 @@ const styles = StyleSheet.create({
   behaviorValue: { fontSize: 14, fontFamily: typography.monoFontFamilyBold, color: colors.textPrimary },
 
   goalLegendRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  goalLegendLeft: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  goalLegendLeft: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
   goalLegendRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   goalLegendSwatch: { width: 10, height: 2, backgroundColor: 'rgba(239,68,68,0.6)' },
-  goalLegendText: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  goalLegendText: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
   dayRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.chip },
   dayRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   dayLabel: { fontSize: 11, fontFamily: typography.monoFontFamilyBold, color: colors.textSecondary, width: 30 },
@@ -369,7 +341,7 @@ const styles = StyleSheet.create({
   empty: { color: colors.textSecondary, fontSize: 12, textAlign: 'center', paddingVertical: spacing.md },
 
   bestDayCard: { borderRadius: 24, padding: 20, borderWidth: 1, borderColor: 'rgba(16,185,129,0.2)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  bestDayLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 2, textTransform: 'uppercase' },
+  bestDayLabel: { fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 1.5, textTransform: 'uppercase' },
   bestDayTitle: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.textPrimary, marginTop: 2 },
   bestDaySub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   bestDayIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(16,185,129,0.2)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)', alignItems: 'center', justifyContent: 'center' },

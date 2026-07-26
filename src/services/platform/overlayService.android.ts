@@ -9,17 +9,17 @@ let PaceOverlay: {
   requestOverlayPermission(): void;
   hasUsageAccessPermission(): boolean;
   requestUsageAccessPermission(): void;
-  start(
-    remainingMinutes: number,
-    autoNextEnabled: boolean,
-    sleepTimerMinutes: number,
-    breakIntervalMinutes: number,
-    notifyRemaining: boolean,
-    notifyLimit: boolean,
-    notifyBreak: boolean,
-    hardBlockMode: boolean,
-    sleepStillnessMinutes: number
-  ): Promise<void>;
+  start(options: {
+    remainingMinutes: number;
+    autoNextEnabled: boolean;
+    sleepTimerMinutes: number;
+    breakIntervalMinutes: number;
+    notifyRemaining: boolean;
+    notifyLimit: boolean;
+    notifyBreak: boolean;
+    hardBlockMode: boolean;
+    sleepStillnessMinutes: number;
+  }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
   consumeExpired(): { reason: string; sleepOnsetAtMs: number } | null;
@@ -52,7 +52,17 @@ export const overlayService: OverlayService = {
     if (!PaceOverlay.hasUsageAccessPermission()) {
       PaceOverlay.requestUsageAccessPermission();
     }
-    await PaceOverlay.start(remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode, sleepStillnessMinutes);
+    await PaceOverlay.start({
+      remainingMinutes,
+      autoNextEnabled: autoNext,
+      sleepTimerMinutes,
+      breakIntervalMinutes,
+      notifyRemaining,
+      notifyLimit,
+      notifyBreak,
+      hardBlockMode,
+      sleepStillnessMinutes,
+    });
   },
 
   async updateRemaining(remainingMinutes) {

@@ -400,6 +400,7 @@ class PaceOverlayService : Service() {
       .putBoolean(PREF_AUTO_NEXT_SESSION, autoNextEnabled)
       .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
       .putLong(PREF_LAST_MOTION_AT_MS, lastMotionAtMs)
+      .putInt(PREF_SLEEP_STILLNESS_MINUTES, sleepStillnessMinutes)
       .apply()
   }
 
@@ -418,6 +419,7 @@ class PaceOverlayService : Service() {
     // 프로세스 재시작(kill+알람 복구)이어도 무진동 시계가 "지금부터 다시 10분"으로 리셋되지 않게
     // 마지막 움직임 시각을 복원 — 없으면(구버전 상태/최초) 안전하게 지금으로(즉시 만료 방지).
     lastMotionAtMs = prefs.getLong(PREF_LAST_MOTION_AT_MS, SystemClock.elapsedRealtime())
+    sleepStillnessMinutes = prefs.getInt(PREF_SLEEP_STILLNESS_MINUTES, 10)
     // 한도 도달 히트카운트도 같은 이유로 복원 — 안 하면 프로세스가 죽었다 살아날 때마다 오늘 몇 번째
     // 도달인지가 0으로 리셋돼 tier가 항상 1로 되돌아가는 버그가 된다(날짜가 바뀌었으면 여기서 그냥
     // 이전 날짜 값을 그대로 들고 오지만, 다음 도달 시점에 performTick이 부르는 게 아니라 ACTION_START
@@ -515,9 +517,9 @@ class PaceOverlayService : Service() {
 
     // 수면 감지(스펙 §1-B/§4-B) — 리서치 근거는 Flip Mode(PaceFlipModule.kt)와 공유: 실제 수면감지
     // 앱들(Sleep as Android 등) 공개 자료 기준 순수 무진동 3분(사용자 원 스펙)은 오탐 위험이 높다고
-    // 명시돼 있어 10분으로 완화. 블루투스 탈착이 겹치면(보조 신호) 6분으로 단축 — 그래도 여전히
+    // 명시돼 있어 10분으로 완화(기본 임계값은 이제 인스턴스 필드 sleepStillnessMinutes, 2026-07-26
+    // D8 프리미엄 조절 기능 참고). 블루투스 탈착이 겹치면(보조 신호) 6분으로 단축 — 그래도 여전히
     // "탈착 이후로도 그만큼 안 움직여야" 하므로 탈착 자체가 즉시 트리거가 되지 않는다.
-    private const val SLEEP_STILLNESS_MS = 10 * 60 * 1000L
     private const val SLEEP_STILLNESS_SHORT_MS = 6 * 60 * 1000L
     // 2026-07-26 사용자 지적 — "가만히 있으면 무조건 수면으로 판단"이 낮 시간대(거치대에 세워두고
     // 안 만지는 등)에 오탐을 낸다. 순수 무진동 시간만으로는 "진짜 잠"과 "낮에 가만히 두고 봄"을
@@ -533,6 +535,9 @@ class PaceOverlayService : Service() {
     // 수면감지는 몇 분 단위 판정이라 초 단위 정밀도가 필요 없음 — 배터리를 위해 배칭 지연을 여유있게.
     private const val STILLNESS_REPORT_LATENCY_US = 5_000_000 // 5s
     private const val PREF_LAST_MOTION_AT_MS = "session_last_motion_at_ms"
+    // 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값(분), 프리미엄 전용 조절.
+    private const val PREF_SLEEP_STILLNESS_MINUTES = "sleep_stillness_minutes"
+    private const val EXTRA_SLEEP_STILLNESS_MINUTES = "sleepStillnessMinutes"
     // 한도 도달 3단계 히트카운트 영속 키(날짜 스코프) — 위 PREF_LAST_MOTION_AT_MS와 마찬가지로
     // PREFS_NAME 안에 같이 저장(별도 파일 불필요).
     private const val PREF_DAILY_LIMIT_HIT_DATE = "daily_limit_hit_date"
@@ -750,7 +755,8 @@ class PaceOverlayService : Service() {
       notifyRemaining: Boolean,
       notifyLimit: Boolean,
       notifyBreak: Boolean,
-      hardBlockMode: Boolean
+      hardBlockMode: Boolean,
+      sleepStillnessMinutes: Int
     ) {
       val intent = Intent(context, PaceOverlayService::class.java).apply {
         action = ACTION_START
@@ -762,6 +768,7 @@ class PaceOverlayService : Service() {
         putExtra(EXTRA_NOTIFY_LIMIT, notifyLimit)
         putExtra(EXTRA_NOTIFY_BREAK, notifyBreak)
         putExtra(EXTRA_HARD_BLOCK_MODE, hardBlockMode)
+        putExtra(EXTRA_SLEEP_STILLNESS_MINUTES, sleepStillnessMinutes)
       }
       ContextCompat.startForegroundService(context, intent)
     }
@@ -842,6 +849,9 @@ class PaceOverlayService : Service() {
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
         autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
         hardBlockMode = intent.getBooleanExtra(EXTRA_HARD_BLOCK_MODE, false)
+        // 2026-07-26 사장님 결정(D8) — 5~20 범위로 방어적 clamp(무료는 JS가 항상 10을 넘기지만,
+        // 네이티브 쪽에서도 잘못된 값이 들어와 감지가 무력화/과민화되지 않도록 이중 방어).
+        sleepStillnessMinutes = intent.getIntExtra(EXTRA_SLEEP_STILLNESS_MINUTES, 10).coerceIn(5, 20)
         lastMotionAtMs = SystemClock.elapsedRealtime() // 신규 세션 — 수면감지 무진동 시계를 지금부터 시작
         loadDailyLimitHitState() // 날짜 바뀌었으면 한도 히트카운트 리셋(자정 롤오버)
         if (dailyLimitOriginalMinutes <= 0) {
@@ -977,7 +987,10 @@ class PaceOverlayService : Service() {
       }
       btWasConnectedThisSession = btNowConnected
       val stillnessElapsedMs = SystemClock.elapsedRealtime() - lastMotionAtMs
-      val stillnessThresholdMs = if (btDisconnectedDuringStillness) SLEEP_STILLNESS_SHORT_MS else SLEEP_STILLNESS_MS
+      // 2026-07-26 사장님 결정(D8) — 기존 고정 SLEEP_STILLNESS_MS(10분) 대신 sleepStillnessMinutes
+      // (프리미엄 전용 조절값, 무료는 항상 10 유지) 사용. BT 탈착 단축 임계값(SLEEP_STILLNESS_SHORT_MS,
+      // 6분 고정)은 이번 스코프에 안 넣음 — "고급" 기능은 메인 임계값 하나만으로 충분하다고 판단.
+      val stillnessThresholdMs = if (btDisconnectedDuringStillness) SLEEP_STILLNESS_SHORT_MS else sleepStillnessMinutes * 60 * 1000L
       // 2026-07-26 사용자 지적("가만히 있으면 무조건 수면으로 판단하는 거 아니지 않아?") — 낮 시간대
       // 오탐(거치대/adb 등으로 폰만 가만히 있는 경우) 방지를 위해 밤 시간대(위 SLEEP_WINDOW_*)에만
       // 무진동 판정을 수면으로 인정한다. 창 밖에서는 아무리 오래 무진동이어도 sleepDetected=false —
@@ -1505,7 +1518,10 @@ class PaceOverlayService : Service() {
   // 이 함수 하나만 부르면 됨).
   private fun applyAutoBadgeStyle() {
     autoBadge?.apply {
-      text = if (autoNextEnabled) "SESSION ON" else "SESSION OFF"
+      // 2026-07-26 사장님 지시("session on은 focus on으로") — iOS(feed/index.tsx의
+      // feed.focusSessionOnBadge/focusSessionStartBadge)와 라벨을 맞춤(둘 다 대칭적인 ON/OFF 쌍으로
+      // 통일 — iOS는 예전에 "SESSION ON"/"START SESSION"으로 비대칭이었던 것도 같이 정리).
+      text = if (autoNextEnabled) "FOCUS ON" else "FOCUS OFF"
       val d = resources.displayMetrics.density
       setPadding((10 * d).toInt(), (7 * d).toInt(), (10 * d).toInt(), (7 * d).toInt())
       setTextColor(if (autoNextEnabled) Color.parseColor("#0B0C0F") else Color.parseColor("#9CA3AF"))

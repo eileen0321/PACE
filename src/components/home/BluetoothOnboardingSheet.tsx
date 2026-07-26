@@ -1,11 +1,9 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import { capabilities } from '../../services/platform/capabilities';
 import { useTranslation } from '../../services/i18n';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { SnapPulseIllustration } from './SnapPulseIllustration';
 import { GestureFlickIllustration } from './GestureFlickIllustration';
 import { RemoteClickIllustration } from './RemoteClickIllustration';
@@ -42,18 +40,9 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
 }) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
-  const router = useRouter();
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
 
-  // 2026-07-26 사장님 결정(D9) — 핸즈프리 컨트롤을 프리미엄 전용으로 게이팅. 페이월이 이미 이
-  // 혜택을 광고하고 있었는데 실제로는 전체 무료 사용자에게 열려 있었던 심사 리스크(허위광고)를
-  // 해결 — 무료 사용자가 "Turn On"을 눌러도 실제로 켜지 않고 페이월로 보낸다.
+  // 2026-07-26 사장님 결정 번복 — D9 프리미엄 게이팅 삭제, 다시 무료로 개방.
   const handleEnable = () => {
-    if (!isPremium) {
-      onDismiss();
-      router.push('/paywall');
-      return;
-    }
     onEnable();
   };
 
@@ -66,12 +55,6 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
           <View style={styles.iconWrap}>
             <Feather name="zap" size={22} color={colors.primary} />
           </View>
-          {!isPremium && (
-            <View style={styles.premiumBadge}>
-              <Feather name="lock" size={10} color={colors.primary} />
-              <Text style={styles.premiumBadgeText}>{t('settings.premium')}</Text>
-            </View>
-          )}
         </View>
         {/* 2026-07-26 사용자 UX 리뷰 반영(4가지):
             1) 제목을 "Hands-Free Control"(상시 가능한 기능처럼 들림) → "Focus Session Controls"로
@@ -108,7 +91,7 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         <Text style={styles.scopeNote}>{t('handsFreeSheet.scopeNote')}</Text>
 
         <Pressable onPress={handleEnable} style={styles.enableBtn}>
-          <Text style={styles.enableBtnText}>{isPremium ? t('handsFreeSheet.turnOn') : t('handsFreeSheet.unlockPremium')}</Text>
+          <Text style={styles.enableBtnText}>{t('handsFreeSheet.turnOn')}</Text>
         </Pressable>
         <Pressable onPress={onDismiss} style={styles.laterBtn}>
           <Text style={styles.laterBtnText}>{t('handsFreeSheet.notNow')}</Text>
@@ -124,8 +107,6 @@ const styles = StyleSheet.create({
   handle: { width: 48, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.1)', alignSelf: 'center', marginBottom: spacing.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
   iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}1A`, alignItems: 'center', justifyContent: 'center' },
-  premiumBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: `${colors.primary}1A`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  premiumBadgeText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5 },
   title: { fontSize: 17, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, marginBottom: spacing.xs },
   valueLine: { fontSize: 13.5, fontFamily: typography.bodyFontFamilySemibold, color: colors.textPrimary, lineHeight: 19, marginBottom: 4 },
   body: { fontSize: 13, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 19, marginBottom: spacing.md },

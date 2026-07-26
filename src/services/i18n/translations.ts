@@ -206,6 +206,10 @@ export const translations = {
       focusSessionDuration: 'Focus Session Duration',
       focusSessionDurationDesc: 'How long Focus Session runs once started',
       focusSessionDurationDescFree: 'Fixed at 10m on the free plan — go Premium to customize',
+      // 2026-07-26 사장님 결정(D8) — Advanced Sleep Mode 실제 구현(무진동 감지 민감도 조절).
+      sleepStillness: 'Advanced Sleep Mode',
+      sleepStillnessDesc: 'Minutes of stillness before sleep is detected',
+      sleepStillnessDescFree: 'Fixed at 10m on the free plan — go Premium to customize',
       connectedApps: 'Connected Apps',
       active: 'Active',
       platform: 'Platform',
@@ -291,7 +295,13 @@ export const translations = {
       // 개요 목록에도 그 항목을 추가해 존재를 알린다.
       row6Title: 'Hands-Free Control',
       row6Desc: 'Advance Shorts with a hand wave or Bluetooth remote — no touching.',
-      tapToContinue: 'Tap to get started',
+      // 2026-07-26 사장님 지시 — 이 화면이 이제 항상 Hands-Free Control 시트로 이어지는 1단계라
+      // "시작하기"보다 "다음"이 정확함.
+      tapToContinue: 'Next',
+      tapToFinish: 'Tap to finish',
+      // 2026-07-26 사장님 지시 — 개요(1페이지) 다음에 Flip Mode 전용 설명 페이지(2페이지, 사용자
+      // 제공 폰이미지) 추가 — "폰을 뒤집어 두면 크레딧을 얻을 수 있다"는 문구.
+      flipCreditsDesc: 'Flip your phone face-down and rest time turns into credits automatically.',
     },
 
     checkIn: {
@@ -362,8 +372,10 @@ export const translations = {
       focusSessionEndedToast: '⏹ Focus Session ended',
       nextShortToast: '⏭ Next Short',
       previousShortToast: '⏮ Previous Short',
-      focusSessionOnBadge: 'SESSION ON',
-      focusSessionStartBadge: 'START SESSION',
+      // 2026-07-26 사장님 지시("session on은 focus on으로") — Android 네이티브 알약(PaceOverlayService)
+      // 라벨과 동기화(대칭 ON/OFF 쌍으로 통일 — 예전엔 "SESSION ON"/"START SESSION"으로 비대칭이었음).
+      focusSessionOnBadge: 'FOCUS ON',
+      focusSessionStartBadge: 'FOCUS OFF',
       loadingShorts: 'Loading Shorts…',
       emptyQueueMessage: 'No Shorts to show.',
       loadFailedMessage: 'Failed to load Shorts.',
@@ -604,6 +616,9 @@ export const translations = {
       focusSessionDuration: 'Focus Session 지속 시간',
       focusSessionDurationDesc: '포커스 세션이 켜진 뒤 도는 시간',
       focusSessionDurationDescFree: '무료 플랜은 10분 고정 — 프리미엄에서 자유롭게 설정 가능',
+      sleepStillness: '고급 취침모드',
+      sleepStillnessDesc: '수면 감지까지 걸리는 무진동 시간',
+      sleepStillnessDescFree: '무료 플랜은 10분 고정 — 프리미엄에서 자유롭게 설정 가능',
       connectedApps: '연결된 플랫폼 앱',
       active: 'Active',
       platform: '플랫폼 구분',
@@ -682,7 +697,9 @@ export const translations = {
       row5Desc: '앱을 열기만 해도 크레딧 5개를 받아요.',
       row6Title: '핸즈프리 컨트롤',
       row6Desc: '손짓이나 블루투스 리모컨으로 화면을 안 만지고도 다음 영상으로 넘길 수 있어요.',
-      tapToContinue: '탭하여 시작하기',
+      tapToContinue: '다음',
+      tapToFinish: '탭하여 완료',
+      flipCreditsDesc: '폰을 뒤집어 두면 크레딧을 얻을 수 있어요.',
     },
 
     checkIn: {
@@ -753,8 +770,8 @@ export const translations = {
       // 2026-07-26 사용자 지적("한글 설정이라고 다 한글로 바꾸지 말고, SESSION ON도 유지하라고") —
       // 이 파일 맨 위 원칙(짧은 기능명/상태 배지는 한국어 UI에서도 영문 유지) 그대로, 이 pill
       // 배지는 영문 배지 그대로 둔다(자연어 번역 대상 아님).
-      focusSessionOnBadge: 'SESSION ON',
-      focusSessionStartBadge: 'START SESSION',
+      focusSessionOnBadge: 'FOCUS ON',
+      focusSessionStartBadge: 'FOCUS OFF',
       loadingShorts: 'Shorts 불러오는 중…',
       emptyQueueMessage: '표시할 Shorts가 없습니다.',
       loadFailedMessage: 'Shorts를 불러오지 못했습니다.',

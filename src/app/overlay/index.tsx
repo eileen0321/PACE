@@ -103,6 +103,28 @@ export default function OverlaySessionScreen() {
     }, [router])
   );
 
+  // 2026-07-26 밤 사용자 실기기 재현("작은 화면 갔다가 상단 알림 눌러 앱으로 복귀하니 까만
+  // DEV SIMULATOR 화면") — 위 useFocusEffect는 Expo Router의 JS 네비게이션 스택 포커스 변화에만
+  // 반응한다. YouTube로 나갔다가(launchPlatformApp) 알림/최근앱으로 Pace 액티비티만 다시
+  // 포그라운드로 가져오는 경우는 JS 라우트 자체가 한 번도 안 바뀌었으므로(이 화면이 스택 최상단에
+  // 계속 있었음) useFocusEffect가 재발동하지 않는다 — 그래서 리다이렉트가 안 걸리고 DEV SIMULATOR
+  // 콘텐츠(iOS용 목업, 어두운 배경)가 그대로 보였다. consumeIfExpired/checkAccessibilityRevoked와
+  // 동일한 AppState 'active' 패턴으로 액티비티 자체의 포그라운드 복귀를 추가로 감지한다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const redirectIfNeeded = () => {
+      if (overlayService.supportsSystemOverlay && hasSessionStartedRef.current && !keepSessionAliveOnUnmountRef.current) {
+        keepSessionAliveOnUnmountRef.current = true;
+        setRedirectingToHome(true);
+        router.replace('/(tabs)/home');
+      }
+    };
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') redirectIfNeeded();
+    });
+    return () => sub.remove();
+  }, [router]);
+
   useEffect(() => {
     if (!user?.id) return;
     (async () => {

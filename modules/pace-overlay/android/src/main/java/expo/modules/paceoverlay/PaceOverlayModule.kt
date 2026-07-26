@@ -15,6 +15,24 @@ import expo.modules.interfaces.permissions.Permissions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.records.Field
+import expo.modules.kotlin.records.Record
+
+// 2026-07-26 밤 — sleepStillnessMinutes(D8) 추가로 start()의 위치 인자가 9개가 되면서 Expo Modules
+// API의 AsyncFunction 위치 인자 오버로드 한도(8개, ObjectDefinitionBuilder.kt 참고)를 넘겨 컴파일이
+// 깨졌다. 위치 인자를 더 늘리는 대신 단일 Record 객체로 묶어 인자 개수 제한 자체를 우회 — 앞으로
+// 세션 시작 옵션이 늘어나도 이 패턴을 유지하면 같은 문제가 재발하지 않는다.
+class StartSessionOptions : Record {
+  @Field val remainingMinutes: Int = 0
+  @Field val autoNextEnabled: Boolean = false
+  @Field val sleepTimerMinutes: Int = 0
+  @Field val breakIntervalMinutes: Int = 0
+  @Field val notifyRemaining: Boolean = true
+  @Field val notifyLimit: Boolean = true
+  @Field val notifyBreak: Boolean = true
+  @Field val hardBlockMode: Boolean = false
+  @Field val sleepStillnessMinutes: Int = 10
+}
 
 // Expo Modules API(2026 기준 권장 패턴 — 구식 NativeModules+@ReactMethod 대신) 로컬 모듈.
 // JS 쪽 바인딩은 modules/pace-overlay/index.ts, 상위 서비스 인터페이스는
@@ -127,7 +145,7 @@ class PaceOverlayModule : Module() {
     // 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
     // 네이티브(PaceOverlayService)가 자기 완결적으로 담당하도록 확장 — 세션 시작 시점의 값을
     // 전부 함께 넘긴다(PaceOverlayService.kt 상단 주석 참고).
-    AsyncFunction("start") { remainingMinutes: Int, autoNextEnabled: Boolean, sleepTimerMinutes: Int, breakIntervalMinutes: Int, notifyRemaining: Boolean, notifyLimit: Boolean, notifyBreak: Boolean, hardBlockMode: Boolean ->
+    AsyncFunction("start") { options: StartSessionOptions ->
       // 2026-07-24 진단용 — 실기기에서 세션 시작 후 PaceOverlayService.onStartCommand 로그가 단 한
       // 줄도 안 찍히는 현상 조사 중. startForegroundService 자체가(혹은 그 이전 단계가) 예외를
       // 던지는데 JS 쪽 .catch(() => {})가 조용히 삼켜서 원인이 안 보였다 — 여기서 먼저 잡아 로그로
@@ -135,7 +153,18 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context ->
         try {
           Log.i("PaceOverlayModule", "start() called, calling PaceOverlayService.start")
-          PaceOverlayService.start(context, remainingMinutes, autoNextEnabled, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode)
+          PaceOverlayService.start(
+            context,
+            options.remainingMinutes,
+            options.autoNextEnabled,
+            options.sleepTimerMinutes,
+            options.breakIntervalMinutes,
+            options.notifyRemaining,
+            options.notifyLimit,
+            options.notifyBreak,
+            options.hardBlockMode,
+            options.sleepStillnessMinutes
+          )
           Log.i("PaceOverlayModule", "PaceOverlayService.start returned normally")
         } catch (e: Exception) {
           Log.e("PaceOverlayModule", "PaceOverlayService.start threw", e)

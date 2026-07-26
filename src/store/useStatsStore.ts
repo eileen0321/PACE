@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { getTodayUsageByApp, getTodayUsageMinutes, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
+import { getTodayUsageMinutes, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
 import { useSettingsStore } from './useSettingsStore';
-import type { AppShieldTarget, DailyStats } from '../types/models';
+import type { DailyStats } from '../types/models';
 
 // 2026-07-18: focus_score는 PACE_ARCHITECTURE.md에 "산출 로직 미정의라 허상 데이터가 될 뻔했다"는
 // 이유로 서버 스키마에서도 의도적으로 뺐던 값 — 여기서 로컬 데이터만으로 산출 가능한 정직한 정의를
@@ -17,9 +17,6 @@ function computeFocusScore(weeklyStats: DailyStats[], dailyLimitMinutes: number)
 type StatsState = {
   todayUsageMinutes: number;
   weeklyStats: DailyStats[];
-  // overlay/index.tsx가 이제 실제 platform_app을 기록하면서 실사용 데이터로 채워짐(과거엔 항상
-  // null이라 늘 빈 배열이었음) — PACE_ARCHITECTURE.md "비주얼 아이덴티티 전면 개편" 참고.
-  platformBreakdown: { app: AppShieldTarget | 'other'; minutes: number }[];
   /** 지난주(-13일~-7일) 총 사용 분 — "지난주 대비 X%" 트렌드 계산용. 데이터가 아예 없으면 null. */
   previousWeekTotalMinutes: number | null;
   focusScore: number | null;
@@ -30,7 +27,6 @@ type StatsState = {
 export const useStatsStore = create<StatsState>((set) => ({
   todayUsageMinutes: 0,
   weeklyStats: [],
-  platformBreakdown: [],
   previousWeekTotalMinutes: null,
   focusScore: null,
   isLoading: false,
@@ -38,10 +34,9 @@ export const useStatsStore = create<StatsState>((set) => ({
   refresh: async (userId) => {
     set({ isLoading: true });
     try {
-      const [today, weekly, platformBreakdown, previousWeek] = await Promise.all([
+      const [today, weekly, previousWeek] = await Promise.all([
         getTodayUsageMinutes(userId),
         getWeeklyStats(userId),
-        getTodayUsageByApp(userId),
         getPreviousWeekStats(userId),
       ]);
       const dailyLimitMinutes = useSettingsStore.getState().settings.dailyLimitMinutes;
@@ -49,7 +44,6 @@ export const useStatsStore = create<StatsState>((set) => ({
       set({
         todayUsageMinutes: today,
         weeklyStats: weekly,
-        platformBreakdown,
         previousWeekTotalMinutes,
         focusScore: computeFocusScore(weekly, dailyLimitMinutes),
       });

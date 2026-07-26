@@ -182,11 +182,9 @@ export default function HomeScreen() {
     // Auto Mode(핑거스냅 포함)가 켜지고 10분 뒤 자동 종료된 뒤로는 다시 켤 방법이 없었다(Focus 탭
     // 토글 버튼이 7/22에 삭제됨). Enable을 고른 적 있는 사용자는 매 세션 시작마다 다시 켜준다 —
     // enableAutoModeForSession은 이미 켜져 있으면 아무것도 안 하는 멱등 호출이라 안전하다.
-    // 2026-07-26 사장님 결정 — 핸즈프리 컨트롤(Auto Mode)을 프리미엄 전용으로 게이팅(D9 해결).
-    // 페이월이 이미 이 기능을 프리미엄 혜택으로 광고하고 있었는데 실제로는 전체 무료 사용자에게
-    // 열려 있어 "안 되는 걸 된다고 광고"하는 심사 리스크가 있었다 — 이제 실제로 막는다. 과거에
-    // opt-in 했던(autoModeOptIn='true') 무료 사용자도 구독이 끊기면 여기서 자동으로 막힘.
-    if (!useSubscriptionStore.getState().isPremium) return;
+    // 2026-07-26 사장님 결정 번복 — D9에서 프리미엄 전용으로 게이팅했던 핸즈프리 컨트롤(Auto Mode)을
+    // 다시 무료로 개방. 이유: Focus Session 자동넘김 자체가 이미 무료라, 그걸 "화면 안 만지고" 넘기는
+    // 트리거만 유료로 막는 게 정책상 어색하다는 판단 — Focus Session 중에는 무료/유료 동일하게 동작.
     AsyncStorage.getItem(STORAGE_KEYS.autoModeOptIn).then(async (optIn) => {
       if (optIn === 'true') { enableAutoModeForSession(); return; }
       if (optIn === null) {

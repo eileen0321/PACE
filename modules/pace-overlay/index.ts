@@ -10,16 +10,17 @@ type PaceOverlayNativeModule = {
   requestUsageAccessPermission(): void;
   // 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
   // 네이티브가 자기 완결적으로 담당 — sleepTimerMinutes<=0은 "꺼짐", breakIntervalMinutes<=0도 "꺼짐".
-  start(
-    remainingMinutes: number,
-    autoNextEnabled: boolean,
-    sleepTimerMinutes: number,
-    breakIntervalMinutes: number,
-    notifyRemaining: boolean,
-    notifyLimit: boolean,
-    notifyBreak: boolean,
-    hardBlockMode: boolean
-  ): Promise<void>;
+  start(options: {
+    remainingMinutes: number;
+    autoNextEnabled: boolean;
+    sleepTimerMinutes: number;
+    breakIntervalMinutes: number;
+    notifyRemaining: boolean;
+    notifyLimit: boolean;
+    notifyBreak: boolean;
+    hardBlockMode: boolean;
+    sleepStillnessMinutes: number;
+  }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
   // 네이티브가 백그라운드에서 스스로 카운트다운해 만료되면(Daily Limit 또는 Sleep Timer) 오버레이/

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,8 +27,6 @@ import { GlassSurface } from '../../components/ui/GlassSurface';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
-
-const SUPPORT_EMAIL = 'comfortstride7@gmail.com';
 
 // getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
 // Date.getDay()와 동일)를 실제 번역 키로 매핑 — 요일 라벨이 언어 설정과 무관하게 하드코딩 한글로
@@ -60,6 +58,8 @@ const DAILY_LIMIT_OPTIONS = [30, 45, 60, 90, 120];
 const BREAK_OPTIONS = [10, 15, 20, 30, 0];
 // 2026-07-20 사용자 지시 — Focus Session(자동넘김) 지속 시간을 10분 하드코딩이 아니라 직접 고르게.
 const FOCUS_SESSION_DURATION_OPTIONS = [5, 10, 20, 30, 60];
+// 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값, 프리미엄 전용 조절.
+const SLEEP_STILLNESS_OPTIONS = [5, 10, 15, 20];
 
 function cycle(options: number[], current: number): number {
   const idx = options.indexOf(current);
@@ -67,13 +67,12 @@ function cycle(options: number[], current: number): number {
 }
 
 // healthy-shorts-assistant(2) SettingsTab.tsx를 토씨 하나 안 틀리고 그대로 이식(사용자 명시적
-// 지시) — Account / Session Defaults / Connected Apps / Platform Configuration / Notifications /
-// Privacy / Support / Advanced(Reset) 8섹션. 원본은 Session Defaults를 실제 세션과 무관한 로컬
-// 데모 state로 관리했는데, Pace는 애초에 "기본값=실제 설정" 하나뿐이라 useSettingsStore에 직접
-// 연결(더 정확한 동작 — 죽은 데모 state를 만들지 않음). "Platform Configuration"의 안드로이드↔iOS
-// 전환 버튼은 브라우저 프리뷰용 데모 기능이라 뺐다(실제 앱은 Platform.OS가 고정, 전환할 대상이
-// 없음) — 대신 실제 Platform.OS에 맞는 정보만 정직하게 표시. 언어 선택기와 구독/paywall 행은
-// Pace 자체 기능이라 유지(원본에 없음).
+// 지시)으로 시작했으나, "Connected Apps"(YouTube 전용 확정 이후 무의미)와 "Platform Configuration"
+// (Android/iOS 라벨만 다르고, 그 안의 오버레이 준비 상태는 Android Guard Services 패널의 "오버레이
+// 상태" 행과 완전히 중복 — 2026-07-26 사장님 지시로 삭제)을 뺐다. 원본은 Session Defaults를 실제
+// 세션과 무관한 로컬 데모 state로 관리했는데, Pace는 애초에 "기본값=실제 설정" 하나뿐이라
+// useSettingsStore에 직접 연결(더 정확한 동작 — 죽은 데모 state를 만들지 않음). 언어 선택기와
+// 구독/paywall 행은 Pace 자체 기능이라 유지(원본에 없음).
 export default function SettingsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -191,12 +190,6 @@ export default function SettingsScreen() {
       console.warn('[settings] export failed', e);
       Alert.alert(t('settings.exportData'), t('settings.exportFailed'));
     }
-  };
-
-  const handleSendFeedback = () => {
-    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Pace Feedback')}`).catch(() => {
-      Alert.alert(t('settings.sendFeedback'), t('settings.feedbackFailed'));
-    });
   };
 
   const handleRateApp = async () => {
@@ -335,34 +328,24 @@ export default function SettingsScreen() {
                 if (Platform.OS === 'android') bluetooth.setFocusSessionDurationMinutes(next);
               }}
             />
-          </GlassSurface>
-        </View>
-
-        {/* 3. Connected Apps — 실제 appShields 상태 반영 */}
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.connectedApps')}</Text>
-          <GlassSurface style={styles.card}>
-            <ConnectedAppRow label={t('home.youtubeShorts')} active={settings.appShields.youtube} />
-            <ConnectedAppRow label={t('home.instagramReels')} active={settings.appShields.instagram} bordered />
-            <ConnectedAppRow label={t('home.tiktokVideoLoop')} active={settings.appShields.tiktok} bordered />
-          </GlassSurface>
-        </View>
-
-        {/* 4. Platform Configuration — 실제 Platform.OS 고정 표시(데모 토글 버튼 제외) */}
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.platform')}</Text>
-          <GlassSurface style={[styles.card, styles.singleCard]}>
-            <View style={styles.platformRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{Platform.OS === 'android' ? t('settings.overlayAssistant') : t('settings.pacePlayer')}</Text>
-                <Text style={styles.rowSubtitle}>{Platform.OS === 'android' ? t('settings.overlayAssistantDesc') : t('settings.pacePlayerDesc')}</Text>
-              </View>
-              <View style={[styles.readyTag, !overlayReady && styles.statusTagOff]}>
-                <Text style={[styles.readyTagText, !overlayReady && styles.statusTagTextOff]}>
-                  {overlayReady ? t('settings.ready') : t('settings.permissionNeededShort')}
-                </Text>
-              </View>
-            </View>
+            <DefaultRow
+              title={t('settings.sleepStillness')}
+              desc={isPremium ? t('settings.sleepStillnessDesc') : t('settings.sleepStillnessDescFree')}
+              value={`${settings.sleepStillnessMinutes}m`} bordered
+              onPress={() => {
+                // 2026-07-26 사장님 결정(D8) — 페이월이 광고하는 "Advanced Sleep Mode(customizable
+                // stillness sensitivity)"의 실제 구현. 무료는 위 Focus Session Duration과 동일한
+                // 패턴으로 값을 못 바꾸고 페이월로 안내(_layout.tsx의 enforceFreeFocusSessionDuration이
+                // sleepStillnessMinutes도 10으로 계속 되돌림).
+                if (!isPremium) {
+                  router.push('/paywall');
+                  return;
+                }
+                update({ sleepStillnessMinutes: cycle(SLEEP_STILLNESS_OPTIONS, settings.sleepStillnessMinutes) });
+                // Android만 실제 효과 있음(다음 세션 시작 시 overlayService.startSession의 새 파라미터로
+                // 전달돼 PaceOverlayService가 읽음) — iOS는 수면감지 자체가 아직 없어 무해하게 무시됨.
+              }}
+            />
           </GlassSurface>
         </View>
 
@@ -559,7 +542,6 @@ export default function SettingsScreen() {
           <GlassSurface style={styles.card}>
             <ChevronRow title={t('settings.replayGuide')} onPress={() => router.push('/onboarding')} />
             <ChevronRow title={t('settings.helpCenter')} bordered onPress={() => setShowHelpCenter(true)} />
-            <ChevronRow title={t('settings.sendFeedback')} bordered onPress={handleSendFeedback} />
             <ChevronRow title={t('settings.rateApp')} bordered onPress={handleRateApp} />
             <View style={[styles.row, styles.rowLast]}>
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>
@@ -648,18 +630,6 @@ function DefaultRow({ title, desc, value, onPress, bordered }: { title: string; 
   );
 }
 
-function ConnectedAppRow({ label, active, bordered }: { label: string; active: boolean; bordered?: boolean }) {
-  const { t } = useTranslation();
-  return (
-    <View style={[styles.row, bordered && styles.rowBordered]}>
-      <Text style={styles.rowTitle}>{label}</Text>
-      <View style={[styles.statusTag, !active && styles.statusTagOff]}>
-        <Text style={[styles.statusTagText, !active && styles.statusTagTextOff]}>{active ? t('settings.active') : t('focus.off')}</Text>
-      </View>
-    </View>
-  );
-}
-
 function NotifRow({ title, desc, value, onChange, bordered }: { title: string; desc: string; value: boolean; onChange: (v: boolean) => void; bordered?: boolean }) {
   return (
     <View style={[styles.row, styles.notifRow, bordered && styles.rowBordered]}>
@@ -685,7 +655,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
   screenTitle: { fontSize: 24, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
-  sectionLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
+  sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   // App.tsx SettingsTab.tsx 전 섹션이 카드에 p-5/px-5(20px)를 쓰는데 spacing.lg(24px)로 잘못
   // 이식돼 있었다. 리스트형 카드(divide-y)는 각 행이 자체 py-4(16px)로 세로 여백을 담당하므로
   // 카드 자체엔 세로 패딩을 안 준다 — Account/Platform/Advanced처럼 단일 콘텐츠 카드만
@@ -734,10 +704,6 @@ const styles = StyleSheet.create({
   statusTagOff: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: colors.borderSubtle },
   statusTagText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.5, textTransform: 'uppercase' },
   statusTagTextOff: { color: colors.textSecondary },
-
-  platformRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  readyTag: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.1)', borderRadius: radius.pill, paddingHorizontal: spacing.sm + 2, paddingVertical: 4 },
-  readyTagText: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.5, textTransform: 'uppercase' },
 
   // Session Status / Android Guard Services (2026-07-22 Focus 탭에서 이전, focus.tsx 원본 스타일 그대로)
   statusTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

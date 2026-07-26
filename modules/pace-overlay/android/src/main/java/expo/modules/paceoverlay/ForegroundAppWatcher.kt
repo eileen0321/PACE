@@ -92,9 +92,16 @@ object ForegroundAppWatcher {
       lastKnownForegroundPackage = recentlyUsed
       lastConfirmedAtMs = end
     }
-    // 두 경로 다 오래 재확인을 못 했으면(진짜 지원 앱을 떠나 한참 지남) "모른다"로 폴백 — 안 그러면
-    // 옛날 값이 영원히 남아 오버레이가 안 사라지는 그 반대 버그(이전 세션에서 이미 한 번 겪음)가
-    // 이 경로로 재발한다.
+    // ⚠️ 2026-07-26 밤 실기기 재현(사장님 지적, "손짓/자동재생 다 되는데 오버레이만 또 없어짐") —
+    // STALENESS_MS가 6초였는데, 77-80행의 MOVE_TO_FOREGROUND 이벤트 추적은 이미 완전하다(필터
+    // 없이 "어떤 앱이든" 전면에 오면 즉시 갱신되므로, 진짜로 유튜브를 떠나면 그 즉시
+    // lastKnownForegroundPackage가 새 앱으로 바뀜 — 별도 decay 없이도 이미 정확함). 그런데
+    // 이 STALENESS_MS 체크가 "최근 6초 안에 재확인 신호(전이 이벤트 또는 recentlyUsed)가
+    // 없으면 모른다로 취급"해서, 사용자가 영상 하나를 6초 넘게 그냥 보기만 해도(스와이프 없음 =
+    // 새 전이 이벤트 없음, lastTimeUsed도 그 사이 안 갱신됨) 오버레이가 사라졌다 — 정확히 이
+    // "가만히 시청 중"이 실사용의 절대다수인데, 그때마다 오탐이 난 것. 이벤트 추적이 이미 진짜
+    // 이탈을 정확히 잡으므로, 이 값을 대폭 늘려(5분) "데이터 자체가 완전히 끊긴 극단적 상황"만
+    // 걸러내는 안전망으로 격하 — 정상 시청 중엔 실질적으로 절대 발동 안 함.
     if (end - lastConfirmedAtMs > STALENESS_MS) return null
     return lastKnownForegroundPackage
   }
@@ -118,5 +125,5 @@ object ForegroundAppWatcher {
   }
 
   private const val RECENCY_WINDOW_MS = 4_000L
-  private const val STALENESS_MS = 6_000L
+  private const val STALENESS_MS = 300_000L
 }

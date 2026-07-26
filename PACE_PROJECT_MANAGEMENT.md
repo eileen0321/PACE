@@ -131,6 +131,16 @@
 검증 + 수면감지 정확도 개선까지 완료(아래 §6 "2026-07-26 — Windows 세션 (Focus Session 라이브
 실기기 검증 완료 + 수면감지 정확도 개선)" 로그 필독). **자동넘김 30편 한도 시스템은 완전히
 제거됨**. 다음 세션 우선순위:
+-1. **[🔴 최우선, dev 워크플로우] 재설치 후 접근성 항상 재확인** — 오늘 밤 "오버레이 소실+자동재생
+   안됨+손짓 안먹음" 세 신고가 전부 `PaceAccessibilityService`가 재설치로 꺼진 단일 원인이었음
+   (§6 "2026-07-26 밤, 이어서2" 로그 필독). 다음 세션 시작 시 실기기로 뭔가 테스트하기 전에
+   반드시 `adb shell settings get secure enabled_accessibility_services`로 먼저 확인하고, 비어
+   있으면 `adb shell settings put secure enabled_accessibility_services
+   com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService && adb shell settings put
+   secure accessibility_enabled 1`로 즉시 복구할 것. 추가로 재설치 직후 `notifyAccessibilityNeeded`
+   알림이 실제로 뜨는지 재현 검증 필요(이론상 `PREF_A11Y_WAS_ENABLED` 전이 감지로 잡혀야 하는데
+   이번엔 확인 못 함) — 안 뜨면 `_layout.tsx` 부팅 시점에 `hasAccessibilityPermission()` 체크를
+   추가로 보강.
 0. **[공용/출시블로커, Mac과 조율] 구독 상품/Offering 설정 iOS↔Android 일치** — Mac이 RC Public SDK
    키를 `.env`에 배선함(2026-07-26 오후2 로그). 이제 RC 대시보드 entitlement/"current" offering에
    **Play Console 구독 상품(Android)을 attach**해야 함(Mac은 App Store Connect 쪽). 앱 코드는 플랫폼
@@ -981,3 +991,50 @@ null이든 detach됐든 상관없이 매 틱 무조건 상태를 확인해 필�
 미세하게 안 맞아 박스 테두리) — 배경 블렌딩/투명로고로 자연스럽게, 다음 작업. (b) ⚠️ **진단 로그
 (VEV/domlog/MUTEBLOCKS/PACEWAVE hand= NSLog) 아직 있음 — App Store 제출 빌드 전 제거 필수.**
 관련 커밋: `bd88df1`~`fdd781f`. 실기기 Release 설치됨.
+
+### 2026-07-26 (밤, 이어서2) — Windows 세션 (🔴🔴 오늘 밤 "오버레이 소실 + 자동재생 안 됨 + 손짓 안 먹음"의 진짜 정체 — 접근성 권한이 통째로 꺼져 있었음)
+
+사장님이 거의 동시에 세 가지를 지적: "자동재생도 안되고 오버레이 방금 또 없어지고", "오버레이
+떳는데 손짓 안먹고". `dumpsys` 실기기 진단으로 확인:
+
+- `settings get secure enabled_accessibility_services` → **완전히 빈 값**. `dumpsys accessibility`도
+  `Bound services:{}`(아무 것도 안 묶여 있음). 즉 `PaceAccessibilityService`가 **시스템 설정에서
+  꺼져 있었음** — Android가 APK를 재설치할 때마다 접근성 서비스의 활성화 상태를 보안상 자동으로
+  초기화하는 것이 원인으로 추정(오늘 밤 여러 차례 `gradlew assembleDebug` 재빌드+재설치를 거침).
+  이미 `[[feedback_reenable_accessibility_after_reinstall]]` 메모리에 있던 바로 그 패턴인데 이번
+  세션 중 재적용을 놓쳤음.
+- 이 **하나의 원인이 오늘 밤 신고된 서로 달라 보이는 세 증상을 전부 설명**함:
+  1. **오버레이 소실**: `PaceOverlayService.foregroundPollRunnable`이 우선 접근성 이벤트 기반
+     감지(`PaceAccessibilityService.getCurrentForegroundPackage()`, 즉시 반영)를 쓰고, 없으면
+     `ForegroundAppWatcher`(UsageStatsManager 폴링, `RECENCY_WINDOW_MS=4s`/`STALENESS_MS=6s`라는
+     알려진 유예 한계 있음)로 폴백한다 — 접근성이 꺼져 있으니 항상 후자만 쓰이고, 그 유예
+     한계에 걸릴 때마다 `overlayView.visibility = View.GONE`이 됨. **`dumpsys window windows`로
+     직접 확인**: 오버레이 창은 WindowManager에 여전히 붙어있어(`isAttachedToWindow`=true라
+     기존 self-heal 로직은 이 케이스를 전혀 못 잡음) `mViewVisibility=0x8`(GONE)·`mHasSurface=false`
+     상태였음 — "죽은 게 아니라 의도적으로 숨겨진" 네 번째 케이스, 지금까지 문서화된 세 가지
+     소실 케이스(리사이즈/프로세스킬/서비스만킬)와도 또 다름.
+  2. **자동재생(Auto Next 스와이프) 안 됨** + **손짓 감지돼도 안 먹음**: 스와이프 제스처 디스패치
+     자체가 `PaceAccessibilityService`(AccessibilityService.dispatchGesture) 담당이라, 서비스가
+     안 묶여 있으면 손짓 감지(카메라 기반, `PaceOverlayService` 소관이라 정상 동작)까지는 되도
+     실제 "다음 영상으로 넘기기" 액션이 조용히 실패함.
+- **응급 수정(라이브 기기)**: `adb shell settings put secure enabled_accessibility_services
+  com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService` + `accessibility_enabled 1`로
+  즉시 재활성화. `dumpsys accessibility`로 `Bound services`에 다시 잡히는 것 확인 → 유튜브 홈↔복귀로
+  실제 전이 이벤트 유발 → `dumpsys window windows`로 오버레이 `mViewVisibility=0x0`·`mHasSurface=true`
+  ·`isReadyForDisplay()=true`로 복구 확인, 스크린샷으로 알약("2m left · SESSION ON") 정상 렌더 확인.
+- **이미 존재하던 예방 장치**(`overlay/index.tsx:285-304`, `PaceOverlayService.kt:440-446`,
+  `PREF_A11Y_WAS_ENABLED` was/now 전이 감지 → `consumeAccessibilityRevoked()` → JS가 AppState
+  `'active'`마다 소비 확인 → `notifyAccessibilityNeeded()` 알림)는 **"세션 도중 삼성이 몰래 끈
+  경우"**를 잡기 위해 이미 이번 세션 초반에 만들어둔 것인데, **"재설치로 인해 애초에 꺼진 채
+  시작하는 경우"**까지 커버하는지는 이번에 확인 못 함(재설치 직후 SharedPreferences의
+  `PREF_A11Y_WAS_ENABLED`가 재설치 전 `true`를 그대로 들고 있다면 다음 틱에서 잡혀야 이론상
+  맞지만, 실제로 알림이 떴었는지 로그로 재현 확인은 못 했음).
+
+**🔴 다음 세션 확인 권장**: (1) 재빌드/재설치 직후 실제로 `notifyAccessibilityNeeded` 알림이 뜨는지
+직접 재현 검증(지금은 이론만 확인), 그렇지 않으면 `_layout.tsx`나 앱 최초 부팅 시점에도 별도로
+`hasAccessibilityPermission()` 체크를 추가해 재설치 직후에도 놓치지 않게 보강 필요. (2) 이번처럼
+개발 중 반복 재설치를 하는 세션에서는 **재설치 후 다음 실기기 테스트 전에 항상
+`adb shell settings put secure enabled_accessibility_services
+com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService && adb shell settings put secure
+accessibility_enabled 1`부터 먼저 실행**하는 습관화 필요(이 세션에서 이걸 안 지켜서 몇 시간을
+"삼성 탓/코드 버그"로 오인하며 허비함).

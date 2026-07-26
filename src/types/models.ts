@@ -50,6 +50,14 @@ export type UserSettings = {
    * 네이티브 SharedPreferences 미러도 함께 갱신한다(Kotlin의 자동 종료 타이머가 그 값을 직접 읽으므로).
    */
   focusSessionDurationMinutes: number;
+  /**
+   * 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값(분). 무료는 항상 10분
+   * 고정(기존 동작 그대로), 프리미엄만 5~20분 사이 직접 조절 가능 — 페이월이 광고하는 "Advanced
+   * Sleep Mode(customizable stillness sensitivity)"의 실제 구현. Android
+   * PaceOverlayService(SLEEP_STILLNESS_MS 대체)만 실제로 쓰고, iOS는 수면감지 자체가 아직 없어
+   * 이 값을 읽는 곳이 없음(무해).
+   */
+  sleepStillnessMinutes: number;
 };
 
 // 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService

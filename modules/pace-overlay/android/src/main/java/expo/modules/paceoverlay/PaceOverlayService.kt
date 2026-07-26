@@ -122,6 +122,10 @@ class PaceOverlayService : Service() {
   // 무관). GLOBAL_ACTION_HOME으로 YouTube 자체를 강제 종료하는 건 침해감이 훨씬 크다고 판단해
   // 사용자가 Settings에서 직접 켜야만 동작하는 별도 옵션으로 분리 — 기본값 false.
   private var hardBlockMode = false
+  // 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값(분). 무료는 항상 10
+  // (companion object 상수와 동일값), 프리미엄만 JS Settings에서 5~20 사이로 넘겨줌. 아래
+  // performTick()에서 SLEEP_STILLNESS_MS 대신 이 값(분→ms 환산)을 사용.
+  private var sleepStillnessMinutes = 10
   // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
   // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
   private var infraReady = false

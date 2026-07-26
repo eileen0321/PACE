@@ -266,6 +266,7 @@ export const translations = {
 
     auth: {
       title: 'Sign In',
+      subtitle: 'Sync your progress and unlock Premium across devices.',
       continueWithApple: 'Continue with Apple',
       continueWithGoogle: 'Continue with Google',
       continueAsGuest: 'Continue as Guest',
@@ -404,6 +405,8 @@ export const translations = {
       staysOnLabel: 'Stays on for your Focus Session',
       scopeNote: 'Hands-free controls work during Focus Sessions.',
       turnOn: 'Turn On',
+      // 2026-07-26 사장님 결정(D9) — 핸즈프리 컨트롤 프리미엄 게이팅.
+      unlockPremium: 'Unlock with Premium',
       notNow: 'Not Now',
     },
 
@@ -657,6 +660,7 @@ export const translations = {
 
     auth: {
       title: '로그인',
+      subtitle: '기기 간 진행 상황을 동기화하고 프리미엄을 이어서 사용하세요.',
       continueWithApple: 'Apple로 계속하기',
       continueWithGoogle: 'Google로 계속하기',
       continueAsGuest: 'Guest로 계속하기',
@@ -785,6 +789,7 @@ export const translations = {
       staysOnLabel: 'Focus Session 동안 계속 유지',
       scopeNote: '핸즈프리 기능은 Focus Session 중에만 동작해요.',
       turnOn: '켜기',
+      unlockPremium: '프리미엄으로 잠금 해제',
       notNow: '나중에',
     },
 

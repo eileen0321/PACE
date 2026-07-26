@@ -16,6 +16,7 @@ import { useTranslation } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useUserStore } from '../../store/useUserStore';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { startSession, endSession } from '../../database/repositories/sessionsRepository';
 import type { SessionEndStatus } from '../../types/models';
 import { overlayService } from '../../services/platform';
@@ -57,6 +58,7 @@ export default function PaceFeedScreen() {
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
   // 현재 "활성 시청 세그먼트" 시작 시각. null이면 카운트 안 함(백그라운드/flush 직후). 사용시간 측정용.
   const watchSegmentStartRef = useRef<number | null>(Date.now());
   const current = queue[0] ?? null;
@@ -106,7 +108,13 @@ export default function PaceFeedScreen() {
   // (isAutoMode) 동안만 핸즈프리 감지를 켠다 — 이 플래그가 useFeedRemoteControl.ios의 감지 게이팅.
   // 현재 감지기는 핑거스냅(SoundAnalysis+AEC). 손짓(카메라 Vision)은 2단계로 pace-gesture에 추가 예정.
   // (고개짓 head-nod는 2026-07-23 "비현실적" 판단으로 계속 제외 — 'snap' 모드만 start.)
-  const handsFreeDetectActive = isAutoMode;
+  //
+  // 2026-07-26 사장님 결정(D9) — 핸즈프리 컨트롤을 프리미엄 전용으로 게이팅. Android는
+  // useBluetoothStore.enableAutoModeForSession 호출부(home.tsx)에서 isPremium을 확인하는데, iOS의
+  // 손짓 감지는 이 화면이 Focus Session(isAutoMode) 여부만 보고 독립적으로 켜서 페이월이 광고하는
+  // "핸즈프리 컨트롤" 혜택을 무료 사용자도 그대로 쓸 수 있었다(플랫폼 간 정책 불일치) — isPremium을
+  // 같이 확인해 무료 사용자는 손짓 감지가 아예 안 켜지게 한다.
+  const handsFreeDetectActive = isAutoMode && isPremium;
 
   useEffect(() => {
     loadInitial();
@@ -184,6 +192,7 @@ export default function PaceFeedScreen() {
       notifyLimit: false,
       notifyBreak: false,
       hardBlockMode: false,
+      sleepStillnessMinutes: 10, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
     }).catch(() => {});
     const timer = setTimeout(() => {
       setIsAutoMode(false);
@@ -248,8 +257,10 @@ export default function PaceFeedScreen() {
   // 다이소 리모컨)이 실제로 연결됐을 때만" 해야 한다 — 폰만 있을 땐 볼륨키가 음량 조절이어야 하는데
   // 세션 ON만으로 무조건 가로채 음량 조절을 막고 있었다. Focus Session ON && BT 오디오 연결됨일 때만 활성.
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
+  // 2026-07-26 사장님 결정(D9) — 블루투스 리모컨(볼륨키)도 핸즈프리 컨트롤의 일부라 위 손짓 감지와
+  // 동일하게 프리미엄 전용.
   useVolumeNext({
-    enabled: isAutoMode && isBluetoothConnected,
+    enabled: isAutoMode && isBluetoothConnected && isPremium,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
   });
 

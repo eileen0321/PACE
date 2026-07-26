@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   notifyBreak: true,
   hardBlockMode: false,
   focusSessionDurationMinutes: 10,
+  sleepStillnessMinutes: 10,
 };
 
 type SettingsState = {

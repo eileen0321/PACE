@@ -39,12 +39,23 @@ const queryClient = new QueryClient();
 // 있게 한다(프리미엄은 기존처럼 자유 선택). isPremium이 false로 바뀔 때마다(로그아웃/구독 만료 등)
 // 강제로 되돌려 프리미엄이었을 때 골라둔 값이 그대로 남지 않게 한다.
 const FREE_FOCUS_SESSION_DURATION_MINUTES = 10;
+// 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값도 같은 원칙: 무료는 10분
+// 고정, 프리미엄만 Settings에서 5~20분 사이 직접 조절. isPremium이 false로 바뀔 때마다 위
+// focusSessionDurationMinutes와 동일한 패턴으로 강제 리셋.
+const FREE_SLEEP_STILLNESS_MINUTES = 10;
 function enforceFreeFocusSessionDuration(isPremium: boolean) {
   if (isPremium) return;
-  const current = useSettingsStore.getState().settings.focusSessionDurationMinutes;
-  if (current === FREE_FOCUS_SESSION_DURATION_MINUTES) return;
-  useSettingsStore.getState().update({ focusSessionDurationMinutes: FREE_FOCUS_SESSION_DURATION_MINUTES });
-  if (Platform.OS === 'android') {
+  const current = useSettingsStore.getState().settings;
+  const patch: { focusSessionDurationMinutes?: number; sleepStillnessMinutes?: number } = {};
+  if (current.focusSessionDurationMinutes !== FREE_FOCUS_SESSION_DURATION_MINUTES) {
+    patch.focusSessionDurationMinutes = FREE_FOCUS_SESSION_DURATION_MINUTES;
+  }
+  if (current.sleepStillnessMinutes !== FREE_SLEEP_STILLNESS_MINUTES) {
+    patch.sleepStillnessMinutes = FREE_SLEEP_STILLNESS_MINUTES;
+  }
+  if (Object.keys(patch).length === 0) return;
+  useSettingsStore.getState().update(patch);
+  if (Platform.OS === 'android' && patch.focusSessionDurationMinutes !== undefined) {
     bluetoothService.setFocusSessionDurationMinutes(FREE_FOCUS_SESSION_DURATION_MINUTES).catch(() => {});
   }
 }
@@ -176,6 +187,7 @@ export default function RootLayout() {
               notifyLimit: settings.notifyLimit,
               notifyBreak: settings.notifyBreak,
               hardBlockMode: settings.hardBlockMode,
+              sleepStillnessMinutes: settings.sleepStillnessMinutes,
             }).catch(() => {});
           }
         }

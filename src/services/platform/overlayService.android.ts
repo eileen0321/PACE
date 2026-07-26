@@ -17,7 +17,8 @@ let PaceOverlay: {
     notifyRemaining: boolean,
     notifyLimit: boolean,
     notifyBreak: boolean,
-    hardBlockMode: boolean
+    hardBlockMode: boolean,
+    sleepStillnessMinutes: number
   ): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
@@ -39,7 +40,7 @@ try {
 export const overlayService: OverlayService = {
   supportsSystemOverlay: PaceOverlay !== null,
 
-  async startSession({ remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode }) {
+  async startSession({ remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode, sleepStillnessMinutes }) {
     if (!PaceOverlay) return;
     if (!PaceOverlay.hasOverlayPermission()) {
       PaceOverlay.requestOverlayPermission();
@@ -51,7 +52,7 @@ export const overlayService: OverlayService = {
     if (!PaceOverlay.hasUsageAccessPermission()) {
       PaceOverlay.requestUsageAccessPermission();
     }
-    await PaceOverlay.start(remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode);
+    await PaceOverlay.start(remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode, sleepStillnessMinutes);
   },
 
   async updateRemaining(remainingMinutes) {

@@ -39,6 +39,12 @@ export interface OverlayService {
      * 기본 false, Settings의 "Hard Block Mode" 토글로만 사용자가 직접 켠다. iOS는 무시(no-op).
      */
     hardBlockMode: boolean;
+    /**
+     * 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값(분, 5~20 사이). 무료는
+     * 항상 10(고정), 프리미엄만 Settings에서 직접 조절. Android(PaceOverlayService)만 실제로
+     * 사용 — iOS는 무시(no-op, 수면감지 자체가 아직 없음).
+     */
+    sleepStillnessMinutes: number;
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;

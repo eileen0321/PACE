@@ -72,6 +72,13 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
       set({ isPremium: cached === '1', isReady: true });
       return;
     }
+    // 2026-07-27 감사 발견(subscription B1) — RC_KEY가 있으면 곧장 네트워크 getCustomerInfo로 갔는데,
+    // 그게 resolve되기 전까지 isPremium이 스토어 기본값 false라 유료 사용자가 콜드런치 직후 잠깐
+    // 광고배너((tabs)/_layout)와 프리미엄 게이트(→페이월)에 노출됐다(느린 망일수록 길어짐). 캐시로 먼저
+    // 낙관적 seed하고, 바로 아래 getCustomerInfo + addCustomerInfoUpdateListener가 RC 실제값으로 정정한다
+    // (만료됐으면 applyCustomerInfo가 false로 내림 — 잠깐의 과다부여는 광고 오노출보다 안전한 트레이드오프).
+    const cachedPremium = await AsyncStorage.getItem(STORAGE_KEYS.premiumIsPremium);
+    if (cachedPremium === '1') set({ isPremium: true });
     // 2026-07-26 감사 발견 — getCustomerInfo(entitlement 판정, 보안적으로 중요)와 getOfferings
     // (구매 가능 상품 목록, 표시용일 뿐)를 하나의 try/catch로 묶어뒀었다. getCustomerInfo가 실제
     // 유료 구독자의 isPremium=true를 이미 확정한 뒤에, 그 다음 줄 getOfferings()만 네트워크

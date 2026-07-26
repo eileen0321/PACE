@@ -12,7 +12,7 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useSettingsStore, DEFAULT_SETTINGS } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
-import { useAttendanceStore, getLast7Days } from '../../store/useAttendanceStore';
+import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -85,6 +85,7 @@ export default function SettingsScreen() {
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const attendanceHistory = useAttendanceStore((s) => s.history);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
+  const currentStreak = getCurrentStreak(attendanceHistory);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
@@ -251,22 +252,35 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* 1.5 Weekly Attendance — 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui 만들어봐") */}
+        {/* 1.5 Weekly Attendance — 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui 만들어봐"),
+            이후 "요즘 트렌드 UI냐"는 질문에 스트릭 숫자 강조 + 연속된 날끼리 이어지는 선으로 보강
+            (Duolingo류 스트릭 UI 패턴 — 단, Pace의 Flat/No-Gradient 원칙은 유지). */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.weeklyAttendance')}</Text>
           <GlassSurface style={[styles.card, styles.singleCard]}>
+            {currentStreak > 0 && (
+              <View style={styles.attendanceStreakRow}>
+                <Feather name="zap" size={14} color={colors.successLight} />
+                <Text style={styles.attendanceStreakText}>{t('settings.attendanceStreak', { n: currentStreak })}</Text>
+              </View>
+            )}
             <View style={styles.attendanceRow}>
               {getLast7Days(attendanceHistory).map((day) => (
                 <View key={day.date} style={styles.attendanceDay}>
                   <Text style={styles.attendanceDayLabel}>{day.dayLabel}</Text>
-                  <View
-                    style={[
-                      styles.attendanceDot,
-                      day.attended && styles.attendanceDotFilled,
-                      day.isToday && styles.attendanceDotToday,
-                    ]}
-                  >
-                    {day.attended && <Feather name="check" size={12} color="#0B0C0F" />}
+                  <View style={styles.attendanceDotColumn}>
+                    {/* 연속된 출석일끼리 칸 전체 폭의 바가 서로 맞닿아 하나의 선처럼 이어짐 —
+                        빠진 날은 바 자체가 없어 그 지점에서 자연스럽게 끊김. */}
+                    {day.attended && <View style={styles.attendanceConnector} />}
+                    <View
+                      style={[
+                        styles.attendanceDot,
+                        day.attended && styles.attendanceDotFilled,
+                        day.isToday && styles.attendanceDotToday,
+                      ]}
+                    >
+                      {day.attended && <Feather name="check" size={12} color="#0B0C0F" />}
+                    </View>
                   </View>
                 </View>
               ))}
@@ -668,10 +682,14 @@ const styles = StyleSheet.create({
   accountCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   // 2026-07-26 사용자 지시("설정에 1주일간 출석한 ui") — 요일 7칸, 출석한 날은 채운 원+체크,
   // 오늘은 테두리로 강조. 하단에 누적 보너스 크레딧(useAttendanceStore.bonusCredits) 표시.
+  attendanceStreakRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.md },
+  attendanceStreakText: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   attendanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  attendanceDay: { alignItems: 'center', gap: 6 },
+  attendanceDay: { alignItems: 'center', gap: 6, flex: 1 },
   attendanceDayLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilySemibold, color: colors.textTertiary },
-  attendanceDot: { width: 28, height: 28, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  attendanceDotColumn: { width: '100%', alignItems: 'center', justifyContent: 'center' },
+  attendanceConnector: { position: 'absolute', left: 0, right: 0, top: '50%', height: 2, marginTop: -1, backgroundColor: colors.successLight },
+  attendanceDot: { width: 28, height: 28, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
   attendanceDotFilled: { backgroundColor: colors.successLight, borderColor: colors.successLight },
   attendanceDotToday: { borderColor: colors.primary, borderWidth: 1.5 },
   attendanceFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.borderSubtle },

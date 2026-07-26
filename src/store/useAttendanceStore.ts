@@ -110,3 +110,21 @@ export function getLast7Days(history: string[]): { date: string; dayLabel: strin
   }
   return days;
 }
+
+// 2026-07-26 — "N일 연속" 스트릭 표시용. 오늘부터 거꾸로 하루씩 내려가며 이력에 있는 날만 센다 —
+// 하루라도 빠지면 그 지점에서 멈춘다(연속이 아니므로). 오늘 아직 체크인 전이어도(이론상 불가능 —
+// _layout.tsx가 부팅마다 checkInIfNeeded를 부르므로 항상 먼저 기록됨) 자연스럽게 0으로 끊긴다.
+export function getCurrentStreak(history: string[]): number {
+  const set = new Set(history);
+  let streak = 0;
+  const d = new Date();
+  while (true) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (!set.has(`${y}-${m}-${day}`)) break;
+    streak++;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}

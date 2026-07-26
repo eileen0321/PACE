@@ -293,7 +293,7 @@ export default function PaceFeedScreen() {
           <Pressable onPress={toggleAutoMode} hitSlop={8} style={[styles.sessionPill, isAutoMode && styles.sessionPillOn]}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             {isAutoMode ? <View style={styles.sessionOnDot} /> : <Feather name="play" size={12} color="rgba(255,255,255,0.92)" />}
-            <Text style={styles.sessionOnText}>{isAutoMode ? 'SESSION ON' : 'START SESSION'}</Text>
+            <Text style={styles.sessionOnText}>{isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}</Text>
           </Pressable>
           <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />

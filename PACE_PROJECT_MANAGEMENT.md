@@ -1168,3 +1168,48 @@ Flip Mode 페이지 리디자인)
 linear→`Easing.inOut(Easing.sin)`으로 교체해 더 유기적으로, (3) 페이지 진입 시 스프링 바운스
 등장 애니메이션(microinteraction) 추가. `npx tsc --noEmit` 통과. **실기기 확인 필요**: 회전
 그라데이션+스프링 진입이 저사양 Android에서도 끊김 없이 도는지.
+
+### 2026-07-26 (밤, 이어서7) — Windows 세션 (공통코드 즉시 푸시 + PlatformPickerCard 재생버튼 reconcile)
+
+사장님 지적("공통 부분 수정하면 푸시 안 해서 맥이 모르잖아") 반영 — 이 세션에서 로컬에만 쌓아뒀던
+공통 코드 변경(위 이어서4~6 전부 + 아래 목록)을 즉시 커밋·푸시. `origin/master`를 fetch하니 Mac
+세션이 이미 같은 파일(`PlatformPickerCard.playButtonLarge`)을 52→40(아이콘 18)으로 독립적으로
+줄여 푸시해둔 상태라 병합 충돌 발생 — **Mac의 40px/아이콘18 값으로 reconcile**(Windows가 골랐던
+36px/16 폐기, iOS와 크기 통일이 우선). 추가로 Mac 세션 로그(§밤2/밤3)가 "휴식 전용 가이드 컴포넌트가
+origin에 없다"고 지적한 항목은 이번 커밋으로 해결됨(`onboarding/index.tsx` 3페이지 구성 + `FlipPhoneHero.tsx`
+전부 포함).
+- 이번 푸시에 포함된 항목(요약): 주간평균 타임존 버그 수정(`src/utils/date.ts`), Platform Breakdown/
+  Connected Apps 삭제, GlassSurface iOS 블러 버그 수정 + 라벨 크기 확대, 온보딩 3페이지(Flip Mode
+  페이지+FlipPhoneHero 애니메이션), 핸즈프리 컨트롤 프리미엄 게이팅 재철회(다시 무료), Settings
+  "기능 건의 및 피드백" 삭제, 홈 재생버튼 크기(→Mac 값 40px로 통일).
+- **앞으로 원칙**: `src/components/**`, `src/app/(tabs)/**`, `src/app/onboarding/**`, 스토어/훅 등
+  플랫폼 무관 공통 코드는 작업 완료 즉시(세션 끝날 때까지 기다리지 말고) 커밋·푸시.
+
+### 2026-07-26 (밤2) — Mac 세션 (⚠️ 공통코드 동기화 경고 + 홈 재생버튼 축소)
+
+**⚠️⚠️ [양 세션 필독] 공통 코드는 반드시 즉시 푸시할 것.** 사장님 지적: 안드로이드(Windows 세션 로컬)에서
+수정한 공통 UI 변경들이 origin에 안 올라와 iOS 빌드에 반영이 안 됨("왜 이렇게 안 되어 있는 게 많아,
+공통 코드는 같이 가야지"). 확인 결과 Mac 로컬은 origin과 100% 동기(cffa398)인데, 예로 **홈
+PlatformPickerCard의 우측 재생버튼 축소**가 origin에 없었음(최신은 8c4d8a5의 52x52 largeButton).
+→ **Windows 세션: 커밋 안 하고 로컬에만 둔 공통 컴포넌트(src/components/**, src/app/(tabs)/**,
+스토어/훅 등 플랫폼 무관 코드) 변경을 전부 커밋·푸시할 것.** Mac도 마찬가지. 안 그러면 두 플랫폼
+UI/로직이 계속 갈라짐.
+
+**홈 재생버튼**: 사장님 지시로 `PlatformPickerCard.playButtonLarge` 52→40, 아이콘 22→18로 축소
+(안드로이드에 맞춤). ⚠️ Windows 세션이 이미 다른 값으로 줄였다면 푸시 후 값 reconcile 필요(간단).
+
+### 2026-07-26 (밤3) — Mac 세션 (⚠️ 공통코드 미푸시 항목 누적 — Windows 세션 즉시 푸시 필요)
+
+사장님이 iOS 빌드에서 "반영 안 됐다"고 지적한 공통 변경들이 **origin에 없음 = Windows 세션 로컬에만
+있고 미푸시**. Mac 로컬은 origin과 100% 동기(미커밋 0)라 받을 방법이 없음. **Windows 세션은 아래를
+즉시 커밋·푸시할 것**:
+1. **홈 온보딩("쉬고 모으고 이어보기") 탭 시 뜨는 "휴식 전용 가이드"** — 현재 origin의 onboarding/index.tsx는
+   탭하면 핸즈프리(BluetoothOnboardingSheet)만 뜸(`onPress→setShowHandsFree`). 휴식 가이드 시트
+   컴포넌트 자체가 origin에 없음(src/components/onboarding엔 AccessibilityOnboardingSheet뿐). → 그
+   휴식 가이드 컴포넌트+연결을 푸시할 것.
+2. (앞 로그) 홈 PlatformPickerCard 재생버튼 축소 — Mac이 52→40으로 임시 반영했으나 Windows가 다른
+   값이면 reconcile.
+- **재확인**: onboarding 라우팅(src/app/index.tsx)은 이미 공통·정상(앱 실행→onboardingCompleted 플래그로
+  온보딩/홈 분기). 시나리오 자체는 양 플랫폼 동일함 — 문제는 "새로 추가한 컴포넌트 미푸시"뿐.
+- ⚠️ 앞으로 공통 컴포넌트(src/components/**, src/app/(tabs)/**, src/app/onboarding/**, 스토어/훅) 변경은
+  플랫폼 무관하므로 **작업 즉시 커밋·푸시**. 안 그러면 사장님이 두 폰 번갈아 볼 때마다 "iOS엔 없네"가 반복됨.

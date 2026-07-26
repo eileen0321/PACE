@@ -25,8 +25,8 @@ import { useDailyBonusStore } from '../store/useDailyBonusStore';
 import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
-import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
+import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { useTranslation } from '../services/i18n';
@@ -276,16 +276,16 @@ export default function RootLayout() {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
 
-  // 2026-07-21: expo-splash-screen(네이티브, 정적)은 폰트 로딩 동안만 담당 — 그 직후 이
-  // JS 애니메이션 스플래시(AnimatedSplash)가 이어받아 브랜딩 애니메이션을 보여준 뒤 스스로
-  // 사라진다. Stack 콘텐츠는 이미 그 아래에서 마운트돼 있으니(라우팅 자체는 지연되지 않음)
-  // 순수하게 시각적 브랜딩 레이어일 뿐이다.
+  // 스플래시: 네이티브 런치스크린은 "로고 없는 단색 #060709"(app.json splash에서 image 제거)로 두고,
+  // 브랜딩 로고는 이 AnimatedSplash(JS)가 담당한다 → 앱 실행 시 "첫 아이콘이 잠깐 떴다 사라지는"
+  // 네이티브 런치 아이콘 플래시(사장님 지적)가 사라지고, 단색 배경에서 곧바로 애니메이션 스플래시
+  // 하나만 자연스럽게 뜬다. (expo-splash-screen은 폰트 로딩 동안 단색 #060709만 유지.)
   const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
 
   if (!fontsLoaded) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#060709' }} onLayout={onLayoutRootView}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           {/* 2026-07-18: 앱이 항상-다크 테마로 고정되면서 상태바도 시스템 설정과 무관하게 항상 밝은
@@ -314,7 +314,6 @@ export default function RootLayout() {
             earned={checkInEarned ?? 0}
             onDismiss={() => setCheckInEarned(null)}
           />
-          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
           {(updatePhase === 'downloading' || updatePhase === 'reloading') && (
             <View style={styles.updateOverlay} pointerEvents="auto">
               <ActivityIndicator size="large" color={colors.primary} />
@@ -323,6 +322,7 @@ export default function RootLayout() {
               </Text>
             </View>
           )}
+          {showAnimatedSplash && <AnimatedSplash onComplete={() => setShowAnimatedSplash(false)} />}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

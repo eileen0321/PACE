@@ -26,8 +26,8 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
   onPress: () => void;
   isActive?: boolean;
   features?: string[];
-  /** 2026-07-26 — 카드가 하나뿐인 화면(Home)에서 기본(32px)보다 살짝만 크게(36px). 52px는
-   * 사용자가 "촌스럽다"고 되돌림. */
+  /** 2026-07-26 — 카드가 하나뿐인 화면(Home)에서 기본(32px)보다 살짝만 크게(40px, iOS와 맞춤).
+   * 52px는 사용자가 "촌스럽다"고 되돌림. */
   largeButton?: boolean;
 }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -74,7 +74,7 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
                 )}
               </View>
               <View style={[styles.playButton, largeButton && styles.playButtonLarge]}>
-                <Ionicons name="play" size={largeButton ? 16 : 14} color="#FFFFFF" style={styles.playIcon} />
+                <Ionicons name="play" size={largeButton ? 18 : 14} color="#FFFFFF" style={styles.playIcon} />
               </View>
             </LinearGradient>
           </ImageBackground>
@@ -114,6 +114,6 @@ const styles = StyleSheet.create({
   featureChip: { borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingVertical: 2 },
   featureChipText: { fontSize: 8, fontFamily: typography.bodyFontFamilyBold, color: '#E5E7EB', letterSpacing: 0.3 },
   playButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  playButtonLarge: { width: 36, height: 36, borderRadius: 18 },
+  playButtonLarge: { width: 40, height: 40, borderRadius: 20 }, // 2026-07-26 사용자 지시로 52→40 축소(안드로이드와 맞춤)
   playIcon: { marginLeft: 2 }, // 원본 ml-0.5(2px) — 삼각형 아이콘의 시각적 무게중심 보정
 });

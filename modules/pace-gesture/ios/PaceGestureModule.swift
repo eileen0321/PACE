@@ -74,11 +74,12 @@ public class PaceGestureModule: Module {
   // 짧은 창 안에서 급격히 커지는)" 모션을 감지한다(안드로이드와 동일한 모션-기반 휴리스틱, 특정 포즈
   // 분류 아님). Focus Session ON 동안만 켜져 게이팅됨(카메라 상시 구동 방지 — 배터리/프라이버시).
   private func startWave() {
+    NSLog("[pace-wave] startWave() called (SESSION ON→감지기 시작)")
     guard #available(iOS 14.0, *) else {
       sendEvent("onError", ["kind": "wave", "message": "Hand pose needs iOS 14+"])
       return
     }
-    if waveDetector != nil { return }
+    if waveDetector != nil { NSLog("[pace-wave] startWave: 이미 실행중(skip)"); return }
     let d = WaveDetector(
       onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
@@ -378,13 +379,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
   private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
   private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
+  private var smoothedSize: CGFloat = 0 // EMA 평활된 손 크기(회전 오실레이션 제거). 손 없으면 0으로 리셋
   private let windowSec: TimeInterval = 0.6
   private let growthRatio: CGFloat = 1.3          // 너클 폭이 1.3배 커짐 = 손이 다가옴. 안정적 지표라 지터 오발화 없음(재무장+JS디바운스도 방어)
   private let minHandSize: CGFloat = 0.02         // 너클 폭 스케일(바운딩박스보다 작음) — 너무 멀면 무시
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.16 // 160ms(≈6회/초) — SESSION ON이면 손짓 안 해도 Vision이
-  // 계속 돌아 영상 디코딩과 GPU/ANE 경합→간헐적 씹힘(사장님 확인). 너클 지표는 안정적이라 빈도 낮춰도 손짓
-  // 감지 유지됨(0.6s창에 3~4샘플이면 성장 판정 충분). 예전 200ms 실패는 노이즈 심한 바운딩박스 탓이었음.
+  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms — 160ms로 낮추니 창 샘플부족으로 손짓 과발화("지맘대로
+  // 지나감"), 게다가 씹힘도 안 줄어(카메라 경합이 씹힘 원인 아님 확인) → 손짓 잘 되던 100ms로 복구.
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave
@@ -395,16 +396,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   }
 
   func start() {
-    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    let st = AVCaptureDevice.authorizationStatus(for: .video)
+    NSLog("[pace-wave] start() cam authStatus=%ld (0=notDet 1=restr 2=DENIED 3=authorized)", st.rawValue)
+    switch st {
     case .authorized:
       queue.async { self.configureAndRun() }
     case .notDetermined:
       AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
         guard let self = self else { return }
+        NSLog("[pace-wave] cam requestAccess granted=%@", granted ? "YES" : "NO")
         guard granted else { self.onError("camera permission denied"); return }
         self.queue.async { self.configureAndRun() }
       }
     default:
+      NSLog("[pace-wave] cam DENIED/RESTRICTED — 설정에서 카메라 켜야 함")
       onError("camera permission denied")
     }
   }
@@ -422,15 +427,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       return
     }
     session.addInput(input)
-    // 카메라 프레임레이트를 15fps로 제한 — 손짓엔 충분하고, 기본 30/60fps 캡처가 영상 디코딩과 GPU/ANE를
-    // 다퉈 간헐적 씹힘을 유발했다(사장님 확인). 캡처 자체 오버헤드를 절반 이하로 낮춘다.
-    if let range = device.activeFormat.videoSupportedFrameRateRanges.first,
-       range.minFrameRate <= 15, range.maxFrameRate >= 15,
-       (try? device.lockForConfiguration()) != nil {
-      device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 15)
-      device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 15)
-      device.unlockForConfiguration()
-    }
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true
@@ -515,7 +511,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     guard let obs = obsOpt else {
       samples.removeAll()
-      armed = true // 손이 프레임에서 빠짐 → 재무장(다음 손짓 1회 허용)
+      armed = true; smoothedSize = 0 // 손 빠짐 → 재무장 + 평활 리셋
       if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
       return
     }
@@ -530,13 +526,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let lmcp = try? obs.recognizedPoint(.littleMCP),
       imcp.confidence > 0.3, lmcp.confidence > 0.3
     else {
-      armed = true
+      armed = true; smoothedSize = 0
       if logTick % 6 == 0 { onDiag("hand no-knuckle") }
       return
     }
     let kdx = imcp.location.x - lmcp.location.x, kdy = imcp.location.y - lmcp.location.y
-    let size = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f n=%d armed=%@", Double(size), samples.count + 1, armed ? "1" : "0")) }
+    let raw = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
+    // EMA 평활 — 너클 폭은 손 회전(좌우로 흔들면 원근단축)에 프레임마다 0.06↔0.15로 오실레이션해 오발화
+    // ("지맘대로 넘어감")했다. 평활로 빠른 진동을 죽이고 "지속적으로 다가오는" 추세만 남긴다(회전 무관).
+    smoothedSize = smoothedSize <= 0 ? raw : smoothedSize * 0.7 + raw * 0.3
+    let size = smoothedSize
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f n=%d armed=%@", Double(size), Double(raw), samples.count + 1, armed ? "1" : "0")) }
     // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
     // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
     if !armed && size < lastFireSize * 0.75 { armed = true }

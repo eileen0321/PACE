@@ -131,6 +131,11 @@
 검증 + 수면감지 정확도 개선까지 완료(아래 §6 "2026-07-26 — Windows 세션 (Focus Session 라이브
 실기기 검증 완료 + 수면감지 정확도 개선)" 로그 필독). **자동넘김 30편 한도 시스템은 완전히
 제거됨**. 다음 세션 우선순위:
+0. **[공용/출시블로커, Mac과 조율] 구독 상품/Offering 설정 iOS↔Android 일치** — Mac이 RC Public SDK
+   키를 `.env`에 배선함(2026-07-26 오후2 로그). 이제 RC 대시보드 entitlement/"current" offering에
+   **Play Console 구독 상품(Android)을 attach**해야 함(Mac은 App Store Connect 쪽). 앱 코드는 플랫폼
+   무관(하드코딩 ID 없음)이라 대시보드/스토어 설정만 맞추면 됨 — 상세 계약은 §6 "구독 상품/Offering
+   설정은 iOS↔Android 공용 조율 항목" 로그 필독. 미등록 시 페이월이 빈 목록.
 1. **수면감지 시간대 게이트(22시~9시) + 정확한 시각 기록 로직의 실제 밤 시간대 재현 테스트** —
    코드 검토로 로직은 확인했지만, 실제로 밤에 폰을 무진동 상태로 10분 두고 (a) 그 창 밖(낮)에서는
    정말 트리거 안 되는지, (b) 트리거될 때 기록되는 시각이 "임계값 넘긴 시각"이 아니라 "마지막
@@ -777,3 +782,33 @@ RC 키 세팅 후 재검증 필요.
 - **남은 확인(구독 완전 작동까지)**: (1) RC 대시보드 **Product catalog/Offerings에 구독 상품+오퍼링
   구성**돼야 페이월이 목록을 받음(키만으론 부족), (2) **App Store Connect/Play Console에 구독 상품
   실제 등록**, (3) 리빌드 후 페이월 열어 상품 뜨는지 + 샌드박스 구매/복원 실기기 테스트(양 플랫폼).
+
+### 2026-07-26 (오후, 이어서2) — Mac 세션 (구독 상품/Offering 설정은 iOS↔Android 공용 조율 항목)
+
+**⚠️ 공용/조율 [Windows+Mac 둘 다 관여] — RevenueCat 구독 상품/Offering/Entitlement는 두 플랫폼이
+한 RC 프로젝트를 공유하므로 반드시 일치시켜야 함**(사장님 지적). 앱 코드는 이미 **완전히 플랫폼
+무관**하게 되어 있어(하드코딩된 ID 없음), 조율은 전적으로 **RC 대시보드 + 양쪽 스토어 콘솔** 설정
+레벨에서 이뤄지면 됨:
+
+**앱 코드가 기대하는 계약(양 플랫폼 공통, 이미 이렇게 구현됨 — `useSubscriptionStore.ts`)**:
+- `isPremium` = `info.entitlements.active`에 **뭐라도 하나라도 활성이면 true**(특정 entitlement ID를
+  하드코딩하지 않음, `:42-43`). → RC에 **entitlement 1개**(예: `premium`)만 있으면 iOS/Android 공용.
+- 페이월은 `offerings.current?.availablePackages`(**"current" offering**)를 그대로 렌더(`:98`,
+  `paywall/index.tsx:94`, `keyExtractor=item.identifier`). → RC에서 **current로 지정된 offering 1개**의
+  패키지가 양 플랫폼에 동일하게 노출됨.
+- 로컬 미러 라벨은 `plan:'premium_monthly'` 문자열 하나(`:55`) — RC 식별자가 아니라 SQLite 표시용,
+  양 플랫폼 동일 코드라 자동 일치.
+
+**따라서 두 세션이 맞춰야 할 것(대시보드/스토어 레벨, 코드 변경 아님)**:
+1. **RC 대시보드**: entitlement 1개 + "current" offering 1개를 확정하고, 그 offering의 각 package에
+   **App Store 상품(iOS)과 Play 상품(Android)을 둘 다 attach**. (한쪽만 붙이면 그 플랫폼에선 페이월이 빔.)
+2. **App Store Connect(iOS, Mac 담당)**: 구독 상품 생성 + RC에 연결. **Play Console(Android, Windows
+   담당)**: 동일 성격의 구독 상품 생성 + 같은 RC entitlement/offering에 연결. 상품 ID는 스토어별로
+   달라도 되지만 **같은 RC entitlement로 귀속**되어야 크로스플랫폼(구글/애플 로그인 전환) 프리미엄
+   인식이 됨.
+3. **크레딧 경제 공식**은 이미 Windows 세션이 §6(2026-07-26 크레딧 경제 공식 확정)에서 확정 — 구독
+   혜택/크레딧도 플랫폼 간 동일해야 하므로 그 공식을 iOS도 그대로 따를 것(별도 상품 티어가 생기면 재확인).
+
+**현재 상태**: Mac이 RC Public SDK 키를 `.env`에 배선(리빌드 반영)까지 함. 위 1~2(대시보드/스토어
+상품 등록)는 **아직 미확인** — 등록 안 돼 있으면 키가 있어도 페이월이 빈 목록. → 사장님/양 세션이
+RC Offering·양 스토어 상품 등록 여부부터 확인 필요. (검증: 리빌드 후 페이월 열어 상품 뜨는지.)

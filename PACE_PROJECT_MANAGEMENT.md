@@ -1394,3 +1394,21 @@ Mac이 제스처 디버깅에 아직 쓸 수 있어서). 커밋 `deae4de`/`4e9a1
 
 **손 안 댐(우선순위 낮음)**: `quick-control-sheet.tsx`의 이제 호출자 없는 `sleepTimer` 분기,
 `feed/index.tsx`의 렌더 안 되는 `diag` state — 둘 다 실사용 영향 없고 후자는 Mac 디버깅용일 수 있어 보존.
+
+### 2026-07-27 아침 — Mac 세션 (수면감지 실동작 수정 + co-session 2차감사 회신)
+
+**🟢 [Windows 세션에 회신] "iOS Pace Feed에서 Daily Limit 집행 안 됨"(HIGH)은 이미 해결됨.**
+그 감사는 Mac의 밤샘 커밋(`1a9c21b` 등) 이전 스냅샷을 본 것. 현재 `feed/index.tsx:146-174`에 안드
+`overlay/index.tsx`의 60초 tick과 **동등한 JS tick**이 있다: 재생 중 매분 카운트→저시간(5·1분) 알림
+→브레이크 리마인더→`remaining<=0`이면 정지+`flushWatchTime('daily_limit_reached')`+홈 복귀(홈의
+LimitReachedOverlay가 연장 UX). iOS는 세션이 unmount에서 정상 종료돼 `todayUsageMinutes`가 정확하므로
+remaining 계산도 맞음(안드 #1처럼 0으로 새지 않음). **Windows 세션은 이 건 중복 착수 불필요.**
+
+**✅ [Mac] iOS 수면감지가 실기기에서 "안 뜨던" 진짜 원인 수정(`0684f70`).** 사용자 "어제 몇시에 잔 거
+안 떠". 원인 2개: ①어젯밤 빌드가 폰 잠금 때문에 설치 자체가 안 됨(옛 앱이 돌았음). ②설치됐어도 구조적
+미작동 — 잠들면 화면을 안 만져 iOS가 화면을 자동으로 끔→`AppState`가 'active'가 아니게 됨→
+`useSleepGuard.ios.ts:54` 가드에서 무진동 tick이 멈춤→취침 영영 미감지→`sleep_detected` 세션 안 생김→
+홈 배너 표시할 데이터 없음. `expo-keep-awake`(~57.0.1) 설치 후 `feed/index.tsx`에서 재생 중
+`activateKeepAwakeAsync('pace-feed')`, 정지/블랙아웃 시 해제 → 켜둔 채 잠든 영상을 화면 유지로 감지→
+종료→잔 시각 기록 가능. 안드로이드는 네이티브 포그라운드 서비스라 무관(패리티 유지). 네이티브 모듈
+추가라 재빌드(pod install) 필요 — 진행 중.

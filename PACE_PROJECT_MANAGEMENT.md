@@ -1231,3 +1231,41 @@ Daily Limit은 Pace가 뭘 주는 게 아니라 그냥 원래 하던 YouTube 시
 보는 건 막는 대상이 아니잖아"). → **결론: Home 팝업/오버레이 펼침카드의 Daily Limit 자유 연장은
 의도된 설계이며 코드 변경 불필요.** 앞으로 이 둘을 다시 "구멍"으로 오인하지 말 것 — Focus Session
 연장(게이팅 대상)과 Daily Limit 연장(자유, 게이팅 대상 아님)을 혼동하는 게 이번 오판의 원인이었다.
+
+### 2026-07-27 (밤샘) — Mac 세션 (자율 전수 감사: iOS↔Android 패리티 + 출시 블로커, 사장님 "OS차이 없게")
+
+사장님 취침 중 자율 작업. 서브에이전트 2종(패리티 감사 + 버그 감사)으로 전수 점검. **핵심 발견: Screen
+Time 삭제 후 iOS 피드에 안드로이드 오버레이가 하던 기능들이 이관 안 됨.**
+
+**✅ Mac(내)가 iOS에 이식 완료(안드 parity, 커밋 1a9c21b/016bcc8):**
+1. **일일한도 진행중 강제종료** — iOS 피드에 안드 overlay 60초 tick 이식(remaining=한도−오늘사용−세션경과,
+   0 도달 시 정지+홈복귀→LimitReachedOverlay). 기존엔 Home 게이트가 '시작'만 막고 세션은 무한이었음.
+2. **브레이크 리마인더** — breakIntervalMinutes마다 notifyBreakReminder.
+3. **저시간(5·1분) 알림** — notifyLowTime.
+4. **수면감지 임계값 설정연동**(sleepStillnessMinutes) + **실제 잠든 시각 정확 기록**(마지막 움직인 시각,
+   안드 markExpired와 동일) + **슬립타이머**(sleep_timer_expired) 구현.
+5. **C5** iOS 블루투스 상태 섹션 숨김(no-op 스텁), **#4** ExtendModal 크레딧버튼 영구비활성 수정,
+   **#7** 버전 동적화, **#2/#6** eas.json production만 실광고 플래그.
+
+**🔴🔴 [Windows 세션 최우선] 안드로이드 블로커 — Mac이 못 고침(Android 네이티브/오버레이 도메인):**
+- **#1 [BLOCKER] 안드로이드 일일한도가 매 세션 리셋** — `overlay/index.tsx`가 YouTube 실행 후 Home으로
+  redirect하며 `keepSessionAliveOnUnmountRef=true`로 unmount cleanup의 `endSessionRow`를 **건너뜀**
+  (`overlay/index.tsx:234`). 세션 row가 duration_seconds=0/ended_at=NULL로 안 닫힘 → `getTodayUsageMinutes()`
+  가 SUM(duration)=**0 반환** → 매 세션 remaining=full → 한도 무한 우회. `isLimitReached`도 항상 false라
+  LimitReachedOverlay 안 뜸. 프로세스가 살아있는 한(force-kill 안 하는 정상 사용) 일일한도 기능 전체 무력화.
+  **수정방향**: 네이티브 세션 종료를 Home이 소비해 endSessionRow 호출 OR redirect 경로에서 네이티브 카운터
+  경과로 ended_at/duration 기록 OR getTodayUsageMinutes가 열린 현재세션의 네이티브 경과분 포함.
+- **#3 [HIGH] 안드로이드 수면 인사이트 영구 안 뜸 + 고아세션 상태/시간 오기록** — #1 때문에 안드 세션은
+  콜드스타트 orphan sweep으로만 닫히는데 `closeOrphanedSession`이 status='app_restarted' 하드코딩
+  (`sessionsRepository.ts:78-84`) → sleep_detected 세션이 없어 홈 "…에 잠드셨습니다" 안드에서 절대 안 뜸.
+  duration도 min(4h, 콜드스타트−시작)이라 10분 세션이 최대 240분으로 기록돼 통계 오염. #1과 같이 처리.
+
+**🟠 [사장님/공용] 남은 것:**
+- **#2 EAS 시크릿**: EAS 클라우드 빌드 쓸 거면 `EXPO_PUBLIC_API_BASE_URL/RC_IOS_KEY/RC_ANDROID_KEY/
+  GOOGLE_WEB_CLIENT_ID/GOOGLE_IOS_CLIENT_ID`를 `eas secret:create`로 등록해야 함(.env는 gitignore라 EAS에
+  안 올라감). 로컬 빌드(expo run)는 .env로 동작하니 무관.
+- **#5 [MEDIUM] backendSync**가 서버 accepted 수 무시하고 전부 markSynced(`backendSync.ts:38-39`) →
+  서버가 일부 거부 시 그 세션 영구 유실. 엔드포인트가 accepted id 반환하도록.
+- **GAP4** iOS 볼륨키 리모컨이 `isBluetoothConnected`(항상 false 스텁)에 게이팅돼 영영 비활성 — AVAudioSession
+  BT 라우트 감지로 isConnected 채우거나 게이트 제거 필요(사용자는 "BT 연결시만" 원함 → 감지 구현이 정답).
+- ⚠️ **진단 로그**(VEV/domlog/MUTEBLOCKS/PACEWV/PACEWAVE) 제출 전 제거.

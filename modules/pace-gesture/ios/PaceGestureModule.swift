@@ -379,7 +379,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
   private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
   private let windowSec: TimeInterval = 0.6
-  private let growthRatio: CGFloat = 1.28         // 손이 이미 커서(bbox~0.33) 1.4배 성장이 어려워 확률 낮음 → 완화(과발화는 armed 재무장+JS 1.5s 디바운스가 막음)
+  private let growthRatio: CGFloat = 1.32         // 비율 게이트(과발화는 armed 재무장+JS 1.5s 디바운스도 막음)
+  private let minGrowthDelta: CGFloat = 0.10      // 절대 증가량 게이트 — 1.28 비율만으론 손이 프레임서 살짝 커져도(0.33→0.42) 오발화("지맘대로 넘어감"). "실제로 크게 다가온" 것만 통과시켜 지터 거름
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
   private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms(10회/초) — 200ms로 낮췄더니 0.6s창 샘플부족으로 손짓 감지율 급락. 촘촘히 유지.
@@ -536,7 +537,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // ⚠️ 과발화 방지(사용자 "한 손짓에 여러 번 넘어감"): refractory만으로는 부족 — 손이 프레임에 계속
     //    있으면 창이 갱신되며 반복 발화됨. "발화 후 손이 한 번 빠져야(no-hand/작아짐) 재무장(armed)"
     //    게이트를 둬 한 제스처=한 번만 넘어가게 한다.
-    if armed && size >= oldest.size * growthRatio {
+    if armed && size >= oldest.size * growthRatio && (size - oldest.size) >= minGrowthDelta {
       guard now - lastFire > refractorySec else { return }
       lastFire = now
       armed = false // 손이 뒤로 빠질(크기 25%↓) 때까지 재발화 금지

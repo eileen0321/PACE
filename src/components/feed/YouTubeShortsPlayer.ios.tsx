@@ -74,13 +74,14 @@ const INJECTED_JS = `
     //   되돌리는 왕복이 "매 영상 처음 한 번 소리 끊김"이었다. volumechange로 반응하면 이미 끊긴 뒤라 늦다.
     //   → muted 프로퍼티 setter를 가로채 audibleOk 이후엔 muted=true를 무시(유튜브 음소거 호출이 no-op)
     //     → 애초에 음소거가 일어나지 않아 컷이 없다. (안드로이드 .tsx의 muted-setter override와 동일 전략.)
+    var muteBlocks = 0; // 진단: 유튜브가 muted=true를 몇 번 시도(=우리가 막음)하는지 — thrash 여부 판별
     try {
       var mdesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
       if (mdesc && mdesc.get && mdesc.set) {
         Object.defineProperty(v, 'muted', {
           configurable: true,
           get: function () { return mdesc.get.call(this); },
-          set: function (val) { if (audibleOk && val === true) return; mdesc.set.call(this, val); }
+          set: function (val) { if (audibleOk && val === true) { muteBlocks++; return; } mdesc.set.call(this, val); }
         });
       }
     } catch (e) {}
@@ -127,6 +128,7 @@ const INJECTED_JS = `
     // 음소거 팝업/아이콘의 실제 요소를 기기에서 잡는다(.ytp-unmute가 안 먹으므로) — 로드 3.5초 뒤 보이는
     // "음소거" 관련 요소를 가장 안쪽까지 파고들어 태그+클래스 체인을 로그. 이 클래스로 다음 빌드에서 CSS 타겟.
     setTimeout(function () {
+      send({ type: 'domlog', text: 'MUTEBLOCKS=' + muteBlocks + ' (유튜브 muted=true 시도 차단 횟수, 3.5s까지)' });
       try {
         var all = document.querySelectorAll('button,div,span,[role="button"],[aria-label]');
         for (var i = 0; i < all.length; i++) {

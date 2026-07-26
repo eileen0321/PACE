@@ -55,8 +55,14 @@ const INJECTED_JS = `
       if (retriesLeft > 0) setTimeout(function () { attach(retriesLeft - 1); }, 300);
       return;
     }
-    v.muted = false;
-    window.pacePlay = function () { v.play().catch(function () {}); };
+    // 무음 자동재생 정책 + 유튜브가 새 페이지마다 스스로 음소거 → "탭하여 음소거 해제"가 계속 뜬다.
+    // WebView는 mediaPlaybackRequiresUserAction=false라 소리 자동재생이 허용되므로, 유튜브가 다시
+    // 음소거해도 즉시 되돌리도록 지속 강제한다(volumechange 이벤트 + 아래 폴링 인터벌 둘 다).
+    function forceUnmute() { try { v.muted = false; v.volume = 1.0; } catch (e) {} }
+    forceUnmute();
+    v.addEventListener('volumechange', function () { if (v.muted) forceUnmute(); });
+    v.addEventListener('play', forceUnmute);
+    window.pacePlay = function () { forceUnmute(); v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
     v.addEventListener('loadeddata', function () {
       if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); }
@@ -67,6 +73,7 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
 
     setInterval(function () {
+      if (v.muted) forceUnmute(); // 유튜브가 몰래 음소거하면 계속 되돌림
       if (reportedEnded || !v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;
       var nearEnd = t >= v.duration - 0.5;

@@ -19,13 +19,15 @@ type Callbacks = {
   onToggleAutoMode: () => void;
   /** 고개짓 감지를 켤지 — 피드가 (Focus Session ON && 현재 영상 진행률 ≥ 0.5)로 계산해 넘긴다. */
   headDetectActive?: boolean;
+  /** 디버그: 네이티브 감지 진단 텍스트("hand=0.12", "SPIKE ...", "no hand" 등) — 피드가 화면에 표시. */
+  onDiag?: (kind: string, text: string) => void;
 };
 
 type GestureModule = {
   start(mode: 'snap' | 'head' | 'wave' | 'both'): Promise<void>;
   stop(): void;
   isHeadGestureSupported(): boolean;
-  addListener(event: 'onSnap' | 'onHeadNod' | 'onHandWave' | 'onError', listener: (payload: any) => void): { remove: () => void };
+  addListener(event: 'onSnap' | 'onHeadNod' | 'onHandWave' | 'onDiag' | 'onError', listener: (payload: any) => void): { remove: () => void };
 };
 
 export function useFeedRemoteControl(callbacks: Callbacks) {
@@ -50,6 +52,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
       mod.addListener('onHeadNod', () => cbRef.current.onNext()),
       mod.addListener('onSnap', () => cbRef.current.onNext()),
       mod.addListener('onHandWave', () => cbRef.current.onNext()),
+      mod.addListener('onDiag', (p) => cbRef.current.onDiag?.(p?.kind ?? '', p?.text ?? '')),
       mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)),
     ];
     return () => {

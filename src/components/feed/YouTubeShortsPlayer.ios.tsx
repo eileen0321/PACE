@@ -63,10 +63,27 @@ const INJECTED_JS = `
     // 해제" 오버레이 제거(사용자 지시). 숨기거나 다른 요소 건드리지 않음 — aria-label로 그 버튼만 콕.
     // 유튜브 "탭하여 음소거 해제" 버튼 = 클래스 .ytp-unmute (aria-label 비어있어 클래스로 잡음, 실기기
     // 로그로 확인). 이걸 클릭하면 유튜브 내부 음소거 상태가 풀리고 팝업이 사라진다. 소리 확인 후에만.
+    var unmuteLogged = 0;
     function tapUnmute() {
       try {
+        // .ytp-unmute 버튼 클릭(내부 상태 동기화) + 그 팝업 요소 자체를 숨김(클릭만으론 유튜브가 다시 띄움).
         var b = document.querySelector('.ytp-unmute');
-        if (b) { b.click(); }
+        if (b) {
+          var vis = b.offsetParent !== null;
+          if ((unmuteLogged++) % 8 === 0) send({ type: 'domlog', text: 'ytp-unmute found vis=' + vis + ' cls=' + (b.className || '').toString().slice(0, 40) });
+          b.click();
+          b.style.setProperty('display', 'none', 'important');
+        } else if ((unmuteLogged++) % 8 === 0) {
+          // .ytp-unmute가 없으면 "음소거" 텍스트를 가진 요소를 찾아 로그(팝업이 다른 요소일 가능성).
+          var all = document.querySelectorAll('div, span, button, [role="button"]');
+          for (var i = 0; i < all.length; i++) {
+            var t = (all[i].textContent || '').slice(0, 20);
+            if (/음소거|unmute/i.test(t) && all[i].offsetParent !== null) {
+              send({ type: 'domlog', text: 'muteText el=' + all[i].tagName + ' cls=' + (all[i].className || '').toString().slice(0, 40) + ' txt=' + t });
+              break;
+            }
+          }
+        }
       } catch (e) {}
     }
     var audibleOk = false;

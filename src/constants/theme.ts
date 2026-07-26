@@ -106,15 +106,6 @@ export const floatingShadow = {
 // 예외: (tabs)/_layout.tsx의 iOS 탭바 블러는 카드/콘텐츠가 아니라 "시스템 크롬"이라 이 원칙 밖 —
 // iOS 26 Liquid Glass 네이티브 컨벤션을 따르기 위한 의도적 예외(PACE_ARCHITECTURE.md 참고).
 
-// (tabs)/_layout.tsx가 iOS에서 탭바를 position:'absolute'(플로팅 블러)로 띄우면서 화면 콘텐츠가
-// 탭바 밑에 깔리게 된다 — 각 탭 화면의 ScrollView contentContainerStyle paddingBottom에 더해서
-// 탭바에 안 가리게 하는 여백. Android는 탭바가 일반 문서 흐름(non-absolute)이라 추가 여백 불필요.
-// jlpt-master/zen-master가 각 화면에서 Math.max(insets.bottom + N, floor) 형태로 직접 계산하던
-// 패턴 대신, Pace는 탭 4개 화면이 전부 이 값 하나로 충분해 상수 하나로 단순화했다.
-export const layout = {
-  tabBarContentClearance: Platform.OS === 'ios' ? 96 : 24,
-} as const;
-
 // 바텀시트/모달의 paddingBottom — jlpt-master/zen-master의 AppAlertSheet.tsx·ErrorBottomSheet.tsx가
 // 쓰던 "(Platform.OS === 'ios' ? 52 : 36) + insets.bottom" 관용구 그대로. 홈 인디케이터가 있는
 // 기기(iPhone X 이후)는 insets.bottom이 자동으로 그 높이를 반영하고, 없는 기기(하드웨어 홈버튼/

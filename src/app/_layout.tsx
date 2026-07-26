@@ -21,11 +21,15 @@ import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
+import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { colors, typography } from '../constants/theme';
 
 const queryClient = new QueryClient();
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+// 실제 광고 단위 ID를 첫 광고 요청 전에 등록된 개발기기에서는 항상 테스트 광고로 받도록 고정
+// (adsConfig.ts 참고 — 실수로 실제 광고를 탭해 계정 정지되는 것을 막는 안전장치).
+configureAdsForTesting();
 
 // healthy-shorts-assistant(1) 리서치 결과: 프로토타입은 본문 전체에 Inter를 기본 폰트로 깔고
 // (Plus Jakarta Sans는 히어로 헤드라인 한두 곳에만, JetBrains Mono는 숫자에만) 있는데, Pace는

@@ -24,7 +24,7 @@ import { bluetoothService, capabilities, overlayService } from '../../services/p
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
-import { colors, layout, radius, spacing, typography } from '../../constants/theme';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
@@ -49,6 +49,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
+  const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const settings = useSettingsStore((s) => s.settings);
   const { todayUsageMinutes, refresh } = useStatsStore();
   const restSeconds = useFlipStore((s) => s.putDownSeconds); // 오늘 쉬는시간(내려놓은 시간) — 히어로 카드에 표시
@@ -218,7 +219,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
 
         {sleepInsightEndedAt && (
@@ -302,7 +303,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingBottom: layout.tabBarContentClearance },
+  content: {},
   sleepInsightBanner: {
     flexDirection: 'row',
     alignItems: 'center',

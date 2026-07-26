@@ -12,7 +12,7 @@ import { useTranslation } from '../../services/i18n';
 import { capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
-import { colors, layout, radius, spacing, typography } from '../../constants/theme';
+import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) SettingsSection.tsx(Focus 탭)를 토씨 하나 안 틀리고 그대로 이식
 // (사용자 명시적 지시)으로 시작했으나, 2026-07-22 사용자 지시로 여러 차례 단순화됨 — Session
@@ -28,6 +28,7 @@ export default function FocusScreen() {
   const router = useRouter();
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
+  const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
@@ -50,7 +51,7 @@ export default function FocusScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         {/* 1. Session Control Hero */}
         <LinearGradient colors={['#1A1D26', colors.cardDeep]} style={styles.heroCard}>
           <View style={styles.liveTag}>
@@ -184,7 +185,7 @@ export default function FocusScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg, paddingBottom: layout.tabBarContentClearance },
+  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
 
   heroCard: { borderRadius: 30, padding: 24, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
   liveTag: { position: 'absolute', top: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },

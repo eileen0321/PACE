@@ -22,14 +22,24 @@
 
 ## 1. 현재 상태 요약 (2026-07-25)
 
-- 출시 전 단계. **로그인(백엔드 미배포)**만 남은 실제 출시 블로커 — Railway 배포가
-  필요하고 코드로는 못 고침 (아래 2-A D2). **결제(RC 키)/AdMob 테스트ID/iOS 차단기능/심사
-  계정 4개는 2026-07-26 전부 해결됨**(D1/D3/D4/D10 — D3는 "기능 삭제", D4는 jlpt-master
-  리뷰어 계정 재사용으로 해결) — 단, App Store Connect/Play Console에 실제 구독 상품(가격/
-  구독그룹)이 등록돼 있고 RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는
-  **별도 미확인** — SDK 키가 있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함,
-  다음 확인 필요. Settings에 게스트용 로그인 진입점도 신규 추가(이전엔 paywall에서 막혀야만
-  우회로 로그인 화면에 도달할 수 있었음).
+- 출시 전 단계. **2-A(D1~D5, D10) 사장님 결정/계정 필요 항목이 2026-07-26에 전부 해결됨** —
+  로그인 백엔드(D2, Railway 실배포+`/auth/guest` 실호출 확인), 결제(D1, RC 키), AdMob(D10, 실제
+  ID), iOS 차단기능(D3, 기능 삭제), 심사 계정(D4, jlpt-master 계정 재사용). 남은 건 D6(제품 방향,
+  안 급함)·D7(구글 OAuth 클라이언트 — 이제 이것만 있으면 백엔드까지 다 준비된 구글 로그인이
+  완성됨)·D8/D9(스펙 미확정, 보류). **단, App Store Connect/Play Console에 실제 구독 상품(가격/
+  구독그룹)이 등록돼 있고 RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는 별도 미확인**
+  — SDK 키가 있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함, 다음 확인 필요.
+  Settings에 게스트용 로그인 진입점도 신규 추가(이전엔 paywall에서 막혀야만 우회로 로그인 화면에
+  도달할 수 있었음). **AdMob 실제ID 관련 안전장치 2건 추가**: (1) 다른 세션이 `EXPO_PUBLIC_
+  USE_REAL_ADS` 빌드 플래그로 평소엔 테스트ID/출시빌드만 실ID를 쓰게 분리(`5c76cce`), (2) 이
+  세션은 그 위에 추가로 `adsConfig.ts`(개발기기를 AdMob 테스트기기로 등록해, 혹시 실ID가 걸린
+  빌드를 테스트하더라도 그 기기에선 항상 테스트 광고만 받게 하는 이중 안전장치)를 더함 — 둘 다
+  같이 있어도 충돌 없음.
+- **Home/Focus/Stats/Settings 하단 콘텐츠가 광고 배너에 가려지던 버그 수정** — 화면들이 실제
+  탭바 높이 대신 어긋난 고정 상수(`constants/theme.ts`의 `layout.tabBarContentClearance`)를
+  참조하고 있었음. `(tabs)/_layout.tsx`가 계산하는 실제 탭바 높이를 `useAdBannerStore`로 공유해
+  4개 화면이 전부 그 값을 쓰도록 통일, 이제 쓸모없어진 `layout.tabBarContentClearance` 상수는
+  삭제.
 - Android: 기능적으로 대체로 안정. 블루투스 핸즈프리 죽은 UI 정리(B1) 완료, BOOT_COMPLETED(B3)도
   "재부팅 시 활성 세션 복구" 범위로 완료. 단 B3 조사 중 더 근본적인 이슈 발견 — Daily Limit 추적이
   상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 시작한 세션에만 묶여 있음(제품 결정 필요,
@@ -49,7 +59,7 @@
 | # | 문제 | 필요한 조치 | 근거 |
 |---|---|---|---|
 | D1 | ~~구독 결제 100% 비활성~~ | ✅ 완료(2026-07-26) — RC iOS/Android SDK 키 발급받아 `.env`에 입력 완료(`goog_jWJgxcRyNFIieGvcyigYvAXBJag`/`appl_XXEGQCLYicODnWDWOaAsEioAIgm`). Metro 재시작 후 실기기 재검증 필요 | MAC_SESSION_HANDOFF §4-4 |
-| D2 | 백엔드(Railway) 미배포 → 구글/애플 로그인 전부 실패(게스트만 가능) | Railway 배포 + `EXPO_PUBLIC_API_BASE_URL`에 배포 URL 입력 | MAC_SESSION_HANDOFF §2 |
+| D2 | ~~백엔드(Railway) 미배포~~ | ✅ 완료(2026-07-26) — Railway CLI로 프로젝트 생성 + MySQL 플러그인 + 환경변수(JWT_SECRET/APPLE_BUNDLE_ID/CORS_ORIGINS/REVENUECAT_WEBHOOK_AUTH_HEADER/DB_*) 설정 + `railway up`으로 실배포. 공개 URL `https://pace-backend-production-2e52.up.railway.app` 발급, `.env`의 `EXPO_PUBLIC_API_BASE_URL`에 반영. `POST /auth/guest` 실제 호출로 JWT 발급 확인(HTTP 200, Flyway 마이그레이션 정상 적용). **미설정 채로 남은 것**: `GOOGLE_CLIENT_ID`(D7과 동일 사유로 비어있음, 구글 로그인만 아직 안 됨 — 게스트/애플은 정상), `REVENUECAT_API_KEY`(RC Secret API Key, 별도 발급 필요 — `/auth/refresh`의 RC reconcile에만 영향, 로그인 자체는 무관) | MAC_SESSION_HANDOFF §2 |
 | D3 | ~~iOS Screen Time(Family Controls) entitlement 미승인~~ | ✅ 완료(2026-07-26) — 사장님 결정: (b) 기능 삭제. `screenTimeService.ios/android.ts`, `ScreenTimeService` 타입, `capabilities.supportsScreenTimeControl`/`supportsAppBlocking`, `modules/pace-screentime` 네이티브 모듈 전부 삭제(어차피 UI 어디서도 호출 안 하던 죽은 인프라였음). iOS의 차단 대체 출구는 Pace Feed로 계속 유지. `npx tsc --noEmit` 통과 | QA_FULL_REVIEW B1 |
 | D4 | ~~심사 리뷰어 화이트리스트 빈 배열~~ | ✅ 완료(2026-07-26) — 사장님 결정: jlpt-master(`src/config/reviewers.ts`)가 이미 구글 플레이 콘솔에 제출해둔 실제 테스트 계정(`s7.reviewer@gmail.com`)을 그대로 재사용. `src/constants/reviewers.ts`에 반영 | QA_FULL_REVIEW B4 |
 | D5 | 지원 이메일이 placeholder(`support@pace.app`, `settings.tsx:33`) | 실제 수신 가능한 메일함으로 교체 | QA_FULL_REVIEW B5 |
@@ -124,11 +134,11 @@ Focus Session 무료한도+보상형광고 기능을 새로 완성함(아래 §6
 네이티브) 먼저 진행. **신규로 C5(전역 Bluetooth Hands-Free가 iOS에서도 가짜 UI) 발견됨 — 위
 2-C 참고, 우선순위 판단해서 큐에 반영할 것.**
 
-**사장님 결정 대기 중** → 2-A(D1~D9). 아무거나 하나씩 정리해주면 해당 세션이 나머지 코드
-작업은 알아서 진행함. 순서 추천: D3(entitlement 여부, 시간 걸림 → 먼저 결정) → D1/D2(키·배포)
-→ D7(Google OAuth 클라이언트 발급, 소셜 로그인 코드는 이미 완성돼 있어 이것만 있으면 바로 동작)
-→ D4/D5(가벼움) → D9(리모컨 프리미엄 게이팅 방식, 기존 사용자 회귀 위험 있어 방향 필요)
-→ D8(고급 취침모드 스펙) → D6(제품 방향, 급하지 않음).
+**사장님 결정 대기 중** → D1/D2/D3/D4/D5/D10 전부 2026-07-26 해결됨. 남은 건 D6~D9뿐:
+D7(Google OAuth 클라이언트 발급 — 이제 백엔드도 살아있어서 이것만 받으면 구글 로그인이
+완전히 동작함, 가장 임팩트 큼) → D9(리모컨 프리미엄 게이팅 방식, 기존 사용자 회귀 위험) →
+D8(고급 취침모드 스펙) → D6(제품 방향, 급하지 않음). 추가로: App Store Connect/Play Console
+구독 상품 실제 등록 여부(위 1번 요약 참고) 확인 필요.
 
 ---
 

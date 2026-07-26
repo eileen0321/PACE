@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -7,6 +8,7 @@ import { colors, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
 import { AdBanner } from '../../components/home/AdBanner';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useAdBannerStore } from '../../store/useAdBannerStore';
 
 // 2026-07-19 실기기(갤럭시 Note20, 3버튼 내비게이션) 1차 수정 — jlpt-master/zen-master의 방어적
 // 최솟값 패턴(paddingBottom = Math.max(insets.bottom, 10))을 그대로 이식했으나, 실기기 스크린샷을
@@ -47,6 +49,13 @@ export default function TabsLayout() {
   // 리마운트되지 않아 광고를 한 번만 불러온다 — 화면들(각 tabs/*.tsx)에 있던 개별 <AdBanner />는
   // 제거했다(중복 표시 방지).
   const tabBarHeight = TAB_BAR_BASE_HEIGHT + (Platform.OS === 'android' ? androidBottomInset : insets.bottom);
+  // 2026-07-26 사용자 지적 — 화면들(Home/Focus/Stats/Settings)이 이 실제 탭바 높이 대신 어긋난
+  // 고정 상수(layout.tabBarContentClearance)를 참조해 광고 배너+탭바 뒤에 콘텐츠가 가려졌다.
+  // 이 유일한 계산값을 공유 store에 반영해 화면들이 항상 실제 값을 읽게 한다.
+  const setTabBarHeight = useAdBannerStore((s) => s.setTabBarHeight);
+  useEffect(() => {
+    setTabBarHeight(tabBarHeight);
+  }, [tabBarHeight, setTabBarHeight]);
 
   const renderIcon = (routeName: string) => ({ focused, color }: { focused: boolean; color: import('react-native').ColorValue; size: number }) => {
     return <Feather name={TAB_ICONS[routeName]} size={22} color={color as string} style={focused ? styles.iconActive : undefined} />;

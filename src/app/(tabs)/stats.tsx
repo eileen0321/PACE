@@ -16,7 +16,7 @@ import { AppHeader } from '../../components/ui/AppHeader';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
-import { colors, gradients, layout, radius, sourceColors, spacing, typography } from '../../constants/theme';
+import { colors, gradients, radius, sourceColors, spacing, typography } from '../../constants/theme';
 import type { DailyStats } from '../../types/models';
 
 // healthy-shorts-assistant(2) StatsTab.tsx(components/StatsTab.tsx)를 토씨 하나 안 틀리고 그대로
@@ -47,6 +47,7 @@ export default function StatsScreen() {
   const { t } = useTranslation();
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
+  const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { weeklyStats, platformBreakdown, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
@@ -85,7 +86,7 @@ export default function StatsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         {/* 1. THIS WEEK HERO */}
         <LinearGradient colors={gradients.heroCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroCard}>
           <View style={styles.heroGlow} pointerEvents="none" />
@@ -317,7 +318,7 @@ function BehaviorRow({ title, subtitle, value, valueColor, last }: { title: stri
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg, paddingBottom: layout.tabBarContentClearance },
+  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
 
   heroCard: { borderRadius: 24, padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSubtle, gap: 8 },
   heroGlow: { position: 'absolute', top: -60, right: -30, width: 192, height: 192, borderRadius: 96, backgroundColor: `${colors.primary}0D` },

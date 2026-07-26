@@ -34,6 +34,9 @@ export function FlipPhoneHero() {
   return (
     <Animated.View style={[styles.wrap, { opacity: entrance, transform: [{ scale: entranceScale }] }]}>
       <View style={styles.vignette} />
+      {/* ⚠️ 그림자는 반드시 사진보다 먼저(뒤에) 그려야 한다 — 순서가 바뀌면 사진 하단을 그림자
+          바가 가로질러 덮어버려 "사진이 잘려 보인다"는 버그가 생긴다(실기기에서 발견). */}
+      <Animated.View style={[styles.groundShadow, { transform: [{ scaleX: shadowScaleX }] }]} />
       <Animated.View
         style={[
           styles.stage,
@@ -42,7 +45,6 @@ export function FlipPhoneHero() {
       >
         <Image source={IMAGE} style={styles.image} resizeMode="contain" />
       </Animated.View>
-      <Animated.View style={[styles.groundShadow, { transform: [{ scaleX: shadowScaleX }] }]} />
     </Animated.View>
   );
 }
@@ -52,5 +54,5 @@ const styles = StyleSheet.create({
   vignette: { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(255,255,255,0.06)' },
   stage: { alignItems: 'center', justifyContent: 'center' },
   image: { width: 208, height: 188 },
-  groundShadow: { position: 'absolute', bottom: 8, width: 130, height: 18, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.45)' },
+  groundShadow: { position: 'absolute', bottom: 0, width: 120, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.4)' },
 });

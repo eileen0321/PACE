@@ -68,14 +68,35 @@ const INJECTED_JS = `
     // 그런데 팝업 없애려고 부른 mp.unMute()/setVolume()가 오디오 파이프라인을 재초기화해 "매 영상 처음
     // 소리가 한 번 끊기는(씹힘)" 원인이었다. 또 음소거로 시작→해제하는 전환도 같은 컷을 만든다.
     // → 팝업(껍데기)은 그냥 두고, 오디오는 절대 두 번 건드리지 않는다: 처음부터 v.muted=false로 한 번만 재생.
+    // ⭐ 컷의 진짜 원인(로그 확정): 재생 t≈1s에 유튜브가 muted=true로 자동음소거 → 내 코드가 muted=false로
+    //   되돌리는 왕복이 "매 영상 처음 한 번 소리 끊김"이었다. volumechange로 반응하면 이미 끊긴 뒤라 늦다.
+    //   → muted 프로퍼티 setter를 가로채 audibleOk 이후엔 muted=true를 무시(유튜브 음소거 호출이 no-op)
+    //     → 애초에 음소거가 일어나지 않아 컷이 없다. (안드로이드 .tsx의 muted-setter override와 동일 전략.)
+    try {
+      var mdesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+      if (mdesc && mdesc.get && mdesc.set) {
+        Object.defineProperty(v, 'muted', {
+          configurable: true,
+          get: function () { return mdesc.get.call(this); },
+          set: function (val) { if (audibleOk && val === true) return; mdesc.set.call(this, val); }
+        });
+      }
+    } catch (e) {}
     function tryAudible() {
-      v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생 — 음소거 단계/재초기화 없음(컷 없음)
+      v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생
       v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
-        v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백
+        v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백(audibleOk 아직 false라 통과)
       });
     }
     tryAudible();
+    // 진단(임시): 매 영상 첫 소리 끊김의 정확한 원인 캡처 — 컷 순간 어떤 이벤트가 뜨는지 타임스탬프로 로깅.
+    // waiting/stalled=버퍼링 스톨, pause=누가 멈춤, seeking=재탐색, ratechange=속도변경. 원인 확정 후 제거.
+    ['pause', 'play', 'playing', 'waiting', 'stalled', 'seeking', 'seeked', 'ratechange', 'suspend', 'emptied', 'volumechange'].forEach(function (ev) {
+      v.addEventListener(ev, function () {
+        send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' paused=' + v.paused + ' rs=' + v.readyState });
+      });
+    });
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });

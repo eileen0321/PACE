@@ -72,30 +72,19 @@ const INJECTED_JS = `
       });
     }
     tryAudible();
-    // ── "탭하여 음소거 해제" 팝업 제거: CSS 주입만(안전). ───────────────────────────────
-    // 웹 리서치 결론: JS로 클릭/display:none 하면 유튜브 UI 컨테이너(영상 포함)를 건드려 재생이 깨진다.
-    // CSS <style>은 "지정 클래스에만" 적용돼 영상 컨테이너를 절대 못 건드리므로 안전. 잘못된 선택자는 무해(no-op).
-    try {
-      var st = document.createElement('style');
-      st.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon,.ytp-mute-effect,.ytp-large-play-button-bg{display:none!important}';
-      (document.head || document.documentElement).appendChild(st);
-    } catch (e) {}
-    // 진단(읽기전용, 클릭/숨김 없음): 보이는 "음소거 해제" 요소의 정확한 태그+클래스 체인을 로그로 확인.
-    // → 위 CSS가 못 잡으면 이 로그의 클래스로 선택자를 좁혀 다음 빌드에서 정확히 숨긴다.
-    setTimeout(function () {
+    // ── "탭하여 음소거 해제" 팝업 제거: YouTube 플레이어 API unMute() 사용 ──────────────────
+    // 실기기 로그로 확정: 팝업 텍스트는 .html5-video-player(= YouTube 플레이어 객체) 자체에 있다.
+    // 이 컨테이너는 영상을 품고 있어 클릭/display:none 하면 재생이 죽는다(앞서 겪음). 대신 이 요소가
+    // 직접 노출하는 플레이어 API unMute()/setVolume()/isMuted()를 호출한다 — YouTube 내부 음소거를
+    // 정식으로 풀어 팝업이 사라지고 소리는 유지. DOM 조작·클릭 이벤트 전혀 없어 재생에 무해.
+    function ytUnmute() {
       try {
-        var all = document.querySelectorAll('div,span,button,[role="button"]');
-        for (var i = 0; i < all.length; i++) {
-          var el = all[i]; if (el.offsetParent === null) continue;
-          var t = (el.textContent || ''); if (t.length > 30) continue;
-          if (t.indexOf('음소거 해제') >= 0 || (t.indexOf('탭하여') >= 0 && t.indexOf('음소거') >= 0) || t.toLowerCase().indexOf('unmute') >= 0) {
-            var p = el.parentElement, gp = p && p.parentElement;
-            send({ type: 'domlog', text: 'MUTEPOP tag=' + el.tagName + ' cls=[' + (el.className || '') + '] p=[' + (p ? p.className : '') + '] gp=[' + (gp ? gp.className : '') + '] txt=' + t.slice(0, 20) });
-            break;
-          }
+        var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        if (mp && typeof mp.unMute === 'function') {
+          if (typeof mp.isMuted !== 'function' || mp.isMuted()) { mp.unMute(); if (typeof mp.setVolume === 'function') mp.setVolume(100); }
         }
       } catch (e) {}
-    }, 2500);
+    }
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });
@@ -108,6 +97,7 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     setInterval(function () {
       if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
+      ytUnmute(); // YouTube 내부 음소거도 정식 API로 해제 → "탭하여 음소거 해제" 팝업 제거
 
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;

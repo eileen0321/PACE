@@ -82,7 +82,7 @@ public class PaceGestureModule: Module {
     let d = WaveDetector(
       onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
-      onDiag: { [weak self] text in self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
+      onDiag: { [weak self] text in NSLog("PACEWAVE %@", text); self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
     )
     waveDetector = d
     d.start()
@@ -375,6 +375,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastFire: TimeInterval = 0
   private var lastAnalyze: TimeInterval = 0
   private var logTick = 0
+  private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
   private let windowSec: TimeInterval = 0.6
   private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
@@ -463,20 +464,25 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     lastAnalyze = now
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-    // 연결에서 이미 세로+미러 고정 → 핸들러엔 .up.
-    let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
-    do {
-      try handler.perform([request])
-    } catch {
-      return // 개별 프레임 실패는 무시(다음 프레임에서 재시도)
-    }
+    // ⭐ orientation 자동 탐색: 실기기 로그에서 .up이 손을 전혀 못 잡음(no hand 100%). 어느 방향이 맞는지
+    //    모르므로 8개 orientation을 순서대로 시도해 손이 잡히는 첫 방향을 쓰고, 한 번 성공하면 그 방향을 고정
+    //    (lockedOri)해 이후 프레임은 그 방향만 — 8회 perform 비용은 손 찾기 전까지만.
+    let allOri: [CGImagePropertyOrientation] = [.up, .right, .left, .down, .upMirrored, .rightMirrored, .leftMirrored, .downMirrored]
+    let tryOri: [CGImagePropertyOrientation] = lockedOri != nil ? [lockedOri!] : allOri
     logTick += 1
-    guard let obs = request.results?.first else {
-      // 손이 안 보이면 창을 비워 오탐 방지(손이 사라졌다 다시 크게 나타나는 걸 성장으로 오인 X).
+    var obsOpt: VNHumanHandPoseObservation? = nil
+    var usedOri: CGImagePropertyOrientation = .up
+    for ori in tryOri {
+      let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: ori, options: [:])
+      if (try? handler.perform([request])) == nil { continue }
+      if let r = request.results?.first { obsOpt = r; usedOri = ori; break }
+    }
+    guard let obs = obsOpt else {
       samples.removeAll()
-      if logTick % 6 == 0 { onDiag("no hand") } // 진단: 손 아예 안 잡힘(orientation/카메라 문제 판별용)
+      if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
       return
     }
+    if lockedOri == nil { lockedOri = usedOri; onDiag("HAND FOUND ori=\(usedOri.rawValue)") } // 첫 감지 방향 고정+로그
 
     // 손 "크기" = 손목 ↔ 중지뿌리(MCP) 거리(안드로이드와 동일 지표). 신뢰도 낮은 점은 버린다.
     guard

@@ -25,7 +25,7 @@ public class PaceGestureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PaceGesture")
 
-    Events("onSnap", "onHeadNod", "onHandWave", "onError")
+    Events("onSnap", "onHeadNod", "onHandWave", "onError", "onDiag")
 
     // mode: "snap" | "head" | "wave" | "both" — 어떤 감지기를 켤지. ("both" = 스냅+손짓, iOS 핸즈프리 2종.
     // 고개짓(head)은 2026-07-23 "비현실적" 판단으로 제외돼 명시 요청 시에만.)
@@ -76,7 +76,8 @@ public class PaceGestureModule: Module {
     if waveDetector != nil { return }
     let d = WaveDetector(
       onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
-      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) }
+      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
+      onDiag: { [weak self] text in self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
     )
     waveDetector = d
     d.start()
@@ -107,7 +108,8 @@ public class PaceGestureModule: Module {
     }
     let d = SnapDetector(
       onSnap: { [weak self] conf in self?.sendEvent("onSnap", ["confidence": conf]) },
-      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "snap", "message": msg]) }
+      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "snap", "message": msg]) },
+      onDiag: { [weak self] text in self?.sendEvent("onDiag", ["kind": "snap", "text": text]) }
     )
     snapDetector = d
     d.start()
@@ -140,82 +142,116 @@ private final class SnapDetector {
   private let queue = DispatchQueue(label: "pace.snap.dsp")
   private let onSnap: (Double) -> Void
   private let onError: (String) -> Void
+  private let onDiag: (String) -> Void
 
   // 안드로이드 상수 이식. RMS 절대치는 16-bit(±32768) 기준 → Float(±1)로 ÷32768 환산, 나머지(Goertzel
   // 비율/ZCR/스파이크 배수)는 스케일 불변이라 그대로.
-  private var noiseFloor: Float = 0.006     // 안드 200/32768
+  private var noiseFloor: Float = 0.004
   private var lastFire: TimeInterval = 0
-  private let spikeMult: Float = 3.5        // rms > floor*3.5
-  private let minAbsRms: Float = 0.012      // 안드 400/32768 (무음 오탐 컷)
+  // 실기기 로그로 튜닝(2026-07-26): 평소 rms~0.002, 스냅 rms~0.013~0.017(floor의 6~8배)로 아주
+  // 깨끗이 분리됨. Goertzel 고/저역·ZCR 게이트는 이 셋업(AEC OFF, 피크 윈도우)에서 안 맞아(zcr이
+  // 항상 0, hilo도 스냅에서 낮게 나옴) → RMS 스파이크 단독으로 판정. spikeMult 4배 + 절대하한 0.008.
+  private let spikeMult: Float = 4.0
+  private let minAbsRms: Float = 0.008
   private let floorGate: Float = 3.0        // rms < floor*3.0 일 때만 floor 갱신
   private let highHz: Float = 2500, lowHz: Float = 500
   private let freqRatio: Float = 1.2        // high > low*1.2
   private let zcrMin: Float = 0.08
   private let refractory: TimeInterval = 0.45
   private var logTick = 0
+  private var retryCount = 0
 
-  init(onSnap: @escaping (Double) -> Void, onError: @escaping (String) -> Void) {
-    self.onSnap = onSnap; self.onError = onError
+  init(onSnap: @escaping (Double) -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
+    self.onSnap = onSnap; self.onError = onError; self.onDiag = onDiag
   }
 
   func start() {
+    NSLog("PACESNAP start() called")
     AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
       guard let self = self else { return }
+      NSLog("PACESNAP mic permission granted=%@", granted ? "YES" : "NO")
       guard granted else { self.onError("microphone permission denied"); return }
       self.queue.async { self.begin() }
     }
   }
 
   private func begin() {
+    NSLog("PACESNAP begin() enter")
     do {
       let session = AVAudioSession.sharedInstance()
       // .measurement: AGC/튜닝 최소화로 순간 스파이크 보존. .mixWithOthers로 유튜브 소리와 공존.
       try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
       try session.setActive(true)
+      NSLog("PACESNAP session active (session.sr=%.0f)", session.sampleRate)
       let input = engine.inputNode
-      // ⭐ 크래시 회피: 커스텀 포맷을 만들지 말고 하드웨어 입력 포맷을 그대로 installTap에 넘긴다
-      // (라우트 변경 시 sampleRate 불일치 "required condition is false" 크래시 방지 — 리서치 확인).
-      let format = input.outputFormat(forBus: 0)
-      let sr = Float(format.sampleRate)
-      guard sr > 0 else { onError("input sampleRate 0"); return }
-      input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
-        self?.process(buffer, sampleRate: sr)
-      }
+      // ⚠️ 실기기 발견: setActive 직후 input.outputFormat(forBus:0)이 sampleRate=0으로 뜨는 경우가 있다
+      // (엔진 미준비 상태). 커스텀 포맷/precomputed sr에 의존하지 말고, 탭 포맷을 nil로 넘겨 노드가
+      // 실행 시점의 실제 포맷을 쓰게 하고, 샘플레이트는 매 버퍼(buffer.format)에서 읽는다.
       engine.prepare()
+      input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
+        self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))
+      }
       try engine.start()
-      NSLog("[pace-snap] started sr=%.0f", Double(sr))
+      NSLog("[pace-snap] started, session sr=%.0f", session.sampleRate)
     } catch {
+      // -10868 등: WebView가 오디오 세션을 막 잡는 순간 engine.start가 실패할 수 있다 → 잠깐 뒤 재시도.
       onError("audio start failed: \(error.localizedDescription)")
+      NSLog("PACESNAP begin() THREW: %@ (retry=%d)", error.localizedDescription, retryCount)
+      if retryCount < 3 {
+        retryCount += 1
+        if engine.isRunning { engine.stop() }
+        queue.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.begin() }
+      }
     }
   }
 
   private func process(_ buffer: AVAudioPCMBuffer, sampleRate: Float) {
-    guard let ch = buffer.floatChannelData?[0] else { return }
+    guard sampleRate > 0, let ch = buffer.floatChannelData?[0] else { return }
     let n = Int(buffer.frameLength)
-    guard n > 32 else { return }
+    guard n >= 64 else { return }
 
-    var sum: Float = 0
-    for i in 0..<n { let s = ch[i]; sum += s * s }
-    let rms = (sum / Float(n)).squareRoot()
+    // ⭐ 핵심 수정: 스냅은 <10ms 순간 transient인데 iOS 탭 버퍼는 보통 ~100ms(4800샘플)라, 버퍼 전체
+    // RMS로 재면 스냅 에너지가 희석돼 스파이크로 안 잡힌다. 작은 윈도우(≈5ms)로 쪼개 "피크 RMS"를
+    // 잡아 순간 스파이크를 보존한다(안드로이드 20ms 프레임 대응). 주파수/ZCR도 그 피크 윈도우에서 계산.
+    let win = min(256, n)
+    var peakRms: Float = 0
+    var peakStart = 0
+    var i = 0
+    while i + win <= n {
+      var sum: Float = 0
+      for j in i..<(i + win) { let s = ch[j]; sum += s * s }
+      let r = (sum / Float(win)).squareRoot()
+      if r > peakRms { peakRms = r; peakStart = i }
+      i += win
+    }
+    let rms = peakRms
 
     if rms < noiseFloor * floorGate { noiseFloor = noiseFloor * 0.95 + rms * 0.05 } // 스파이크 아닐 때만 갱신
 
     logTick += 1
-    if logTick % 20 == 0 { NSLog("[pace-snap] rms=%.4f floor=%.4f", Double(rms), Double(noiseFloor)) }
+    if logTick % 12 == 0 {
+      onDiag(String(format: "rms=%.4f fl=%.4f", rms, noiseFloor)) // 주기적 상태
+      NSLog("PACESNAP rms=%.4f fl=%.4f", Double(rms), Double(noiseFloor))
+    }
 
-    guard rms > noiseFloor * spikeMult, rms > minAbsRms else { return }        // 스파이크
-    let high = goertzel(ch, n, highHz, sampleRate)
-    let low = goertzel(ch, n, lowHz, sampleRate)
-    guard high > low * freqRatio else { return }                              // 고역 우세(스냅 vs 목소리/음악)
+    guard rms > noiseFloor * spikeMult, rms > minAbsRms else { return }        // 스파이크(피크 기준)
+    let base = ch + peakStart
+    let high = goertzel(base, win, highHz, sampleRate)
+    let low = goertzel(base, win, lowHz, sampleRate)
+    let hilo = high / max(low, 1e-6)
     var cross = 0
-    for i in 1..<n { if (ch[i-1] >= 0) != (ch[i] >= 0) { cross += 1 } }
-    let zcr = Float(cross) / Float(n)
-    guard zcr > zcrMin else { return }                                        // 광대역성
+    for j in 1..<win { if (base[j-1] >= 0) != (base[j] >= 0) { cross += 1 } }
+    let zcr = Float(cross) / Float(win)
+    // 스파이크가 잡히면(게이트 통과 여부와 무관) 진단으로 보여줘 임계 튜닝 근거를 만든다.
+    // hilo/zcr은 참고용으로만 로그 — 게이트로는 안 씀(이 셋업에서 신뢰 못 함, 실기기 로그로 확인).
+    onDiag(String(format: "SPIKE rms=%.3f hi/lo=%.2f", rms, hilo))
+    NSLog("PACESNAP SPIKE rms=%.4f hilo=%.2f zcr=%.3f", Double(rms), Double(hilo), Double(zcr))
 
     let now = CACurrentMediaTime()
     guard now - lastFire > refractory else { return }
     lastFire = now
-    NSLog("[pace-snap] 🫰 SNAP rms=%.4f hi/lo=%.2f zcr=%.3f", Double(rms), Double(high / max(low, 1e-6)), Double(zcr))
+    onDiag("🫰 SNAP!")
+    NSLog("PACESNAP 🫰 FIRED")
     DispatchQueue.main.async { self.onSnap(Double(rms)) }
   }
 
@@ -302,21 +338,23 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let request = VNDetectHumanHandPoseRequest()
   private let onWave: () -> Void
   private let onError: (String) -> Void
+  private let onDiag: (String) -> Void
 
   // 최근 (시각, 손 크기) 샘플 — 500ms 창에서 크기가 1.5배 이상 커지면 "다가오는 손짓"으로 판정.
   private var samples: [(t: TimeInterval, size: CGFloat)] = []
   private var lastFire: TimeInterval = 0
   private var lastAnalyze: TimeInterval = 0
   private var logTick = 0
-  private let windowSec: TimeInterval = 0.5
-  private let growthRatio: CGFloat = 1.5          // 안드 GROWTH_RATIO_THRESHOLD
+  private let windowSec: TimeInterval = 0.6
+  private let growthRatio: CGFloat = 1.4          // 조금 더 잘 잡히게(안드 1.5보다 완화)
   private let minHandSize: CGFloat = 0.03         // 안드 MIN_HAND_SIZE
   private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.15 // 안드로이드와 동일하게 ~150ms마다만 추론(배터리)
+  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms마다 추론(더 촘촘히 → 빠른 손짓도 잡게)
 
-  init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void) {
+  init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave
     self.onError = onError
+    self.onDiag = onDiag
     super.init()
     request.maximumHandCount = 1
   }
@@ -352,6 +390,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA] // Vision이 확실히 처리하는 포맷
     output.setSampleBufferDelegate(self, queue: queue)
     guard session.canAddOutput(output) else {
       session.commitConfiguration()
@@ -401,24 +440,27 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     } catch {
       return // 개별 프레임 실패는 무시(다음 프레임에서 재시도)
     }
+    logTick += 1
     guard let obs = request.results?.first else {
       // 손이 안 보이면 창을 비워 오탐 방지(손이 사라졌다 다시 크게 나타나는 걸 성장으로 오인 X).
       samples.removeAll()
+      if logTick % 6 == 0 { onDiag("no hand") } // 진단: 손 아예 안 잡힘(orientation/카메라 문제 판별용)
       return
     }
 
     // 손 "크기" = 손목 ↔ 중지뿌리(MCP) 거리(안드로이드와 동일 지표). 신뢰도 낮은 점은 버린다.
     guard
-      let wrist = try? obs.recognizedPoint(.wrist), wrist.confidence > 0.3,
-      let mcp = try? obs.recognizedPoint(.middleMCP), mcp.confidence > 0.3
-    else { return }
+      let wrist = try? obs.recognizedPoint(.wrist),
+      let mcp = try? obs.recognizedPoint(.middleMCP)
+    else { onDiag("hand? no wrist/mcp"); return }
+    if wrist.confidence <= 0.3 || mcp.confidence <= 0.3 {
+      onDiag(String(format: "hand low-conf w=%.2f m=%.2f", wrist.confidence, mcp.confidence)); return
+    }
     let dx = wrist.location.x - mcp.location.x
     let dy = wrist.location.y - mcp.location.y
     let size = CGFloat((dx * dx + dy * dy).squareRoot())
+    onDiag(String(format: "hand=%.3f n=%d", Double(size), samples.count + 1)) // 손 잡힘 + 크기
     guard size >= minHandSize else { return } // 너무 작으면(먼 배경) 무시 — 안드 MIN_HAND_SIZE=0.03
-
-    logTick += 1
-    if logTick % 10 == 0 { NSLog("[pace-wave] hand size=%.3f (win=%d)", Double(size), samples.count) }
 
     let t = now
     samples.append((t, size))
@@ -430,7 +472,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       guard now - lastFire > refractorySec else { return }
       lastFire = now
       samples.removeAll() // 트리거 후 이력 초기화
-      NSLog("[pace-wave] 👋 WAVE size=%.3f ratio=%.2f", Double(size), Double(size / max(oldest.size, 0.001)))
+      onDiag("👋 WAVE!")
       DispatchQueue.main.async { self.onWave() }
     }
   }

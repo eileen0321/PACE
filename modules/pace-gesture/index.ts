@@ -16,6 +16,7 @@ type PaceGestureNativeModule = {
   addListener(event: 'onSnap', listener: (payload: { confidence: number }) => void): EventSubscription;
   addListener(event: 'onHeadNod', listener: (payload: Record<string, never>) => void): EventSubscription;
   addListener(event: 'onHandWave', listener: (payload: Record<string, never>) => void): EventSubscription;
+  addListener(event: 'onDiag', listener: (payload: { kind: string; text: string }) => void): EventSubscription;
   addListener(event: 'onError', listener: (payload: { kind: string; message: string }) => void): EventSubscription;
 };
 

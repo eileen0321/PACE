@@ -48,6 +48,7 @@ export default function PaceFeedScreen() {
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
+  const [diag, setDiag] = useState<{ wave: string; snap: string }>({ wave: '—', snap: '—' }); // 디버그 오버레이(손짓/스냅 감지 수치)
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
@@ -239,6 +240,7 @@ export default function PaceFeedScreen() {
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
+    onDiag: (kind, text) => setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })),
   });
 
   // 2026-07-22 감사 수정: 볼륨키(에어팟/버즈/다이소 BT 리모컨) → 다음 Short 훅이 추가됐지만 어느
@@ -295,6 +297,15 @@ export default function PaceFeedScreen() {
             <Text style={styles.appIconText}>P</Text>
           </Pressable>
         </View>
+
+        {/* 🐞 임시 디버그 오버레이(2026-07-26) — 손짓/스냅이 안 돼서 Vision·마이크가 실제로 신호를
+            잡는지 화면에서 확인용. 세션 ON일 때만. 원인 확정 후 제거 예정. */}
+        {isAutoMode && (
+          <View style={styles.diagBox} pointerEvents="none">
+            <Text style={styles.diagText}>👋 {diag.wave}</Text>
+            <Text style={styles.diagText}>🫰 {diag.snap}</Text>
+          </View>
+        )}
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}
@@ -384,6 +395,8 @@ const styles = StyleSheet.create({
   // 상단 세션 토글 필(항상 표시) — OFF는 "▶ START SESSION"(중립 테두리), ON은 "● SESSION ON"(초록 테두리).
   sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   sessionPillOn: { borderColor: colors.success },
+  diagBox: { alignSelf: 'center', marginTop: 8, backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
+  diagText: { color: '#00E5A0', fontSize: 15, fontFamily: typography.monoFontFamilyBold, textAlign: 'center' },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.

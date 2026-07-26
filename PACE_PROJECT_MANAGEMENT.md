@@ -399,3 +399,29 @@ true면(`_layout.tsx`에서 부팅 시 + 구매/복원 시 네이티브에 동�
 Focus Session 무료한도/보상형광고 기능을 이미 구현해뒀음(`rewardedAd.ts`는 그 세션이 만든 파일, 이
 세션은 그 파일의 테스트ID만 실제ID로 교체) — 두 세션이 같은 날 각각 계정작업/코드작업으로 정확히
 맞아떨어짐.
+
+### 2026-07-26 (아침) — Windows 세션 (사장님 실시간 지시, "이어폰 관련 문구 없애")
+
+사장님이 직접 "자동넘김이란 용어가 있으면 안 되고 Focus Session으로, 이어폰 가이드도 없애 — 이어폰
+안 되잖아"라고 지시. `자동넘김`/`Auto Next`는 grep해보니 유저에게 보이는 실제 문자열에는 딱 하나만
+남아있었음(어제 밤 paywall 혜택 목록에 내가 넣은 것) — 그것만 고치면 됐음. "이어폰" 쪽은 더 컸음:
+
+- `onboarding/index.tsx` slide3(온보딩 3번째 화면)과 `settings.tsx` FAQ Q3/A3가 "Bluetooth 이어폰
+  리모컨 버튼으로 넘긴다"고 문구가 돼 있었는데, 이건 Android에서 확정적으로 거짓(B1에서 이미 확인된
+  사실 — OS가 서드파티 앱에 미디어 버튼을 절대 안 넘김)이라 FAQ Q3/A3는 `capabilities.
+  supportsHandsFreeControl`(Android=false)로 이미 숨겨져 있었음. 근데 **온보딩 slide3는 플랫폼 구분
+  없이 항상 보여서 Android에서도 거짓 문구가 나가고 있었음** — 이게 진짜 버그.
+- `BluetoothOnboardingSheet.tsx`도 iOS 분기만 여전히 "Bluetooth 헤드셋 버튼" 문구를 쓰고 있었음(B1은
+  Android 스코프였어서 iOS는 안 건드렸었음) — 근데 §2-C C5(iOS의 `useBluetoothStore`/
+  `bluetoothService.ios.ts`가 100% no-op 스텁이라는 이미 알려진 문제)에 따르면 iOS에서도 똑같이
+  거짓임.
+- 전부 "핑거스냅/손짓으로 넘기기"(실제로 오늘 밤 내내 검증하며 고친, 진짜 동작하는 기능)로 고치고,
+  FAQ Q3/A3의 플랫폼 게이팅도 제거(더 이상 하드웨어 버튼 약속이 아니므로 그 플래그로 숨길 이유가
+  없음). `BluetoothOnboardingSheet`도 플랫폼 분기 자체를 없애 양쪽 다 같은(정직한) 문구.
+- **의도적으로 손 안 댐**: `settings.tsx`의 "Playback Controls" 섹션(Connected Device/Play-Pause
+  Action 상태 표시)과 `stats.tsx`의 "Bluetooth Controls" 섹션은 iOS 전용으로만 노출되는데, 이것도
+  C5 문제로 실제로는 기능 안 함 — 근데 이건 "가이드/문구"가 아니라 라이브 상태 표시고, Mac 세션이
+  지금 이 파일들(제스처/블루투스 관련)을 활발히 건드리고 있어서 충돌 위험이 있다고 판단해 손 안 댐.
+  Mac 세션이나 사장님이 C5를 실제로 고칠 때 같이 정리하는 게 안전함.
+
+검증: `npx tsc --noEmit` 통과. 실기기 육안 확인은 아직 못 함(문구만 바뀐 거라 크래시 위험은 낮음).

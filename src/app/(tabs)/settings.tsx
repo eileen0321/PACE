@@ -17,8 +17,7 @@ import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useToastStore } from '../../store/useToastStore';
-import { clearUserHistory, getAllSessionsForExport } from '../../database/repositories/sessionsRepository';
-import { getWeeklyStats } from '../../database/repositories/statsRepository';
+import { clearUserHistory } from '../../database/repositories/sessionsRepository';
 import { capabilities, overlayService, autoNextService } from '../../services/platform';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../services/notifications';
@@ -163,34 +162,6 @@ export default function SettingsScreen() {
       clearUserHistory(user.id)
         .then(() => useStatsStore.getState().refresh(user.id))
         .catch(() => {});
-    }
-  };
-
-  // 2026-07-21 밤 감사 발견 — Export Data 행이 onPress 자체가 없어 완전히 죽어있었다. Privacy
-  // 섹션이 "기기 로컬에만 저장"을 명시하는 이상, 그 로컬 데이터를 실제로 꺼내볼 수 있어야 문구와
-  // 동작이 일치한다 — 세션 이력 전체 + 주간 통계 + 현재 설정을 JSON으로 묶어 공유시트로 내보낸다.
-  const handleExportData = async () => {
-    if (!user?.id) return;
-    try {
-      const [sessions, weeklyStats] = await Promise.all([
-        getAllSessionsForExport(user.id),
-        getWeeklyStats(user.id),
-      ]);
-      const payload = { exportedAt: new Date().toISOString(), settings, weeklyStats, sessions };
-      const { File, Paths } = require('expo-file-system'); // lazy: 미링크 빌드에서 화면 죽지 않게
-      const Sharing = require('expo-sharing');
-      const file = new File(Paths.cache, `pace-export-${Date.now()}.json`);
-      file.create();
-      file.write(JSON.stringify(payload, null, 2));
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
-      } else {
-        Alert.alert(t('settings.exportData'), file.uri);
-      }
-    } catch (e) {
-      console.warn('[settings] export failed', e);
-      Alert.alert(t('settings.exportData'), t('settings.exportFailed'));
     }
   };
 
@@ -500,26 +471,6 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
         )}
-
-        {/* 5.5 Privacy — SettingsTab.tsx SECTION 6, 이전 버전에서 통째로 빠뜨렸던 섹션 */}
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.privacy')}</Text>
-          <GlassSurface style={styles.card}>
-            {/* 2026-07-20 실기기 감사 중 발견: "Usage Analytics: ENABLED" 배지가 어떤 실제 기능과도
-                연결 안 된 상태였다 — 코드 전체에 서드파티/외부 분석(analytics) 수집이 아예 존재하지
-                않는데도(grep 결과 이 화면과 번역 문자열 말고는 "analytics" 언급 자체가 없음) 켜져
-                있다고 표시하고 있었다. "don't fake data" 원칙 위반이라 제거 — 로컬 데이터 행이
-                이미 실제로 저장되는 것(기기 로컬)을 정직하게 설명하고 있으므로 중복도 아님. */}
-            <View style={styles.row}>
-              <Text style={styles.rowTitle}>{t('settings.localData')}</Text>
-              <Text style={styles.privacyValue}>{t('settings.storedSafely')}</Text>
-            </View>
-            <Pressable style={[styles.row, styles.rowBordered]} onPress={handleExportData}>
-              <Text style={styles.rowTitle}>{t('settings.exportData')}</Text>
-              <Feather name="chevron-right" size={16} color={colors.textSecondary} />
-            </Pressable>
-          </GlassSurface>
-        </View>
 
         {/* 6. Language (Pace 전용) */}
         <View>

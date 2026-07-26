@@ -106,6 +106,22 @@ export const useUserStore = create<UserState>((set, get) => ({
 
   loginAsGuest: async () => {
     const deviceId = await getOrCreateDeviceId();
+    // 2026-07-27 사용자 지적("로그아웃하면 Guest 뜨기 전에 '-'가 잠깐 보였다 시간차 두고 바뀜") —
+    // 서버 loginAsGuest 호출(네트워크 왕복)이 끝나야 user가 채워져서, 그동안 settings.tsx의
+    // `user?.email ?? '-'` 폴백이 그대로 노출됐다. 게스트 신원 자체는 deviceId만 있으면 로컬에서
+    // 즉시 만들 수 있으므로, 먼저 이 로컬 유저로 낙관적 반영(화면에 바로 "Guest") 하고, 서버 호출은
+    // 백그라운드에서 계속해 성공하면 서버 발급 값으로 조용히 교체한다 — 실패해도 이미 로컬 유저가
+    // set돼 있으니 추가로 할 일이 없다(기존 catch 폴백과 최종 상태 동일).
+    const localUser: User = {
+      id: `local-${deviceId}`,
+      email: null,
+      name: null,
+      avatarUrl: null,
+      provider: 'guest',
+      isGuest: true,
+      createdAt: new Date().toISOString(),
+    };
+    set({ user: localUser, isLoggedIn: true, isGuest: true });
     try {
       const result = await authApi.loginAsGuest(deviceId);
       await setToken(result.token);
@@ -118,17 +134,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       // 세션 기록(startSession)이 user.id를 요구하는 모든 화면(app/overlay 등)이 조용히 broken 상태였음.
       // deviceId 기반 로컬 전용 유저로 폴백해 오프라인에서도 SQLite/설정 등 나머지 기능이 정상 동작하게 한다.
       // 실 백엔드가 붙으면 이 id로 만든 로컬 데이터를 서버 발급 id로 마이그레이션하는 로직이 필요하다.
-      const user: User = {
-        id: `local-${deviceId}`,
-        email: null,
-        name: null,
-        avatarUrl: null,
-        provider: 'guest',
-        isGuest: true,
-        createdAt: new Date().toISOString(),
-      };
-      await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
-      set({ user, isLoggedIn: true, isGuest: true });
+      await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(localUser));
     }
   },
 
@@ -136,8 +142,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     await googleAuth.signOut();
     await clearToken();
     await AsyncStorage.multiRemove(USER_SCOPED_KEYS);
-    set({ user: null, isLoggedIn: false, isGuest: false });
     useSubscriptionStore.getState().reset().catch(() => {}); // RC 익명 ID로 리셋
-    await get().loginAsGuest();
+    await get().loginAsGuest(); // 아래 loginAsGuest가 즉시 로컬 게스트를 set하므로 user:null 노출 구간 없음
   },
 }));

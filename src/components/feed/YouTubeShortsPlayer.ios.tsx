@@ -66,22 +66,18 @@ const INJECTED_JS = `
     var unmuteLogged = 0;
     function tapUnmute() {
       try {
-        // .ytp-unmute 버튼 클릭(내부 상태 동기화) + 그 팝업 요소 자체를 숨김(클릭만으론 유튜브가 다시 띄움).
-        var b = document.querySelector('.ytp-unmute');
-        if (b) {
-          var vis = b.offsetParent !== null;
-          if ((unmuteLogged++) % 8 === 0) send({ type: 'domlog', text: 'ytp-unmute found vis=' + vis + ' cls=' + (b.className || '').toString().slice(0, 40) });
-          b.click();
-          b.style.setProperty('display', 'none', 'important');
-        } else if ((unmuteLogged++) % 8 === 0) {
-          // .ytp-unmute가 없으면 "음소거" 텍스트를 가진 요소를 찾아 로그(팝업이 다른 요소일 가능성).
-          var all = document.querySelectorAll('div, span, button, [role="button"]');
-          for (var i = 0; i < all.length; i++) {
-            var t = (all[i].textContent || '').slice(0, 20);
-            if (/음소거|unmute/i.test(t) && all[i].offsetParent !== null) {
-              send({ type: 'domlog', text: 'muteText el=' + all[i].tagName + ' cls=' + (all[i].className || '').toString().slice(0, 40) + ' txt=' + t });
-              break;
-            }
+        // ⚠️ 클릭 금지(문서 클릭 리스너 트리거로 이벤트 루프/내비게이션 → "쇼츠 불러오기 실패" 유발했음).
+        // 소리는 이미 v.muted=false로 나므로, 보이는 "탭하여 음소거 해제" 팝업 요소를 CSS로 숨기기만 한다.
+        var all = document.querySelectorAll('div, span, button, [role="button"], a');
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el.offsetParent === null) continue; // 안 보이면 skip
+          var t = (el.textContent || '');
+          if (t.length > 40) continue; // 큰 컨테이너 말고 팝업 자체(짧은 텍스트)만
+          if (t.indexOf('음소거 해제') >= 0 || t.indexOf('음소거를 해제') >= 0 || t.toLowerCase().indexOf('unmute') >= 0 || (t.indexOf('탭하여') >= 0 && t.indexOf('음소거') >= 0)) {
+            if ((unmuteLogged++) % 10 === 0) send({ type: 'domlog', text: 'MUTEPOP ' + el.tagName + ' cls=' + (el.className || '').toString().slice(0, 40) + ' txt=' + t.slice(0, 24) });
+            el.style.setProperty('display', 'none', 'important');
+            break;
           }
         }
       } catch (e) {}
@@ -95,13 +91,6 @@ const INJECTED_JS = `
       });
     }
     tryAudible();
-    // 팝업이 뜨는 순간 바로 클릭해 깜빡임 최소화 — 영상 로드 직후 3초간 100ms마다 .ytp-unmute를 잡아 클릭.
-    // (소리 확인된 뒤에만. 상시 MutationObserver는 유튜브가 DOM을 계속 바꿔 CPU 낭비라 짧은 폴링만.)
-    var fastTries = 0;
-    var fastPoll = setInterval(function () {
-      if (audibleOk) { var ub = document.querySelector('.ytp-unmute'); if (ub) ub.click(); }
-      if (++fastTries > 30) clearInterval(fastPoll);
-    }, 100);
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });

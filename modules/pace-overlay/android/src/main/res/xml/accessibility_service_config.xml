@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SupportedApps.PACKAGES(PaceAccessibilityService.kt)와 packageNames를 반드시 동기화 —
+<!-- SupportedApps.PACKAGES(ForegroundAppWatcher.kt)와 packageNames를 반드시 동기화 —
      XML이 Kotlin 상수를 읽을 방법이 없어 여기도 하드코딩(기존 모듈 컨벤션과 동일). -->
+<!-- 2026-07-27 감사 발견 — com.ss.android.ugc.trill(한국 리전 TikTok 실제 패키지명, 2026-07-18에
+     SupportedApps.PACKAGES/supportedApps.ts엔 추가됐지만 이 XML만 그때 빠짐)이 packageNames에 없어서,
+     한국 리전 TikTok에서는 접근성 기반 실시간 감지(onAccessibilityEvent)가 전혀 안 들어오고 있었다
+     — ForegroundAppWatcher의 UsageStatsManager 폴백만 느리게 잡는 상태였음. 추가해 동기화. -->
 <!-- 2026-07-19: canRetrieveWindowContent를 true로 켬 — PaceAccessibilityService의 실제 재생 위치
      감지(rootInActiveWindow 트리 순회)에 필요. 새 런타임 권한이 추가되는 게 아니라 기존 접근성
      권한 범위 안의 선언이다(사용자가 시스템 설정에서 켜는 단일 접근성 토글은 동일). -->
@@ -21,5 +25,5 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
-    android:packageNames="com.google.android.youtube,com.instagram.android,com.zhiliaoapp.musically"
+    android:packageNames="com.google.android.youtube,com.instagram.android,com.zhiliaoapp.musically,com.ss.android.ugc.trill"
     android:description="@string/pace_accessibility_service_description" />

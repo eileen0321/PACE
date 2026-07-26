@@ -64,31 +64,15 @@ const INJECTED_JS = `
     //   - 팝업 텍스트 요소 display:none → 그 요소가 영상 컨테이너를 포함 → 영상 멈추고 소리만 남음
     //   결론: 팝업은 유튜브 UI라 건드리면 재생이 깨진다. 소리는 이미 나므로 팝업(껍데기)은 그냥 둔다.
     var audibleOk = false;
-    // ── "탭하여 음소거 해제" 팝업 제거: YouTube 플레이어 API unMute() 사용 ──────────────────
-    // 실기기 로그로 확정: 팝업 텍스트는 .html5-video-player(= YouTube 플레이어 객체) 자체에 있다.
-    // 이 컨테이너는 영상을 품고 있어 클릭/display:none 하면 재생이 죽는다(앞서 겪음). 대신 이 요소가
-    // 직접 노출하는 플레이어 API unMute()/setVolume()를 호출한다 — 내부 음소거를 정식 해제, 팝업 제거.
-    function ytUnmute() {
-      try {
-        var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-        if (mp && typeof mp.unMute === 'function' && (typeof mp.isMuted !== 'function' || mp.isMuted())) {
-          mp.unMute(); if (typeof mp.setVolume === 'function') mp.setVolume(100);
-        }
-      } catch (e) {}
-    }
-    // ⚡ 첫 재생 '씹힘' 방지: 예전엔 소리로 먼저 play()→iOS가 차단→음소거로 다시 play() 했는데, 이
-    // 재시작이 영상 첫 프레임을 끊었다(사용자 "영상 처음 씹힌다"). 대신 "음소거 자동재생"(iOS에서 항상
-    // 허용, 재시작 없음)으로 매끄럽게 시작하고, 재생이 시작된 직후 이미 돌아가는 영상의 음소거만 해제한다.
+    // ⭐ 실기기 로그로 확정(audible-ok muted=false, 영상당 1회): 소리는 v.muted=false로 "깨끗하게" 나온다.
+    // 그런데 팝업 없애려고 부른 mp.unMute()/setVolume()가 오디오 파이프라인을 재초기화해 "매 영상 처음
+    // 소리가 한 번 끊기는(씹힘)" 원인이었다. 또 음소거로 시작→해제하는 전환도 같은 컷을 만든다.
+    // → 팝업(껍데기)은 그냥 두고, 오디오는 절대 두 번 건드리지 않는다: 처음부터 v.muted=false로 한 번만 재생.
     function tryAudible() {
-      v.muted = true; v.volume = 1.0; // 음소거로 부드럽게 시작(iOS 항상 허용)
-      v.play().then(function () {
-        audibleOk = true;
-        v.muted = false; v.volume = 1.0; // 재생 시작 후 음소거만 해제(재시작 X)
-        ytUnmute();
-        ad('audible-ok');
-      }).catch(function (e) {
-        send({ type: 'audio', tag: 'play-blocked', err: String(e && e.name), muted: v.muted });
-        v.play().catch(function () {}); // 드묾 — 그래도 재생만 계속
+      v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생 — 음소거 단계/재초기화 없음(컷 없음)
+      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
+        send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
+        v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백
       });
     }
     tryAudible();
@@ -104,7 +88,6 @@ const INJECTED_JS = `
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     setInterval(function () {
       if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } // 소리 재생 확인 후에만 재-unmute(폴백)
-      ytUnmute(); // YouTube 내부 음소거도 정식 API로 해제 → "탭하여 음소거 해제" 팝업 제거
 
       if (!v.duration || isNaN(v.duration)) return;
       var t = v.currentTime;

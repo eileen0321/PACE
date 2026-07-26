@@ -189,7 +189,10 @@ private final class SnapDetector {
     let session = AVAudioSession.sharedInstance()
     do {
       // .measurement: AGC 최소화(순간 스파이크 보존). .mixWithOthers로 유튜브 소리와 공존.
-      try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
+      // ⭐ 리서치 정답(2026-07-26): 다른 오디오(WebView 영상)를 죽이지 않으려면 mode는 .default(NOT
+      // .measurement — 그건 출력 볼륨을 죽임), options는 .mixWithOthers(앱 세션을 협조적으로 만들어
+      // WebView 세션을 인터럽트 안 함) + .defaultToSpeaker(수화부 저볼륨 라우팅 회피) + .allowBluetoothA2DP.
+      try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
       try session.setActive(true)
     } catch {
       scheduleRetry("session config: \(error.localizedDescription)"); return

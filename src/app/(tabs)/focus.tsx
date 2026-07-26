@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -9,7 +8,6 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useTranslation } from '../../services/i18n';
-import { capabilities } from '../../services/platform';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -26,7 +24,6 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // Break Reminder/Healthy Pause 토글도 실제 useSettingsStore에 연결.
 export default function FocusScreen() {
   const { t } = useTranslation();
-  const router = useRouter();
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
@@ -121,38 +118,8 @@ export default function FocusScreen() {
           </View>
         </GlassSurface>
 
-        {/* 4. iOS Pace Feed / dev POC 진입 (2026-07-18 iOS 전략 확정 — PACE_ARCHITECTURE.md 참고).
-            Pace Feed = iOS에서 YouTube Shorts를 순차 재생하는 자체 화면(iOS 전용).
-            QA #19 수정(2026-07-19): capabilities.supportsPaceFeed(iOS 전용)로 섹션 전체를 게이팅 —
-            이전엔 라벨 접미사만 iOS 조건이고 버튼은 무조건 렌더돼 Android에도 노출됐음.
-            NOTE(i18n): 스캐폴드 단계라 리터럴 문자열 — feed.* 키 배선은 후속 작업. */}
-        {capabilities.supportsPaceFeed && (
-        <View>
-          <Text style={styles.sectionLabel}>Pace Feed</Text>
-          <Pressable onPress={() => router.push('/feed')} style={styles.feedEntryBtn}>
-            <View style={styles.feedEntryLeft}>
-              <View style={styles.feedEntryIcon}><Feather name="play-circle" size={18} color={colors.successLight} /></View>
-              <View style={styles.feedEntryTextWrap}>
-                <Text style={styles.feedEntryTitle}>Open Pace Feed</Text>
-                <Text style={styles.feedEntrySub}>차단 대신 볼 차분한 대체 피드</Text>
-              </View>
-            </View>
-            <Feather name="chevron-right" size={18} color={colors.textSecondary} />
-          </Pressable>
-          {__DEV__ && (
-            <Pressable onPress={() => router.push('/dev/shorts-poc')} style={[styles.feedEntryBtn, styles.devEntryBtn]}>
-              <View style={styles.feedEntryLeft}>
-                <View style={styles.feedEntryIcon}><Feather name="alert-triangle" size={16} color={colors.warning} /></View>
-                <View style={styles.feedEntryTextWrap}>
-                  <Text style={styles.feedEntryTitle}>Shorts WebView POC (dev)</Text>
-                  <Text style={styles.feedEntrySub}>원안 ① 자동넘김 검증용 · 출시 금지</Text>
-                </View>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textSecondary} />
-            </Pressable>
-          )}
-        </View>
-        )}
+        {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로
+            들어가므로(home.tsx, iOS) 집중화면의 진입 버튼은 중복이었다. dev Shorts POC 버튼도 함께 제거. */}
       </ScrollView>
 
       {/* Demo Mindful Break Prompt Modal */}

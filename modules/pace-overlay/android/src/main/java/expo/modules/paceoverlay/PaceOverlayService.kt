@@ -337,10 +337,17 @@ class PaceOverlayService : Service() {
   }
 
   private fun markExpired(reason: String) {
-    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+    val editor = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
       .putBoolean(PREF_EXPIRED, true)
       .putString(PREF_EXPIRE_REASON, reason)
-      .apply()
+    // sleep_detected일 때만 "마지막 실제 움직임" 시각을 벽시계로 환산해 같이 남긴다 — elapsedRealtime은
+    // 부팅 후 경과시간이라 그 자체로는 JS에 의미가 없으므로, 지금(currentTimeMillis)에서 무진동 경과분을
+    // 빼 "그 순간의 실제 시각"으로 변환한다.
+    if (reason == "sleep_detected") {
+      val stillnessElapsedMs = SystemClock.elapsedRealtime() - lastMotionAtMs
+      editor.putLong(PREF_SLEEP_ONSET_AT_MS, System.currentTimeMillis() - stillnessElapsedMs)
+    }
+    editor.apply()
   }
 
   // Daily Limit 알림(notifyLimit)/저시간 경고(notifyRemaining)/Break Reminder(notifyBreak) 전부
@@ -508,6 +515,14 @@ class PaceOverlayService : Service() {
     // "탈착 이후로도 그만큼 안 움직여야" 하므로 탈착 자체가 즉시 트리거가 되지 않는다.
     private const val SLEEP_STILLNESS_MS = 10 * 60 * 1000L
     private const val SLEEP_STILLNESS_SHORT_MS = 6 * 60 * 1000L
+    // 2026-07-26 사용자 지적 — "가만히 있으면 무조건 수면으로 판단"이 낮 시간대(거치대에 세워두고
+    // 안 만지는 등)에 오탐을 낸다. 순수 무진동 시간만으로는 "진짜 잠"과 "낮에 가만히 두고 봄"을
+    // 구분할 수 없으므로(움직임 신호 하나로는 원천적 한계), 실제 취침이 몰리는 시간대에만 이 판정
+    // 자체를 적용하는 2차 게이트를 추가한다 — useFlipStore.ts의 QUIET_HOURS(00~06시, 크레딧 제외용)
+    // 보다 넓게 잡음: 이건 "혹시 수면 중일 수도 있는 시간"을 판정 대상으로 아예 좁히는 것이라, 너무
+    // 좁히면 늦게 자거나 늦잠 자는 사용자를 놓친다 — 밤 10시~아침 9시로 넉넉히 잡아 자정을 걸친다.
+    private const val SLEEP_WINDOW_START_HOUR = 22 // 22:00
+    private const val SLEEP_WINDOW_END_HOUR = 9 // 09:00 (다음날)
     // Flip Mode의 LINEAR_ACCEL_EPSILON(1.2)보다 살짝 낮게 — 여긴 "완전히 멈췄다"를 원하므로
     // Flip Mode(오탐 완화용 보조 게이트)보다 더 엄격하게 잡아도 무방.
     private const val STILLNESS_WAKE_EPSILON = 1.0f
@@ -527,6 +542,12 @@ class PaceOverlayService : Service() {
     const val PREFS_NAME = "pace_overlay"
     const val PREF_EXPIRED = "expired"
     const val PREF_EXPIRE_REASON = "expire_reason"
+    // 2026-07-26 사용자 지적 — "1시 3분에 잠들었는데 실제로는 10분 전(무진동 시작 시점)이 진짜
+    // 잠든 시각에 더 가깝지 않냐" — markExpired() 호출 시각(=무진동 임계값을 넘긴 시각)은 실제
+    // 마지막 움직임(lastMotionAtMs)보다 stillnessThresholdMs만큼 항상 늦다. sleep_detected일 때만
+    // 마지막 움직임의 벽시계 시각(epoch ms)을 같이 저장해, JS가 세션 ended_at을 "감지된 시각"이
+    // 아니라 "마지막으로 움직인 시각"으로 정확히 기록하게 한다(consumeExpired 참고).
+    const val PREF_SLEEP_ONSET_AT_MS = "sleep_onset_at_ms"
     const val PREF_AUTO_MODE = "bt_auto_mode"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
@@ -654,6 +675,13 @@ class PaceOverlayService : Service() {
       return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
         it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
       }
+    }
+
+    // 2026-07-26 — SLEEP_WINDOW_START_HOUR~SLEEP_WINDOW_END_HOUR(22시~다음날 9시, 자정 걸침) 안에
+    // 있는지. 이 창 밖(낮 시간대)에서는 stillnessElapsedMs가 아무리 길어도 수면으로 판정하지 않는다.
+    private fun isWithinSleepDetectionWindow(): Boolean {
+      val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+      return hour >= SLEEP_WINDOW_START_HOUR || hour < SLEEP_WINDOW_END_HOUR
     }
 
     // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 사용자가 설정한 시간만큼
@@ -933,7 +961,11 @@ class PaceOverlayService : Service() {
       btWasConnectedThisSession = btNowConnected
       val stillnessElapsedMs = SystemClock.elapsedRealtime() - lastMotionAtMs
       val stillnessThresholdMs = if (btDisconnectedDuringStillness) SLEEP_STILLNESS_SHORT_MS else SLEEP_STILLNESS_MS
-      val sleepDetected = stillnessElapsedMs >= stillnessThresholdMs
+      // 2026-07-26 사용자 지적("가만히 있으면 무조건 수면으로 판단하는 거 아니지 않아?") — 낮 시간대
+      // 오탐(거치대/adb 등으로 폰만 가만히 있는 경우) 방지를 위해 밤 시간대(위 SLEEP_WINDOW_*)에만
+      // 무진동 판정을 수면으로 인정한다. 창 밖에서는 아무리 오래 무진동이어도 sleepDetected=false —
+      // 그 시간의 무진동은 그냥 무진동일 뿐 세션을 끊지 않는다(Daily Limit 등 다른 조건은 그대로 적용).
+      val sleepDetected = stillnessElapsedMs >= stillnessThresholdMs && isWithinSleepDetectionWindow()
 
       // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
       // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게

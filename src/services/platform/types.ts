@@ -54,7 +54,13 @@ export interface OverlayService {
    * 백그라운드에서 죽는 문제의 우회책(PACE_ARCHITECTURE.md "백그라운드 타이머 버그" 참고). 만료 안
    * 됐으면 null. iOS: 항상 null(no-op, Screen Time이 자체적으로 차단을 집행하므로 이 경로가 필요 없음).
    */
-  consumeExpired(): Promise<SessionEndStatus | null>;
+  /**
+   * 2026-07-26 — sleep_detected일 때 sleepOnsetAtMs(epoch ms)를 같이 반환한다: 네이티브가 무진동
+   * 임계값을 넘겨 "감지한" 시각이 아니라 실제 "마지막으로 움직인" 시각(진짜 잠든 시각에 더 가까움)
+   * — 세션 ended_at을 이 값으로 기록해야 수면 인사이트 배너("N시 N분에 잠드셨습니다")가 정확하다.
+   * sleep_detected가 아니면 항상 null.
+   */
+  consumeExpired(): Promise<{ reason: SessionEndStatus; sleepOnsetAtMs: number | null } | null>;
   /**
    * 2026-07-26 사용자 지시("몇 편 봤는지 카운트") — 이번 세션에서 실제로 넘어간 영상 편수(자동넘김
    * 스와이프든 사용자가 직접 손으로 넘긴 것이든 전부 포함, PaceAccessibilityService의 재생위치

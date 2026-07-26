@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useTranslation } from '../../services/i18n';
 import { bluetoothService } from '../../services/platform';
 import { showRewardedAd } from '../../services/ads/rewardedAd';
@@ -53,22 +54,29 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
+          <View style={styles.iconWrap}>
+            <Feather name="zap" size={22} color={colors.primary} />
+          </View>
           <Text style={styles.title}>{t('home.focusSessionTimedOutTitle')}</Text>
           <Text style={styles.message}>{t('home.focusSessionTimedOutMessage', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
           <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd}>
             {watchingAd ? (
-              <ActivityIndicator color={colors.background} />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.btnPrimaryText}>{t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+              <>
+                <Feather name="play-circle" size={16} color="#FFFFFF" />
+                <Text style={styles.btnPrimaryText}>{t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+              </>
             )}
           </Pressable>
           {totalCredits >= FOCUS_SESSION_EXTEND_MINUTES && (
             <Pressable style={[styles.btn, styles.btnCredits]} onPress={onUseCredits} disabled={watchingAd}>
+              <Feather name="star" size={16} color={colors.successLight} />
               <Text style={styles.btnCreditsText}>{t('home.useCreditsToExtend', { credits: FOCUS_SESSION_EXTEND_MINUTES, extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
             </Pressable>
           )}
-          <Pressable style={styles.btn} onPress={onDismiss} disabled={watchingAd}>
-            <Text style={styles.btnText}>{t('overlay.notNow')}</Text>
+          <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd}>
+            <Text style={styles.dismissText}>{t('overlay.notNow')}</Text>
           </Pressable>
         </View>
       </View>
@@ -77,15 +85,25 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  card: { width: '100%', maxWidth: 360, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
-  title: { color: colors.textPrimary, fontSize: 17, fontFamily: typography.bodyFontFamilyBold },
-  message: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
-  btn: { borderRadius: radius.pill, paddingVertical: spacing.sm, alignItems: 'center', justifyContent: 'center' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  card: { width: '100%', maxWidth: 340, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.lg, alignItems: 'center', gap: spacing.xs },
+  iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
+  title: { color: colors.textPrimary, fontSize: 17, fontFamily: typography.bodyFontFamilyBold, textAlign: 'center' },
+  message: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, textAlign: 'center', marginBottom: spacing.sm },
+  btn: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
   btnPrimary: { backgroundColor: colors.primary },
   btnDisabled: { opacity: 0.7 },
-  btnPrimaryText: { color: colors.background, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
+  btnPrimaryText: { color: '#FFFFFF', fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
   btnCredits: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)' },
   btnCreditsText: { color: colors.successLight, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
-  btnText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
+  dismissBtn: { paddingVertical: spacing.sm, alignItems: 'center', justifyContent: 'center' },
+  dismissText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
 });

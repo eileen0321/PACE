@@ -20,15 +20,16 @@
 
 ---
 
-## 1. 현재 상태 요약 (2026-07-25)
+## 1. 현재 상태 요약 (2026-07-26)
 
-- 출시 전 단계. **2-A(D1~D5, D10) 사장님 결정/계정 필요 항목이 2026-07-26에 전부 해결됨** —
+- 출시 전 단계. **2-A(D1~D5, D7, D10) 사장님 결정/계정 필요 항목이 2026-07-26에 전부 해결됨** —
   로그인 백엔드(D2, Railway 실배포+`/auth/guest` 실호출 확인), 결제(D1, RC 키), AdMob(D10, 실제
-  ID), iOS 차단기능(D3, 기능 삭제), 심사 계정(D4, jlpt-master 계정 재사용). 남은 건 D6(제품 방향,
-  안 급함)·D7(구글 OAuth 클라이언트 — 이제 이것만 있으면 백엔드까지 다 준비된 구글 로그인이
-  완성됨)·D8/D9(스펙 미확정, 보류). **단, App Store Connect/Play Console에 실제 구독 상품(가격/
-  구독그룹)이 등록돼 있고 RevenueCat 대시보드에 Offering/Package로 연결돼 있는지는 별도 미확인**
-  — SDK 키가 있어도 스토어 쪽 상품 자체가 없으면 구매 버튼을 눌러도 실패함, 다음 확인 필요.
+  ID), iOS 차단기능(D3, 기능 삭제), 심사 계정(D4, jlpt-master 계정 재사용), 지원 이메일(D5, 실주소
+  교체), 구글 로그인(D7, OAuth 클라이언트 3종 발급). 남은 건 D6(제품 방향, 안 급함)·D8/D9(스펙
+  미확정, 보류)·**D11(신규, 진행 중)**. **D11**: 실기기 검증 중 RevenueCat `ConfigurationError`가
+  실제로 확인됨(Play Store에 구독 상품 미등록) — Play Console 결제 프로필까지는 완료했으나 입금
+  계좌 은행 확인(영업일 2~5일 소요) 대기 중이라 구독 상품 생성이 막혀 있음, 확인되는 대로 이어서
+  진행.
   Settings에 게스트용 로그인 진입점도 신규 추가(이전엔 paywall에서 막혀야만 우회로 로그인 화면에
   도달할 수 있었음). **AdMob 실제ID 관련 안전장치 2건 추가**: (1) 다른 세션이 `EXPO_PUBLIC_
   USE_REAL_ADS` 빌드 플래그로 평소엔 테스트ID/출시빌드만 실ID를 쓰게 분리(`5c76cce`), (2) 이
@@ -62,12 +63,13 @@
 | D2 | ~~백엔드(Railway) 미배포~~ | ✅ 완료(2026-07-26) — Railway CLI로 프로젝트 생성 + MySQL 플러그인 + 환경변수(JWT_SECRET/APPLE_BUNDLE_ID/CORS_ORIGINS/REVENUECAT_WEBHOOK_AUTH_HEADER/DB_*) 설정 + `railway up`으로 실배포. 공개 URL `https://pace-backend-production-2e52.up.railway.app` 발급, `.env`의 `EXPO_PUBLIC_API_BASE_URL`에 반영. `POST /auth/guest` 실제 호출로 JWT 발급 확인(HTTP 200, Flyway 마이그레이션 정상 적용). **미설정 채로 남은 것**: `GOOGLE_CLIENT_ID`(D7과 동일 사유로 비어있음, 구글 로그인만 아직 안 됨 — 게스트/애플은 정상), `REVENUECAT_API_KEY`(RC Secret API Key, 별도 발급 필요 — `/auth/refresh`의 RC reconcile에만 영향, 로그인 자체는 무관) | MAC_SESSION_HANDOFF §2 |
 | D3 | ~~iOS Screen Time(Family Controls) entitlement 미승인~~ | ✅ 완료(2026-07-26) — 사장님 결정: (b) 기능 삭제. `screenTimeService.ios/android.ts`, `ScreenTimeService` 타입, `capabilities.supportsScreenTimeControl`/`supportsAppBlocking`, `modules/pace-screentime` 네이티브 모듈 전부 삭제(어차피 UI 어디서도 호출 안 하던 죽은 인프라였음). iOS의 차단 대체 출구는 Pace Feed로 계속 유지. `npx tsc --noEmit` 통과 | QA_FULL_REVIEW B1 |
 | D4 | ~~심사 리뷰어 화이트리스트 빈 배열~~ | ✅ 완료(2026-07-26) — 사장님 결정: jlpt-master(`src/config/reviewers.ts`)가 이미 구글 플레이 콘솔에 제출해둔 실제 테스트 계정(`s7.reviewer@gmail.com`)을 그대로 재사용. `src/constants/reviewers.ts`에 반영 | QA_FULL_REVIEW B4 |
-| D5 | 지원 이메일이 placeholder(`support@pace.app`, `settings.tsx:33`) | 실제 수신 가능한 메일함으로 교체 | QA_FULL_REVIEW B5 |
+| D5 | ~~지원 이메일이 placeholder~~ | ✅ 완료(2026-07-26) — `settings.tsx`의 `SUPPORT_EMAIL`을 실제 수신 이메일 `comfortstride7@gmail.com`으로 교체 | QA_FULL_REVIEW B5 |
 | D6 | (B3 조사 중 신규 발견) Daily Limit 추적이 상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 "YouTube with PACE"를 눌러 세션을 시작한 경우에만 동작함 — 유저가 그냥 일반 YouTube 앱을 직접 열어서 보면 Pace는 그 시청을 아예 감지 못함(재부팅 여부와 무관, 앱의 기존 설계) | 제품 결정 필요: (a) 현재 "opt-in 세션" 모델 유지(문서화·마케팅에 명시) vs (b) Android UsageStatsManager 등으로 상시 감시 추가(배터리/권한/Play정책 트레이드오프 있음) | B3 로그, §6 참고 |
 | D7 | ~~Google 소셜 로그인 OAuth 클라이언트 미발급~~ | ✅ 완료(2026-07-26) — Google Cloud Console "Pace-Server" 프로젝트(`pace-server-502818`, jlpt-master와 별개, 이미 YouTube Data API용으로 존재하던 프로젝트)에 Pace 전용 OAuth 클라이언트 3종 신규 발급: Android(패키지 `com.strides7.pace` + 로컬 debug 키스토어 SHA-1, **release SHA-1은 아직 미등록 — 출시 빌드 전 Play Console에서 받아 추가 필요**), Web(`...2ihg3c4bj03vj59smd48m8ef007kcrei...`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` + 백엔드 `GOOGLE_CLIENT_ID`로 사용 — ID 토큰 audience 검증용), iOS(`...fq9o0uudug7bh60ut88pr6atc97nkdqc...`, 번들ID `com.strides7.pace` + 팀ID `328BF833XS`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` + `app.json`의 `iosUrlScheme`로 사용). `.env`(로컬, gitignore)와 Railway `GOOGLE_CLIENT_ID`에 반영, 백엔드 재배포 후 `/auth/guest` 정상 재확인. **iOS `iosUrlScheme`는 네이티브 설정(Info.plist)이라 다음 iOS prebuild/빌드부터 실제 반영됨 — 아직 실기기 검증 안 함.** | 2026-07-26 로그 참고 |
 | D8 | (2026-07-26 신규, 사장님 요청이었으나 스펙 미확정이라 보류) "고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로 추가해달라는 요청 — 뭘 "고급"으로 만들지 구체 스펙이 아직 없음(현재 수면감지는 10분 무진동 고정 임계값 하나뿐, 사용자 설정 UI 자체가 없음) | 제품 결정 필요 — 임시 제안(확정 아님): 프리미엄 한정으로 무진동 임계값을 5~20분 사이 직접 조절 + 블루투스 탈착 보조신호 사용 여부 토글 정도가 "코드로 바로 만들 수 있는" 최소 범위. 사장님이 원하는 그림이 이거랑 다르면 다시 정의 필요 | 2026-07-26 로그 참고 |
 | D9 | (2026-07-26 신규, 사장님 요청이었으나 기존 동작 회귀 위험 있어 보류) "리모컨 지원"을 프리미엄 전용으로 가둬달라는 요청 — 그런데 핑거스냅/손짓/블루투스 볼륨키 Auto Mode는 **이미 전체 사용자에게 배포돼 실제로 쓰이고 있는 기존 기능**(오늘 밤에도 이걸로 여러 버그를 고침). 지금 프리미엄 뒤로 가두면 기존 사용자 입장에선 "되던 기능이 갑자기 막힘"으로 보일 회귀임 | 제품 결정 필요: (a) 신규 사용자만 프리미엄 게이팅하고 기존 사용자는 유지(grandfather) vs (b) 전체 게이팅하되 출시 공지로 미리 안내 vs (c) 이번엔 게이팅 보류(현 상태 유지) — 방향 정해지면 코드 자체는 간단함(`useSubscriptionStore.isPremium` 체크 하나 추가) | 2026-07-26 로그 참고 |
 | D10 | ~~AdMob 테스트 광고 단위 ID~~ | ✅ 완료(2026-07-26) — AdMob 앱 심사 승인됨, Android/iOS 앱 등록 + 배너(양쪽)·보상형(Android) 광고 단위 실제 발급받아 `app.json`(androidAppId/iosAppId), `AdBanner.tsx`, `rewardedAd.ts`에 실제 ID로 교체 완료. `npx tsc --noEmit` 통과. 새 광고 단위는 활성화까지 최대 1시간 걸릴 수 있음 — 실기기에서 광고 실제로 뜨는지 확인 필요 | 2026-07-26 로그 참고 |
+| D11 | (2026-07-26 실기기 검증 중 발견) RevenueCat `PurchasesError(code=ConfigurationError)` 실제 발생 — Play Store에 구독 상품이 하나도 등록 안 돼 있음. SDK 키(D1)만으론 결제 불가, 스토어 쪽 상품+RC Offering 연결까지 필요 | 🟡 진행 중 — Google Play Console 정기결제 메뉴가 "Google Payments 판매자 계정 설정 필요"로 막혀 있어 결제 프로필(사업자정보/카테고리/지원이메일 `comfortstride7@gmail.com`/카드명세서명 "PACE")까지 완료, **입금 계좌 등록 후 은행 소액 입금 확인 대기 중**(구글 측, 보통 영업일 2~5일, 코드/설정으로 단축 불가). 확인되는 대로 Play Console 구독 상품 생성 → RevenueCat Offering/Package 연결 이어서 진행. iOS(App Store Connect) 쪽 구독 상품도 별도로 아직 미착수 | 2026-07-26 로그 참고 |
 
 ### 2-B. Android 담당(Windows 세션) — 코드로 해결 가능
 
@@ -121,17 +123,18 @@
 
 ## 5. 📋 다음 지시 (세션별 — 이 섹션을 매번 갱신)
 
-**Windows 세션(다음 작업)** → 2026-07-26 밤 세션에서 Focus Session/연속 시청 통합(아래 §6
-"2026-07-26 — Windows 세션 (Focus Session/연속 시청 통합)" 로그 필독 — **자동넘김 30편 한도
-시스템은 완전히 제거됨**, 아래 1번은 새 통합 시스템 기준으로 갱신됨). 다음 세션 우선순위:
-1. **Focus Session 무료 10분 고정 + 광고/크레딧 연장(각 +5분) 흐름 실기기 검증** — 코드는
-   완성·설치·기본 스모크 테스트(크래시 없음, "SESSION ON" + "Focus Session Started (10m)" 토스트
-   확인)까지 했지만, 실제 10분 자연 만료 → `FocusSessionExtendModal` 등장 → 광고 시청(네트워크+
-   구글 광고서버+실제 터치라 adb로 자동화 불가) 또는 크레딧 사용 버튼까지의 전체 흐름은 사람이
-   직접 10분 기다려서 확인 필요. 테스트 편의상 `PaceOverlayModule.setFocusSessionDurationMinutes`
-   호출부나 네이티브 상수를 잠깐 짧게(1~2분) 낮춰서 테스트하는 것도 방법.
-2. D7/D8/D9(사장님 결정 대기) 중 하나라도 정리되면 그에 맞춰 마저 구현.
-3. Home/온보딩/스플래시 WIP 스모크 테스트(이전부터 밀려있던 항목, 아직 미완).
+**Windows 세션(다음 작업)** → 2026-07-26 밤 세션에서 Focus Session/연속 시청 통합 + 실기기 라이브
+검증 + 수면감지 정확도 개선까지 완료(아래 §6 "2026-07-26 — Windows 세션 (Focus Session 라이브
+실기기 검증 완료 + 수면감지 정확도 개선)" 로그 필독). **자동넘김 30편 한도 시스템은 완전히
+제거됨**. 다음 세션 우선순위:
+1. **수면감지 시간대 게이트(22시~9시) + 정확한 시각 기록 로직의 실제 밤 시간대 재현 테스트** —
+   코드 검토로 로직은 확인했지만, 실제로 밤에 폰을 무진동 상태로 10분 두고 (a) 그 창 밖(낮)에서는
+   정말 트리거 안 되는지, (b) 트리거될 때 기록되는 시각이 "임계값 넘긴 시각"이 아니라 "마지막
+   움직인 시각"과 정확히 일치하는지 실기기로 확인 필요(낮 시간이라 이번 세션엔 못 함).
+2. Health Connect(Android)/HealthKit(iOS) 연동으로 워치 수면 데이터를 보조 신호로 추가하는 건
+   — 사장님이 제안했으나 새 권한 플로우+의존성 필요한 별도 작업이라 보류 중, 착수 여부 확인 필요.
+3. D7/D8/D9(사장님 결정 대기) 중 하나라도 정리되면 그에 맞춰 마저 구현.
+4. Home/온보딩/스플래시 WIP 스모크 테스트(이전부터 밀려있던 항목, 아직 미완).
 
 **Mac 세션(다음 작업)** → 기기 연결되면 C3(실기기 검증) 최우선. 기기 없으면 C1(Sleep Timer
 네이티브) 먼저 진행. **신규로 C5(전역 Bluetooth Hands-Free가 iOS에서도 가짜 UI) 발견됨 — 위
@@ -548,3 +551,71 @@ Settings 탭(주간 출석 위젯 렌더 확인)·Focus 탭(실제 YouTube Short
 없음. **미검증**: 10분 자연 만료 후 `FocusSessionExtendModal`이 실제로 뜨는지, 광고/크레딧 버튼을
 눌렀을 때 `extendFocusSession`이 실제로 5분을 더해주는지 — 10분을 실제로 기다려야 확인 가능해
 다음 세션 권장 작업으로 위 §5에 남김.
+
+### 2026-07-26 — Windows 세션 (Focus Session 라이브 실기기 검증 완료 + 수면감지 정확도 개선)
+
+**위 §5의 미검증 항목을 실제로 확인함** — 실기기(R3CN80S5GWW)에서 진짜 10분(설정값 조작 없이
+그대로) Focus Session을 시작해 자연 만료까지 실제로 기다린 뒤 확인:
+- `bt_auto_mode`가 정확히 10분 뒤 `false`로 자동 전환(`focusSessionAutoStop` 정상 발동) 확인.
+- Pace를 포그라운드로 가져오니 `FocusSessionExtendModal`이 정상적으로 뜸.
+- **광고 연장 경로**: 리워드 광고 시청 → "리워드 지급됨" 확인 → 엔드카드 X 눌러 닫으니 Pace로
+  정상 복귀 + "Focus Session Started (10m)" 네이티브 토스트까지 확인(광고 SDK의 표준 엔드카드
+  UX일 뿐 버그 아님 — 광고 종료 후 자동 복귀가 안 되는 것처럼 보였던 건 사용자가 아직 엔드카드의
+  X를 안 눌렀던 것).
+- **크레딧 연장 경로**: 실제 저장된 값(휴식 크레딧 0 + 출석 보너스 5)으로 `spendCredits`/
+  `spendBonusCredits` 조합 로직을 코드 레벨로 직접 트레이싱 — 5크레딧 정확히 소비, `extendFocusSession(5)`
+  호출까지 로직 정합성 확인.
+- 부가로 발견된 것(버그 아님, 우리 제어 밖): 리워드 광고 시청 중 하단 시스템 내비게이션 바가
+  흰색으로 보이는 것은 구글 Mobile Ads SDK 자체 `AdActivity`가 Pace 테마를 안 받는 것 — 모든 앱이
+  겪는 SDK 자체 제약이라 앱 코드로 고칠 수 있는 부분이 아님.
+
+**`FocusSessionExtendModal.tsx` 디자인 개선** — 사용자 피드백("모달 겁내 촌스러운데") 반영. 기존
+`DailyCheckInModal.tsx`와 톤을 맞춰 상단 아이콘 배지(Feather `zap`, indigo tint) + 제목/설명 가운데
+정렬 + 버튼에 아이콘(광고=`play-circle`, 크레딧=`star`) 추가. JS만 바꾼 변경이라 재빌드 불필요.
+
+**Focus Session 종료 시 동작 방식 — 사장님 명시적 확정(추가 질문 나올 시 재확인 불필요)**:
+"Focus Session(10분)이 끝나도 손으로 스와이프하면 시청 자체는 계속 가능(자동 넘김 편의 기능만
+꺼짐), 일일 한도(Daily Limit)에 도달해야만 진짜로 막힘" 구조를 **그대로 유지하기로 결정**함
+(하드 블록 방식과 양자택일로 물어봤고 "지금처럼 유지" 선택). 즉 Focus Session은 어시스트 기능
+게이트일 뿐 시청 자체의 게이트가 아님 — 향후 이 전제를 뒤집는 논의가 나오면 이 결정을 먼저 참고.
+
+**수면감지 정확도 개선 2건** (`PaceOverlayService.kt`, 사용자가 실기기 라이브 테스트 중 직접
+지적):
+
+1. **낮 시간대 오탐 방지 — 시간대 게이트 추가**: "가만히 있으면 무조건 수면 판정"이 낮에 거치대에
+   세워두거나(이번엔 제 adb 원격 테스트가 원인 — adb `input tap`은 터치 이벤트만 주입할 뿐 실제
+   가속도계를 움직이지 않아 "책상에 가만히 10분+"과 똑같이 잡힘) 하는 상황에서 오탐을 낸다는
+   지적. `SLEEP_WINDOW_START_HOUR=22`/`SLEEP_WINDOW_END_HOUR=9`(자정 걸침) 상수 추가, 무진동
+   임계값(10분/블루투스 해제 시 6분)을 넘겨도 이 창(22시~다음날 9시) 밖이면 `sleepDetected`가
+   무조건 `false` — 낮 시간대엔 아무리 오래 안 움직여도 수면으로 판정하지 않음(Daily Limit 등
+   다른 종료 조건은 그대로 적용됨, 이 게이트는 수면 판정에만 적용).
+2. **수면 판정 시각 정확도 — "감지 시각"이 아니라 "마지막 움직인 시각"으로 기록**: 기존엔
+   `markExpired()`가 불린 시각(=무진동 임계값을 "넘긴" 순간, 실제 잠든 시각보다 정확히
+   10분/6분 늦음) 그대로가 세션 `ended_at`(→ 홈 화면 "N시 N분에 잠드셨습니다" 배너 근거)으로
+   기록되고 있었음 — 사용자 지적: "1시 3분에 잠들었는데 일어나서 다시 만지면 그 시각이 갱신돼야
+   지, 마지막 폰 사용 시각이 잠든 시각과 비슷해야 하는 거 아니냐". `markExpired(reason)`이
+   `sleep_detected`일 때만 `PREF_SLEEP_ONSET_AT_MS`(마지막 실제 움직임의 벽시계 epoch ms —
+   `System.currentTimeMillis() - stillnessElapsedMs`로 환산)를 같이 저장하도록 수정.
+   `PaceOverlayModule.consumeExpired()`는 이제 `String?` 대신 `{reason, sleepOnsetAtMs}` 맵을
+   반환(JS `OverlayService.consumeExpired()` 타입도 동일하게 변경 — `overlayService.android.ts`/
+   `types.ts`). `overlay/index.tsx`가 `sleep_detected`일 때 `sleepOnsetAtMsRef`로 이 값을 들고
+   있다가 세션 종료 시 `endSessionRow(...,  new Date(sleepOnsetAtMs).toISOString())`로 실제
+   ended_at을 넘김(`sessionsRepository.endSession()`에 5번째 선택 인자 `endedAtOverride` 추가,
+   생략 시 기존처럼 `now()`) — duration_seconds 계산도 같은 시각 기준으로 같이 보정됨. **이
+   값은 SharedPreferences(XML)에 저장돼 앱 프로세스/기기 재부팅에도 살아남음** — 어젯밤 감지된
+   수면이 아침에 앱을 열 때도 정확한 시각으로 반영됨.
+
+**보류/미착수 — Health Connect(Android)/HealthKit(iOS) 연동으로 워치 수면 데이터 보조 신호화**:
+사장님이 외부 리서치(Google Health Connect `SleepSessionRecord`, 구글 Sleep API/
+`SleepSegmentEvent`, 애플 HealthKit `HKCategoryValueSleepAnalysis`)를 근거로 제안. 웹 조사 결과
+Health Connect는 2026년 기준 정식 지원(Google Fit API는 2026년 내 폐지 예정이라 Health Connect가
+공식 후속)이고 `SleepSessionRecord` 읽기 자체는 가능하나, **워치(갤럭시워치/픽셀워치/애플워치)가
+실제로 수면 데이터를 기록해줘야만 값이 존재** — 폰 단독 사용자에게는 데이터 자체가 없어 보조
+신호일 뿐 위 무진동 휴리스틱을 대체할 수 없음. 새 권한 요청 플로우(Health Connect 자체 권한 다이얼로그)
++ 신규 Gradle 의존성 추가가 필요한 별도 크기의 작업이라 이번 세션엔 시간대 게이트로 오탐 문제를
+먼저 해결하고 이건 다음 세션으로 보류함. iOS 쪽(HealthKit)은 Mac 세션 스코프.
+
+검증: `npx tsc --noEmit` 통과, `gradlew assembleDebug` 빌드 성공, 실기기 재설치 후 크래시 없음
+확인. 시간대 게이트/수면 시각 정확도 수정은 코드 검토로 로직 확인 완료 — **밤 시간대 실제 재현
+테스트(22시~9시 사이에 실제로 무진동 10분 만들어 정확한 시각이 기록되는지)는 낮 시간이라 아직
+실기기로 못 함**, 다음 밤 세션에서 확인 권장.

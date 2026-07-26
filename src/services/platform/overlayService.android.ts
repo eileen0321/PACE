@@ -21,7 +21,7 @@ let PaceOverlay: {
   ): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
-  consumeExpired(): string | null;
+  consumeExpired(): { reason: string; sleepOnsetAtMs: number } | null;
   getVideoWatchCount(): number;
   hasBatteryOptimizationExemption(): boolean;
   requestBatteryOptimizationExemption(): void;
@@ -79,7 +79,12 @@ export const overlayService: OverlayService = {
   },
 
   async consumeExpired() {
-    return (PaceOverlay?.consumeExpired() ?? null) as SessionEndStatus | null;
+    const result = PaceOverlay?.consumeExpired() ?? null;
+    if (!result) return null;
+    return {
+      reason: result.reason as SessionEndStatus,
+      sleepOnsetAtMs: result.sleepOnsetAtMs >= 0 ? result.sleepOnsetAtMs : null,
+    };
   },
 
   async getVideoWatchCount() {

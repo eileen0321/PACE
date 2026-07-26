@@ -166,18 +166,21 @@ class PaceOverlayModule : Module() {
     // 즉시 쏘므로(sendAlertNotification) JS는 더 이상 신경 안 써도 됨. 만료 안 됐으면 null,
     // 만료됐으면 사유 문자열("daily_limit_reached"/"sleep_timer_expired") 반환.
     Function("consumeExpired") {
-      val reason: String? = appContext.reactContext?.let { context ->
+      appContext.reactContext?.let { context ->
         val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val wasExpired = prefs.getBoolean(PaceOverlayService.PREF_EXPIRED, false)
         if (wasExpired) {
           val expireReason = prefs.getString(PaceOverlayService.PREF_EXPIRE_REASON, "daily_limit_reached")
+          // 2026-07-26 — sleep_detected일 때만 존재(PaceOverlayService.markExpired 참고). JS가 세션
+          // ended_at을 "감지된 시각"이 아니라 "마지막으로 움직인 시각(진짜 잠든 시각에 더 가까움)"으로
+          // 정확히 기록하는 데 쓴다. -1이면 "이 정보 없음"(sleep_detected가 아니었던 경우).
+          val sleepOnsetAtMs = prefs.getLong(PaceOverlayService.PREF_SLEEP_ONSET_AT_MS, -1L)
           prefs.edit().putBoolean(PaceOverlayService.PREF_EXPIRED, false).apply()
-          expireReason
+          mapOf("reason" to expireReason, "sleepOnsetAtMs" to sleepOnsetAtMs)
         } else {
           null
         }
       }
-      reason
     }
 
     // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 세션

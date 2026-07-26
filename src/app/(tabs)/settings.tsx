@@ -28,10 +28,7 @@ import { AccessibilityOnboardingSheet } from '../../components/onboarding/Access
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
 
-// 2026-07-21 밤 감사 발견 — 실제 모니터링되는 지원 이메일이 없어(백엔드/도메인 미확정) 앱 전체가
-// 이미 쓰는 게스트 이메일 폴백 도메인(guest@pace.app)과 통일된 자리표시자를 쓴다. 출시 전 실제
-// 수신함으로 교체 필수 — 지금은 버튼이 죽어있는 것보다 우선 연결해두고 나중에 주소만 바꾸면 됨.
-const SUPPORT_EMAIL = 'support@pace.app';
+const SUPPORT_EMAIL = 'comfortstride7@gmail.com';
 
 // 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애") — faqQ3/A3가 예전엔 "Bluetooth 이어폰
 // 리모컨 버튼으로 Shorts를 넘긴다"는, capabilities.supportsHandsFreeControl(하드웨어 미디어 버튼

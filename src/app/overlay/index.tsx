@@ -48,6 +48,9 @@ export default function OverlaySessionScreen() {
   const [videoIndex, setVideoIndex] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const endReasonRef = useRef<SessionEndStatus>('manual_stop');
+  // 2026-07-26 — sleep_detected일 때만 채워짐(네이티브가 무진동 임계값을 "넘긴" 시각이 아니라
+  // 실제 "마지막으로 움직인" 시각, epoch ms) — 아래 cleanup에서 세션 ended_at을 정확히 기록하는 데 씀.
+  const sleepOnsetAtMsRef = useRef<number | null>(null);
   const sessionStartedAtMsRef = useRef<number | null>(null);
   const hasAutoEndedRef = useRef(false);
   // remainingMinutes/isSessionActive 둘 다 스토어 초기값이 0/false라, 아래 useEffect가 "세션이 실제로
@@ -166,8 +169,15 @@ export default function OverlaySessionScreen() {
     return () => {
       clearInterval(tickInterval);
       if (sessionIdRef.current && user.id) {
+        // 2026-07-26 사용자 지적("1시 3분에 잠들었으면 실제 마지막으로 움직인 시각을 써야지") —
+        // sleep_detected면 네이티브가 무진동 임계값을 "넘긴" 시각(now) 대신 실제 마지막 움직임 시각
+        // (sleepOnsetAtMsRef, PaceOverlayService.markExpired 참고)을 세션 종료 시각으로 쓴다 — 그래야
+        // duration도, 홈 화면 수면 인사이트 배너("N시 N분에 잠드셨습니다")도 실제 잠든 시각에 가깝다.
+        const effectiveEndedAtMs = endReasonRef.current === 'sleep_detected' && sleepOnsetAtMsRef.current != null
+          ? sleepOnsetAtMsRef.current
+          : Date.now();
         const durationSeconds = sessionStartedAtMsRef.current
-          ? Math.max(0, Math.round((Date.now() - sessionStartedAtMsRef.current) / 1000))
+          ? Math.max(0, Math.round((effectiveEndedAtMs - sessionStartedAtMsRef.current) / 1000))
           : 0;
         const sessionId = sessionIdRef.current;
         const userId = user.id;
@@ -178,7 +188,7 @@ export default function OverlaySessionScreen() {
         // (아래 원래 있던 주석 참고), 이제는 Android에서 진짜 값을 셀 수 있게 됐다. endSession()
         // (네이티브 stop → 카운터 리셋) 호출 전에 먼저 읽어야 한다.
         overlayService.getVideoWatchCount().then((videosWatched) => (
-          endSessionRow(sessionId, durationSeconds, videosWatched, endReason)
+          endSessionRow(sessionId, durationSeconds, videosWatched, endReason, new Date(effectiveEndedAtMs).toISOString())
         )).then(() => pushUnsyncedSessions(userId)).catch(() => {});
         logOverlayEvent(user.id, sessionIdRef.current, 'SESSION_STOP', endReasonRef.current).catch(() => {});
       }
@@ -199,12 +209,13 @@ export default function OverlaySessionScreen() {
   useEffect(() => {
     const consumeIfExpired = () => {
       if (!hasSessionStartedRef.current || hasAutoEndedRef.current) return;
-      overlayService.consumeExpired().then((reason) => {
-        if (!reason || hasAutoEndedRef.current) return;
+      overlayService.consumeExpired().then((result) => {
+        if (!result || hasAutoEndedRef.current) return;
         hasAutoEndedRef.current = true;
-        endReasonRef.current = reason;
+        endReasonRef.current = result.reason;
+        sleepOnsetAtMsRef.current = result.sleepOnsetAtMs;
         useTimerStore.setState(
-          reason === 'sleep_timer_expired' ? { sleepTimerRemainingMinutes: 0 } : { remainingMinutes: 0 }
+          result.reason === 'sleep_timer_expired' ? { sleepTimerRemainingMinutes: 0 } : { remainingMinutes: 0 }
         );
         exitOverlay();
       }).catch(() => {});

@@ -17,11 +17,13 @@ export async function startSession(userId: string, platformApp: string | null): 
   return id;
 }
 
-export async function endSession(sessionId: string, durationSeconds: number, videosWatched: number, status: SessionEndStatus): Promise<void> {
+// 2026-07-26 — endedAtOverride: sleep_detected일 때 실제 "마지막으로 움직인 시각"(overlay/index.tsx
+// 참고)을 넘겨받아 그대로 기록한다 — 생략하면 기존처럼 호출 시점(now)을 쓴다.
+export async function endSession(sessionId: string, durationSeconds: number, videosWatched: number, status: SessionEndStatus, endedAtOverride?: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(
     `UPDATE viewing_sessions SET ended_at = ?, duration_seconds = ?, videos_watched = ?, status = ? WHERE id = ?`,
-    [new Date().toISOString(), durationSeconds, videosWatched, status, sessionId]
+    [endedAtOverride ?? new Date().toISOString(), durationSeconds, videosWatched, status, sessionId]
   );
 }
 

@@ -24,7 +24,7 @@ import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
-import { bottomSheetPadding, colors, layout, radius, spacing, typography } from '../../constants/theme';
+import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
 import type { UserSettings } from '../../types/models';
 
 // 2026-07-21 밤 감사 발견 — 실제 모니터링되는 지원 이메일이 없어(백엔드/도메인 미확정) 앱 전체가
@@ -78,6 +78,7 @@ export default function SettingsScreen() {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const adBannerHeight = useAdBannerStore((s) => s.height);
+  const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { settings, update } = useSettingsStore();
   const { todayUsageMinutes } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
@@ -92,6 +93,7 @@ export default function SettingsScreen() {
   const [overlayReady, setOverlayReady] = useState(false);
   const [hasUsageAccessPermission, setHasUsageAccessPermission] = useState(false);
   const [hasAutoNextPermission, setHasAutoNextPermission] = useState(false);
+  const [hasBatteryExemption, setHasBatteryExemption] = useState(false);
   const [showAccessibilityOnboarding, setShowAccessibilityOnboarding] = useState(false);
 
   // 2026-07-22 사용자 지시 — Focus 탭의 "Session Status"/"Android Guard Services" 카드를 이 화면으로
@@ -101,14 +103,16 @@ export default function SettingsScreen() {
     bluetooth.refresh();
     let cancelled = false;
     const check = async () => {
-      const [overlay, usageAccess, autoNextPermission] = await Promise.all([
+      const [overlay, usageAccess, autoNextPermission, batteryExemption] = await Promise.all([
         overlayService.hasOverlayPermission(),
         overlayService.hasForegroundDetectionPermission(),
         capabilities.supportsAutoNext ? autoNextService.hasPermission() : Promise.resolve(false),
+        overlayService.hasBatteryOptimizationExemption(),
       ]);
       if (cancelled) return;
       setOverlayReady(overlay);
       setHasUsageAccessPermission(usageAccess);
+      setHasBatteryExemption(batteryExemption);
       if (autoNextPermission && !hasAutoNextPermission && showAccessibilityOnboarding) {
         setShowAccessibilityOnboarding(false);
         useToastStore.getState().show(`✅ ${t('focus.handsFreeEnabledToast')}`);
@@ -201,7 +205,7 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: layout.tabBarContentClearance + adBannerHeight }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <Text style={styles.screenTitle}>{t('settings.screenTitle')}</Text>
 
         {/* 1. Account */}
@@ -382,6 +386,24 @@ export default function SettingsScreen() {
                   </View>
                 </Pressable>
               )}
+              {/* 2026-07-26 사용자 지시(외부 AI 조언 반영) — 삼성 One UI가 접근성/오버레이/사용정보
+                  접근을 배터리 최적화로 조용히 회수하는 걸 이번 세션 내내 겪었다. "배터리 사용량
+                  최적화 제외"를 받아두면 회수 빈도가 줄어든다 — 위 세 행과 같은 guardRow 패턴. */}
+              <Pressable
+                style={[styles.guardRow, styles.guardRowBordered]}
+                onPress={() => !hasBatteryExemption && overlayService.requestBatteryOptimizationExemption()}
+              >
+                <View style={styles.guardLeft}>
+                  <Text style={styles.statusTitleSm}>{t('focus.batteryStatus')}</Text>
+                  <Text style={styles.guardDesc}>{t('focus.batteryStatusDesc')}</Text>
+                </View>
+                <View style={[styles.pulsePill, !hasBatteryExemption && styles.pulsePillWarning]}>
+                  <View style={[styles.pulseDot, !hasBatteryExemption && styles.pulseDotWarning]} />
+                  <Text style={[styles.pulsePillText, !hasBatteryExemption && styles.pulsePillTextWarning]}>
+                    {hasBatteryExemption ? t('focus.running') : t('focus.permissionNeeded')}
+                  </Text>
+                </View>
+              </Pressable>
             </View>
           </View>
         )}
@@ -604,7 +626,7 @@ function ChevronRow({ title, bordered, onPress }: { title: string; bordered?: bo
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg, paddingBottom: layout.tabBarContentClearance },
+  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
   screenTitle: { fontSize: 24, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   sectionLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   // App.tsx SettingsTab.tsx 전 섹션이 카드에 p-5/px-5(20px)를 쓰는데 spacing.lg(24px)로 잘못

@@ -94,6 +94,36 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 2026-07-26 사용자 지시(외부 AI 조언 반영) — 접근성/오버레이/사용정보 접근 3대 권한이 삼성 One UI
+    // 배터리 최적화의 1순위 타깃이라 백그라운드에서 조용히 회수되는 걸 이번 세션 내내 실제로 겪었다
+    // (memory: feedback_reenable_accessibility_after_reinstall.md). "배터리 사용량 최적화 제외"를
+    // 받아두면 그 회수 빈도를 줄일 수 있는 표준 대응책.
+    Function("hasBatteryOptimizationExemption") {
+      appContext.reactContext?.let { context ->
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        pm.isIgnoringBatteryOptimizations(context.packageName)
+      } ?: false
+    }
+
+    Function("requestBatteryOptimizationExemption") {
+      appContext.reactContext?.let { context ->
+        try {
+          val intent = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${context.packageName}")
+          ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+          context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+          // 일부 OEM 커스텀 ROM은 이 다이렉트 인텐트를 안 지원 — 일반 배터리 설정 목록으로 폴백.
+          Log.w("PaceOverlayModule", "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS not supported, falling back", e)
+          val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          context.startActivity(fallback)
+        }
+      }
+    }
+
     // 2026-07-19: Daily Limit뿐 아니라 Sleep Timer/Break Reminder/저시간·한도도달 알림까지 전부
     // 네이티브(PaceOverlayService)가 자기 완결적으로 담당하도록 확장 — 세션 시작 시점의 값을
     // 전부 함께 넘긴다(PaceOverlayService.kt 상단 주석 참고).
@@ -148,6 +178,12 @@ class PaceOverlayModule : Module() {
         }
       }
       reason
+    }
+
+    // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 세션
+    // 도중 조용히 회수됐는지 1회성 소비 확인. consumeExpired()와 동일 패턴.
+    Function("consumeAccessibilityRevoked") {
+      PaceOverlayService.consumeAccessibilityRevoked()
     }
 
     // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — ⚠️ Play 스토어 정책 리스크

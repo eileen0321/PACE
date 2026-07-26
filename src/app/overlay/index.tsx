@@ -18,7 +18,7 @@ import { overlayService, autoNextService } from '../../services/platform';
 import { showRewardedAd } from '../../services/ads/rewardedAd';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
-import { notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
+import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { launchPlatformApp } from '../../constants/supportedApps';
@@ -238,6 +238,27 @@ export default function OverlaySessionScreen() {
     checkCap();
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') checkCap();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 삼성 One UI
+  // 배터리 최적화로 세션 도중 조용히 꺼지는 걸 이번 세션 내내 겪었다. 네이티브(PaceOverlayService.
+  // performTick)가 "이전엔 켜져 있었는데 지금은 꺼졌다"는 전이를 이미 감지해뒀으면, Pace로 돌아올
+  // 때마다(위 두 효과와 동일한 이유로 AppState 'active') 1회성 소비 확인 후 기존 재활성화 안내
+  // 알림(notifyAccessibilityNeeded)을 띄운다 — 사용자가 직접 설정에서 상태를 확인해야만 알 수 있던
+  // 것을 능동적으로 알려준다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const checkAccessibilityRevoked = () => {
+      if (!hasSessionStartedRef.current) return;
+      overlayService.consumeAccessibilityRevoked().then((revoked) => {
+        if (revoked) notifyAccessibilityNeeded().catch(() => {});
+      }).catch(() => {});
+    };
+    checkAccessibilityRevoked();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkAccessibilityRevoked();
     });
     return () => sub.remove();
   }, []);

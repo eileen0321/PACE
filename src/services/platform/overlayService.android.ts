@@ -23,6 +23,9 @@ let PaceOverlay: {
   stop(): Promise<void>;
   consumeExpired(): string | null;
   getVideoWatchCount(): number;
+  hasBatteryOptimizationExemption(): boolean;
+  requestBatteryOptimizationExemption(): void;
+  consumeAccessibilityRevoked(): boolean;
 } | null = null;
 
 try {
@@ -81,5 +84,17 @@ export const overlayService: OverlayService = {
 
   async getVideoWatchCount() {
     return PaceOverlay?.getVideoWatchCount() ?? 0;
+  },
+
+  async hasBatteryOptimizationExemption() {
+    return PaceOverlay?.hasBatteryOptimizationExemption() ?? true;
+  },
+
+  async requestBatteryOptimizationExemption() {
+    PaceOverlay?.requestBatteryOptimizationExemption();
+  },
+
+  async consumeAccessibilityRevoked() {
+    return PaceOverlay?.consumeAccessibilityRevoked() ?? false;
   },
 };

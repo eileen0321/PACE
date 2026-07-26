@@ -114,6 +114,8 @@ export const translations = {
       // 2026-07-18: Auto Next 실제 스와이프용 별도 접근성 서비스 — Usage Access와는 다른 권한.
       autoNextAccessibilityStatus: 'Focus Session Swipe Status',
       autoNextAccessibilityStatusDesc: 'Accessibility permission for advancing videos',
+      batteryStatus: 'Battery Optimization',
+      batteryStatusDesc: 'Prevents the OS from silently disabling Pace',
       connected: 'Connected',
       notConnected: 'Not Connected',
       // 2026-07-21 감사 발견 — AccessibilityOnboardingSheet.tsx가 useTranslation을 아예 안 써서
@@ -227,7 +229,7 @@ export const translations = {
       faqQ2: 'What is a Focus Session?',
       faqA2: 'Turn it on to let Pace advance to the next short for a duration you choose. It always stops on its own — never runs indefinitely.',
       faqQ3: 'What does Hands-Free Control do?',
-      faqA3: 'Snap your fingers or wave your hand in front of the camera to skip clips or toggle a Focus Session without touching the screen.',
+      faqA3: 'Snap your fingers, wave your hand in front of the camera, or press your Bluetooth remote\'s volume button to skip clips or toggle a Focus Session without touching the screen.',
       faqQ4: 'Does my data leave my device?',
       faqA4: 'No — all usage history and settings are stored locally on your device only. Nothing is uploaded to a server.',
       faqQ5: 'How do I reset everything?',
@@ -253,7 +255,7 @@ export const translations = {
       slide2Title: 'Focus Session, on a timer',
       slide2Description: 'Turn it on and PACE advances clips for the time you choose, then stops on its own.',
       slide3Title: 'Control it hands-free',
-      slide3Description: 'Snap your fingers or wave your hand to skip clips or toggle Focus Session — no need to touch the screen.',
+      slide3Description: 'Snap your fingers, wave your hand, or press your Bluetooth remote to skip clips or toggle Focus Session — no need to touch the screen.',
     },
 
     paywall: {
@@ -275,7 +277,7 @@ export const translations = {
       benefitsTitle: "What you'll get",
       benefitNoAds: 'No banner or rewarded ads',
       benefitUnlimitedAutoNext: 'Unlimited Focus Session (no daily video cap)',
-      benefitRemoteControl: 'Hands-free control (finger-snap / hand-wave)',
+      benefitRemoteControl: 'Hands-free control (finger-snap / hand-wave / Bluetooth remote)',
       benefitAdvancedSleepMode: 'Advanced Sleep Mode (customizable stillness sensitivity)',
     },
 
@@ -417,6 +419,8 @@ export const translations = {
       accessibilityStatusDesc: '포그라운드 앱 감지에 필요',
       autoNextAccessibilityStatus: '포커스 세션 스와이프 상태',
       autoNextAccessibilityStatusDesc: '영상 넘김에 필요한 접근성 권한',
+      batteryStatus: '배터리 최적화',
+      batteryStatusDesc: 'OS가 Pace를 조용히 꺼버리는 걸 방지',
       connected: '연결됨',
       notConnected: '미연결',
       a11ySheetTitle: '핸즈프리 Shorts',
@@ -524,7 +528,7 @@ export const translations = {
       faqQ2: '포커스 세션(Focus Session)이 뭔가요?',
       faqA2: '켜두면 정해둔 시간 동안만 다음 영상으로 넘어가요. 무한정 계속되지 않고 항상 스스로 멈춰요.',
       faqQ3: '핸즈프리 컨트롤은 뭘 하나요?',
-      faqA3: '카메라 앞에서 핑거스냅을 하거나 손을 흔들면 화면을 만지지 않고도 다음 영상으로 넘기거나 포커스 세션을 켜고 끌 수 있어요.',
+      faqA3: '카메라 앞에서 핑거스냅을 하거나 손을 흔들거나, 블루투스 리모컨의 볼륨 버튼을 누르면 화면을 만지지 않고도 다음 영상으로 넘기거나 포커스 세션을 켜고 끌 수 있어요.',
       faqQ4: '제 데이터가 기기 밖으로 나가나요?',
       faqA4: '아니요 — 사용 기록과 설정은 전부 기기 안에만 저장돼요. 서버로 업로드되지 않아요.',
       faqQ5: '전체 초기화는 어떻게 하나요?',
@@ -550,7 +554,7 @@ export const translations = {
       slide2Title: '포커스 세션은 시간제한',
       slide2Description: '켜두면 정해둔 시간 동안만 영상이 자동으로 넘어가고, 시간이 다 되면 스스로 멈춰요.',
       slide3Title: '손 안 대고 제어',
-      slide3Description: '핑거스냅이나 손짓만으로 영상 넘기기와 포커스 세션 켜고 끄기까지, 화면 터치 없이 가능해요.',
+      slide3Description: '핑거스냅, 손짓, 블루투스 리모컨 버튼까지 — 영상 넘기기와 포커스 세션 켜고 끄기가 화면 터치 없이 가능해요.',
     },
 
     paywall: {
@@ -572,7 +576,7 @@ export const translations = {
       benefitsTitle: '이런 게 좋아져요',
       benefitNoAds: '배너/보상형 광고 전부 제거',
       benefitUnlimitedAutoNext: 'Focus Session 무제한(일일 횟수 제한 없음)',
-      benefitRemoteControl: '핸즈프리 조작(핑거스냅/손짓)',
+      benefitRemoteControl: '핸즈프리 조작(핑거스냅/손짓/블루투스 리모컨)',
       benefitAdvancedSleepMode: '고급 취침모드(무진동 감지 민감도 직접 설정)',
     },
 

@@ -23,6 +23,12 @@
        자체가 안 됨"이라는 더 넓은 문제는 이걸로 해결 안 됨(별도 설계 필요, PACE_PROJECT_MANAGEMENT.md
        §6 참고). -->
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <!-- 2026-07-26 배터리 최적화 제외(사용자 지시, 외부 AI 조언 반영) — 삼성 One UI가 접근성/오버레이/
+       사용정보 접근 권한을 배터리 최적화로 조용히 회수하는 걸 이번 세션 내내 겪어서, "배터리 사용량
+       최적화 제외"를 사용자가 직접 설정할 수 있게 요청 다이얼로그로 안내한다. Play 정책상 이 권한은
+       "핵심 기능에 반드시 필요한 경우"로 제한적으로만 승인되는데, Pace는 포그라운드 서비스가 실시간
+       세션 집행(Daily Limit/Sleep Timer)을 담당하는 앱이라 해당 예외에 해당한다. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
   <application>
     <service

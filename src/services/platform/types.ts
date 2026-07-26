@@ -78,6 +78,19 @@ export interface OverlayService {
    * 호출해야 한다 — endSession()이 네이티브 카운터를 리셋한다.
    */
   getVideoWatchCount(): Promise<number>;
+  /**
+   * 2026-07-26 사용자 지시(외부 AI 조언 반영) — 접근성/오버레이/사용정보 접근이 삼성 One UI 배터리
+   * 최적화의 1순위 회수 타깃이라(이번 세션 내내 실제로 겪음), "배터리 사용량 최적화 제외"를 받아두면
+   * 회수 빈도가 줄어든다. Android만 실제 동작, iOS는 이 개념 자체가 없어 항상 true/no-op.
+   */
+  hasBatteryOptimizationExemption(): Promise<boolean>;
+  requestBatteryOptimizationExemption(): Promise<void>;
+  /**
+   * 2026-07-26 — 접근성 권한이 이전엔 켜져 있었는데 세션 중(백그라운드 최적화 등으로) 조용히 꺼진
+   * 적이 있는지 1회성 소비 확인(읽으면 즉시 리셋). true면 재활성화 안내(notifyAccessibilityNeeded)를
+   * 띄운다. Android만 실제 신호, iOS는 항상 false.
+   */
+  consumeAccessibilityRevoked(): Promise<boolean>;
 }
 
 export type BluetoothState = {

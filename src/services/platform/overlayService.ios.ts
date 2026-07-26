@@ -52,4 +52,13 @@ export const overlayService: OverlayService = {
   async getVideoWatchCount() {
     return 0; // iOS는 서드파티 앱 내부 재생 상태를 관찰할 방법이 없어 애초에 셀 수 없음 — no-op
   },
+  async hasBatteryOptimizationExemption() {
+    return true; // iOS는 이 개념 자체가 없음(Android 전용 배터리 최적화 시스템) — no-op
+  },
+  async requestBatteryOptimizationExemption() {
+    // no-op
+  },
+  async consumeAccessibilityRevoked() {
+    return false; // iOS는 접근성 서비스 개념 자체가 다름(Vision 프레임워크 기반) — no-op
+  },
 };

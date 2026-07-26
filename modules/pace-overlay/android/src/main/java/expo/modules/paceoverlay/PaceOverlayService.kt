@@ -142,6 +142,11 @@ class PaceOverlayService : Service() {
   // 자체가 즉시 트리거가 되는 게 아니다).
   private var btWasConnectedThisSession = false
   private var btDisconnectedDuringStillness = false
+  // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 삼성 One UI
+  // 배터리 최적화로 세션 중 조용히 꺼지는 걸 이번 세션 내내 실제로 겪었다. "이전엔 켜져 있었는데
+  // 지금은 꺼져 있다"는 전이를 잡아 JS가 재활성화 안내(notifyAccessibilityNeeded)를 띄울 수 있게
+  // 1회성 신호를 세운다 — consumeExpired()/consumeAutoNextCapReached()와 동일 패턴.
+  private var accessibilityRevokedPending = false
 
   // 한도 도달 UI 3단계화(2026-07-23, 사용자 지적 — "TAKE YOUR PACE" 3단계 시스템이 LimitReachedOverlay.tsx
   // (JS)에만 구현돼 있었는데, 그건 activeSessionPlatform===null(=홈 탭을 직접 보고 있을 때)에만 뜨는
@@ -417,6 +422,23 @@ class PaceOverlayService : Service() {
       .apply()
   }
 
+  // 2026-07-26 — "이전엔 켜져 있었는데 지금은 꺼져 있다"는 전이만 잡는다(단순히 "지금 꺼져 있다"가
+  // 아니라 — 애초에 한 번도 켠 적 없는 사용자에게 꺼졌다고 알리면 안 되므로). PREF_A11Y_WAS_ENABLED는
+  // performTick()이 60초마다 살아있는 세션 동안만 갱신 — 세션이 없을 때의 회수는 이 경로로 못 잡지만,
+  // 가장 disruptive한 "세션 도중 회수"는 확실히 잡는다.
+  private fun checkAccessibilityRevoked() {
+    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val nowEnabled = PaceAccessibilityService.isEnabled(this)
+    val wasEnabled = prefs.getBoolean(PREF_A11Y_WAS_ENABLED, false)
+    if (nowEnabled) {
+      if (!wasEnabled) prefs.edit().putBoolean(PREF_A11Y_WAS_ENABLED, true).apply()
+    } else if (wasEnabled) {
+      accessibilityRevokedPending = true
+      prefs.edit().putBoolean(PREF_A11Y_WAS_ENABLED, false).apply()
+      Log.w("PaceOverlay", "ACCESSIBILITY_REVOKED — was enabled, now disabled (likely OEM background optimization)")
+    }
+  }
+
   // 오버레이 창/포그라운드 알림/포그라운드 폴링/미디어세션 세팅 — ACTION_START(정상 시작)와
   // ACTION_TICK(프로세스가 죽었다 알람으로 되살아난 경우, infraReady==false)이 공유하는 초기화
   // 경로. 이미 세팅돼 있으면(같은 프로세스에서 이미 돌고 있던 정상 틱) 아무 것도 안 한다.
@@ -497,6 +519,8 @@ class PaceOverlayService : Service() {
     private const val PREF_DAILY_LIMIT_HIT_DATE = "daily_limit_hit_date"
     private const val PREF_DAILY_LIMIT_HIT_COUNT = "daily_limit_hit_count"
     private const val PREF_DAILY_LIMIT_ORIGINAL_MINUTES = "daily_limit_original_minutes"
+    // 2026-07-26 — "접근성이 이전에 켜져 있었다" 기억용(checkAccessibilityRevoked 참고).
+    private const val PREF_A11Y_WAS_ENABLED = "a11y_was_enabled"
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.
@@ -700,6 +724,17 @@ class PaceOverlayService : Service() {
       context.startService(Intent(context, PaceOverlayService::class.java).apply { action = ACTION_STOP })
     }
 
+    // consumeExpired()/PaceAccessibilityService.consumeAutoNextCapReached()와 동일한 1회성 소비
+    // 패턴 — checkAccessibilityRevoked()가 세운 신호를 JS가 포그라운드 복귀 시 확인한다.
+    fun consumeAccessibilityRevoked(): Boolean {
+      val service = instance ?: return false
+      if (service.accessibilityRevokedPending) {
+        service.accessibilityRevokedPending = false
+        return true
+      }
+      return false
+    }
+
     // 2026-07-19: Handler.postDelayed 대신 AlarmManager.setAndAllowWhileIdle()로 다음 틱을 예약 —
     // Doze 유지보수 윈도우에서도 결국 깨어나고, 이 알람 자체는 시스템에 등록되므로 우리 프로세스가
     // 죽어도 살아남아 PaceTickReceiver→PaceOverlayService(ACTION_TICK)를 다시 깨운다.
@@ -839,6 +874,7 @@ class PaceOverlayService : Service() {
       } else {
         Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
       }
+      checkAccessibilityRevoked()
       if (sleepTimerRemainingMinutes > 0) {
         sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
       }

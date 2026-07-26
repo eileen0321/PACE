@@ -17,12 +17,17 @@ import { bottomSheetPadding, colors, radius, spacing, typography } from '../../c
 // 그걸 처음 켜는 유일한 진입점이다. 그래서 컴포넌트를 통째로 숨기는 대신 실제로 벌어지는 일
 // (제스처 기반 핸즈프리)로 문구를 바꿨다.
 // 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애 — 이어폰 안 되잖아") — iOS 분기도
-// "Bluetooth 헤드셋 버튼" 문구를 그대로 뒀었는데(당시 B1은 Android 스코프였음), 이건 iOS에서도
-// 똑같이 거짓임(§2-C C5, useBluetoothStore/bluetoothService.ios.ts가 100% no-op 스텁 — 눌러도
-// 토스트만 뜸). 이제 플랫폼 분기 자체를 없애고 양쪽 다 Android와 동일하게 핑거스냅/손짓 문구로
-// 통일 — PaceGestureModule.swift(2026-07-26 밤 Mac 세션 커밋)로 iOS도 핑거스냅/손짓 인식 자체는
-// 실제로 동작하니, 이 Home 진입점(Enable 버튼)이 그 엔진을 실제로 켜는지는 별개 배선 문제로
-// C5에 남겨둔다(문구를 거짓으로 만들지 않는 것과 배선을 고치는 것은 다른 작업).
+// "Bluetooth 헤드셋 버튼(Next/Previous/Play-Pause 전용 미디어 버튼)" 문구를 그대로 뒀었는데(당시
+// B1은 Android 스코프였음), 이건 iOS에서도 똑같이 거짓임(§2-C C5, useBluetoothStore/
+// bluetoothService.ios.ts가 100% no-op 스텁 — 눌러도 토스트만 뜸). 플랫폼 분기 자체를 없애고
+// 핑거스냅/손짓 문구로 통일했었다.
+//
+// 2026-07-26 사장님 정정("우리 앱에서 되는건 핑거스냅, 손짓, 블루투스 리모컨이야") — 위에서 삭제한
+// 건 "전용 미디어 버튼(Play/Pause/Next Track)" 라우팅이고, 이것만 확정적으로 죽어있다(OS가 미디어
+// 버튼을 항상 실제 재생 중인 앱으로만 넘김, B1). 그런데 이거랑 별개로 **블루투스 리모컨의 볼륨
+// 버튼**을 대리 신호로 쓰는 경로는 실제로 살아있다(PaceAccessibilityService.onKeyEvent — 외부
+// 블루투스 장치의 볼륨 버튼만 소비, 폰 자체 물리 버튼은 통과시켜 실제 음량 조절에 영향 없음). 이걸
+// 안 넣고 핑거스냅/손짓만 남긴 게 과잉 삭제였다 — 세 번째 방법으로 다시 추가.
 export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
   visible: boolean;
   onEnable: () => void;
@@ -39,7 +44,7 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         </View>
         <Text style={styles.title}>Hands-Free Control</Text>
         <Text style={styles.body}>
-          Go hands-free without a headset — Pace can advance Shorts from a finger snap or a hand wave.
+          Go hands-free — Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote's volume button.
         </Text>
 
         <View style={styles.actionRow}>
@@ -49,6 +54,10 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         <View style={styles.actionRow}>
           <Feather name="camera" size={16} color={colors.textSecondary} />
           <Text style={styles.actionLabel}>Hand wave <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+        </View>
+        <View style={styles.actionRow}>
+          <Feather name="bluetooth" size={16} color={colors.textSecondary} />
+          <Text style={styles.actionLabel}>Bluetooth remote <Text style={styles.actionArrow}>→</Text> Next Short</Text>
         </View>
         <View style={styles.actionRow}>
           <Feather name="play-circle" size={16} color={colors.textSecondary} />

@@ -88,6 +88,7 @@
 | C3 | Live Activity/다이나믹아일랜드 + 취침감지 블랙아웃 — **실기기 검증 안 됨**(시뮬레이터만 확인) | 진행 중 — 기기 필요 |
 | C4 | 위젯 익스텐션(`targets/widget`) 첫 서명 빌드 미검증 | 진행 중 |
 | C5 | (B1 조사 중 신규 발견) 전역 `useBluetoothStore`/`bluetoothService.ios.ts` 경로(Home/Settings/Stats의 "Bluetooth Hands-Free")가 iOS에서도 100% no-op 스텁 — "Enable"을 눌러도 토스트만 뜨고 실제로 아무것도 안 켜짐. Pace Feed 안의 별개 볼륨키 리모컨(`useFeedRemoteControl.ios.ts`, 07-22 수정으로 실동작 확인됨)과는 다른 죽은 경로 | 열림 — 신규, 정직성 이슈(가짜로 "동작하는 척" UI) |
+| C6 | (2026-07-26 신규) 사장님 전달 — **애플이 마이크 기반 핑거스냅 감지를 심사에서 허용하지 않음**을 통보받음 | ✅ 가이드/문구는 처리됨(Windows 세션) — `capabilities.supportsFingerSnap`(`Platform.OS === 'android'`)을 추가해 `BluetoothOnboardingSheet.tsx`의 "Finger snap" 행과 안내 문구를 iOS에서만 숨김. 어차피 iOS는 C5(no-op 스텁)+Pace Feed(`useFeedRemoteControl.ios.ts`가 `'wave'`만 start, snap 리스너는 등록만 하고 미가동)라 **실제 동작 변화는 없음**, 순수 안내 문구 정직성 수정. Android(`PaceSnapDetector`)는 실기기 검증된 정상 기능이라 구현/문구 그대로 유지 — **삭제 아님, 숨김뿐**. iOS 네이티브(`modules/pace-gesture`)에 혹시 남아있는 `'snap'` 모드 자체를 완전히 뽑아낼지는 Mac 세션 판단 필요(지금은 애초에 start 안 하므로 급하지 않음) | 2026-07-26 로그 참고 |
 
 ### 2-D. 공통
 
@@ -551,6 +552,30 @@ Settings 탭(주간 출석 위젯 렌더 확인)·Focus 탭(실제 YouTube Short
 없음. **미검증**: 10분 자연 만료 후 `FocusSessionExtendModal`이 실제로 뜨는지, 광고/크레딧 버튼을
 눌렀을 때 `extendFocusSession`이 실제로 5분을 더해주는지 — 10분을 실제로 기다려야 확인 가능해
 다음 세션 권장 작업으로 위 §5에 남김.
+
+### 2026-07-26 — Windows 세션 (현재 상태 점검 — 사장님 요청 "현재 문제점 개선점 확인해")
+
+밤사이 여러 세션 인스턴스가 진행한 내용을 문서만 보고 믿지 않고 실제 코드/환경으로 교차검증함:
+- `git fetch`+`pull` — origin이 로컬보다 3커밋 앞서 있었음(Mac 세션의 iOS 피드 무음 오버레이
+  수정 3건, `feed/index.tsx`/`YouTubeShortsPlayer.ios.tsx`/`PaceGestureModule.swift`만 건드림,
+  충돌 없이 fast-forward). 반영 완료.
+- D1/D2/D4/D5/D7 — `.env`에 RC/Google 클라이언트 ID 실제로 채워져 있음, `reviewers.ts`에
+  `s7.reviewer@gmail.com`, `settings.tsx`의 `SUPPORT_EMAIL`이 `comfortstride7@gmail.com` —
+  로그의 주장과 코드 상태 일치 확인.
+- `npx tsc --noEmit` 전체 재실행 — 에러 0건, 밤새 쌓인 대량 변경 후에도 타입 정합성 깨진 곳 없음.
+- 이전 §6 "WIP 스모크 테스트 미완" 항목(Home 히어로카드/온보딩/스플래시/quick-control-sheet)은
+  이후 커밋(`94d137c`/`dfb0e78`/`b3e2563` 등)으로 **이미 커밋 완료 확인** — §3 항목 4는 해소.
+- **새로 발견된 미커밋 WIP** (이전 로그에 기록 안 됨, 출처 불명 — 아마 어젯밤 세션 막바지에
+  손대고 로그 없이 끝난 것으로 추정): `app.json`(OTA 업데이트에 `expo-channel-name: production`
+  요청 헤더 추가 — EAS Update 채널 지정용으로 보임, 타당해 보임), `src/app/_layout.tsx`
+  (`checkAndForceUpdate`에 `.catch()` 추가 — unhandled rejection 방지, 안전한 수정),
+  `eas.json`(신규 — 프로덕션 EAS 빌드 설정, 표준적인 최소 구성). 셋 다 코드 리뷰상 문제 없어
+  보이나 **아직 커밋도 실기기 검증도 안 됨** — 다음 세션 처리 필요.
+
+**결론(사장님께)**: D1~D5/D7/D10 전부 실제로 반영됨 확인. 아직 남은 건 D6(제품 방향)·D8(고급
+취침모드 스펙)·D9(리모컨 프리미엄 게이팅 방식) 사장님 결정 3건 + D11(RevenueCat, 은행 확인
+대기 — 코드/설정으로 단축 불가, 그냥 기다리는 중) 뿐. Android 쪽 코드 이슈는 B1~B3 모두 종결.
+iOS 쪽 C1~C5는 아직 열려있음(Mac 세션 담당, 진행 상황은 이 세션에서 확인 불가 — 그쪽 로그 참고).
 
 ### 2026-07-26 — Windows 세션 (Focus Session 라이브 실기기 검증 완료 + 수면감지 정확도 개선)
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTranslation } from '../../services/i18n';
 import { bluetoothService } from '../../services/platform';
@@ -50,42 +50,49 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
     onDismiss();
   };
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
-      <View style={styles.backdrop}>
-        <View style={styles.card}>
-          <View style={styles.iconWrap}>
-            <Feather name="zap" size={22} color={colors.primary} />
-          </View>
-          <Text style={styles.title}>{t('home.focusSessionTimedOutTitle')}</Text>
-          <Text style={styles.message}>{t('home.focusSessionTimedOutMessage', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
-          <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd}>
-            {watchingAd ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Feather name="play-circle" size={16} color="#FFFFFF" />
-                <Text style={styles.btnPrimaryText}>{t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
-              </>
-            )}
-          </Pressable>
-          {totalCredits >= FOCUS_SESSION_EXTEND_MINUTES && (
-            <Pressable style={[styles.btn, styles.btnCredits]} onPress={onUseCredits} disabled={watchingAd}>
-              <Feather name="star" size={16} color={colors.successLight} />
-              <Text style={styles.btnCreditsText}>{t('home.useCreditsToExtend', { credits: FOCUS_SESSION_EXTEND_MINUTES, extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
-            </Pressable>
-          )}
-          <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd}>
-            <Text style={styles.dismissText}>{t('overlay.notNow')}</Text>
-          </Pressable>
+    <View style={styles.backdrop} pointerEvents="auto">
+      <View style={styles.card}>
+        <View style={styles.iconWrap}>
+          <Feather name="zap" size={22} color={colors.primary} />
         </View>
+        <Text style={styles.title}>{t('home.focusSessionTimedOutTitle')}</Text>
+        <Text style={styles.message}>{t('home.focusSessionTimedOutMessage', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+        <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd}>
+          {watchingAd ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <>
+              <Feather name="play-circle" size={16} color="#FFFFFF" />
+              <Text style={styles.btnPrimaryText}>{t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+            </>
+          )}
+        </Pressable>
+        {totalCredits >= FOCUS_SESSION_EXTEND_MINUTES && (
+          <Pressable style={[styles.btn, styles.btnCredits]} onPress={onUseCredits} disabled={watchingAd}>
+            <Feather name="star" size={16} color={colors.successLight} />
+            <Text style={styles.btnCreditsText}>{t('home.useCreditsToExtend', { credits: FOCUS_SESSION_EXTEND_MINUTES, extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+          </Pressable>
+        )}
+        <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd}>
+          <Text style={styles.dismissText}>{t('overlay.notNow')}</Text>
+        </Pressable>
       </View>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1000,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
   card: { width: '100%', maxWidth: 340, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.lg, alignItems: 'center', gap: spacing.xs },
   iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
   title: { color: colors.textPrimary, fontSize: 17, fontFamily: typography.bodyFontFamilyBold, textAlign: 'center' },

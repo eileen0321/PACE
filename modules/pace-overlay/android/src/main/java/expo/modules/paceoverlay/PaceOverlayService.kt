@@ -695,18 +695,12 @@ class PaceOverlayService : Service() {
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       if (enable) {
         PaceAccessibilityService.startWatching(45_000L)
-        // 2026-07-20 실기기 검증 중 발견: revert 과정에서 이 호출이 통째로 빠져 있었다 — 핑거스냅이
-        // "AUTO ON"과 완전히 끊어진 채 방치돼 있었음(권한 있어도 디텍터가 아예 안 켜짐). 실제 재생
-        // 위치 감지(위)와 핑거스냅(마이크)은 같은 Focus Session 안에서 나란히 도는 별개의 트리거라
-        // 둘 다 여기서 같이 켜고 꺼야 한다.
-        //
-        // ⚠️ 2026-07-23 되돌림 — "블루투스 연결돼 있으면 리모컨이 이미 다음넘김을 처리하니 핑거스냅은
-        // 끈다"는 전제로 여기서 스킵하던 로직이 있었는데, 오늘 밤 실기기 검증(§4-G)으로 그 전제 자체가
-        // 대다수 기기(에어팟/버즈 등 AVRCP-only)에서 거짓임이 확정됐다 — 블루투스 리모컨의 다음넘김은
-        // Android 플랫폼 레벨 제약으로 원천 불가능(볼륨키 릴레이를 실제로 지원하는 극소수 예외
-        // 기기만 별개). 그 전제가 무너진 채로 이 스킵을 유지하면 "리모컨도 안 되고 핑거스냅도 꺼진"
-        // 최악의 조합이 되므로, 블루투스 연결 여부와 무관하게 항상 켠다.
-        PaceSnapDetector.start(context) { triggerNext(context) }
+        // 2026-07-26 사용자 지시("iOS랑 통일성 있게 핑거스냅은 비활성화 유지") — iOS가 먼저 핑거스냅을
+        // 뺐다(마이크용 AVAudioSession .playAndRecord를 켜면 재생 중이던 영상이 시스템 레벨에서
+        // 음소거되는 근본 충돌 때문, YouTubeShortsPlayer.ios.tsx 관련 커밋 참고). Android는 이 음소거
+        // 충돌이 실제로 없지만(AudioRecord는 폰 자체 마이크로 별도 열림), 두 플랫폼 동작을 통일하기로
+        // 결정 — 코드/디텍터 구현 자체는 남겨두고(향후 재활성화 대비) 여기서 시작 호출만 뺀다.
+        // PaceSnapDetector.start(context) { triggerNext(context) } // 의도적으로 비활성화 — 위 주석 참고
         // 2026-07-24 손 밀어내기(shoo) — 핑거스냅과 같은 Focus Session 안에서 나란히 도는 세 번째
         // 핸즈프리 트리거. 카메라 권한이 없으면 PaceHandWaveDetector.start()가 조용히 no-op한다
         // (PaceSnapDetector의 RECORD_AUDIO 방어와 동일한 원칙).
@@ -919,6 +913,17 @@ class PaceOverlayService : Service() {
   // 여기서 뭔가 던지면 예전엔 그대로 앱이 죽었다.
   private fun performTick() {
     try {
+      // 2026-07-26 사용자 지적("화면 작아졌다가 다시 커지면 오버레이가 없어짐") — 스플릿스크린/
+      // 멀티윈도우 리사이즈 등으로 시스템이 SYSTEM_ALERT_WINDOW를 조용히 떼어내는 경우(addView 실패가
+      // 예외 없이 삼켜지는 케이스 포함)를 매 틱(60초)마다 스스로 감지해 복구한다. overlayView 필드
+      // 자체는 살아있어도(showOverlay의 `if (overlayView != null) return` 가드 때문에 재호출이
+      // no-op으로 씹힘) 실제로 화면에 붙어있지 않으면(isAttachedToWindow==false) 유령 상태로 간주해
+      // 강제로 다시 띄운다.
+      if (overlayView != null && overlayView?.isAttachedToWindow != true) {
+        Log.w("PaceOverlay", "overlay view detached unexpectedly (resize?) — re-adding")
+        overlayView = null
+        showOverlay(remainingMinutes)
+      }
       // 2026-07-26 사용자 지시("실제 재생 중일 때만 차감") — 예전엔 세션이 활성인 동안 실제 재생
       // 여부와 무관하게 매분 무조건 깎았다(일시정지/백그라운드도 "사용"으로 카운트되는 정확도 문제).
       // isLikelyPlaying()==false(재생 중이 아님이 확인됨)일 때만 건너뛰고, null(접근성 꺼짐 등 판단

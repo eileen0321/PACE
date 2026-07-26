@@ -29,6 +29,14 @@ export type AppCapabilities = {
   supportsHandsFreeControl: boolean;
   /** 실제 하드웨어 리모컨(AirPods 등) 신호 수신까지 실기기로 검증됐는가. Android=true, iOS=false(스텁). */
   bluetoothHardwareVerified: boolean;
+  /**
+   * 2026-07-26 (1차) — 애플이 마이크 기반 핑거스냅 감지를 심사에서 허용하지 않는다고 통보. Android
+   * 구현(PaceSnapDetector)은 실기기 검증까지 끝난 정상 동작 기능이라 원래는 Android만 true로 뒀었음.
+   * 2026-07-26 (2차, 사장님 정정) — "iOS랑 통일성 있게 핑거스냅은 비활성화해서 유지" — 두 플랫폼
+   * 동작을 맞추기로 결정, Android도 false로 내림. 감지기 구현/네이티브 시작 호출(setAutoMode의
+   * PaceSnapDetector.start, 주석 처리됨)은 향후 재활성화 대비 그대로 남겨둠 — 삭제 아님.
+   */
+  supportsFingerSnap: boolean;
 };
 
 export const capabilities: AppCapabilities = {
@@ -40,6 +48,7 @@ export const capabilities: AppCapabilities = {
   supportsPaceFeed: Platform.OS === 'ios',
   supportsHandsFreeControl: Platform.OS !== 'android',
   bluetoothHardwareVerified: bluetoothService.supportsHardwareRemote,
+  supportsFingerSnap: false,
 };
 
 // 빌드당 고정값이라 Zustand 스토어로 만들 이유는 없지만(런타임에 변하지 않음), 컴포넌트에서

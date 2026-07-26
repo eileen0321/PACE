@@ -24,6 +24,7 @@ import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
+import { useTranslation } from '../services/i18n';
 import { colors, typography } from '../constants/theme';
 
 const queryClient = new QueryClient();
@@ -59,6 +60,7 @@ Text.defaultProps = Text.defaultProps || {};
 Text.defaultProps.style = [{ fontFamily: 'Inter_400Regular' }];
 
 export default function RootLayout() {
+  const { t } = useTranslation();
   const initUser = useUserStore((s) => s.init);
   const loadSettings = useSettingsStore((s) => s.load);
   const syncSettingsFromServer = useSettingsStore((s) => s.syncFromServer);
@@ -172,11 +174,16 @@ export default function RootLayout() {
   const [updatePhase, setUpdatePhase] = useState<ForceUpdatePhase | null>(null);
   useEffect(() => {
     const runCheck = () => {
-      checkAndForceUpdate((phase) => setUpdatePhase(phase)).finally(() => {
-        // 'reloading' 단계에서 성공했으면 곧 앱 자체가 재시작되므로 이 setState는 의미 없어진다 —
-        // 실패(스킵/에러)로 끝난 경우에만 블로킹 화면을 원래대로 되돌린다.
-        setUpdatePhase(null);
-      });
+      checkAndForceUpdate((phase) => setUpdatePhase(phase))
+        .catch(() => {
+          // reloadAsync 네이티브 예외 — services/updates 설계상 여기까지 올라온다. 다음 포그라운드
+          // 복귀 때 재시도되므로 여기선 조용히 삼킨다(unhandled rejection 방지).
+        })
+        .finally(() => {
+          // 'reloading' 단계에서 성공했으면 곧 앱 자체가 재시작되므로 이 setState는 의미 없어진다 —
+          // 실패(스킵/에러)로 끝난 경우에만 블로킹 화면을 원래대로 되돌린다.
+          setUpdatePhase(null);
+        });
     };
     runCheck();
     const sub = AppState.addEventListener('change', (state) => {
@@ -232,7 +239,7 @@ export default function RootLayout() {
             <View style={styles.updateOverlay} pointerEvents="auto">
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={styles.updateText}>
-                {updatePhase === 'downloading' ? '새 업데이트를 받는 중...' : '적용하는 중...'}
+                {updatePhase === 'downloading' ? t('home.updateDownloading') : t('home.updateApplying')}
               </Text>
             </View>
           )}

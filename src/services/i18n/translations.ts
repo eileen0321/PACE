@@ -35,6 +35,17 @@ export const translations = {
       watchAdToExtend: 'Watch ad for +{{extend}}m',
       useCreditsToExtend: 'Use {{credits}} credits for +{{extend}}m',
       focusSessionExtendedToast: 'Focus Session extended by {{extend}} minutes',
+      // 2026-07-26 감사 발견 — useBluetoothStore.toggleAutoMode의 iOS 토스트(하드웨어 리모컨 없어
+      // 네이티브 토스트가 없는 플랫폼이라 인앱에서 직접 표시)가 언어 설정과 무관하게 항상 영어였다.
+      focusSessionEnabledToast: '🎧 Focus Session Enabled',
+      focusSessionDisabledToast: '🎧 Focus Session Disabled',
+      // 2026-07-26 감사 발견 — formatSleepInsight()(useSleepInsightStore.ts)가 언어 설정과 무관하게
+      // 항상 한국어 문자열을 직접 조립해 반환했다. period/hour/minute는 ko 전용 파라미터.
+      sleepInsightMessage: 'You fell asleep at {{time}}',
+      // 2026-07-26 감사 발견 — OTA 강제 업데이트 블로킹 화면(_layout.tsx)이 useTranslation을 아예
+      // 안 써서 언어 설정과 무관하게 항상 한국어로만 떴다.
+      updateDownloading: 'Downloading update...',
+      updateApplying: 'Applying update...',
     },
 
     stats: {
@@ -271,7 +282,8 @@ export const translations = {
 
     checkIn: {
       title: "You're checked in!",
-      message: '+{{earned}} rest credits added for opening PACE today.',
+      streakSingular: '{{n}} day streak',
+      streakPlural: '{{n}} day streak',
       dismiss: 'Nice',
     },
 
@@ -336,12 +348,36 @@ export const translations = {
       focusSessionEndedToast: '⏹ Focus Session ended',
       nextShortToast: '⏭ Next Short',
       previousShortToast: '⏮ Previous Short',
-      focusSessionOnBadge: 'Focus Session ON',
-      focusSessionStartBadge: 'Start Focus Session',
+      focusSessionOnBadge: 'SESSION ON',
+      focusSessionStartBadge: 'START SESSION',
       loadingShorts: 'Loading Shorts…',
       emptyQueueMessage: 'No Shorts to show.',
       loadFailedMessage: 'Failed to load Shorts.',
       sleepBlackout: 'Looks like you dozed off · tap to exit',
+    },
+
+    // 2026-07-26 감사 발견 — LimitReachedOverlay.tsx가 t() 없이 통째로 하드코딩돼 있었고, 그나마도
+    // 같은 화면 안에서 영어("TAKE YOUR PACE", "Take your pace.", "Time well spent.")와 한국어가
+    // 뒤섞여 있어(언어 설정 무관하게 항상 그대로 혼용 표시) 가장 자주 보이는 화면 중 하나가 늘
+    // 반쪽짜리 번역이었다.
+    limitReached: {
+      tier1Title: 'TAKE YOUR PACE',
+      tier1Subtitle: '{{n}} minutes watched',
+      tier1Body: 'You can keep watching, or stop here.',
+      tier2Title: 'Time for a break?',
+      tier2Subtitle: '{{n}} minutes have already passed',
+      extendTier1: '+5 minutes',
+      extendTier2: 'Keep watching',
+      dismissTier1: "That's it for today",
+      dismissTier2: 'Stop here',
+      tier3Title1: 'Take your pace.',
+      tier3Body1: "You've watched {{n}} minutes so far.",
+      tier3Title2: 'Time for a short break?',
+      tier3Body2: "You've watched {{n}} minutes today.",
+      tier3Title3: 'Time well spent.',
+      tier3Body3: "You've gone over today's goal.",
+      tier3Title4: 'Got other things to do today?',
+      tier3Body4: "You've gone over your {{n}}-minute goal.",
     },
   },
 
@@ -361,6 +397,11 @@ export const translations = {
       watchAdToExtend: '광고 보고 +{{extend}}분 받기',
       useCreditsToExtend: '크레딧 {{credits}}개로 +{{extend}}분 받기',
       focusSessionExtendedToast: 'Focus Session이 {{extend}}분 더 이어져요',
+      focusSessionEnabledToast: '🎧 Focus Session 켜짐',
+      focusSessionDisabledToast: '🎧 Focus Session 꺼짐',
+      sleepInsightMessage: '{{period}} {{hour}}시 {{minute}}분에 잠드셨습니다',
+      updateDownloading: '새 업데이트를 받는 중...',
+      updateApplying: '적용하는 중...',
     },
 
     stats: {
@@ -583,7 +624,8 @@ export const translations = {
 
     checkIn: {
       title: '출석 완료!',
-      message: '오늘 PACE를 열어서 휴식 크레딧 +{{earned}}이 적립됐어요.',
+      streakSingular: '{{n}}일 연속',
+      streakPlural: '{{n}}일 연속',
       dismiss: '확인',
     },
 
@@ -651,6 +693,26 @@ export const translations = {
       emptyQueueMessage: '표시할 Shorts가 없습니다.',
       loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
       sleepBlackout: '잠드신 것 같아요 · 탭하면 종료',
+    },
+
+    limitReached: {
+      tier1Title: 'TAKE YOUR PACE',
+      tier1Subtitle: '{{n}}분 시청 완료',
+      tier1Body: '계속 시청할 수도, 여기서 멈출 수도 있습니다.',
+      tier2Title: '잠시 쉬어갈까요?',
+      tier2Subtitle: '벌써 {{n}}분이 지났습니다',
+      extendTier1: '5분 추가',
+      extendTier2: '계속 보기',
+      dismissTier1: '오늘은 여기까지',
+      dismissTier2: '여기까지 보기',
+      tier3Title1: '천천히 가세요.',
+      tier3Body1: '지금까지 {{n}}분 시청했습니다.',
+      tier3Title2: '잠시 쉬어갈까요?',
+      tier3Body2: '오늘 {{n}}분 시청했습니다.',
+      tier3Title3: '시간을 알차게 보내셨네요.',
+      tier3Body3: '오늘 목표 시간을 초과했습니다.',
+      tier3Title4: '오늘 다른 할일이 있었나요?',
+      tier3Body4: '목표 {{n}}분을 넘겼어요.',
     },
   },
 } as const;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
+import { useTranslation } from '../../services/i18n';
 
 // 2026-07-22 사용자 지시 — 하루 한도를 넘긴 뒤 반복적으로 뜨던 단일 다이얼로그를 3단계로 완화.
 // 실제 스크린타임 앱 UX 리서치 결과(One Sec/Apple Screen Time 등) — 반복될수록 마찰을 "키우기"보다
@@ -13,12 +14,15 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 접근성(WCAG 2.2.1 Timing Adjustable) — 스크린리더 사용자에게 자동 소멸 메시지가 뜨자마자 사라지면
 // 정보 자체를 놓친다. `AccessibilityInfo.isScreenReaderEnabled()`로 감지해 스크린리더가 켜져 있으면
 // 자동 소멸시키지 않고 탭해서 닫는 방식으로 전환 + `announceForAccessibility`로 즉시 음성 안내.
-const TIER3_MESSAGES = (usageMinutes: number, goalMinutes: number) => [
-  { title: 'Take your pace.', body: `지금까지 ${usageMinutes}분 시청했습니다.` },
-  { title: '잠시 쉬어갈까요?', body: `오늘 ${usageMinutes}분 시청했습니다.` },
-  { title: 'Time well spent.', body: '오늘 목표 시간을 초과했습니다.' },
-  { title: '오늘 다른 할일이 있었나요?', body: `목표 ${goalMinutes}분을 넘겼어요.` },
-];
+function useTier3Messages(usageMinutes: number, goalMinutes: number) {
+  const { t } = useTranslation();
+  return [
+    { title: t('limitReached.tier3Title1'), body: t('limitReached.tier3Body1', { n: usageMinutes }) },
+    { title: t('limitReached.tier3Title2'), body: t('limitReached.tier3Body2', { n: usageMinutes }) },
+    { title: t('limitReached.tier3Title3'), body: t('limitReached.tier3Body3') },
+    { title: t('limitReached.tier3Title4'), body: t('limitReached.tier3Body4', { n: goalMinutes }) },
+  ];
+}
 
 function Tier3Toast({ visible, usageMinutes, goalMinutes, hitCount, onDone }: {
   visible: boolean;
@@ -29,6 +33,7 @@ function Tier3Toast({ visible, usageMinutes, goalMinutes, hitCount, onDone }: {
 }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const [screenReaderOn, setScreenReaderOn] = useState(false);
+  const messages = useTier3Messages(usageMinutes, goalMinutes);
 
   useEffect(() => {
     AccessibilityInfo.isScreenReaderEnabled().then(setScreenReaderOn).catch(() => {});
@@ -36,7 +41,6 @@ function Tier3Toast({ visible, usageMinutes, goalMinutes, hitCount, onDone }: {
 
   useEffect(() => {
     if (!visible) return;
-    const messages = TIER3_MESSAGES(usageMinutes, goalMinutes);
     const msg = messages[(hitCount - 3) % messages.length];
     AccessibilityInfo.announceForAccessibility(`${msg.title} ${msg.body}`);
     Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
@@ -49,7 +53,6 @@ function Tier3Toast({ visible, usageMinutes, goalMinutes, hitCount, onDone }: {
   }, [visible, screenReaderOn]);
 
   if (!visible) return null;
-  const messages = TIER3_MESSAGES(usageMinutes, goalMinutes);
   const msg = messages[(hitCount - 3) % messages.length];
 
   return (
@@ -81,6 +84,8 @@ export function LimitReachedOverlay({ visible, tier, hitCount, limitMinutes, tod
   onExtend: () => void;
   onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
+
   if (tier === 3) {
     return (
       <Tier3Toast visible={visible} usageMinutes={todayUsageMinutes} goalMinutes={limitMinutes} hitCount={hitCount} onDone={onDismiss} />
@@ -98,23 +103,23 @@ export function LimitReachedOverlay({ visible, tier, hitCount, limitMinutes, tod
           </View>
           {isTier1 ? (
             <>
-              <Text style={styles.title}>TAKE YOUR PACE</Text>
-              <Text style={styles.subtitle}>{limitMinutes}분 시청 완료</Text>
-              <Text style={styles.body}>계속 시청할 수도, 여기서 멈출 수도 있습니다.</Text>
+              <Text style={styles.title}>{t('limitReached.tier1Title')}</Text>
+              <Text style={styles.subtitle}>{t('limitReached.tier1Subtitle', { n: limitMinutes })}</Text>
+              <Text style={styles.body}>{t('limitReached.tier1Body')}</Text>
             </>
           ) : (
             <>
-              <Text style={styles.title}>잠시 쉬어갈까요?</Text>
-              <Text style={styles.subtitle}>벌써 {Math.max(0, todayUsageMinutes - limitMinutes)}분이 지났습니다</Text>
+              <Text style={styles.title}>{t('limitReached.tier2Title')}</Text>
+              <Text style={styles.subtitle}>{t('limitReached.tier2Subtitle', { n: Math.max(0, todayUsageMinutes - limitMinutes) })}</Text>
             </>
           )}
         </View>
         <View style={styles.buttonBlock}>
           <Pressable onPress={onExtend} style={styles.extendBtn}>
-            <Text style={styles.extendBtnText}>{isTier1 ? '5분 추가' : '계속 보기'}</Text>
+            <Text style={styles.extendBtnText}>{isTier1 ? t('limitReached.extendTier1') : t('limitReached.extendTier2')}</Text>
           </Pressable>
           <Pressable onPress={onDismiss} style={styles.dismissBtn}>
-            <Text style={styles.dismissBtnText}>{isTier1 ? '오늘은 여기까지' : '여기까지 보기'}</Text>
+            <Text style={styles.dismissBtnText}>{isTier1 ? t('limitReached.dismissTier1') : t('limitReached.dismissTier2')}</Text>
           </Pressable>
         </View>
       </View>

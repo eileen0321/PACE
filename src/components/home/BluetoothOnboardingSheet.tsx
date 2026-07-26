@@ -2,6 +2,10 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
+import { capabilities } from '../../services/platform/capabilities';
+import { SnapPulseIllustration } from './SnapPulseIllustration';
+import { GestureFlickIllustration } from './GestureFlickIllustration';
+import { RemoteClickIllustration } from './RemoteClickIllustration';
 
 // 2026-07-19: Bluetooth Hands-Free Control 최초 1회 안내(사용자 지시, Copilot 스펙 정리 반영) —
 // 사용자가 Home에서 플랫폼 카드를 처음 탭할 때 세션 시작 전에 뜬다(home.tsx). "Enable"/"Not Now"
@@ -42,30 +46,44 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         <View style={styles.iconWrap}>
           <Feather name="zap" size={22} color={colors.primary} />
         </View>
-        <Text style={styles.title}>Hands-Free Control</Text>
+        {/* 2026-07-26 사용자 UX 리뷰 반영(4가지):
+            1) 제목을 "Hands-Free Control"(상시 가능한 기능처럼 들림) → "Focus Session Controls"로
+               — 실제로는 Focus Session 중에만 동작해서, 일반 유튜브에서 안 되면 "버그인가?" 오해
+               소지가 있었음. 이름 자체에 스코프를 박아 기대치 관리.
+            2) 가장 중요한 "왜 써야 하는지"(혜택)가 안 보였음 → valueLine 한 줄 추가.
+            3) 메커니즘 설명 앞의 "Go hands-free —"는 제목이 이미 커버하므로 중복 제거.
+            4) 마지막에 "Focus Session 중에만 동작"이라는 스코프 고지를 명시적으로 한 번 더. */}
+        <Text style={styles.title}>Focus Session Controls</Text>
+        <Text style={styles.valueLine}>Stay focused without touching your phone.</Text>
         <Text style={styles.body}>
-          Go hands-free — Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote's volume button.
+          {capabilities.supportsFingerSnap
+            ? 'Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote\'s volume button.'
+            : 'Pace can advance Shorts from a hand wave or your Bluetooth remote\'s volume button.'}
         </Text>
 
+        {capabilities.supportsFingerSnap && (
+          <View style={styles.actionRow}>
+            <View style={styles.iconStage}><SnapPulseIllustration /></View>
+            <Text style={styles.actionLabel}>Finger snap <Text style={styles.actionArrow}>→</Text> Next Short</Text>
+          </View>
+        )}
         <View style={styles.actionRow}>
-          <Feather name="mic" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionLabel}>Finger snap <Text style={styles.actionArrow}>→</Text> Next Short</Text>
-        </View>
-        <View style={styles.actionRow}>
-          <Feather name="camera" size={16} color={colors.textSecondary} />
+          <View style={styles.iconStage}><GestureFlickIllustration /></View>
           <Text style={styles.actionLabel}>Hand wave <Text style={styles.actionArrow}>→</Text> Next Short</Text>
         </View>
         <View style={styles.actionRow}>
-          <Feather name="bluetooth" size={16} color={colors.textSecondary} />
+          <View style={styles.iconStage}><RemoteClickIllustration /></View>
           <Text style={styles.actionLabel}>Bluetooth remote <Text style={styles.actionArrow}>→</Text> Next Short</Text>
         </View>
         <View style={styles.actionRow}>
-          <Feather name="play-circle" size={16} color={colors.textSecondary} />
-          <Text style={styles.actionLabel}>Auto Mode <Text style={styles.actionArrow}>→</Text> Hands-free for your Focus Session</Text>
+          <View style={styles.iconStage}><Feather name="play-circle" size={16} color={colors.textSecondary} /></View>
+          <Text style={styles.actionLabel}>Hands-free mode <Text style={styles.actionArrow}>→</Text> Stays on for your Focus Session</Text>
         </View>
 
+        <Text style={styles.scopeNote}>Hands-free controls work during Focus Sessions.</Text>
+
         <Pressable onPress={onEnable} style={styles.enableBtn}>
-          <Text style={styles.enableBtnText}>Enable</Text>
+          <Text style={styles.enableBtnText}>Turn On</Text>
         </Pressable>
         <Pressable onPress={onDismiss} style={styles.laterBtn}>
           <Text style={styles.laterBtnText}>Not Now</Text>
@@ -81,8 +99,14 @@ const styles = StyleSheet.create({
   handle: { width: 48, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.1)', alignSelf: 'center', marginBottom: spacing.md },
   iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}1A`, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
   title: { fontSize: 17, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, marginBottom: spacing.xs },
+  valueLine: { fontSize: 13.5, fontFamily: typography.bodyFontFamilySemibold, color: colors.textPrimary, lineHeight: 19, marginBottom: 4 },
   body: { fontSize: 13, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 19, marginBottom: spacing.md },
+  scopeNote: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textTertiary, marginTop: spacing.sm },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 6 },
+  // 2026-07-26 — 각 줄의 손짓 일러스트가 서로 다른 내부 크기(스냅 40x36, 손짓 40x36, 리모컨
+  // 34x20, Feather 아이콘 16x16)를 가져서 그대로 두면 줄마다 라벨 시작 위치가 어긋난다. 모든
+  // 줄의 아이콘을 이 고정 크기 스테이지 안에 가운데 정렬해 라벨이 항상 같은 x에서 시작하게 한다.
+  iconStage: { width: 40, height: 36, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
   actionArrow: { color: colors.textTertiary },
   enableBtn: { marginTop: spacing.md, backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.sm + 2, alignItems: 'center' },

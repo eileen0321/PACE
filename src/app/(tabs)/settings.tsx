@@ -30,6 +30,13 @@ import type { UserSettings } from '../../types/models';
 
 const SUPPORT_EMAIL = 'comfortstride7@gmail.com';
 
+// getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
+// Date.getDay()와 동일)를 실제 번역 키로 매핑 — 요일 라벨이 언어 설정과 무관하게 하드코딩 한글로
+// 고정돼 있던 문제 수정.
+const DAY_INDEX_KEYS: TranslationKey[] = [
+  'stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat',
+];
+
 // 2026-07-26 사용자 지시("이어폰 관련 가이드나 문구도 없애") — faqQ3/A3가 예전엔 "Bluetooth 이어폰
 // 리모컨 버튼으로 Shorts를 넘긴다"는, capabilities.supportsHandsFreeControl(하드웨어 미디어 버튼
 // 라우팅, Android=불가능 확정)과 동일한 약속이라 이 플래그로 Android에서만 숨겼었다. 지금은 문구를
@@ -264,7 +271,7 @@ export default function SettingsScreen() {
             <View style={styles.attendanceRow}>
               {getLast7Days(attendanceHistory).map((day) => (
                 <View key={day.date} style={styles.attendanceDay}>
-                  <Text style={styles.attendanceDayLabel}>{day.dayLabel}</Text>
+                  <Text style={styles.attendanceDayLabel}>{t(DAY_INDEX_KEYS[day.dayIndex])}</Text>
                   <View style={styles.attendanceDotColumn}>
                     {/* 연속된 출석일끼리 칸 전체 폭의 바가 서로 맞닿아 하나의 선처럼 이어짐 —
                         빠진 날은 바 자체가 없어 그 지점에서 자연스럽게 끊김. */}

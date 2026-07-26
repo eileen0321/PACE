@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
@@ -65,6 +65,23 @@ export default function OverlaySessionScreen() {
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)/home');
   };
+
+  // 2026-07-26 사용자 지적("유튜브 창 닫으면 pace앱이 계속 까만화면만 보여주고 개판") — 이 화면
+  // 아래쪽의 "underlying content"(DEV SIMULATOR)는 위 33번째 줄 주석대로 프로덕션엔 존재하면 안 되는
+  // 개발용 목업일 뿐인데, 세션 시작 후 YouTube로 전환했다가(launchPlatformApp) 뒤로가기/최근앱으로
+  // 이 화면으로 돌아오면(=Pace 액티비티가 다시 포그라운드) 실사용자 눈엔 텅 빈 검은 화면처럼 보였다.
+  // Android는 이미 실제 네이티브 시스템 오버레이(알약)가 세션 중 항상 떠 있어 이 화면이 굳이 다시
+  // 보일 필요가 없으므로, 포커스를 다시 받을 때마다(=사용자가 이 화면으로 돌아올 때마다) 곧바로
+  // Home으로 리다이렉트한다 — 세션/오버레이 자체는 그대로 유지되고 화면 전환만 일어남. iOS는 이
+  // 화면이 실제 시뮬레이터 콘텐츠 역할을 계속 해야 하므로(Live Activity가 오버레이를 대신하지만
+  // 화면 자체는 Pace Feed 진입 전 상태를 보여줌) 건드리지 않는다.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === 'android' && overlayService.supportsSystemOverlay && hasSessionStartedRef.current) {
+        router.replace('/(tabs)/home');
+      }
+    }, [router])
+  );
 
   useEffect(() => {
     if (!user?.id) return;

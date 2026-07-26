@@ -250,7 +250,7 @@ export default function HomeScreen() {
         {sleepInsightEndedAt && (
           <View style={styles.sleepInsightBanner}>
             <Text style={styles.sleepInsightIcon}>🌙</Text>
-            <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt)}</Text>
+            <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt, t)}</Text>
             <Text style={styles.sleepInsightDismiss} onPress={dismissSleepInsight}>✕</Text>
           </View>
         )}

@@ -90,10 +90,12 @@ export const useAttendanceStore = create<AttendanceState>((set, get) => ({
 }));
 
 // 설정 화면의 "주간 출석" 위젯용 — 오늘 포함 최근 7일을 오래된 순으로 반환.
-export function getLast7Days(history: string[]): { date: string; dayLabel: string; attended: boolean; isToday: boolean }[] {
+// 2026-07-26 감사 발견 — 요일 라벨이 언어 설정과 무관하게 하드코딩된 한글 배열이었다. 이 파일은
+// 훅이 아니라 순수 함수라 t()를 직접 쓸 수 없으므로, dayIndex(0=일~6=토, Date.getDay()와 동일)만
+// 반환하고 실제 문자열 매핑은 호출부(컴포넌트, useTranslation 가능)가 stats.daySun..daySat 키로 한다.
+export function getLast7Days(history: string[]): { date: string; dayIndex: number; attended: boolean; isToday: boolean }[] {
   const today = todayStr();
-  const dayLabels = ['일', '월', '화', '수', '목', '금', '토'];
-  const days: { date: string; dayLabel: string; attended: boolean; isToday: boolean }[] = [];
+  const days: { date: string; dayIndex: number; attended: boolean; isToday: boolean }[] = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
@@ -103,7 +105,7 @@ export function getLast7Days(history: string[]): { date: string; dayLabel: strin
     const dateStr = `${y}-${m}-${day}`;
     days.push({
       date: dateStr,
-      dayLabel: dayLabels[d.getDay()],
+      dayIndex: d.getDay(),
       attended: history.includes(dateStr),
       isToday: dateStr === today,
     });

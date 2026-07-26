@@ -340,7 +340,10 @@ export default function SettingsScreen() {
         )}
 
         {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
-        {capabilities.supportsHandsFreeControl && (
+        {/* 2026-07-27: iOS에선 이 "블루투스 기기 연결 상태" 섹션을 숨김 — bluetoothService.ios.ts가 no-op
+            스텁이라 항상 "Not Connected"로만 떠 오해를 준다. iOS 핸즈프리는 블루투스 페어링이 아니라 피드
+            안의 손짓(카메라)/볼륨키(useFeedRemoteControl.ios)라 그 안내는 온보딩 Hands-Free 가이드가 담당. */}
+        {capabilities.supportsHandsFreeControl && Platform.OS !== 'ios' && (
         <View>
           <Text style={styles.sectionLabel}>{t('settings.playbackControls')}</Text>
           <GlassSurface style={styles.card}>

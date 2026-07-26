@@ -21,7 +21,11 @@ const ROWS: { icon: keyof typeof Feather.glyphMap; titleKey: 'onboarding.row1Tit
   // 설명은 아이콘이 아니라 아래 문구(row1Desc)가 맡는다.
   { icon: 'smartphone', titleKey: 'onboarding.row1Title', descKey: 'onboarding.row1Desc' },
   { icon: 'star', titleKey: 'onboarding.row2Title', descKey: 'onboarding.row2Desc' },
-  { icon: 'play', titleKey: 'onboarding.row3Title', descKey: 'onboarding.row3Desc' },
+  // 2026-07-26 사용자 지시 — 심사 관점에서 "연속 시청"을 온보딩 전면에 내세우는 대신(Copilot 조언
+  // 반영), 사용 통계 확인으로 대체. 크레딧으로 시청을 이어가는 기능 자체는 그대로 있고, 한도 도달
+  // 모달에서 자연스럽게 발견하게 둔다(overlay/index.tsx의 capModal 참고) — 온보딩에서 굳이 홍보하지
+  // 않음.
+  { icon: 'bar-chart-2', titleKey: 'onboarding.row3Title', descKey: 'onboarding.row3Desc' },
   { icon: 'moon', titleKey: 'onboarding.row4Title', descKey: 'onboarding.row4Desc' },
 ];
 

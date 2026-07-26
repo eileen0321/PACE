@@ -62,7 +62,12 @@
           }
         }
       ],
-      "@react-native-google-signin/google-signin",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.262818691684-fq9o0uudug7bh60ut88pr6atc97nkdqc"
+        }
+      ],
       "expo-localization",
       "expo-font",
       "expo-video",

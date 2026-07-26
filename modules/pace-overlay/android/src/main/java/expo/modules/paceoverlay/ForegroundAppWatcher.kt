@@ -65,6 +65,15 @@ object ForegroundAppWatcher {
   // 윈도우 크기에 의존하지 않는 증분(incremental) 방식으로 교체 — 마지막으로 조회한 시점(cursor)
   // 이후의 새 이벤트만 훑고, 새 MOVE_TO_FOREGROUND가 없으면 마지막으로 알려진 값을 그대로 유지한다
   // (그게 "다음 전이가 오기 전까진 여전히 유효한 현재 상태"라는 UsageEvents의 실제 의미이므로).
+  // 2026-07-27 사용자 지적("Pace 자체 화면으로 돌아와도 알약이 안 사라짐") — 실기기 진단 로그로
+  // 확정: mostRecentlyUsedSupportedApp()의 override가 무조건적이라(아래 참고), Pace로 돌아온 뒤
+  // 몇 초가 아니라 30초 넘게도 계속 "youtube"로 되돌려놔서 오버레이가 Pace 자신의 화면 위에 계속
+  // 떠 있었다. 진짜 원인: MOVE_TO_FOREGROUND 이벤트로 Pace 자신(비지원 앱)으로의 전이를 정확히
+  // 감지해도, 그 직후 recentlyUsed 체크가 "최근에 유튜브를 쓴 적 있다"는 사실만 보고 무조건
+  // 덮어썼다 — 그 "최근"이 이 전이보다 실제로 더 과거인지 확인을 안 했다. 이제 두 신호의
+  // 타임스탬프를 직접 비교해서, 진짜로 더 최신인 쪽만 채택한다.
+  private var lastNonSupportedTransitionAtMs: Long = 0L
+
   fun getForegroundPackage(context: Context): String? {
     val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     val end = System.currentTimeMillis()
@@ -77,6 +86,11 @@ object ForegroundAppWatcher {
       if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
         lastKnownForegroundPackage = event.packageName
         lastConfirmedAtMs = end
+        if (event.packageName !in SupportedApps.PACKAGES) {
+          // Pace 자신을 포함한 "지원 앱이 아닌 곳"으로의 전이 시각을 따로 기록 — 아래 recentlyUsed
+          // 폴백이 이보다 과거의 유튜브 사용 기록으로 이걸 덮어쓰지 못하게 막는 기준선이 된다.
+          lastNonSupportedTransitionAtMs = event.timeStamp
+        }
       }
     }
     cursor = end
@@ -87,9 +101,11 @@ object ForegroundAppWatcher {
     // 다시 안 뜬다. 이벤트 스트림에 의존하지 않는 별도 신호로 교차검증: queryUsageStats의
     // lastTimeUsed는 앱이 실제로 전면에서 계속 쓰이는 동안 주기적으로 갱신되는 값이라, 이벤트를
     // 놓쳐도 "그 사이 유튜브가 최근에도 계속 쓰였다"는 사실 자체는 여전히 잡을 수 있다.
+    // ⚠️ 단, 이 신호가 위 lastNonSupportedTransitionAtMs보다 과거면(=진짜 이탈이 그 이후 확정된
+    // 사실이면) 절대 덮어쓰면 안 된다 — 그게 이번에 발견된 버그의 핵심 원인이었다.
     val recentlyUsed = mostRecentlyUsedSupportedApp(usageStatsManager, end)
-    if (recentlyUsed != null) {
-      lastKnownForegroundPackage = recentlyUsed
+    if (recentlyUsed != null && recentlyUsed.second > lastNonSupportedTransitionAtMs) {
+      lastKnownForegroundPackage = recentlyUsed.first
       lastConfirmedAtMs = end
     }
     // ⚠️ 2026-07-26 밤 실기기 재현(사장님 지적, "손짓/자동재생 다 되는데 오버레이만 또 없어짐") —
@@ -108,7 +124,8 @@ object ForegroundAppWatcher {
 
   // SupportedApps.PACKAGES 중 lastTimeUsed가 RECENCY_WINDOW_MS 이내로 가장 최근인 것을 찾는다.
   // 여러 지원 앱이 동시에 최근값을 갖는 경우는 실사용상 거의 없다(한 번에 하나만 화면에 보임).
-  private fun mostRecentlyUsedSupportedApp(usageStatsManager: UsageStatsManager, nowMs: Long): String? {
+  // Pair(패키지명, lastTimeUsed)를 반환 — 호출부가 이 lastTimeUsed를 다른 신호와 직접 비교해야 한다.
+  private fun mostRecentlyUsedSupportedApp(usageStatsManager: UsageStatsManager, nowMs: Long): Pair<String, Long>? {
     val stats = usageStatsManager.queryUsageStats(
       UsageStatsManager.INTERVAL_BEST, nowMs - RECENCY_WINDOW_MS, nowMs
     ) ?: return null
@@ -121,7 +138,7 @@ object ForegroundAppWatcher {
         best = stat.packageName
       }
     }
-    return best
+    return best?.let { Pair(it, bestLastUsed) }
   }
 
   private const val RECENCY_WINDOW_MS = 4_000L

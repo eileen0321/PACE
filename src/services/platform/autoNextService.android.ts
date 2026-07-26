@@ -23,10 +23,6 @@ let PaceOverlay: {
   requestAccessibilityPermission(): void;
   startAutoNextWatching(intervalMs: number): Promise<void>;
   stopAutoNextWatching(): Promise<void>;
-  setUnlimitedAutoNext(enabled: boolean): void;
-  consumeAutoNextCapReached(): boolean;
-  extendAutoNextCap(extendBy: number): void;
-  getAutoSwipeStatus(): { count: number; cap: number };
 } | null = null;
 
 if (ENABLE_AUTO_NEXT) {
@@ -76,21 +72,5 @@ export const autoNextService: AutoNextService = {
 
   async stop() {
     await PaceOverlay?.stopAutoNextWatching();
-  },
-
-  async setUnlimitedAutoNext(enabled) {
-    PaceOverlay?.setUnlimitedAutoNext(enabled);
-  },
-
-  async consumeAutoNextCapReached() {
-    return PaceOverlay?.consumeAutoNextCapReached() ?? false;
-  },
-
-  async extendAutoNextCap(extendBy) {
-    PaceOverlay?.extendAutoNextCap(extendBy);
-  },
-
-  async getAutoSwipeStatus() {
-    return PaceOverlay?.getAutoSwipeStatus() ?? { count: 0, cap: 0 };
   },
 };

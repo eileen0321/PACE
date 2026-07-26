@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -13,11 +13,7 @@ import { useAutoNextStore } from '../../store/useAutoNextStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useToastStore } from '../../store/useToastStore';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
-import { useFlipStore } from '../../store/useFlipStore';
-import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { overlayService, autoNextService } from '../../services/platform';
-import { showRewardedAd } from '../../services/ads/rewardedAd';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
@@ -221,29 +217,6 @@ export default function OverlaySessionScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2026-07-26 사용자 지시("자동넘김 30회 도달하면 멈추고 광고 보면 20회씩 추가") — 위
-  // consumeExpired()와 정확히 같은 이유·같은 패턴: YouTube가 전면에 있는 동안 Pace의 JS 타이머는
-  // 백그라운드 throttle로 죽어있을 수 있어, 네이티브가 이미 판단해둔 "한도 도달" 신호를 Pace가 다시
-  // 포그라운드로 돌아올 때마다(AppState 'active') 1회성으로 소비 확인한다. 프리미엄이면 네이티브가
-  // 애초에 한도 체크를 안 하므로 이 신호가 발생할 일이 없지만, 방어적으로 한 번 더 확인한다.
-  const [showCapModal, setShowCapModal] = useState(false);
-  const [watchingAd, setWatchingAd] = useState(false);
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const checkCap = () => {
-      if (!hasSessionStartedRef.current) return;
-      if (useSubscriptionStore.getState().isPremium) return;
-      autoNextService.consumeAutoNextCapReached().then((reached) => {
-        if (reached) setShowCapModal(true);
-      }).catch(() => {});
-    };
-    checkCap();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkCap();
-    });
-    return () => sub.remove();
-  }, []);
-
   // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 삼성 One UI
   // 배터리 최적화로 세션 도중 조용히 꺼지는 걸 이번 세션 내내 겪었다. 네이티브(PaceOverlayService.
   // performTick)가 "이전엔 켜져 있었는데 지금은 꺼졌다"는 전이를 이미 감지해뒀으면, Pace로 돌아올
@@ -264,43 +237,6 @@ export default function OverlaySessionScreen() {
     });
     return () => sub.remove();
   }, []);
-
-  const onWatchAdForMore = () => {
-    setWatchingAd(true);
-    showRewardedAd().then((result) => {
-      setWatchingAd(false);
-      if (result === 'earned') {
-        autoNextService.extendAutoNextCap(20).catch(() => {});
-        setShowCapModal(false);
-        useToastStore.getState().show(t('overlay.autoNextExtendedToast', { extend: 20 }));
-      } else if (result === 'failed') {
-        useToastStore.getState().show(t('overlay.autoNextAdFailed'));
-      }
-      // 'closed_without_reward'(끝까지 안 보고 닫음) — 모달을 유지해 다시 시도할 수 있게 한다.
-    });
-  };
-
-  // 2026-07-26 사용자 지시("연속 시청 1분 = 1크레딧") — 크레딧 소비 단위를 "영상 1편"에서 "세션
-  // 1분"으로 재정의. 기존 "Extend Time" 칩(OverlayExpandedCard onExtend)과 동일한 경로로 실제
-  // 세션 시간(remainingMinutes)을 늘리고, 동시에 자동넘김 무료 한도(autoSwipeCap)도 같은 양만큼
-  // 늘려 이 모달이 뜬 원인(영상 편수 한도 도달) 자체도 함께 풀어준다 — 시간만 늘고 스와이프는 여전히
-  // 막혀 있는 상태가 안 되도록. 출석 보너스(useAttendanceStore.bonusCredits, 매일 리셋 안 되는 별도
-  // 지갑)와 오늘 쉬어서 모은 크레딧(useFlipStore.credits)을 합산해서 함께 쓴다.
-  const restCredits = useFlipStore((s) => s.credits);
-  const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
-  const totalCredits = restCredits + bonusCredits;
-  const onUseCredits = () => {
-    const spentRest = useFlipStore.getState().spendCredits(restCredits);
-    const spentBonus = useAttendanceStore.getState().spendBonusCredits(bonusCredits);
-    const spent = spentRest + spentBonus;
-    if (spent <= 0) return;
-    useDailyBonusStore.getState().addMinutes(spent);
-    const newRemaining = useTimerStore.getState().addMinutes(spent);
-    overlayService.updateRemaining(newRemaining).catch(() => {});
-    autoNextService.extendAutoNextCap(spent).catch(() => {});
-    setShowCapModal(false);
-    useToastStore.getState().show(t('overlay.creditsExtendedToast', { extend: spent }));
-  };
 
   // Auto Next 시뮬레이션: 실제로는 services/platform의 autoNextService(Android)가 담당 —
   // 여기서는 dev 시뮬레이터에서 데모 영상이 끝나면 다음 영상으로 넘어가는 흉내만 낸다.
@@ -392,38 +328,6 @@ export default function OverlaySessionScreen() {
       <View style={styles.devBadge}>
         <Text style={styles.devBadgeText}>{t('overlay.devSimulator')}</Text>
       </View>
-
-      <Modal visible={showCapModal} transparent animationType="fade" onRequestClose={() => setShowCapModal(false)}>
-        <View style={styles.capModalBackdrop}>
-          <View style={styles.capModalCard}>
-            <Text style={styles.capModalTitle}>{t('overlay.autoNextCapReachedTitle')}</Text>
-            <Text style={styles.capModalMessage}>{t('overlay.autoNextCapReachedMessage', { cap: 30 })}</Text>
-            <Pressable
-              style={[styles.capModalBtn, styles.capModalBtnPrimary, watchingAd && styles.capModalBtnDisabled]}
-              onPress={onWatchAdForMore}
-              disabled={watchingAd}
-            >
-              {watchingAd ? (
-                <ActivityIndicator color={colors.background} />
-              ) : (
-                <Text style={styles.capModalBtnPrimaryText}>{t('overlay.watchAdForMore', { extend: 20 })}</Text>
-              )}
-            </Pressable>
-            {totalCredits > 0 && (
-              <Pressable
-                style={[styles.capModalBtn, styles.capModalBtnCredits]}
-                onPress={onUseCredits}
-                disabled={watchingAd}
-              >
-                <Text style={styles.capModalBtnCreditsText}>{t('overlay.useCreditsForMore', { credits: totalCredits })}</Text>
-              </Pressable>
-            )}
-            <Pressable style={styles.capModalBtn} onPress={() => setShowCapModal(false)} disabled={watchingAd}>
-              <Text style={styles.capModalBtnText}>{t('overlay.notNow')}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -470,16 +374,4 @@ const styles = StyleSheet.create({
   simCategory: { color: '#30D158', fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 1, backgroundColor: 'rgba(48,209,88,0.1)', borderWidth: 1, borderColor: 'rgba(48,209,88,0.2)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   devBadge: { position: 'absolute', bottom: spacing.lg, alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   devBadgeText: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontFamily: typography.bodyFontFamilyBold, letterSpacing: 0.5 },
-  // 2026-07-26 — 무료 Focus Session 자동넘김 한도 도달 시 보상형 광고 유도 모달.
-  capModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  capModalCard: { width: '100%', maxWidth: 360, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
-  capModalTitle: { color: colors.textPrimary, fontSize: 17, fontFamily: typography.bodyFontFamilyBold },
-  capModalMessage: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
-  capModalBtn: { borderRadius: radius.pill, paddingVertical: spacing.sm, alignItems: 'center', justifyContent: 'center' },
-  capModalBtnPrimary: { backgroundColor: colors.primary },
-  capModalBtnDisabled: { opacity: 0.7 },
-  capModalBtnPrimaryText: { color: colors.background, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
-  capModalBtnCredits: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)' },
-  capModalBtnCreditsText: { color: colors.successLight, fontFamily: typography.bodyFontFamilyBold, fontSize: 14 },
-  capModalBtnText: { color: colors.textSecondary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
 });

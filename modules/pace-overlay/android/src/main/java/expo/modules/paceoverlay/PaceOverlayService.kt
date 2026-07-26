@@ -145,7 +145,7 @@ class PaceOverlayService : Service() {
   // 2026-07-26 사용자 지시(외부 AI 조언 반영, "저장하고 있다가 다시 노티") — 접근성 권한이 삼성 One UI
   // 배터리 최적화로 세션 중 조용히 꺼지는 걸 이번 세션 내내 실제로 겪었다. "이전엔 켜져 있었는데
   // 지금은 꺼져 있다"는 전이를 잡아 JS가 재활성화 안내(notifyAccessibilityNeeded)를 띄울 수 있게
-  // 1회성 신호를 세운다 — consumeExpired()/consumeAutoNextCapReached()와 동일 패턴.
+  // 1회성 신호를 세운다 — consumeExpired()와 동일 패턴.
   private var accessibilityRevokedPending = false
 
   // 한도 도달 UI 3단계화(2026-07-23, 사용자 지적 — "TAKE YOUR PACE" 3단계 시스템이 LimitReachedOverlay.tsx
@@ -583,7 +583,35 @@ class PaceOverlayService : Service() {
     private const val DEFAULT_FOCUS_SESSION_MINUTES = 10
     const val PREF_FOCUS_SESSION_MINUTES = "focus_session_duration_minutes"
     private val focusSessionHandler = Handler(Looper.getMainLooper())
-    private val focusSessionAutoStop = Runnable { instance?.let { setAutoMode(it.applicationContext, false) } }
+    // 2026-07-26 사용자 지시("무료일땐 10분 고정, 보상광고 보면 늘려줘") — 이 Runnable이 실행됐다는
+    // 것 자체가 "시간이 다 돼서 자동으로 꺼짐"이라는 뜻(사용자가 직접 끈 경우는 이 경로를 안 탐) —
+    // JS가 이 신호를 소비해서 보상형 광고 유도 모달을 띄운다(consumeExpired와 동일한 1회성 패턴).
+    private var focusSessionTimedOutPending = false
+    private val focusSessionAutoStop = Runnable {
+      focusSessionTimedOutPending = true
+      instance?.let { setAutoMode(it.applicationContext, false) }
+    }
+
+    fun consumeFocusSessionTimedOut(): Boolean {
+      if (focusSessionTimedOutPending) {
+        focusSessionTimedOutPending = false
+        return true
+      }
+      return false
+    }
+
+    // 보상형 광고 시청 완료 후 호출 — 이미 타임아웃으로 꺼져 있으면 워처를 다시 켜고, extraMinutes
+    // 뒤에 다시 자동 종료되도록 예약(원래 설정값(PREF_FOCUS_SESSION_MINUTES)이 아니라 이 값을 씀).
+    fun extendFocusSession(context: Context, extraMinutes: Int) {
+      if (!isBuildAutoNextEnabled(context)) return
+      val wasActive = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AUTO_MODE, false)
+      if (!wasActive) {
+        setAutoMode(context, true) // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어씀.
+      }
+      focusSessionHandler.removeCallbacks(focusSessionAutoStop)
+      focusSessionHandler.postDelayed(focusSessionAutoStop, extraMinutes.coerceAtLeast(1) * 60 * 1000L)
+      showToast(context, "🎯 Focus Session +${extraMinutes}m")
+    }
 
     fun setFocusSessionDurationMinutes(context: Context, minutes: Int) {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -724,8 +752,8 @@ class PaceOverlayService : Service() {
       context.startService(Intent(context, PaceOverlayService::class.java).apply { action = ACTION_STOP })
     }
 
-    // consumeExpired()/PaceAccessibilityService.consumeAutoNextCapReached()와 동일한 1회성 소비
-    // 패턴 — checkAccessibilityRevoked()가 세운 신호를 JS가 포그라운드 복귀 시 확인한다.
+    // consumeExpired()와 동일한 1회성 소비 패턴 — checkAccessibilityRevoked()가 세운 신호를 JS가
+    // 포그라운드 복귀 시 확인한다.
     fun consumeAccessibilityRevoked(): Boolean {
       val service = instance ?: return false
       if (service.accessibilityRevokedPending) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,6 +7,7 @@ import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useSessionStore } from '../../store/useSessionStore';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
@@ -19,6 +20,7 @@ import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
+import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, capabilities, overlayService } from '../../services/platform';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -70,12 +72,35 @@ export default function HomeScreen() {
   // hitCount 자체가 다음 로직에서 0으로 안 내려가지만(오늘 누적 기록이라 정직하게 유지), 어차피
   // isLimitReached가 false면 visible 조건 자체가 꺼진다.
   const [dismissedHitCount, setDismissedHitCount] = useState(0);
+  const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
 
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
   useEffect(() => {
     loadLimitHits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2026-07-26 사용자 지시(Focus Session/연속 시청 통합 결정) — 무료 Focus Session이 시간(10분) 만료로
+  // 자동 종료됐을 때(사용자가 직접 끈 게 아니라) 광고/크레딧 연장 모달을 띄운다. YouTube가 전면에
+  // 있는 동안 Home의 JS는 백그라운드 throttle로 죽어있을 수 있어, 네이티브가 이미 판단해둔 "시간
+  // 만료" 신호를 Pace가 다시 포그라운드로 돌아올 때마다(AppState 'active') 1회성으로 소비 확인한다
+  // (overlay/index.tsx의 consumeExpired/consumeAccessibilityRevoked와 동일 패턴). 프리미엄은 free
+  // duration 고정 자체가 적용 안 되므로(enforceFreeFocusSessionDuration) 이 신호가 발생할 일이 없지만
+  // 방어적으로 한 번 더 확인한다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const checkTimedOut = () => {
+      if (useSubscriptionStore.getState().isPremium) return;
+      bluetoothService.consumeFocusSessionTimedOut().then((timedOut) => {
+        if (timedOut) setShowFocusSessionExtend(true);
+      }).catch(() => {});
+    };
+    checkTimedOut();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkTimedOut();
+    });
+    return () => sub.remove();
   }, []);
 
   // 2026-07-22 사용자 지시 — 한도 도달 알림 3단계화. 한도를 넘긴 뒤 5분 단위로 "몇 번째 도달인지"
@@ -296,6 +321,11 @@ export default function HomeScreen() {
         todayUsageMinutes={todayUsageMinutes}
         onExtend={() => { addBonusMinutes(5); setDismissedHitCount(hitCount); }}
         onDismiss={() => setDismissedHitCount(hitCount)}
+      />
+
+      <FocusSessionExtendModal
+        visible={showFocusSessionExtend}
+        onDismiss={() => setShowFocusSessionExtend(false)}
       />
     </SafeAreaView>
   );

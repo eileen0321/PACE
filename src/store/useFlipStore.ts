@@ -84,10 +84,10 @@ type FlipState = {
   rollDateIfNeeded: () => void;
   resetToday: () => void;
   /**
-   * Focus Session 무료 한도(PaceAccessibilityService.autoSwipeCap) 연장에 크레딧을 쓴다 — 보상형
-   * 광고와 동일한 extendAutoNextCap()을 부르되, 광고 대신 이 크레딧이 재원. 보유량 초과 요청은
-   * 보유량만큼만 쓰고 실제로 쓴 양을 반환(호출부가 그 값으로 extendAutoNextCap을 부름) — 잔액 0이면
-   * 0 반환(그냥 no-op, 에러 아님).
+   * Focus Session 연장(bluetoothService.extendFocusSession)에 크레딧을 쓴다 — 보상형 광고와 동일한
+   * 네이티브 함수를 부르되, 광고 대신 이 크레딧이 재원(1크레딧=1분). 보유량 초과 요청은 보유량만큼만
+   * 쓰고 실제로 쓴 양을 반환(호출부가 그 값으로 extendFocusSession을 부름) — 잔액 0이면 0 반환(그냥
+   * no-op, 에러 아님).
    */
   spendCredits: (amount: number) => number;
 };

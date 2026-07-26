@@ -11,6 +11,8 @@ let PaceOverlay: {
   setBluetoothAutoMode(enable: boolean): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
+  consumeFocusSessionTimedOut(): boolean;
+  extendFocusSession(extraMinutes: number): void;
   hasRecordAudioPermission(): boolean;
   requestRecordAudioPermission(): Promise<{ status: string; granted: boolean }>;
   hasCameraPermission(): boolean;
@@ -87,6 +89,23 @@ export const bluetoothService: BluetoothService = {
     } catch (e) {
       console.warn('[bluetoothService.android] getFocusSessionDurationMinutes failed', e);
       return 10;
+    }
+  },
+
+  async consumeFocusSessionTimedOut() {
+    try {
+      return PaceOverlay?.consumeFocusSessionTimedOut() ?? false;
+    } catch (e) {
+      console.warn('[bluetoothService.android] consumeFocusSessionTimedOut failed', e);
+      return false;
+    }
+  },
+
+  async extendFocusSession(extraMinutes: number) {
+    try {
+      PaceOverlay?.extendFocusSession(extraMinutes);
+    } catch (e) {
+      console.warn('[bluetoothService.android] extendFocusSession failed', e);
     }
   },
 

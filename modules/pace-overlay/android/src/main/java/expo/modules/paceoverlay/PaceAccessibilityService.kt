@@ -57,18 +57,6 @@ class PaceAccessibilityService : AccessibilityService() {
   // 것이든 checkPlaybackAndMaybeSwipe()가 "영상이 바뀌었다"고 판단할 때마다 1씩 증가. 세션 시작
   // (startPlaybackTracking)마다 0으로 리셋 — companion getVideoCount()로 JS가 읽는다.
   private var videoAdvanceCount = 0
-  // 2026-07-26 사용자 지시("자동넘김 30회 도달하면 멈추고 보상형 광고로 20회씩 추가") — 무료 사용자는
-  // 자동넘김(Focus Session)이 실제로 스와이프한 횟수가 이 한도에 도달하면 일시정지되고, JS가 보상형
-  // 광고 시청 완료 시 extendAutoNextCap()으로 한도를 늘려 재개한다. videoAdvanceCount(전체 시청 편수,
-  // 수동 스와이프 포함)와 달리 이건 "자동넘김이 실제로 스와이프한 횟수"만 센다 — 세션 시작마다 리셋.
-  private var autoSwipeCount = 0
-  private var autoSwipeCap = DEFAULT_AUTO_SWIPE_CAP
-  // JS(overlay/index.tsx)가 consumeAutoNextCapReached()로 1회성 소비 — true를 반환하면 보상형 광고
-  // 유도 모달을 띄운다. 세션 시작마다 false로 리셋.
-  private var capReachedPending = false
-  // 프리미엄(useSubscriptionStore.isPremium) 상태 — JS가 setUnlimitedAutoNext()로 동기화한다. 세션
-  // 리셋 대상이 아니다(프리미엄 여부는 세션과 무관하게 계정 상태이므로).
-  private var unlimitedAutoNext = false
   private var lastSwipeAtMs = 0L
   private var lastVolumeKeySwipeAtMs = 0L
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
@@ -112,18 +100,6 @@ class PaceAccessibilityService : AccessibilityService() {
     }
   }
 
-  // 무료 한도(autoSwipeCap) 도달 — 자동넘김만 멈추고(isWatching=false) 재생위치/사용시간 추적은
-  // 그대로 유지한다(isTrackingPlayback은 안 건드림, maybeStopPolling이 둘 다 꺼졌을 때만 폴링 중단).
-  // capReachedPending은 JS가 consumeAutoNextCapReached()로 1회 소비할 때까지 유지.
-  private fun pauseAutoNextForCap() {
-    if (!capReachedPending) {
-      capReachedPending = true
-      Log.i("PaceAccessibility", "AUTO_NEXT_CAP_REACHED autoSwipeCount=$autoSwipeCount cap=$autoSwipeCap — Focus Session 자동넘김 일시정지, 보상형 광고 대기")
-    }
-    isWatching = false
-    maybeStopPolling()
-  }
-
   companion object {
     // 재생 위치를 얼마나 자주 확인할지(스와이프 자체의 간격이 아니라 폴링 주기) — 초 단위 텍스트라
     // 이보다 훨씬 잦은 폴링은 정확도 이득이 없다.
@@ -134,9 +110,6 @@ class PaceAccessibilityService : AccessibilityService() {
     private const val DEFAULT_SAFETY_TIMEOUT_MS = 45_000L
     // 물리 볼륨 버튼 1회 입력의 반복 ACTION_DOWN을 하나로 묶는 불응 구간(onKeyEvent 참고).
     private const val VOLUME_KEY_DEBOUNCE_MS = 500L
-    // 2026-07-26 사용자 지시 — 무료 Focus Session 자동넘김 한도, 보상형 광고 1회당 추가량.
-    private const val DEFAULT_AUTO_SWIPE_CAP = 30
-    private const val AUTO_SWIPE_CAP_EXTEND = 20
     // 한국어 로케일 실측: "0분 5초 중 0분 2초"(현재 중 전체). 콜론 포맷("0:05 / 0:15")도 방어적으로
     // 같이 시도 — YouTube 앱 버전/기기 로케일이 다르면 문구가 바뀔 수 있다.
     private val KOREAN_TIME_PATTERN = Pattern.compile("(\\d+)분\\s*(\\d+)초\\s*중\\s*(\\d+)분\\s*(\\d+)초")
@@ -200,48 +173,10 @@ class PaceAccessibilityService : AccessibilityService() {
         service.lastKnownCurrentSec = -1
         service.lastPlaybackAdvanceAtMs = 0L
         service.videoAdvanceCount = 0
-        // 2026-07-26 — 무료 자동넘김 한도도 세션 단위로 리셋(unlimitedAutoNext는 계정 상태라 안 건드림).
-        service.autoSwipeCount = 0
-        service.autoSwipeCap = DEFAULT_AUTO_SWIPE_CAP
-        service.capReachedPending = false
         service.ensurePollingScheduled()
         Log.d("PaceAccessibility", "startPlaybackTracking() -> polling started (usage-time accuracy only)")
       }
     }
-
-    // 2026-07-26 사용자 지시("유료일땐 ... 자동넘김 무제한") — useSubscriptionStore.isPremium이
-    // 바뀔 때마다(부팅 시/구매 완료/복원 시) JS가 호출해 동기화한다. true면 autoSwipeCap을 아예
-    // 무시(위 checkPlaybackAndMaybeSwipe 참고).
-    fun setUnlimitedAutoNext(enabled: Boolean) {
-      instance?.let { it.unlimitedAutoNext = enabled }
-    }
-
-    // 자동넘김이 무료 한도에 도달해 일시정지됐는지 1회성 소비 확인 — JS가 보상형 광고 유도 모달을
-    // 띄울지 판단하는 신호(consumeExpired()와 동일 패턴).
-    fun consumeAutoNextCapReached(): Boolean {
-      val service = instance ?: return false
-      if (service.capReachedPending) {
-        service.capReachedPending = false
-        return true
-      }
-      return false
-    }
-
-    // 보상형 광고 시청 완료 보상 — 한도를 extendBy만큼 늘리고, 한도 때문에 멈춰 있었다면 즉시 재개.
-    fun extendAutoNextCap(extendBy: Int = AUTO_SWIPE_CAP_EXTEND) {
-      val service = instance ?: return
-      service.autoSwipeCap += extendBy
-      val wasPaused = !service.isWatching
-      if (wasPaused) {
-        service.isWatching = true
-        service.lastSwipeAtMs = SystemClock.elapsedRealtime()
-        service.ensurePollingScheduled()
-      }
-      Log.i("PaceAccessibility", "extendAutoNextCap(+$extendBy) -> cap=${service.autoSwipeCap} resumed=$wasPaused")
-    }
-
-    fun getAutoSwipeCount(): Int = instance?.autoSwipeCount ?: 0
-    fun getAutoSwipeCap(): Int = instance?.autoSwipeCap ?: DEFAULT_AUTO_SWIPE_CAP
 
     // 2026-07-26 — 이번 세션(startPlaybackTracking()~지금)에서 실제로 넘어간 영상 편수. 접근성이
     // 꺼져있으면(instance==null) 0 — 이 경우 JS 쪽은 videosWatched=0으로 정직하게 기록한다(예전에
@@ -434,15 +369,8 @@ class PaceAccessibilityService : AccessibilityService() {
         // 세되 스와이프는 절대 하지 않는다 — Focus Session을 안 켠 사용자에게 원치 않는 자동넘김이
         // 발생하면 안 되므로.
         if (isWatching) {
-          // 2026-07-26 — 무료 한도(autoSwipeCap, 기본 30회) 도달 시 스와이프 대신 일시정지 + 보상형
-          // 광고 유도 신호. 프리미엄(unlimitedAutoNext)이면 한도 자체를 안 본다.
-          if (!unlimitedAutoNext && autoSwipeCount >= autoSwipeCap) {
-            pauseAutoNextForCap()
-          } else {
-            autoSwipeCount++
-            performSwipeUp()
-            lastSwipeAtMs = now
-          }
+          performSwipeUp()
+          lastSwipeAtMs = now
         }
         lastKnownCurrentSec = -1
         return
@@ -452,19 +380,13 @@ class PaceAccessibilityService : AccessibilityService() {
     if (!isWatching) return
     // Tier 2: 재생 위치 신호를 아예 못 찾았거나(광고, 노드 구조 변경, 다른 로케일), 신호는 있지만
     // 비정상적으로 오래 안 끝나는 경우 — 둘 다 이 안전 타임아웃 하나로 커버된다. isWatching이 꺼져
-    // 있으면 위에서 이미 return했으므로 여긴 항상 자동넘김이 실제로 스와이프하는 경로 — 이것도
-    // 결국 한 편을 넘기는 것이므로 카운트한다(무료 한도 체크도 tier=1과 동일하게 적용).
+    // 있으면 위에서 이미 return했으므로 여긴 항상 자동넘김이 실제로 스와이프하는 경로.
     if (now - lastSwipeAtMs >= safetyTimeoutMs) {
-      if (!unlimitedAutoNext && autoSwipeCount >= autoSwipeCap) {
-        pauseAutoNextForCap()
-      } else {
-        autoSwipeCount++
-        videoAdvanceCount++
-        Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs} count=$videoAdvanceCount")
-        performSwipeUp()
-        lastSwipeAtMs = now
-        lastKnownCurrentSec = -1
-      }
+      videoAdvanceCount++
+      Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs} count=$videoAdvanceCount")
+      performSwipeUp()
+      lastSwipeAtMs = now
+      lastKnownCurrentSec = -1
     }
   }
 

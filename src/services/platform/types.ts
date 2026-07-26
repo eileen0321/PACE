@@ -12,21 +12,6 @@ export interface AutoNextService {
   requestPermission(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
-  /**
-   * 2026-07-26 사용자 지시("무료일땐 ... 유료일땐 ... 자동넘김 무제한") — useSubscriptionStore.isPremium이
-   * 바뀔 때마다(부팅 시/구매·복원 완료 시) 호출해 네이티브 한도 체크 자체를 켜고 끈다. Android만 실제
-   * 동작, iOS는 no-op(자동넘김 횟수 제한 개념 자체가 없음 — 애초에 하드웨어 리모컨/제스처 기반).
-   */
-  setUnlimitedAutoNext(enabled: boolean): Promise<void>;
-  /**
-   * 무료 사용자의 자동넘김이 한도(기본 30회)에 도달해 일시정지됐는지 1회성 소비 확인(읽으면 즉시
-   * 리셋) — true면 보상형 광고 유도 모달을 띄운다. Android만 실제 신호, iOS는 항상 false.
-   */
-  consumeAutoNextCapReached(): Promise<boolean>;
-  /** 보상형 광고 시청 완료(onEarnedReward) 보상 — 한도를 extendBy만큼 늘리고 즉시 재개. */
-  extendAutoNextCap(extendBy: number): Promise<void>;
-  /** 현재 한도 상태(표시용, 예: "12/30회"). Android만 실제 값, iOS는 항상 {count:0, cap:0}. */
-  getAutoSwipeStatus(): Promise<{ count: number; cap: number }>;
 }
 
 export interface OverlayService {
@@ -119,6 +104,14 @@ export interface BluetoothService {
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;
+  /**
+   * 2026-07-26 사용자 지시("무료일땐 10분 고정, 보상광고 보면 늘려줘") — Focus Session이 설정된
+   * 시간이 다 돼서(사용자가 직접 끈 게 아니라) 자동으로 꺼졌는지 1회성 소비 확인(읽으면 즉시
+   * 리셋) — true면 보상형 광고로 연장 유도 모달을 띄운다. Android만 실제 신호, iOS는 항상 false.
+   */
+  consumeFocusSessionTimedOut(): Promise<boolean>;
+  /** 보상형 광고 시청 완료 후 호출 — Focus Session을 extraMinutes만큼 재개. Android만 실제 동작. */
+  extendFocusSession(extraMinutes: number): Promise<void>;
   /**
    * 2026-07-21 밤 감사 발견 — 핑거스냅(PaceSnapDetector)이 모든 Focus Session 시작 경로에 연결돼
    * 있는데 RECORD_AUDIO 런타임 권한을 요청하는 JS 코드가 전무했다. 네이티브는 이미 권한 없으면

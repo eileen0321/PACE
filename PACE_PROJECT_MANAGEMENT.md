@@ -121,12 +121,15 @@
 
 ## 5. 📋 다음 지시 (세션별 — 이 섹션을 매번 갱신)
 
-**Windows 세션(다음 작업)** → 2026-07-26 밤 세션에서 사용시간 정확도/영상 카운트/수면 블랙아웃/
-Focus Session 무료한도+보상형광고 기능을 새로 완성함(아래 §6 로그). 다음 세션 우선순위:
-1. **자동넘김 30회 한도 + 보상형 광고 20회 연장 흐름 실기기 검증** — 코드는 완성·설치까지 했지만
-   실제 광고 시청(네트워크+구글 광고서버+실제 터치)은 adb로 자동화할 수 없어 사람이 직접 확인
-   필요(YouTube with PACE 세션 켜고 Focus Session으로 30편 넘기거나, 테스트 편의상 코드의
-   `DEFAULT_AUTO_SWIPE_CAP`을 잠깐 낮춰서 테스트하는 것도 방법).
+**Windows 세션(다음 작업)** → 2026-07-26 밤 세션에서 Focus Session/연속 시청 통합(아래 §6
+"2026-07-26 — Windows 세션 (Focus Session/연속 시청 통합)" 로그 필독 — **자동넘김 30편 한도
+시스템은 완전히 제거됨**, 아래 1번은 새 통합 시스템 기준으로 갱신됨). 다음 세션 우선순위:
+1. **Focus Session 무료 10분 고정 + 광고/크레딧 연장(각 +5분) 흐름 실기기 검증** — 코드는
+   완성·설치·기본 스모크 테스트(크래시 없음, "SESSION ON" + "Focus Session Started (10m)" 토스트
+   확인)까지 했지만, 실제 10분 자연 만료 → `FocusSessionExtendModal` 등장 → 광고 시청(네트워크+
+   구글 광고서버+실제 터치라 adb로 자동화 불가) 또는 크레딧 사용 버튼까지의 전체 흐름은 사람이
+   직접 10분 기다려서 확인 필요. 테스트 편의상 `PaceOverlayModule.setFocusSessionDurationMinutes`
+   호출부나 네이티브 상수를 잠깐 짧게(1~2분) 낮춰서 테스트하는 것도 방법.
 2. D7/D8/D9(사장님 결정 대기) 중 하나라도 정리되면 그에 맞춰 마저 구현.
 3. Home/온보딩/스플래시 WIP 스모크 테스트(이전부터 밀려있던 항목, 아직 미완).
 
@@ -486,3 +489,62 @@ Focus Session 무료한도/보상형광고 기능을 이미 구현해뒀음(`rew
 검증: `npx tsc --noEmit` 통과, 실기기 재설치·재실행 후 크래시 없음 확인(로그 상 RevenueCat 설정
 경고만 있음, 무관). 크레딧 소비→세션 시간 실제 연장 여부는 실제로 한도까지 도달시켜야 확인 가능해
 아직 육안 검증 못 함 — 다음 세션에서 실제로 30편 도달시켜 크레딧 버튼 눌러보는 걸 권장.
+
+### 2026-07-26 — Windows 세션 (Focus Session/연속 시청 통합 — 시스템 전면 교체)
+
+사장님이 바로 위 항목("자동넘김 30편 한도")을 만든 지 몇 시간 안 지나서, 외부 AI(Copilot)와의
+대화를 붙여넣고 핵심을 지적함: **"focus session이 연속 시청이자나"** — 즉 어젯밤에 만든
+"Focus Session(10분 고정 시간)"과 그 전날 밤에 만든 "자동넘김 30편 한도(연속 시청)"가 사실
+같은 기능(핸즈프리 자동 넘김)을 서로 다른 축(시간 vs 편수)으로 **중복 게이팅**하고 있었다는
+뜻 — 무료 사용자 입장에서 "왜 업그레이드 모달이 두 종류(시간 만료 모달 vs 편수 한도 모달)가
+따로 뜨는지" 혼란스러울 수 있는 설계 결함. 사장님이 명시적으로 통합 모델을 승인함
+("나는 오히려 이렇게 가고 싶음"):
+
+- **무료**: Focus Session 10분 고정(시간 축 하나만 남김) + 출석 +5크레딧/일 + 휴식 10분당
+  +5크레딧(기존 §6 "크레딧 경제 공식" 그대로 유지) + 연장: 광고 시청 → +5분 **또는** 크레딧
+  5개 → +5분(1크레딧=1분, 기존 공식 그대로).
+- **프리미엄**: 지속시간 자유 선택 + 광고 제거 + (선택) 크레딧 2배 적립 — 마지막 항목은
+  "선택"이라고 명시했으므로 아직 미확정, 이번 세션에서 구현 안 함.
+
+**"자동넘김 30편 한도" 시스템 전면 제거** (2026-07-26 밤에 막 완성했던 것 포함):
+- `PaceAccessibilityService.kt`: `autoSwipeCount`/`autoSwipeCap`/`capReachedPending`/
+  `unlimitedAutoNext` 필드, `pauseAutoNextForCap()`, `setUnlimitedAutoNext()`/
+  `consumeAutoNextCapReached()`/`extendAutoNextCap()`/`getAutoSwipeCount()`/`getAutoSwipeCap()`
+  companion 함수 전부 삭제. `checkPlaybackAndMaybeSwipe()`는 이제 `isWatching`이면 한도 체크 없이
+  항상 스와이프(무료/프리미엄 구분 없음 — 스와이프 자체엔 더 이상 편수 제한이 없고, Focus Session
+  의 "지속시간"만 무료/프리미엄을 가른다).
+- `PaceOverlayModule.kt`: 대응하는 `Function()` 바인딩 4개 삭제(새로 추가한
+  `consumeFocusSessionTimedOut`/`extendFocusSession`은 그대로 유지 — 이름이 달라 혼동 없음).
+- JS: `AutoNextService` 인터페이스(`types.ts`)에서 `setUnlimitedAutoNext`/
+  `consumeAutoNextCapReached`/`extendAutoNextCap`/`getAutoSwipeStatus` 4개 제거,
+  `autoNextService.android.ts`/`.ios.ts` 구현도 동일하게 정리. `_layout.tsx`의 부팅
+  시/구독상태 변경 시 `autoNextService.setUnlimitedAutoNext(isPremium)` 호출부 삭제(더 이상
+  프리미엄이 스와이프 자체를 특별 취급할 이유가 없음 — `enforceFreeFocusSessionDuration`만 남음).
+- `overlay/index.tsx`: 예전 "자동넘김 30편 한도 도달" 모달 전체 삭제(`showCapModal`/`watchingAd`
+  state, `checkCap` AppState 이펙트, `onWatchAdForMore`/`onUseCredits`/`restCredits`/
+  `bonusCredits`/`totalCredits`, Modal JSX, `capModal*` 스타일, 이제 안 쓰는 import들
+  `useSubscriptionStore`/`useFlipStore`/`useAttendanceStore`/`showRewardedAd`/`ActivityIndicator`/
+  `Modal`). 이 모달의 역할(무료 한도 도달 시 광고/크레딧으로 연장)은 이제
+  `FocusSessionExtendModal`(Home) 하나로 완전히 대체됨.
+- i18n: `overlay.autoNextCapReachedTitle/Message`, `watchAdForMore`, `useCreditsForMore`,
+  `autoNextExtendedToast`, `creditsExtendedToast` 키 삭제(en/ko 둘 다, 더 이상 아무 데서도 참조
+  안 함). 대신 `home.useCreditsToExtend` 신규 추가(en/ko) — 아래 크레딧 버튼용.
+
+**`FocusSessionExtendModal.tsx`에 "크레딧 사용" 버튼 신규 추가** — 기존엔 광고 버튼 하나뿐이었음.
+`useFlipStore`(휴식 크레딧) + `useAttendanceStore`(출석 보너스)를 합산해 5개 이상 있을 때만
+버튼 노출, 눌러도 실제로는 부족분만큼만 소비(`spendCredits`/`spendBonusCredits`가 각각 실제
+소비량을 반환하는 기존 clamp 패턴 그대로 재사용), `bluetoothService.extendFocusSession(spent)`
+호출.
+
+**Home(`home.tsx`) 폴링 마무리** — 어젯밤 세션이 중단됐던 지점: `FocusSessionExtendModal`의
+JSX 렌더는 이미 있었지만 `showFocusSessionExtend` state와 그걸 채우는 AppState 이펙트가
+빠져있었음. `overlay/index.tsx`의 `consumeExpired`/`consumeAccessibilityRevoked`와 동일한
+패턴(YouTube가 전면일 때 JS 타이머가 죽어있을 수 있어, 네이티브가 이미 판단해둔 1회성 신호를
+Pace가 포그라운드로 돌아올 때마다 `consumeFocusSessionTimedOut()`으로 소비)으로 완성.
+
+검증: `npx tsc --noEmit` 통과, `gradlew assembleDebug` 빌드 성공, 실기기(R3CN80S5GWW) 재설치 후
+Settings 탭(주간 출석 위젯 렌더 확인)·Focus 탭(실제 YouTube Shorts 세션 시작 → "SESSION ON" 알약
++ "Focus Session Started (10m)" 토스트로 무료 10분 고정이 실제로 적용됨을 확인) 둘 다 크래시
+없음. **미검증**: 10분 자연 만료 후 `FocusSessionExtendModal`이 실제로 뜨는지, 광고/크레딧 버튼을
+눌렀을 때 `extendFocusSession`이 실제로 5분을 더해주는지 — 10분을 실제로 기다려야 확인 가능해
+다음 세션 권장 작업으로 위 §5에 남김.

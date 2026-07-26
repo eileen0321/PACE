@@ -312,9 +312,18 @@ export default function SettingsScreen() {
               onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
             />
             <DefaultRow
-              title={t('settings.focusSessionDuration')} desc={t('settings.focusSessionDurationDesc')}
+              title={t('settings.focusSessionDuration')}
+              desc={isPremium ? t('settings.focusSessionDurationDesc') : t('settings.focusSessionDurationDescFree')}
               value={`${settings.focusSessionDurationMinutes}m`} bordered
               onPress={() => {
+                // 2026-07-26 사용자 지시("무료일땐 10분 fix") — 무료는 값을 못 바꾸고 프리미엄
+                // 화면으로 안내(_layout.tsx의 enforceFreeFocusSessionDuration이 10분으로 계속
+                // 되돌려두므로, 여기서 cycle을 허용해도 다음 앱 재시작/구독상태 변화 때 무의미해짐 —
+                // 애초에 탭 자체를 다르게 처리해 혼란을 없앤다).
+                if (!isPremium) {
+                  router.push('/paywall');
+                  return;
+                }
                 const next = cycle(FOCUS_SESSION_DURATION_OPTIONS, settings.focusSessionDurationMinutes);
                 update({ focusSessionDurationMinutes: next });
                 // Android만 실제 효과 있음(네이티브 Kotlin 자동 종료 타이머가 이 미러 값을 직접

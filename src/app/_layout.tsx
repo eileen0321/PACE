@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import { autoNextService, syncAutoNextBuildFlag } from '../services/platform';
+import { autoNextService, bluetoothService, syncAutoNextBuildFlag } from '../services/platform';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
 import { JetBrainsMono_500Medium, JetBrainsMono_700Bold } from '@expo-google-fonts/jetbrains-mono';
@@ -27,6 +27,21 @@ import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { colors, typography } from '../constants/theme';
 
 const queryClient = new QueryClient();
+
+// 2026-07-26 사용자 지시("무료일땐 10분으로 fix") — Focus Session 지속시간은 Settings에서
+// [5,10,20,30,60]분 중 고를 수 있었는데, 무료 사용자는 10분으로 고정하고 보상형 광고로만 늘릴 수
+// 있게 한다(프리미엄은 기존처럼 자유 선택). isPremium이 false로 바뀔 때마다(로그아웃/구독 만료 등)
+// 강제로 되돌려 프리미엄이었을 때 골라둔 값이 그대로 남지 않게 한다.
+const FREE_FOCUS_SESSION_DURATION_MINUTES = 10;
+function enforceFreeFocusSessionDuration(isPremium: boolean) {
+  if (isPremium) return;
+  const current = useSettingsStore.getState().settings.focusSessionDurationMinutes;
+  if (current === FREE_FOCUS_SESSION_DURATION_MINUTES) return;
+  useSettingsStore.getState().update({ focusSessionDurationMinutes: FREE_FOCUS_SESSION_DURATION_MINUTES });
+  if (Platform.OS === 'android') {
+    bluetoothService.setFocusSessionDurationMinutes(FREE_FOCUS_SESSION_DURATION_MINUTES).catch(() => {});
+  }
+}
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 // 실제 광고 단위 ID를 첫 광고 요청 전에 등록된 개발기기에서는 항상 테스트 광고로 받도록 고정
@@ -93,15 +108,18 @@ export default function RootLayout() {
     // initUser()가 끝나야 토큰 유무(로그인 성공 vs 로컬 전용 게스트 폴백)가 확정되므로, 그 이후에
     // syncFromServer를 불러야 불필요한 401(→자동로그아웃)을 피할 수 있다(services/sync/backendSync
     // 참고 — 토큰 없으면 그 안에서 스스로 스킵하지만, 순서를 지켜 의도를 명확히 한다).
-    (async () => {
+    const settingsReady = (async () => {
       await initUser();
       await loadSettings();
       syncSettingsFromServer().catch(() => {});
     })();
-    initSubscription().then(() => {
-      // 2026-07-26 사용자 지시("유료일땐 ... 자동넘김 무제한") — init() 완료 직후 현재 isPremium을
-      // 네이티브에 1회 동기화. 이후 값 변화(구매/복원/RC 리스너 갱신)는 아래 subscribe가 담당.
-      autoNextService.setUnlimitedAutoNext(useSubscriptionStore.getState().isPremium).catch(() => {});
+    const subscriptionReady = initSubscription();
+    // 2026-07-26 사용자 지시("무료일땐 Focus Session 10분 고정") — loadSettings()가 먼저 끝나야
+    // (그래야 focusSessionDurationMinutes가 저장된 실제 값으로 채워짐) 아래 강제 적용이 방금 로드된
+    // 값을 덮어쓰지 않는다 — 둘 다 끝난 뒤에만 실행.
+    Promise.all([settingsReady, subscriptionReady]).then(() => {
+      const isPremium = useSubscriptionStore.getState().isPremium;
+      enforceFreeFocusSessionDuration(isPremium);
     });
     loadDailyBonus();
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
@@ -124,11 +142,11 @@ export default function RootLayout() {
   }, []);
 
   // 2026-07-26 — isPremium이 바뀔 때마다(구매 완료, 복원, RC CustomerInfo 리스너 갱신, 로그아웃 등)
-  // 네이티브 자동넘김 무제한 플래그를 계속 동기화. 부팅 시 1회는 위 initSubscription().then()이 담당.
+  // Focus Session 무료 고정시간 강제 적용을 계속 동기화. 부팅 시 1회는 위 initSubscription().then()이 담당.
   useEffect(() => {
     const unsub = useSubscriptionStore.subscribe((state, prevState) => {
       if (state.isPremium !== prevState.isPremium) {
-        autoNextService.setUnlimitedAutoNext(state.isPremium).catch(() => {});
+        enforceFreeFocusSessionDuration(state.isPremium);
       }
     });
     return unsub;

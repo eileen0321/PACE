@@ -1051,3 +1051,19 @@ UI/로직이 계속 갈라짐.
 
 **홈 재생버튼**: 사장님 지시로 `PlatformPickerCard.playButtonLarge` 52→40, 아이콘 22→18로 축소
 (안드로이드에 맞춤). ⚠️ Windows 세션이 이미 다른 값으로 줄였다면 푸시 후 값 reconcile 필요(간단).
+
+### 2026-07-26 (밤3) — Mac 세션 (⚠️ 공통코드 미푸시 항목 누적 — Windows 세션 즉시 푸시 필요)
+
+사장님이 iOS 빌드에서 "반영 안 됐다"고 지적한 공통 변경들이 **origin에 없음 = Windows 세션 로컬에만
+있고 미푸시**. Mac 로컬은 origin과 100% 동기(미커밋 0)라 받을 방법이 없음. **Windows 세션은 아래를
+즉시 커밋·푸시할 것**:
+1. **홈 온보딩("쉬고 모으고 이어보기") 탭 시 뜨는 "휴식 전용 가이드"** — 현재 origin의 onboarding/index.tsx는
+   탭하면 핸즈프리(BluetoothOnboardingSheet)만 뜸(`onPress→setShowHandsFree`). 휴식 가이드 시트
+   컴포넌트 자체가 origin에 없음(src/components/onboarding엔 AccessibilityOnboardingSheet뿐). → 그
+   휴식 가이드 컴포넌트+연결을 푸시할 것.
+2. (앞 로그) 홈 PlatformPickerCard 재생버튼 축소 — Mac이 52→40으로 임시 반영했으나 Windows가 다른
+   값이면 reconcile.
+- **재확인**: onboarding 라우팅(src/app/index.tsx)은 이미 공통·정상(앱 실행→onboardingCompleted 플래그로
+  온보딩/홈 분기). 시나리오 자체는 양 플랫폼 동일함 — 문제는 "새로 추가한 컴포넌트 미푸시"뿐.
+- ⚠️ 앞으로 공통 컴포넌트(src/components/**, src/app/(tabs)/**, src/app/onboarding/**, 스토어/훅) 변경은
+  플랫폼 무관하므로 **작업 즉시 커밋·푸시**. 안 그러면 사장님이 두 폰 번갈아 볼 때마다 "iOS엔 없네"가 반복됨.

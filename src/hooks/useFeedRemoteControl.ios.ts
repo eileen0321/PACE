@@ -63,18 +63,20 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     };
   }, []);
 
-  // 감지 게이팅: active면 손짓(전면카메라 Vision) + 핑거스냅(raw 오디오 DSP)을 함께 시작, 꺼지면 정지.
-  // Focus Session 동안만 켜짐(안드로이드 setAutoMode에서 snap+handwave 함께 켜는 것과 동일).
-  // 2026-07-26(2차): 스냅을 SoundAnalysis→raw DSP(안드 이식)로 재작성해 크래시가 사라져 'both' 복귀.
+  // 감지 게이팅: active면 손짓(전면카메라 Vision)만 시작, 꺼지면 정지. Focus Session 동안만 켜짐.
+  // ⚠️ 2026-07-26 최종: 핑거스냅(마이크)은 인앱 영상재생과 근본 충돌한다 — 스냅용 .playAndRecord 세션을
+  // 켜면 (1) 매 영상이 시스템 레벨에서 무음이 되고 (2) engine.start ObjC 예외로 크래시(캐처로 크래시는
+  // 막았으나 무음은 못 막음). 마이크를 안 켜는 방식(예: 미디어세션 미터링)으로 재작성 전까지 스냅 제외.
+  // 크래시-세이프 인프라(PaceExceptionCatcher, 재시도, 스파이크 감지)는 재개 대비 네이티브에 남겨둠.
   useEffect(() => {
     const mod = modRef.current;
     if (!mod) return;
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('both').catch((err) => {
+      mod.start('wave').catch((err) => {
         runningRef.current = false;
-        console.warn('[useFeedRemoteControl] 핸즈프리(snap+wave) start 실패:', err);
+        console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
       });
     } else if (!active && runningRef.current) {
       runningRef.current = false;

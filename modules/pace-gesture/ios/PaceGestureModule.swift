@@ -175,33 +175,55 @@ private final class SnapDetector {
     }
   }
 
+  private func scheduleRetry(_ why: String) {
+    NSLog("PACESNAP retry(%d) after: %@", retryCount, why)
+    if engine.isRunning { engine.stop() }
+    engine.inputNode.removeTap(onBus: 0)
+    guard retryCount < 5 else { onError("snap start gave up: \(why)"); return }
+    retryCount += 1
+    queue.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.begin() }
+  }
+
   private func begin() {
     NSLog("PACESNAP begin() enter")
+    let session = AVAudioSession.sharedInstance()
     do {
-      let session = AVAudioSession.sharedInstance()
-      // .measurement: AGC/튜닝 최소화로 순간 스파이크 보존. .mixWithOthers로 유튜브 소리와 공존.
+      // .measurement: AGC 최소화(순간 스파이크 보존). .mixWithOthers로 유튜브 소리와 공존.
       try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth])
       try session.setActive(true)
-      NSLog("PACESNAP session active (session.sr=%.0f)", session.sampleRate)
-      let input = engine.inputNode
-      // ⚠️ 실기기 발견: setActive 직후 input.outputFormat(forBus:0)이 sampleRate=0으로 뜨는 경우가 있다
-      // (엔진 미준비 상태). 커스텀 포맷/precomputed sr에 의존하지 말고, 탭 포맷을 nil로 넘겨 노드가
-      // 실행 시점의 실제 포맷을 쓰게 하고, 샘플레이트는 매 버퍼(buffer.format)에서 읽는다.
-      engine.prepare()
-      input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
-        self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))
-      }
-      try engine.start()
-      NSLog("[pace-snap] started, session sr=%.0f", session.sampleRate)
     } catch {
-      // -10868 등: WebView가 오디오 세션을 막 잡는 순간 engine.start가 실패할 수 있다 → 잠깐 뒤 재시도.
-      onError("audio start failed: \(error.localizedDescription)")
-      NSLog("PACESNAP begin() THREW: %@ (retry=%d)", error.localizedDescription, retryCount)
-      if retryCount < 3 {
-        retryCount += 1
-        if engine.isRunning { engine.stop() }
-        queue.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.begin() }
+      scheduleRetry("session config: \(error.localizedDescription)"); return
+    }
+    NSLog("PACESNAP session active (sr=%.0f)", session.sampleRate)
+    let input = engine.inputNode
+
+    // ⭐ 핵심: AVAudioEngine.start()/installTap은 WebView 오디오와 충돌 시 Swift가 못 잡는 ObjC
+    // NSException(-10868)을 던져 앱을 죽였다(실기기 확인) → PaceExceptionCatcher(@try/@catch)로 감싸
+    // 크래시 대신 Swift 에러로 받는다. VoiceProcessing(AEC=노이즈캔슬)로 재생음 에코를 상쇄(안드
+    // AcousticEchoCanceler 대응). 탭 포맷 nil + 샘플레이트는 버퍼에서 읽어 sr=0 이슈 회피.
+    do {
+      try PaceExceptionCatcher.catchExceptions {
+        // VoiceProcessing(AEC)은 iOS에서 입력 탭이 버퍼를 안 주는 이슈가 있어(실기기 확인, "started"는
+        // 되나 rms 콜백이 안 옴) 쓰지 않는다. 대신 적응형 noiseFloor가 영상 소리 레벨을 추적하고 스냅이
+        // 그 위로 6~8배 튀는 걸로 감지(=소프트웨어 노이즈 게이팅). .measurement 모드로 순간 스파이크 보존.
+        input.removeTap(onBus: 0)                     // 재시도 시 기존 탭 제거(중복설치 크래시 방지)
+        self.engine.prepare()
+        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
+          self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))
+        }
+        do { try self.engine.start() }
+        catch { NSLog("PACESNAP engine.start swift-err %@", error.localizedDescription) }
       }
+    } catch {
+      // ObjC NSException을 여기서 안전하게 받음(크래시 X) → 재시도.
+      scheduleRetry("start exception: \(error.localizedDescription)"); return
+    }
+
+    if engine.isRunning {
+      retryCount = 0
+      NSLog("[pace-snap] started (AEC) sr=%.0f", session.sampleRate)
+    } else {
+      scheduleRetry("engine not running after start")
     }
   }
 

@@ -64,31 +64,34 @@ const INJECTED_JS = `
     //   - 팝업 텍스트 요소 display:none → 그 요소가 영상 컨테이너를 포함 → 영상 멈추고 소리만 남음
     //   결론: 팝업은 유튜브 UI라 건드리면 재생이 깨진다. 소리는 이미 나므로 팝업(껍데기)은 그냥 둔다.
     var audibleOk = false;
-    function tryAudible() {
-      v.muted = false; v.volume = 1.0;
-      v.play().then(function () { audibleOk = true; ad('audible-ok'); }).catch(function (e) {
-        send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
-        v.muted = true; v.play().catch(function () {}); // 소리 차단 시 무음으로라도 autoplay
-      });
-    }
-    tryAudible();
     // ── "탭하여 음소거 해제" 팝업 제거: YouTube 플레이어 API unMute() 사용 ──────────────────
     // 실기기 로그로 확정: 팝업 텍스트는 .html5-video-player(= YouTube 플레이어 객체) 자체에 있다.
     // 이 컨테이너는 영상을 품고 있어 클릭/display:none 하면 재생이 죽는다(앞서 겪음). 대신 이 요소가
-    // 직접 노출하는 플레이어 API unMute()/setVolume()/isMuted()를 호출한다 — YouTube 내부 음소거를
-    // 정식으로 풀어 팝업이 사라지고 소리는 유지. DOM 조작·클릭 이벤트 전혀 없어 재생에 무해.
+    // 직접 노출하는 플레이어 API unMute()/setVolume()를 호출한다 — 내부 음소거를 정식 해제, 팝업 제거.
     function ytUnmute() {
       try {
         var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-        if (mp && typeof mp.unMute === 'function') {
-          if (typeof mp.isMuted !== 'function' || mp.isMuted()) { mp.unMute(); if (typeof mp.setVolume === 'function') mp.setVolume(100); }
+        if (mp && typeof mp.unMute === 'function' && (typeof mp.isMuted !== 'function' || mp.isMuted())) {
+          mp.unMute(); if (typeof mp.setVolume === 'function') mp.setVolume(100);
         }
       } catch (e) {}
     }
-    // 첫 2초간 빠르게 unMute — 유튜브가 페이지 로드 직후 음소거로 시작해 "탭하여 음소거 해제" 팝업이
-    // 잠깐 뜨는 것을 최소화. ytUnmute는 getElementById+isMuted라 가벼움(예전 perf 문제였던 broad
-    // querySelectorAll 아님) → 빠른 폴링 안전.
-    var fastU = 0; var fastUT = setInterval(function () { ytUnmute(); if (++fastU > 20) clearInterval(fastUT); }, 100);
+    // ⚡ 첫 재생 '씹힘' 방지: 예전엔 소리로 먼저 play()→iOS가 차단→음소거로 다시 play() 했는데, 이
+    // 재시작이 영상 첫 프레임을 끊었다(사용자 "영상 처음 씹힌다"). 대신 "음소거 자동재생"(iOS에서 항상
+    // 허용, 재시작 없음)으로 매끄럽게 시작하고, 재생이 시작된 직후 이미 돌아가는 영상의 음소거만 해제한다.
+    function tryAudible() {
+      v.muted = true; v.volume = 1.0; // 음소거로 부드럽게 시작(iOS 항상 허용)
+      v.play().then(function () {
+        audibleOk = true;
+        v.muted = false; v.volume = 1.0; // 재생 시작 후 음소거만 해제(재시작 X)
+        ytUnmute();
+        ad('audible-ok');
+      }).catch(function (e) {
+        send({ type: 'audio', tag: 'play-blocked', err: String(e && e.name), muted: v.muted });
+        v.play().catch(function () {}); // 드묾 — 그래도 재생만 계속
+      });
+    }
+    tryAudible();
     // 유튜브가 재생 후 다시 음소거하면 되돌린다 — 단 "소리 재생이 실제로 됐을 때(audibleOk)"만.
     // 초기 무음-autoplay 단계에서 섣불리 unmute하면 autoplay가 깨져 멈추므로 게이트를 둔다.
     v.addEventListener('volumechange', function () { if (audibleOk && v.muted) { v.muted = false; v.volume = 1.0; } });

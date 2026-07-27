@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -373,15 +374,15 @@ export default function OverlaySessionScreen() {
           onToggleExpanded={() => setExpanded((v) => !v)}
         />
         {!expanded && (timer.remainingMinutes === 5 || timer.remainingMinutes === 1) && (
-          <View style={styles.lowTimeToast}>
+          <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutUp.duration(160)} style={styles.lowTimeToast}>
             <Feather name="clock" size={14} color="#000000" />
             <Text style={styles.lowTimeToastText}>
               {timer.remainingMinutes === 1 ? t('overlay.lowTimeWarningSingular', { n: 1 }) : t('overlay.lowTimeWarningPlural', { n: timer.remainingMinutes })}
             </Text>
-          </View>
+          </Animated.View>
         )}
         {expanded && (
-          <View style={styles.expandedWrap}>
+          <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutUp.duration(160)} style={styles.expandedWrap}>
             <OverlayExpandedCard
               todayUsedMinutes={effectiveDailyLimitMinutes - timer.remainingMinutes}
               dailyLimitMinutes={effectiveDailyLimitMinutes}
@@ -407,7 +408,7 @@ export default function OverlaySessionScreen() {
                 useToastStore.getState().show(t('overlay.minutesAdded', { n: amount }));
               }}
             />
-          </View>
+          </Animated.View>
         )}
       </SafeAreaView>
 

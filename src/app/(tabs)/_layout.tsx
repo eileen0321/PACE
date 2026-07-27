@@ -75,9 +75,12 @@ export default function TabsLayout() {
         tabBarItemStyle: { paddingVertical: 4 },
         // iOS: iOS 26 "Liquid Glass" 탭바 컨벤션 — 반투명 블러 위로 콘텐츠가 비쳐 보이는 떠 있는
         // 형태가 현재 시스템 기본값이라 네이티브 룩에 맞춰 따라간다(카드/오버레이는 기존 원칙대로
-        // 플랫 유지 — 시스템 크롬에만 적용되는 예외). Android: Material 3는 블러 대신 불투명
-        // elevation 서피스가 표준이고, zen-master/jlpt-master의 GlassSurface도 안드로이드에서 텍스트가
-        // 같이 흐려지는 문제로 실제 블러를 쓰지 않고 flat 컬러로 대체했던 전례를 그대로 따른다.
+        // 플랫 유지 — 시스템 크롬에만 적용되는 예외). Android: 탭바는 Material 3 표준을 따라 블러 대신
+        // 불투명 elevation 서피스를 쓴다 — 시스템 크롬이라는 이 예외 자체는 유지하되, "GlassSurface가
+        // Android에서 실제 블러를 안 쓴다"는 옛 근거는 더 이상 사실이 아니다(2026-07-27 GlassSurface.tsx
+        // 재작성 이후 Android도 실제 BlurView 렌더링 — GlassSurface를 새로 쓸 때 이 주석을 "안드는 블러
+        // 없음"으로 오해해 크기 변하는 애니메이션 안에 넣으면 focus.tsx에서 고친 것과 같은 블러 리사이즈
+        // 플리커가 재발할 수 있다).
         tabBarStyle: Platform.select({
           ios: { position: 'absolute', borderTopWidth: 0, elevation: 0 },
           android: {

@@ -1790,3 +1790,47 @@ Time/Family Controls 언급 제거, `b88a65d`)는 이미 별개로 처리돼 있
 - (주의) 다음 빌드부터는 스토어 규칙상 **`versionCode`(Android)/`CFBundleVersion`(iOS)는 업로드마다
   단조 증가**해야 하니, 같은 트랙에 재업로드하면 2,3…으로 올릴 것. `version`/`versionName`은 사용자 표시용이라
   테스트 중엔 1.0.1 유지 가능.
+
+**↳ Windows 세션 적용 완료**: `android/app/build.gradle`의 `versionName`을 `"1.0.0"`→`"1.0.1"`로 맞춤
+(`versionCode`는 이미 `1`이라 변경 불필요). `app.json`의 `version`은 이미 `1.0.1`이라 그대로.
+
+### 2026-07-28 밤 — 손짓/화면전환 전수감사 (사장님 지시, 에이전트 2개 병렬 실행)
+
+**손짓 감지 감사에서 발견·수정한 진짜 버그 2건**:
+1. **[FIXED] `PaceHandWaveDetector.kt` 레이스 컨디션** — start()/stop()이 빠르게 연속 호출되면(예:
+   "손짓" 스위치를 짧은 시간 안에 껐다 켰다), `ProcessCameraProvider.getInstance().addListener()`의
+   비동기 콜백이 `running` 플래그만 확인하고 "이게 어느 start() 호출에 속한 콜백인지"는 확인 안 해서,
+   이미 stop()된 첫 start()의 지연 콜백이 그 사이 실행된 두 번째(현재 유효한) start()의 리소스를
+   건드리는 문제가 있었다 — 최악의 경우 이미 DESTROYED된 LifecycleRegistry에 markState(RESUMED)를
+   호출해 예외 → `cleanupAfterStartFailure()`가 방금 정상 시작된 세션까지 지워버림("마지막으로
+   켰는데 조용히 꺼져있음"). start()마다 증가하는 `startGeneration` 토큰으로 콜백이 자기 세대인지
+   확인하게 고침. 재현 조건: 스위치를 100~300ms 안에 두 번 토글 — 드물지만 실제로 가능.
+2. **[FIXED] `focus.tsx`의 "손짓" 하위토글에 카메라 권한 요청이 없었음** — 마스터 토글
+   (`toggleAutoMode`/`enableAutoModeForSession`, `useBluetoothStore.ts`)은 켤 때 카메라 권한을 미리
+   요청하는데, 2026-07-27에 마스터와 독립적으로 분리된 이 하위토글은 권한 요청 코드가 아예 없었다 —
+   카메라 권한을 한 번도 안 준 기기에서 이 스위치만 켜면 JS는 ON으로 보이는데 네이티브
+   `PaceHandWaveDetector.start()`는 조용히 no-op(마스터와 대칭되는 "보이는데 안 됨" 버그, 사장님이
+   전에 지적한 "손짓 블루투스 안됨" 계열과 같은 근본원인). 마스터와 같은 패턴으로 권한 요청 추가.
+
+**화면전환 감사에서 발견·수정한 것**:
+3. **[FIXED] `overlay/index.tsx`의 저시간 토스트/확장카드가 애니메이션 없이 즉시 스냅** — 같은 화면의
+   "+N분 추가" 토스트(ToastHost 경유, 150~200ms 페이드)와 대비돼 화면 하나 안에서 트랜지션 품질이
+   들쭉날쭉했다. `focus.tsx`에서 방금 고친 손짓 아코디언과 같은 `FadeInDown`/`FadeOutUp` 패턴 적용
+   (둘 다 BlurView 없는 평범한 View라 리사이즈 플리커 위험 없음, 에이전트가 확인).
+4. **[FIXED] `(tabs)/_layout.tsx`의 낡은 주석** — "GlassSurface는 Android에서 실제 블러 안 씀"이라는
+   옛 근거가 2026-07-27 GlassSurface.tsx 재작성 이후 더 이상 사실이 아닌데 그대로 남아 있어서, 앞으로
+   GlassSurface를 크기 변하는 애니메이션 안에 넣으면 `focus.tsx`에서 고친 것과 같은 블러 리사이즈
+   플리커가 재발할 수 있었음 — 주석을 현재 사실에 맞게 정정.
+
+**발견했지만 오늘 밤은 손 안 댄 것 (우선순위 낮음/스코프 큼 — 다음 세션 참고)**:
+- 🟡 카메라(손짓)/마이크(핑거스냅) 권한이 **세션 도중** 회수되는 경우 재감지·안내가 없음 — 접근성
+  권한은 이미 이 패턴(`checkAccessibilityRevoked`/`notifyAccessibilityNeeded`)이 있는데 카메라/마이크는
+  없음. 실사용에서 있을 법하지만("설정에서 앱 권한 끄기") 오늘 감사 스코프보다 큰 작업이라 보류.
+- 🟡 `PaceAccessibilityService.bluetoothVolumeKeySkipEnabled` 컴패니언 기본값(true)이 `onServiceConnected()`
+  시점에 SharedPreferences를 스스로 안 읽음 — 프로세스가 죽고 OS가 접근성 서비스를 `PaceOverlayService`의
+  복원보다 먼저 리바인드하면, 사용자가 꺼둔 설정이 짧게 무시되는 좁은 창(OEM 프로세스 킬 의존적) — 낮은 빈도.
+- 🟡 `home.tsx`의 `ConnectingOverlay`가 체크리스트 애니메이션(~1.35~1.65초) 도중 앱이 백그라운드로
+  가면 완료 콜백이 못 불려 Home 화면에 "연결 중…" 이 멈춰 보이는 채로 남을 수 있음(플랫폼 탭 직후
+  ~1초 안에 최근앱→복귀 시 재현). `AppState` 'active' 복귀 시 강제 완료 처리 추가 권장.
+- 🟡 `stats.tsx`의 Rest Time 카드가 `putDownSeconds` 값에 따라 애니메이션 없이 마운트/언마운트돼
+  아래 카드들이 순간 밀림 — 드문 타이밍이라 낮은 우선순위.

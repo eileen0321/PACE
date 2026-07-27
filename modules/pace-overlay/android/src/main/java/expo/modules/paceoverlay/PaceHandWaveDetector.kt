@@ -76,6 +76,14 @@ object PaceHandWaveDetector {
   private const val LUMA_DARK_ABS_MAX = 70.0 // 절대 밝기도 충분히 어두워야(0~255) — 정상 조도 변화 오탐 방지
 
   @Volatile private var running = false
+  // 2026-07-28 감사 발견 — start()/stop()이 빠르게 연속 호출되면(예: Focus 탭 "손짓" 스위치를 짧은
+  // 시간 안에 껐다 켰다), providerFuture.addListener()의 비동기 콜백이 `running`만 확인하고 "이게 어느
+  // start() 호출에 속한 콜백인지"는 확인 안 해서, 이미 stop()된 첫 번째 start()의 지연 콜백이 그 사이에
+  // 실행된 두 번째(현재 유효한) start()의 owner/handLandmarker를 건드리는 레이스가 있었다 — 최악의 경우
+  // 이미 DESTROYED된 첫 번째 LifecycleRegistry에 markState(RESUMED)를 호출해 예외가 나고,
+  // cleanupAfterStartFailure()가 방금 정상 시작된 두 번째 세션의 리소스까지 지워버린다("마지막으로 켰는데
+  // 조용히 꺼져있음"). start()/stop() 호출마다 증가하는 세대 토큰으로 콜백이 자기 세대인지 확인하게 한다.
+  @Volatile private var startGeneration = 0
   private var cameraProvider: ProcessCameraProvider? = null
   private var handLandmarker: HandLandmarker? = null
   private var analysisExecutor: ExecutorService? = null
@@ -113,11 +121,12 @@ object PaceHandWaveDetector {
       return
     }
     running = true
-    Handler(Looper.getMainLooper()).post { startOnMainThread(context, onWave) }
+    val myGeneration = ++startGeneration
+    Handler(Looper.getMainLooper()).post { startOnMainThread(context, onWave, myGeneration) }
   }
 
-  private fun startOnMainThread(context: Context, onWave: () -> Unit) {
-    if (!running) return // start()와 stop()이 거의 동시에 불린 경우 방어
+  private fun startOnMainThread(context: Context, onWave: () -> Unit, myGeneration: Int) {
+    if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
     lastTriggerAtMs = 0L
 
@@ -154,7 +163,9 @@ object PaceHandWaveDetector {
 
     val providerFuture = ProcessCameraProvider.getInstance(context)
     providerFuture.addListener({
-      if (!running) return@addListener // stop()이 초기화 완료 전에 먼저 불렸을 수 있음
+      // stop() 또는 그 사이의 또 다른 start()가 이 콜백보다 먼저 실행됐으면(=내가 stale) 손대지 않는다 —
+      // running만 보면 "지금 켜져 있나"만 알 뿐 "이게 그 켜진 세션의 콜백인가"는 모른다(위 주석 참고).
+      if (!running || myGeneration != startGeneration) return@addListener
       try {
         val provider = providerFuture.get()
         // 폴더블/일부 태블릿처럼 전면 카메라 자체가 없는 기기 대비 — CameraSelector 바인딩이

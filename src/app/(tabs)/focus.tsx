@@ -68,7 +68,20 @@ export default function FocusScreen() {
   const gestureOn = settings.handsFreeGesture;
   const setGesture = (v: boolean) => {
     update({ handsFreeGesture: v });
-    if (!isIOS) bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
+    if (isIOS) return;
+    // 2026-07-28 감사 발견 — 마스터 토글(toggleAutoMode/enableAutoModeForSession)은 켤 때 카메라 권한을
+    // 미리 요청하는데, 이 손짓 하위토글은 마스터와 독립적으로 켤 수 있게 분리된 뒤(2026-07-27)로도 권한
+    // 요청 코드가 없었다 — 카메라 권한을 한 번도 안 준 기기에서 이 스위치만 켜면 JS는 ON으로 보이는데
+    // 네이티브 PaceHandWaveDetector.start()는 조용히 no-op(마스터와 동일한 "보이는데 안 됨" 버그).
+    if (v) {
+      (async () => {
+        const hasCamera = await bluetoothService.hasCameraPermission();
+        if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
+        bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
+      })();
+      return;
+    }
+    bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
   };
   const volumeSkipOn = isIOS ? settings.volumeKeyRemote : settings.bluetoothVolumeKeySkipEnabled;
   const setVolumeSkip = (v: boolean) => {

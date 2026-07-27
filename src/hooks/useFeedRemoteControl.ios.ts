@@ -27,6 +27,8 @@ type GestureModule = {
   start(mode: 'snap' | 'head' | 'wave' | 'both'): Promise<void>;
   stop(): void;
   isHeadGestureSupported(): boolean;
+  /** 영상 전환(페이지 리로드) 동안 손짓 추론을 잠깐 멈춰 CPU를 로드에 양보(카메라는 유지). */
+  setWavePaused(paused: boolean): void;
   addListener(event: 'onSnap' | 'onHeadNod' | 'onHandWave' | 'onDiag' | 'onError', listener: (payload: any) => void): { remove: () => void };
 };
 
@@ -36,12 +38,23 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
   const modRef = useRef<GestureModule | null>(null);
   const runningRef = useRef(false);
   const lastNextRef = useRef(0);
+  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 과발화 안전망(사용자 "한 손짓에 여러 번 넘어감"): 네이티브 재무장 게이트에 더해, JS에서도 직전
   // 넘김 후 1.5초 내 재호출은 무시한다(연속/누적 이벤트가 여러 영상을 순삭하는 것 방지).
   const fireNext = () => {
     const nowMs = Date.now();
     if (nowMs - lastNextRef.current < 1500) return;
     lastNextRef.current = nowMs;
+    // 전환(YouTube 페이지 리로드 ~1.6s) 동안 손짓 추론을 멈춰 CPU를 페이지 로드에 양보 → 전환 체감 개선.
+    // 고정 타임아웃으로 자동 재개(onReady 신호에 의존하지 않아 "ready 누락→영구 정지" 위험 없음).
+    // 불응(네이티브 1200ms)이 어차피 재발화를 막으므로 이 구간에 손짓을 놓칠 일도 없다.
+    try {
+      modRef.current?.setWavePaused?.(true);
+      if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = setTimeout(() => {
+        try { modRef.current?.setWavePaused?.(false); } catch {}
+      }, 1600);
+    } catch {}
     cbRef.current.onNext();
   };
 
@@ -66,6 +79,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     ];
     return () => {
       subs.forEach((s) => { try { s.remove(); } catch {} });
+      if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
       try { mod?.stop(); } catch {}
       modRef.current = null;
       runningRef.current = false;

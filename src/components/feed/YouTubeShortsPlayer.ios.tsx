@@ -185,6 +185,8 @@ function isAllowedNavigation(url: string): boolean {
 export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, preload }: Props) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  // 스피너는 로드가 길어질 때(≥450ms)만 표시 — 빠른 전환엔 스피너를 안 띄워 "기다림"을 강조하지 않는다.
+  const [showSpinner, setShowSpinner] = useState(false);
   const wasPreloadRef = useRef<boolean>(!!preload);
   const source = useMemo(
     () => ({ uri: `https://www.youtube.com/shorts/${videoId}`, headers: { Cookie: CONSENT_COOKIE } }),
@@ -193,6 +195,13 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
 
   // videoId가 바뀌면(다음 영상) 새 페이지 로드 → ready 리셋.
   useEffect(() => { setReady(false); wasPreloadRef.current = !!preload; }, [videoId]);
+
+  // 스피너 지연: 활성 로드가 450ms 넘게 걸릴 때만 스피너를 보인다(빠른 로드는 커버만·스피너 없음).
+  useEffect(() => {
+    if (ready || preload) { setShowSpinner(false); return; }
+    const t = setTimeout(() => setShowSpinner(true), 450);
+    return () => clearTimeout(t);
+  }, [ready, preload, videoId]);
 
   // 프리로드였다가 활성화(preload=false)되면 → 미리 로드해둔 영상을 처음부터 소리내어 재생.
   // 이게 "다음 영상 즉시 재생"의 핵심 — 페이지가 이미 로드돼 있어 재로드 간극(씹힘)이 없다.
@@ -274,7 +283,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           preload(다음 영상 미리로드)일 땐 화면에 안 보이므로 커버 불필요 — 활성 영상 로딩 때만 표시. */}
       {!ready && !preload && (
         <View style={styles.loadingCover} pointerEvents="none">
-          <ActivityIndicator size="large" color="#FFFFFF" />
+          {showSpinner && <ActivityIndicator size="large" color="#FFFFFF" />}
         </View>
       )}
     </View>

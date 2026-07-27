@@ -57,6 +57,13 @@ public class PaceGestureModule: Module {
       NSLog("PACEWV %@", msg)
     }
 
+    // 영상 전환(페이지 리로드, ~1.6s) 동안 손짓 추론을 잠깐 멈춰 CPU를 페이지 로드에 양보한다.
+    // 카메라는 켠 채(재시작 비용 0)라 재개가 즉시다. 불응(1200ms)이 어차피 재발화를 막으므로 손짓 유실 없음.
+    // ⚠️ JS는 반드시 안전 타임아웃으로 자동 재개해야 함(ready 이벤트 누락 대비) — false를 못 부르면 손짓이 죽음.
+    Function("setWavePaused") { (paused: Bool) in
+      self.waveDetector?.setPaused(paused)
+    }
+
     // 고개짓 지원 기기인지(TrueDepth). JS가 UI 노출 여부 판단에 사용.
     Function("isHeadGestureSupported") { () -> Bool in
       if #available(iOS 11.0, *) { return ARFaceTrackingConfiguration.isSupported }
@@ -390,6 +397,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastTriggerMs: Double = 0
   private var lastProcessedMs: Double = 0
   private var lastHandSeenMs: Double = 0 // 손이 마지막으로 보인 시각 — "부재→근접 등장" 안전망용
+  private var paused = false // 영상 전환 중 추론 일시정지(카메라는 유지) — setPaused로 토글
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
   private var logTick = 0
@@ -462,6 +470,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     default:
       NSLog("[pace-wave] cam DENIED/RESTRICTED — 설정에서 카메라 켜야 함")
       onError("camera permission denied")
+    }
+  }
+
+  // 영상 전환 중 추론 일시정지/재개. 재개 시 히스토리를 비워 전환 전의 낡은 손 크기 baseline이
+  // 남아 growth를 오염시키지 않게 한다(재개 직후 새 접근을 깨끗한 기준으로 판정).
+  func setPaused(_ p: Bool) {
+    queue.async {
+      self.paused = p
+      if !p { self.sizeHistory.removeAll(); self.lumaHistory.removeAll(); self.lastHandSeenMs = 0 }
     }
   }
 
@@ -569,7 +586,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // AVCaptureVideoDataOutputSampleBufferDelegate — 프레임을 MediaPipe에 흘리고, 밝기 occlusion도 여기서 본다.
   func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
     let now = CFAbsoluteTimeGetCurrent()
-    lastFrameAt = now // 워치독용(스로틀 전)
+    lastFrameAt = now // 워치독용(스로틀 전) — paused여도 갱신돼 워치독이 카메라를 죽었다고 오판·재시작하지 않음
+    if paused { return } // 영상 전환(페이지 리로드) 중엔 추론을 멈춰 CPU를 페이지 로드에 양보(카메라는 켠 채)
     let nowMs = now * 1000
     guard nowMs - lastProcessedMs >= processIntervalMs else { return } // 안드와 동일 150ms 간격
     lastProcessedMs = nowMs

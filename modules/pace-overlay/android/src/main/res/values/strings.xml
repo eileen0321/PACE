@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 접근성 서비스 설정 화면에 사용자에게 그대로 노출되는 설명 — "왜 이 권한이 필요한지"를
-         정직하게 밝힌다(Play 정책 관점에서도, 사용자 신뢰 관점에서도 중요). -->
-    <string name="pace_accessibility_service_description">Pace가 켜져 있는 동안 YouTube Shorts, Instagram Reels, TikTok 화면에서 Auto Next 설정에 따라 자동으로 다음 영상으로 넘겨줍니다. 다른 용도로는 사용하지 않습니다.</string>
+         정직하게 밝힌다(Play 정책 관점에서도, 사용자 신뢰 관점에서도 중요).
+         2026-07-27 감사 발견 — 이 파일(values/, 로케일 한정자 없음)이 그동안 모든 언어의 기본값이었다.
+         한국어 기기든 영어 기기든 이 파일이 쓰이므로, 영어 사용자에게 한국어 설명이 그대로 노출되고
+         있었다(크리티컬 — 접근성 권한처럼 민감한 화면에서). 기본값을 영어로 바꾸고, 한국어는
+         values-ko/strings.xml로 분리해 로케일에 맞게만 뜨도록 정정. -->
+    <string name="pace_accessibility_service_description">While Pace is on, it advances to the next video on YouTube Shorts, Instagram Reels, and TikTok according to your Auto Next setting. It is not used for any other purpose.</string>
 </resources>

@@ -358,6 +358,14 @@ class PaceOverlayService : Service() {
     editor.apply()
   }
 
+  // 2026-07-27 감사 발견(크리티컬) — 이 서비스가 띄우는 알림/전체화면차단/토스트 문구가 전부
+  // 한국어로 하드코딩돼 있었다. 이건 JS의 src/services/i18n을 안 거치는 순수 네이티브 코드라,
+  // 기기 언어가 영어여도 이 문구들만 한국어로 보이는 상태였다(JS 쪽 LimitReachedOverlay.tsx 등
+  // 같은 화면의 JS 사본은 이미 정상적으로 영문 대응돼 있었음 — 네이티브 사본만 놓친 것).
+  // 한국어(ko) 기기에서만 한국어, 그 외(영어 포함 전부)는 영어로 — JS i18n의 폴백 방향(미지원
+  // 로케일→영어)과 동일한 원칙.
+  private fun isKoreanLocale(): Boolean = resources.configuration.locales[0].language == "ko"
+
   // Daily Limit 알림(notifyLimit)/저시간 경고(notifyRemaining)/Break Reminder(notifyBreak) 전부
   // 이 헬퍼로 통일 — expo-notifications(JS)와 별개의 네이티브 채널을 쓴다. JS 쪽 'pace-session'
   // 채널은 JS 코드가 실행돼야(ensureAndroidChannel) 생성되는데, 이 서비스는 JS 없이도(백그라운드에서)
@@ -985,7 +993,11 @@ class PaceOverlayService : Service() {
         nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
         if (nextBreakInMinutes <= 0) {
           if (notifyBreak) {
-            sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "휴식 시간이에요", "잠깐 스트레칭하거나 심호흡을 해보세요.")
+            if (isKoreanLocale()) {
+              sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "휴식 시간이에요", "잠깐 스트레칭하거나 심호흡을 해보세요.")
+            } else {
+              sendAlertNotification(NOTIFICATION_ID_BREAK_REMINDER, "Break time", "Take a moment to stretch or breathe.")
+            }
           }
           nextBreakInMinutes = breakIntervalMinutes
         }
@@ -995,7 +1007,11 @@ class PaceOverlayService : Service() {
       Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
 
       if (notifyRemaining && (remainingMinutes == 5 || remainingMinutes == 1)) {
-        sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
+        if (isKoreanLocale()) {
+          sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
+        } else {
+          sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "Time remaining", "$remainingMinutes min left today — take a breather?")
+        }
       }
 
       // 수면 감지(스펙 §1-B/§4-B) — 블루투스 탈착은 "보조 신호(타이머 단축)"로만: 탈착 자체가 트리거가
@@ -1050,8 +1066,13 @@ class PaceOverlayService : Service() {
         if (notifyLimit && reason != "sleep_detected") {
           // 수면감지는 "자고 있는데 알림 소리/진동으로 깨우는" 모순을 피하려 알림을 안 보낸다 —
           // 화면 자체를 잠그므로(아래 showBlockOverlay/lockScreen) 어차피 알림을 봐도 소용없다.
-          val limitBody = if (isDailyLimit && dailyLimitHitCount >= 2) "잠시 쉬어갈까요?" else "잠시 휴대폰을 내려놓을 시간이에요."
-          sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", limitBody)
+          if (isKoreanLocale()) {
+            val limitBody = if (isDailyLimit && dailyLimitHitCount >= 2) "잠시 쉬어갈까요?" else "잠시 휴대폰을 내려놓을 시간이에요."
+            sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", limitBody)
+          } else {
+            val limitBody = if (isDailyLimit && dailyLimitHitCount >= 2) "Time for a break?" else "Time to put the phone down for a bit."
+            sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "You've reached today's limit", limitBody)
+          }
         }
         cancelScheduledTick(this)
         // 2026-07-19 사용자 제품 결정: "Pace가 만료로 판단했는데 YouTube는 계속 시청 가능"했던 기존
@@ -1090,7 +1111,7 @@ class PaceOverlayService : Service() {
     }
     return Notification.Builder(this, CHANNEL_ID)
       .setContentTitle("Pace")
-      .setContentText("세션 관리 중")
+      .setContentText(if (isKoreanLocale()) "세션 관리 중" else "Managing session")
       .setSmallIcon(android.R.drawable.ic_menu_recent_history)
       .setOngoing(true)
       .build()
@@ -1307,22 +1328,37 @@ class PaceOverlayService : Service() {
       isDailyLimit -> "🛡"
       else -> "⏸"
     }
+    // 2026-07-27 감사 발견(크리티컬) — 이 화면(전체화면 차단, 한도 도달의 핵심 UI)이 한국어로만
+    // 하드코딩돼 영어 기기에도 그대로 노출되고 있었다. tier1/tier2 문구는 JS LimitReachedOverlay.tsx
+    // (translations.ts의 limitReached.*)의 기존 영문 카피와 그대로 맞춰 두 사본이 어긋나지 않게 한다.
+    val ko = isKoreanLocale()
     val titleText = when {
-      isSleepTimer -> "Sleep Timer 종료"
-      isDailyLimitTier2 -> "잠시 쉬어갈까요?"
+      isSleepTimer -> if (ko) "Sleep Timer 종료" else "Sleep Timer ended"
+      isDailyLimitTier2 -> if (ko) "잠시 쉬어갈까요?" else "Time for a break?"
       isDailyLimit -> "TAKE YOUR PACE"
-      else -> "오늘의 한도에 도달했어요"
+      else -> if (ko) "오늘의 한도에 도달했어요" else "You've reached today's limit"
     }
     // tier1만 3줄(제목/부제/본문), 나머지는 2줄(제목/본문) — JS LimitReachedOverlay.tsx의 Modal 구조와 동일.
-    val subtitleText = if (isDailyLimit && !isDailyLimitTier2) "${dailyLimitOriginalMinutes}분 시청 완료" else null
+    val subtitleText = if (isDailyLimit && !isDailyLimitTier2) {
+      if (ko) "${dailyLimitOriginalMinutes}분 시청 완료" else "$dailyLimitOriginalMinutes minutes watched"
+    } else null
     val bodyText = when {
-      isSleepTimer -> "설정한 Sleep Timer 시간이 다 됐어요."
-      isDailyLimitTier2 -> "벌써 ${(dailyLimitTier - 1) * EXTEND_MINUTES}분이 지났습니다"
-      isDailyLimit -> "계속 시청할 수도, 여기서 멈출 수도 있습니다."
-      else -> "오늘 정해둔 시청 시간을 다 썼어요."
+      isSleepTimer -> if (ko) "설정한 Sleep Timer 시간이 다 됐어요." else "Your Sleep Timer has ended."
+      isDailyLimitTier2 -> {
+        val elapsed = (dailyLimitTier - 1) * EXTEND_MINUTES
+        if (ko) "벌써 ${elapsed}분이 지났습니다" else "$elapsed minutes have already passed"
+      }
+      isDailyLimit -> if (ko) "계속 시청할 수도, 여기서 멈출 수도 있습니다." else "You can keep watching, or stop here."
+      else -> if (ko) "오늘 정해둔 시청 시간을 다 썼어요." else "You've used up today's watch time."
     }
-    val extendBtnText = if (isDailyLimitTier2) "계속 보기" else "+${EXTEND_MINUTES}분"
-    val endBtnText = if (isDailyLimitTier2) "여기까지 보기" else "휴식하기"
+    val extendBtnText = when {
+      isDailyLimitTier2 -> if (ko) "계속 보기" else "Keep watching"
+      else -> if (ko) "+${EXTEND_MINUTES}분" else "+$EXTEND_MINUTES minutes"
+    }
+    val endBtnText = when {
+      isDailyLimitTier2 -> if (ko) "여기까지 보기" else "Stop here"
+      else -> if (ko) "휴식하기" else "Take a break"
+    }
     val d = resources.displayMetrics.density
 
     val root = LinearLayout(this).apply {
@@ -1423,12 +1459,24 @@ class PaceOverlayService : Service() {
   private var tier3DismissRunnable: Runnable? = null
 
   private fun showTier3Toast(usageMinutes: Int, goalMinutes: Int, hitCount: Int) {
-    val messages = listOf(
-      "Take your pace." to "지금까지 ${usageMinutes}분 시청했습니다.",
-      "잠시 쉬어갈까요?" to "오늘 ${usageMinutes}분 시청했습니다.",
-      "Time well spent." to "오늘 목표 시간을 초과했습니다.",
-      "오늘 다른 할일이 있었나요?" to "목표 ${goalMinutes}분을 넘겼어요."
-    )
+    // 2026-07-27 감사 발견(크리티컬) — 4개 문구 중 2개(title2/title4)가 한국어로만 하드코딩돼 영어
+    // 기기에도 그대로 노출되고 있었다(나머지 2개만 영어라 뒤섞인 상태). JS translations.ts의
+    // limitReached.tier3Title/Body1~4와 맞춰 전부 로케일에 맞게 뜨도록 정정.
+    val messages = if (isKoreanLocale()) {
+      listOf(
+        "천천히 가세요." to "지금까지 ${usageMinutes}분 시청했습니다.",
+        "잠시 쉬어갈까요?" to "오늘 ${usageMinutes}분 시청했습니다.",
+        "시간을 알차게 보내셨네요." to "오늘 목표 시간을 초과했습니다.",
+        "오늘 다른 할일이 있었나요?" to "목표 ${goalMinutes}분을 넘겼어요."
+      )
+    } else {
+      listOf(
+        "Take your pace." to "You've watched $usageMinutes minutes so far.",
+        "Time for a short break?" to "You've watched $usageMinutes minutes today.",
+        "Time well spent." to "You've gone over today's goal.",
+        "Got other things to do today?" to "You've gone over your $goalMinutes-minute goal."
+      )
+    }
     val (msgTitle, msgBody) = messages[(hitCount - 3) % messages.size]
 
     removeTier3Toast() // 이전 토스트가 아직 안 사라졌으면(연속 도달 등) 먼저 치우고 새로 띄움

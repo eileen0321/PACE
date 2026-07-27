@@ -59,6 +59,12 @@ function enforceFreeFocusSessionDuration(isPremium: boolean) {
   if (Platform.OS === 'android' && patch.focusSessionDurationMinutes !== undefined) {
     bluetoothService.setFocusSessionDurationMinutes(FREE_FOCUS_SESSION_DURATION_MINUTES).catch(() => {});
   }
+  // 2026-07-27 감사 발견 — 위 focusSessionDurationMinutes push와 달리 sleepStillnessMinutes는
+  // 이 push가 없으면 이미 도는 중인 세션이 다운그레이드 이후에도 계속 프리미엄 시절 임계값(최대
+  // 20분)으로 동작했다. setSleepStillnessMinutes는 라이브 값이라 지금 도는 세션에도 즉시 반영됨.
+  if (Platform.OS === 'android' && patch.sleepStillnessMinutes !== undefined) {
+    bluetoothService.setSleepStillnessMinutes(FREE_SLEEP_STILLNESS_MINUTES).catch(() => {});
+  }
 }
 
 SplashScreen.preventAutoHideAsync().catch(() => {});

@@ -63,6 +63,7 @@ type PaceOverlayNativeModule = {
   setBluetoothAutoMode(enable: boolean): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
+  setSleepStillnessMinutes(minutes: number): void;
   // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용이라 알약 탭/블루투스 리모컨
   // (둘 다 네이티브에서 직접 setAutoMode를 부름)을 못 막았다. 앱 부팅 시 1회 호출해 네이티브 쪽
   // 게이트를 실제 값으로 맞춘다(PaceOverlayService.setBuildAutoNextEnabled 참고).

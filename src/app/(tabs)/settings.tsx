@@ -290,7 +290,13 @@ export default function SettingsScreen() {
             <DefaultRow
               title={t('settings.defaultSleep')} desc={t('settings.defaultSleepDesc')}
               value={settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.off')} bordered
-              onPress={() => update({ sleepTimerMinutes: cycle(SLEEP_TIMER_OPTIONS, settings.sleepTimerMinutes ?? 0) || null })}
+              onPress={() => {
+                const nextTimer = cycle(SLEEP_TIMER_OPTIONS, settings.sleepTimerMinutes ?? 0) || null;
+                update({ sleepTimerMinutes: nextTimer });
+                if (Platform.OS === 'android') {
+                  bluetoothService.setSleepTimerMinutes(nextTimer ?? 0).catch(() => {});
+                }
+              }}
             />
             <DefaultRow
               title={t('settings.sleepStillness')}

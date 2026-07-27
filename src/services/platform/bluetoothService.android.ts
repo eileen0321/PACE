@@ -18,6 +18,7 @@ let PaceOverlay: {
     notifyBreak: boolean;
     hardBlockMode: boolean;
   }): void;
+  setSleepTimerMinutes(minutes: number): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
   setSleepStillnessMinutes(minutes: number): void;
@@ -106,6 +107,14 @@ export const bluetoothService: BluetoothService = {
       PaceOverlay?.updateLiveSessionConfig(config);
     } catch (e) {
       console.warn('[bluetoothService.android] updateLiveSessionConfig failed', e);
+    }
+  },
+
+  async setSleepTimerMinutes(minutes: number) {
+    try {
+      PaceOverlay?.setSleepTimerMinutes(minutes);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setSleepTimerMinutes failed', e);
     }
   },
 

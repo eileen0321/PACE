@@ -1690,7 +1690,7 @@ JS 쪽 나머지 배선은 `4fef7c7`로 별도 커밋+푸시 완료.
 | `sleepStillnessMinutes` | ✅ 라이브(즉시) — **오늘 수정** | 원래 프리미엄→무료 강제 다운그레이드 경로(`_layout.tsx`)만 라이브 함수(`setSleepStillnessMinutes`, 이 세션에서 신설)를 쓰고, 사용자가 Settings에서 직접 값을 바꾸는 UI는 `update()`만 부르는 불일치가 있어 같은 라이브 함수를 호출하도록 추가(`settings.tsx`) |
 | `bluetoothVolumeKeySkipEnabled` / `handsFreeGesture`(Android) | ✅ 라이브(즉시) | `focus.tsx` — 각각 `setBluetoothVolumeKeySkipEnabled`/`setHandsFreeGestureEnabled` 네이티브 즉시 갱신 |
 | `focusSessionDurationMinutes` | ⚪ 의도된 설계(다음 세션부터만) | Focus Session 자동종료 타이머는 이미 예약된 것이라 재조정 안 함(`PaceOverlayModule.kt` 주석에 명시) — 버그 아님 |
-| **`sleepTimerMinutes`** | 🔴 **미해결 — 다음 세션까지 반영 안 됨** | `settings.tsx`/`overlay/index.tsx` 둘 다 `update()`만 호출. `PaceOverlayService.kt:807-809` 주석: "dailyLimitMinutes/sleepTimerMinutes는 '새 한도 대비 현재 남은시간'을 다시 계산해야 하는 별개 문제라 `updateLiveSessionConfig`에 포함 안 함" — dailyLimitMinutes는 그 후 `updateRemaining()` 재사용으로 고쳐졌지만 sleepTimerMinutes는 아직 그 경로가 없음. 네이티브 쪽 `sleepTimerRemainingMinutes`(`PaceOverlayService.kt:115`)가 세션 시작 시점 값에서 매 틱 감소하는 순수 카운트다운이라, 고치려면 "남은 취침 카운트다운을 새 값으로 전부 리셋할지" vs "경과시간을 보존해 비례 조정할지" 제품 판단이 먼저 필요함(다른 필드처럼 기계적으로 미러링 불가) — **그래서 이번엔 코드를 건드리지 않고 여기 기록만 남김** |
+| `sleepTimerMinutes` | ✅ 라이브(즉시) — **오늘 수정(리셋형)** | 사장님 결정: "리셋형: 그냥 지금부터 30분 다시 카운트, 경과시간 무시". 네이티브 `setSleepTimerMinutes(context, minutes)`(`PaceOverlayService.kt`)가 `instance?.sleepTimerRemainingMinutes`를 새 값으로 직접 덮어씀(비례조정 없음, minutes<=0은 -1=끄기). `PaceOverlayModule.kt`에 `Function("setSleepTimerMinutes")` 브릿지 추가, `bluetoothService.setSleepTimerMinutes()`로 노출. `settings.tsx`(Settings 탭 cycle)와 `overlay/index.tsx`(세션 도중 오버레이 알약 cycle) 두 진입점 모두 배선 완료 |
 | `autoNext` | 🟡 낮은 우선순위, 사실상 도달 불가 | 토글 UI가 오버레이 알약(`overlay/index.tsx:371,390`)에만 있는데, Android는 세션 시작 즉시 이 화면을 Home으로 리다이렉트해서 실사용에서 거의 안 보임. 네이티브 push 자체가 없음 |
 | `handsFreeGesture`(iOS) | 🔴 **별개 버그 — 죽은 설정, 라이브/다음세션과 무관** | iOS `feed/index.tsx`가 손짓 게이팅을 `handsFreeDetectActive = isAutoMode`로만 결정하고 `settings.handsFreeGesture` 값 자체를 아예 참조 안 함(의도적으로 분리된 코드) — 이 토글은 켜든 끄든 iOS에서 현재 아무 효과가 없음. 세션-도중-반영 문제가 아니라 토글 자체가 죽어있는 별개 이슈라 오늘 스코프 밖으로 분리 |
 | `appShields` | 해당없음 | UI에서 바꿀 방법 자체가 없음("Connected Apps" 섹션 삭제됨) |
@@ -1702,7 +1702,7 @@ JS 쪽 나머지 배선은 `4fef7c7`로 별도 커밋+푸시 완료.
 위 `handsFreeGesture`(iOS) 죽은 설정.
 
 **다음 세션에 남길 것**:
-1. 🔴 `sleepTimerMinutes` 라이브 반영 — 리셋형 vs 비례조정형 제품 판단 먼저 필요(사장님 확인 필요)
+1. ~~🔴 `sleepTimerMinutes` 라이브 반영~~ → 2026-07-28 사장님 결정(리셋형)으로 해결 완료
 2. 🔴 iOS `handsFreeGesture` 죽은 설정 — `feed/index.tsx`에서 실제로 참조하도록 연결할지, 아니면 UI에서
    빼야 할지 판단 필요(이것도 사장님이 D9 정책 재확인 후 결정)
 3. 🟡 `autoNext` 오버레이 알약 토글 — 우선순위 낮음, 필요시에만

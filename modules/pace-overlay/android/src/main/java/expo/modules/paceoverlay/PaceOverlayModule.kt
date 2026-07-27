@@ -328,6 +328,12 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 2026-07-28 사장님 결정("리셋형: 지금부터 새 값으로 다시 카운트, 경과시간 무시") — 취침 타이머를
+    // 이미 도는 세션 중에 바꾸면 새 값으로 카운트다운을 처음부터 다시 시작한다.
+    Function("setSleepTimerMinutes") { minutes: Int ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setSleepTimerMinutes(context, minutes) }
+    }
+
     // 2026-07-20 사용자 지시 — Focus Session 지속 시간을 10분 하드코딩이 아니라 사용자가 직접
     // 고르게 한다(정책상으로도 문제없음, PACE_ARCHITECTURE.md 참고). 다음 setBluetoothAutoMode(true)
     // 호출부터 반영된다 — 이미 도는 중인 세션의 예약된 자동 종료 시각은 안 바뀜.

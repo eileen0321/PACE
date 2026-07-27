@@ -799,14 +799,27 @@ class PaceOverlayService : Service() {
       PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = enabled
     }
 
+    // 2026-07-28 사장님 결정("리셋형: 그냥 지금부터 30분 다시 카운트, 경과시간 무시") — 취침 타이머를
+    // 세션 도중 바꾸면 지금까지 흘러간 시간은 버리고 새 값으로 카운트다운을 처음부터 다시 시작한다.
+    // dailyLimitMinutes처럼 "오늘 사용량 대비 남은시간 재계산"이 필요 없어(취침 타이머는 세션 시작
+    // 시점부터의 순수 카운트다운이라 "오늘 사용량" 개념이 없음) updateRemaining과 달리 JS 계산 없이
+    // 새 값을 그대로 반영하면 된다. minutes<=0은 "끄기"(-1, performTick의 감소 조건 `>0`과 동일 규약).
+    fun setSleepTimerMinutes(context: Context, minutes: Int) {
+      val normalized = if (minutes > 0) minutes else -1
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putInt(PREF_SLEEP_TIMER, normalized).apply()
+      instance?.sleepTimerRemainingMinutes = normalized
+    }
+
     // 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 위
     // Bluetooth/손짓과 같은 종류의 결함이 Settings 화면의 나머지 설정(휴식 간격/알림 3종/Hard Block)
     // 에도 전부 있었다: onStartCommand(ACTION_START)가 세션 "시작 시점" 값만 읽어서, 이미 도는 세션
     // 중에 Settings에서 값을 바꿔도 다음 세션 시작 전까지 전혀 반영이 안 됐다. 이 함수 하나로 이미
     // 도는 세션의 인스턴스 필드+SharedPreferences를 함께 즉시 갱신한다(세션 재시작 불필요) —
-    // dailyLimitMinutes/sleepTimerMinutes는 "새 한도 대비 현재 남은시간"을 다시 계산해야 하는 별개
-    // 문제라 여기 포함 안 함(오늘 사용량이 필요해 JS가 계산해서 overlayService.updateRemaining()으로
-    // 넘기는 기존 경로를 재사용해야 함 — home.tsx/overlay/index.tsx의 remainingMinutes 계산과 동일).
+    // dailyLimitMinutes는 "새 한도 대비 현재 남은시간"을 다시 계산해야 하는 별개 문제라 여기 포함 안
+    // 함(오늘 사용량이 필요해 JS가 계산해서 overlayService.updateRemaining()으로 넘기는 기존 경로를
+    // 재사용해야 함 — home.tsx/overlay/index.tsx의 remainingMinutes 계산과 동일). sleepTimerMinutes는
+    // 위 setSleepTimerMinutes()로 별도 처리(리셋형, 2026-07-28).
     fun updateLiveSessionConfig(
       context: Context,
       breakIntervalMinutes: Int,

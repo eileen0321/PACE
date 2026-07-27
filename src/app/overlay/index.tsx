@@ -13,7 +13,7 @@ import { useAutoNextStore } from '../../store/useAutoNextStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useToastStore } from '../../store/useToastStore';
-import { overlayService, autoNextService } from '../../services/platform';
+import { overlayService, autoNextService, bluetoothService } from '../../services/platform';
 import { startSession, endSession as endSessionRow, logOverlayEvent } from '../../database/repositories/sessionsRepository';
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
@@ -391,7 +391,11 @@ export default function OverlaySessionScreen() {
               sleepTimerMinutes={settings.sleepTimerMinutes}
               onCycleSleepTimer={() => {
                 const idx = SLEEP_TIMER_OPTIONS.indexOf(settings.sleepTimerMinutes ?? 0);
-                updateSettings({ sleepTimerMinutes: SLEEP_TIMER_OPTIONS[(idx + 1) % SLEEP_TIMER_OPTIONS.length] || null });
+                const nextTimer = SLEEP_TIMER_OPTIONS[(idx + 1) % SLEEP_TIMER_OPTIONS.length] || null;
+                updateSettings({ sleepTimerMinutes: nextTimer });
+                if (Platform.OS === 'android') {
+                  bluetoothService.setSleepTimerMinutes(nextTimer ?? 0).catch(() => {});
+                }
               }}
               isPlaying={isPlaying}
               onTogglePlaying={() => { setIsPlaying((v) => !v); setExpanded(false); }}

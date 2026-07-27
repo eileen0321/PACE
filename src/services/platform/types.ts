@@ -147,6 +147,13 @@ export interface BluetoothService {
     notifyBreak: boolean;
     hardBlockMode: boolean;
   }): Promise<void>;
+  /**
+   * 2026-07-28 사장님 결정(리셋형) — 취침 타이머를 이미 도는 세션 중에 바꾸면, 경과시간은 버리고
+   * 새 값으로 카운트다운을 처음부터 다시 시작한다(비례조정 아님). dailyLimitMinutes와 달리 "오늘
+   * 사용량 대비 재계산"이 필요 없어 updateRemaining과는 별도 경로 — 새 값을 그대로 넘기면 된다.
+   * minutes<=0은 끄기. Android만 실제 동작, iOS는 no-op(취침 타이머 네이티브 경로 자체가 없음).
+   */
+  setSleepTimerMinutes(minutes: number): Promise<void>;
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;

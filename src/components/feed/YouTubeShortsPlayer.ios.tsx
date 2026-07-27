@@ -294,7 +294,11 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   web: { flex: 1, backgroundColor: '#000000' },
   loadingCover: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: '#000000',
     alignItems: 'center',
     justifyContent: 'center',

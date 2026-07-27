@@ -14,7 +14,12 @@ export const SUPPORTED_APPS = {
   // 바로 딥링크하는 공식 방법은 없어 앱을 기본 진입점으로만 연다. webFallback은 스킴 실행이
   // 실패했을 때(앱 미설치 등) 열 웹 URL.
   // packageNames: 배열인 이유 — TikTok이 리전별로 다른 패키지명을 쓴다(아래 tiktok 항목 참고).
-  youtube: { packageNames: ['com.google.android.youtube'], label: 'YouTube Shorts', androidScheme: 'vnd.youtube://', webFallback: 'https://m.youtube.com/shorts' },
+  // 2026-07-28 실기기 재현으로 확인: m.youtube.com/shorts는 App Link로 열려도 YouTube가 그냥 홈 탭을
+  // 보여준다(영상 ID 없는 경로라 Shorts로 인식 안 함 — InternalMainActivity가 뜨는 건 같지만 내용물이
+  // 홈). www.youtube.com/shorts(같은 경로, m. 대신 www. 서브도메인)는 영상 ID 없이도 정확히 Shorts
+  // 풀스크린 피드로 연결됨을 adb am start로 직접 검증. m. 서브도메인만 도메인 검증/라우팅 테이블에서
+  // 빠져있는 것으로 추정 — 원인 추적보다 검증된 URL로 교체.
+  youtube: { packageNames: ['com.google.android.youtube'], label: 'YouTube Shorts', androidScheme: 'vnd.youtube://', webFallback: 'https://www.youtube.com/shorts' },
   instagram: { packageNames: ['com.instagram.android'], label: 'Instagram Reels', androidScheme: 'instagram://app', webFallback: 'https://www.instagram.com/reels/' },
   // 2026-07-18: 사용자 지시로 healthy-shorts-assistant(2) 원본 그대로 TikTok도 Home 플랫폼 선택에
   // 복원(원래 MVP 축소안에선 제외했었음) — "제품 전략 피벗" 문서에 이 오버라이드를 기록해둘 것.

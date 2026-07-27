@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   notifyLimit: true,
   notifyBreak: true,
   hardBlockMode: false,
+  bluetoothVolumeKeySkipEnabled: true,
   focusSessionDurationMinutes: 10,
   sleepStillnessMinutes: 10,
 };

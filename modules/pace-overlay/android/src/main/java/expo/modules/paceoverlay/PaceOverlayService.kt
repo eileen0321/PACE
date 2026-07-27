@@ -126,6 +126,10 @@ class PaceOverlayService : Service() {
   // (companion object 상수와 동일값), 프리미엄만 JS Settings에서 5~20 사이로 넘겨줌. 아래
   // performTick()에서 SLEEP_STILLNESS_MS 대신 이 값(분→ms 환산)을 사용.
   private var sleepStillnessMinutes = 10
+  // 2026-07-27 사용자 지시 — 블루투스 스피커/이어폰을 순수 감상용으로 쓰는 사람도 있어, 볼륨키를
+  // 다음/이전 넘기기 신호로 쓸지 여부를 Settings에서 별도로 끌 수 있게 한다(PaceAccessibilityService.
+  // bluetoothVolumeKeySkipEnabled로 그대로 전달 — 실제 게이팅은 그 클래스의 onKeyEvent에서 함).
+  private var bluetoothVolumeKeySkipEnabled = true
   // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
   // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
   private var infraReady = false
@@ -401,6 +405,7 @@ class PaceOverlayService : Service() {
       .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
       .putLong(PREF_LAST_MOTION_AT_MS, lastMotionAtMs)
       .putInt(PREF_SLEEP_STILLNESS_MINUTES, sleepStillnessMinutes)
+      .putBoolean(PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, bluetoothVolumeKeySkipEnabled)
       .apply()
   }
 
@@ -420,6 +425,8 @@ class PaceOverlayService : Service() {
     // 마지막 움직임 시각을 복원 — 없으면(구버전 상태/최초) 안전하게 지금으로(즉시 만료 방지).
     lastMotionAtMs = prefs.getLong(PREF_LAST_MOTION_AT_MS, SystemClock.elapsedRealtime())
     sleepStillnessMinutes = prefs.getInt(PREF_SLEEP_STILLNESS_MINUTES, 10)
+    bluetoothVolumeKeySkipEnabled = prefs.getBoolean(PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, true)
+    PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = bluetoothVolumeKeySkipEnabled
     // 한도 도달 히트카운트도 같은 이유로 복원 — 안 하면 프로세스가 죽었다 살아날 때마다 오늘 몇 번째
     // 도달인지가 0으로 리셋돼 tier가 항상 1로 되돌아가는 버그가 된다(날짜가 바뀌었으면 여기서 그냥
     // 이전 날짜 값을 그대로 들고 오지만, 다음 도달 시점에 performTick이 부르는 게 아니라 ACTION_START
@@ -538,6 +545,9 @@ class PaceOverlayService : Service() {
     // 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값(분), 프리미엄 전용 조절.
     private const val PREF_SLEEP_STILLNESS_MINUTES = "sleep_stillness_minutes"
     private const val EXTRA_SLEEP_STILLNESS_MINUTES = "sleepStillnessMinutes"
+    // 2026-07-27 사용자 지시 — 블루투스 볼륨키로 영상 넘기기 on/off.
+    private const val PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED = "bluetooth_volume_key_skip_enabled"
+    private const val EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED = "bluetoothVolumeKeySkipEnabled"
     // 한도 도달 3단계 히트카운트 영속 키(날짜 스코프) — 위 PREF_LAST_MOTION_AT_MS와 마찬가지로
     // PREFS_NAME 안에 같이 저장(별도 파일 불필요).
     private const val PREF_DAILY_LIMIT_HIT_DATE = "daily_limit_hit_date"
@@ -756,7 +766,8 @@ class PaceOverlayService : Service() {
       notifyLimit: Boolean,
       notifyBreak: Boolean,
       hardBlockMode: Boolean,
-      sleepStillnessMinutes: Int
+      sleepStillnessMinutes: Int,
+      bluetoothVolumeKeySkipEnabled: Boolean
     ) {
       val intent = Intent(context, PaceOverlayService::class.java).apply {
         action = ACTION_START
@@ -769,6 +780,7 @@ class PaceOverlayService : Service() {
         putExtra(EXTRA_NOTIFY_BREAK, notifyBreak)
         putExtra(EXTRA_HARD_BLOCK_MODE, hardBlockMode)
         putExtra(EXTRA_SLEEP_STILLNESS_MINUTES, sleepStillnessMinutes)
+        putExtra(EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, bluetoothVolumeKeySkipEnabled)
       }
       ContextCompat.startForegroundService(context, intent)
     }
@@ -852,6 +864,8 @@ class PaceOverlayService : Service() {
         // 2026-07-26 사장님 결정(D8) — 5~20 범위로 방어적 clamp(무료는 JS가 항상 10을 넘기지만,
         // 네이티브 쪽에서도 잘못된 값이 들어와 감지가 무력화/과민화되지 않도록 이중 방어).
         sleepStillnessMinutes = intent.getIntExtra(EXTRA_SLEEP_STILLNESS_MINUTES, 10).coerceIn(5, 20)
+        bluetoothVolumeKeySkipEnabled = intent.getBooleanExtra(EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, true)
+        PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = bluetoothVolumeKeySkipEnabled
         lastMotionAtMs = SystemClock.elapsedRealtime() // 신규 세션 — 수면감지 무진동 시계를 지금부터 시작
         loadDailyLimitHitState() // 날짜 바뀌었으면 한도 히트카운트 리셋(자정 롤오버)
         if (dailyLimitOriginalMinutes <= 0) {

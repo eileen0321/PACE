@@ -232,6 +232,10 @@ export const translations = {
       enforcementSection: 'Enforcement',
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: 'When the limit is reached, Pace immediately exits YouTube and other blocked apps for you, in addition to the full-screen block screen.',
+      // 2026-07-27 사용자 지시 — 에어팟/블루투스 스피커를 순수 감상용으로 쓰는 사람들을 위한 별도 토글.
+      bluetoothSection: 'Bluetooth',
+      bluetoothVolumeKeySkip: 'Skip with Volume Keys',
+      bluetoothVolumeKeySkipDesc: 'Use the volume buttons on a connected Bluetooth speaker or earbuds to skip to the next or previous video. Turn this off if you only use Bluetooth for audio.',
       // 2026-07-21 감사 발견 — Playback Controls 카드(Bluetooth Hands-Free)가 t() 없이 하드코딩돼 있었음.
       playbackControls: 'Playback Controls',
       handsFreeControl: 'Hands-Free Control',
@@ -638,6 +642,9 @@ export const translations = {
       enforcementSection: '차단 실행',
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: '한도 도달 시 전체화면 차단에 더해, YouTube 등 차단 대상 앱을 즉시 강제 종료합니다.',
+      bluetoothSection: '블루투스',
+      bluetoothVolumeKeySkip: '볼륨키로 영상 넘기기',
+      bluetoothVolumeKeySkipDesc: '연결된 블루투스 스피커나 이어폰의 볼륨 버튼으로 다음/이전 영상으로 넘깁니다. 블루투스를 순수 음향 감상용으로만 쓰신다면 꺼주세요.',
       playbackControls: '재생 컨트롤',
       handsFreeControl: '핸즈프리 컨트롤',
       connectedDevice: '연결된 기기',

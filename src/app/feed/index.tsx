@@ -264,6 +264,7 @@ export default function PaceFeedScreen() {
       notifyBreak: false,
       hardBlockMode: false,
       sleepStillnessMinutes: 10, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
+      bluetoothVolumeKeySkipEnabled: false, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
     }).catch(() => {});
     const timer = setTimeout(() => {
       setIsAutoMode(false);

@@ -189,6 +189,7 @@ export default function RootLayout() {
               notifyBreak: settings.notifyBreak,
               hardBlockMode: settings.hardBlockMode,
               sleepStillnessMinutes: settings.sleepStillnessMinutes,
+              bluetoothVolumeKeySkipEnabled: settings.bluetoothVolumeKeySkipEnabled,
             }).catch(() => {});
           }
         }

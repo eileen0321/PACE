@@ -32,6 +32,7 @@ class StartSessionOptions : Record {
   @Field val notifyBreak: Boolean = true
   @Field val hardBlockMode: Boolean = false
   @Field val sleepStillnessMinutes: Int = 10
+  @Field val bluetoothVolumeKeySkipEnabled: Boolean = true
 }
 
 // Expo Modules API(2026 기준 권장 패턴 — 구식 NativeModules+@ReactMethod 대신) 로컬 모듈.
@@ -163,7 +164,8 @@ class PaceOverlayModule : Module() {
             options.notifyLimit,
             options.notifyBreak,
             options.hardBlockMode,
-            options.sleepStillnessMinutes
+            options.sleepStillnessMinutes,
+            options.bluetoothVolumeKeySkipEnabled
           )
           Log.i("PaceOverlayModule", "PaceOverlayService.start returned normally")
         } catch (e: Exception) {

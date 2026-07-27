@@ -176,6 +176,7 @@ export default function HomeScreen() {
       notifyBreak: settings.notifyBreak,
       hardBlockMode: settings.hardBlockMode,
       sleepStillnessMinutes: settings.sleepStillnessMinutes,
+      bluetoothVolumeKeySkipEnabled: settings.bluetoothVolumeKeySkipEnabled,
     }).catch(() => {});
     setConnectingPlatform(platform);
     // 2026-07-23 버그 수정 — 예전엔 BluetoothOnboardingSheet에서 Enable을 고른 "그 첫 세션"에만

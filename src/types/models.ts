@@ -44,6 +44,13 @@ export type UserSettings = {
    */
   hardBlockMode: boolean;
   /**
+   * 2026-07-27 사용자 지시 — 블루투스 스피커/이어폰(에어팟 등)을 순수 음향 감상용으로만 쓰는
+   * 사람도 있으므로, 볼륨키를 다음/이전 영상 넘기기 신호로 쓸지 여부를 별도로 끌 수 있어야 한다
+   * (기존 손짓/핑거스냅 Hands-Free 토글과는 독립적 — 카메라 제스처는 켜두고 블루투스 볼륨키
+   * 하이재킹만 끄고 싶은 경우가 있을 수 있음). 기본 true(기존 동작 유지).
+   */
+  bluetoothVolumeKeySkipEnabled: boolean;
+  /**
    * 2026-07-21 밤 감사 발견 — Android는 이 값을 설정 가능(bluetoothService의 네이티브 미러 경유)했지만
    * iOS(feed/index.tsx)는 10분 하드코딩이었고 설정 UI 자체가 없었다. 공용 JS 소스오브트루스로 승격 —
    * Android는 여기서 update() 후 별도로 bluetoothService.setFocusSessionDurationMinutes()를 호출해

@@ -169,6 +169,7 @@ export default function OverlaySessionScreen() {
         notifyBreak: settings.notifyBreak,
         hardBlockMode: settings.hardBlockMode,
         sleepStillnessMinutes: settings.sleepStillnessMinutes,
+        bluetoothVolumeKeySkipEnabled: settings.bluetoothVolumeKeySkipEnabled,
       }).catch(() => {});
       launchPlatformApp(platform).catch(() => {});
     })();

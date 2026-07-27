@@ -341,6 +341,25 @@ export default function SettingsScreen() {
           </View>
         )}
 
+        {/* 5.65 Bluetooth Volume-Key Skip(2026-07-27 사용자 지시) — 블루투스 스피커/이어폰(에어팟 등)을
+            순수 감상용으로만 쓰는 사용자를 위해, 연결된 블루투스 기기의 볼륨(+/-) 버튼을 다음/이전 영상
+            넘기기 신호로 쓸지 여부를 독립적으로 끌 수 있게 한다. 위 카메라 제스처 Hands-Free 토글(Focus
+            탭)과는 별개 스위치 — 아래 "Playback Controls" 섹션(하드웨어 리모컨 상태 표시, Android는 항상
+            안 됨이 확인돼 숨김)과 혼동하지 말 것: 이건 실제로 동작하는 별도 기능이다. */}
+        {Platform.OS === 'android' && (
+          <View>
+            <Text style={styles.sectionLabel}>{t('settings.bluetoothSection')}</Text>
+            <GlassSurface style={styles.card}>
+              <NotifRow
+                title={t('settings.bluetoothVolumeKeySkip')}
+                desc={t('settings.bluetoothVolumeKeySkipDesc')}
+                value={settings.bluetoothVolumeKeySkipEnabled}
+                onChange={(value) => update({ bluetoothVolumeKeySkipEnabled: value })}
+              />
+            </GlassSurface>
+          </View>
+        )}
+
         {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
         {/* 2026-07-27: iOS에선 이 "블루투스 기기 연결 상태" 섹션을 숨김 — bluetoothService.ios.ts가 no-op
             스텁이라 항상 "Not Connected"로만 떠 오해를 준다. iOS 핸즈프리는 블루투스 페어링이 아니라 피드

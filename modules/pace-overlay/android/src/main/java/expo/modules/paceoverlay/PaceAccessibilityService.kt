@@ -5,6 +5,8 @@ import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -115,6 +117,11 @@ class PaceAccessibilityService : AccessibilityService() {
     private val KOREAN_TIME_PATTERN = Pattern.compile("(\\d+)분\\s*(\\d+)초\\s*중\\s*(\\d+)분\\s*(\\d+)초")
     private val COLON_TIME_PATTERN = Pattern.compile("(\\d+):(\\d+)\\s*/\\s*(\\d+):(\\d+)")
     private var instance: PaceAccessibilityService? = null
+    // 2026-07-27 사용자 지시 — 블루투스 볼륨키로 다음/이전 넘기기 on/off. 카메라 제스처(isWatching,
+    // 인스턴스 필드) Hands-Free 토글과 독립적이라 companion 레벨에 둔다(둘 다 세션 시작 시
+    // PaceOverlayService.onStartCommand에서 값을 넣어준다) — 인스턴스 생명주기와 무관하게 세션
+    // 설정값이라 여기 있어야 세션 재시작/프로세스 복구에도 값이 유지된다.
+    var bluetoothVolumeKeySkipEnabled = true
 
     // 시스템 설정에 "활성화된 접근성 서비스" 목록으로 등록돼 있는지 확인 — 오버레이 권한과 달리
     // 별도 런타임 API가 없어 Settings.Secure를 직접 파싱해야 한다(표준 Android 패턴).
@@ -292,7 +299,11 @@ class PaceAccessibilityService : AccessibilityService() {
     if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
       return false
     }
-    if (!isWatching || !SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+    // 2026-07-27 사용자 지시 — 이 볼륨키 하이재킹은 카메라 제스처 Hands-Free(isWatching)와 별개의
+    // 독립 토글이다(에어팟/블루투스 스피커를 순수 감상용으로만 쓰는 사용자를 위해 따로 끌 수 있어야
+    // 함). isWatching 대신 bluetoothVolumeKeySkipEnabled로 게이팅 — 손짓/핑거스냅은 꺼둔 채 이것만
+    // 켜두거나, 반대로 이것만 꺼둘 수 있다.
+    if (!bluetoothVolumeKeySkipEnabled || !SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
       return false
     }
     // 2026-07-23 사용자 지적 — "사용자가 실제 볼륨을 올리거나 내리고 싶을 땐?" 폰 자체 물리
@@ -301,7 +312,22 @@ class PaceAccessibilityService : AccessibilityService() {
     // 구분해서, 외부 장치에서 온 볼륨 이벤트만 "다음넘김" 대리 신호로 취급한다 — 폰 자체 볼륨
     // 버튼은 여기서 바로 return false로 통과시켜 평소와 똑같이 실제 음량을 조절한다.
     val device = InputDevice.getDevice(event.deviceId)
-    if (device == null || !device.isExternal) {
+    // 2026-07-27 사용자 실기기 지적("폰 자체 볼륨키에도 넘어감, 블루투스 연결돼 있어도 폰 버튼으로는
+    // 넘어가면 안 되지") — 이 실기기(삼성)에서 InputDevice.isExternal() 하나만으로는 내장 볼륨버튼과
+    // 진짜 블루투스 기기를 못 미더울 정도로 확실히 구분 못 할 가능성이 있다(일부 삼성 기기가 내장
+    // 버튼을 별도 입력 서브시스템으로 노출해 isExternal()을 오탐시키는 알려진 특성). 신호 하나를
+    // 더 겹친다 — 내장 버튼은 거의 항상 vendorId/productId가 0으로 잡히고(플랫폼 내부 경로), 진짜
+    // 페어링된 외부 기기는 실제 vendor/product ID를 갖는다. isExternal() + vendorId/productId 둘
+    // 다 0이 아님 + 지금 실제로 블루투스 오디오 기기가 연결돼 있음, 이 세 조건을 전부 만족해야만
+    // "진짜 블루투스 리모컨에서 온 신호"로 인정한다 — 셋 중 하나라도 아니면 폰 버튼으로 간주해
+    // 시스템 기본 볼륨 동작을 그대로 통과시킨다.
+    // ⚠️ 미검증: 이 휴리스틱(vendorId/productId)이 이 특정 기기에서 실제로 내장 버튼을 걸러내는지는
+    // 아직 실기기로 재현 확인 못 했다 — 아래 로그(device.name/vendorId/productId/isExternal)로
+    // 다음에 재현될 때 바로 진단 가능하게 남겨둔다.
+    if (device != null) {
+      Log.d("PaceAccessibility", "volume-key device check: name=${device.name} vendorId=${device.vendorId} productId=${device.productId} isExternal=${device.isExternal}")
+    }
+    if (device == null || !device.isExternal || (device.vendorId == 0 && device.productId == 0) || !isBluetoothAudioConnected()) {
       return false
     }
     // ACTION_DOWN에서만 처리 — ACTION_UP까지 같이 소비하면 한 번의 물리 입력이 두 번 카운트될 위험.
@@ -316,15 +342,14 @@ class PaceAccessibilityService : AccessibilityService() {
       return true
     }
     lastVolumeKeySwipeAtMs = now
-    Log.i("PaceAccessibility", "onKeyEvent volume-key-next keyCode=${event.keyCode} pkg=$currentForegroundPackage")
+    Log.i("PaceAccessibility", "onKeyEvent volume-key-swipe keyCode=${event.keyCode} pkg=$currentForegroundPackage")
     // 2026-07-26 사용자 지시 — 외부 블루투스 리모컨의 실제 물리 버튼 입력이므로 swipeOnce와 동일하게
     // "사람이 직접 낸 신호"다 — 수면감지 무진동 시계 리셋.
     PaceOverlayService.markUserActivity()
-    // 방향 구분 없이 둘 다 "다음"으로 취급 — 사용자가 명시한 요구가 "볼륨받아서 다음재생으로
-    // 넘기기"였지 별도 이전/다음 구분이 아니었다. 오디오 자체는 iOS 쪽과 동일하게 실제로 변하지
-    // 않아야 하므로(return true로 시스템 볼륨 변경 자체를 여기서 막음) 영상 시청 중 볼륨이 실수로
-    // 튀는 부작용도 없다.
-    performSwipeUp()
+    // 2026-07-27 — iOS(Mac 세션)와 동일하게 방향 구분 적용: 볼륨업=다음, 볼륨다운=이전(기존엔 방향
+    // 무관하게 둘 다 "다음"으로 취급했었음). 오디오 자체는 실제로 변하지 않아야 하므로(return true로
+    // 시스템 볼륨 변경 자체를 여기서 막음) 영상 시청 중 볼륨이 실수로 튀는 부작용도 없다.
+    if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) performSwipeUp() else performSwipeDown()
     return true
   }
 
@@ -512,6 +537,17 @@ class PaceAccessibilityService : AccessibilityService() {
       lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.75f)
     }
     dispatchSwipe(path)
+  }
+
+  // 2026-07-27 — onKeyEvent의 볼륨키-블루투스 판별용. PaceOverlayService companion에 동일 로직이
+  // 이미 있지만(수면감지의 "세션 중 블루투스 연결 해제됐는가" 체크용) private이라 이 클래스에서
+  // 직접 못 부른다 — BLUETOOTH_CONNECT 런타임 권한 없이도 AudioManager.getDevices()만으로 충분한
+  // 짧은 로직이라 그대로 복제해 둔다.
+  private fun isBluetoothAudioConnected(): Boolean {
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+    return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+      it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+    }
   }
 
   private fun dispatchSwipe(path: Path) {

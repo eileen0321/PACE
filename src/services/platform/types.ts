@@ -45,6 +45,13 @@ export interface OverlayService {
      * 사용 — iOS는 무시(no-op, 수면감지 자체가 아직 없음).
      */
     sleepStillnessMinutes: number;
+    /**
+     * 2026-07-27 사용자 지시 — 블루투스 스피커/이어폰을 순수 감상용으로만 쓰는 사용자를 위해,
+     * 볼륨키를 다음/이전 영상 넘기기 신호로 쓸지 여부를 별도로 끌 수 있게 한다(카메라 제스처
+     * Hands-Free 토글과는 독립적). Android만 실제로 게이팅(PaceAccessibilityService.onKeyEvent).
+     * iOS는 무시(no-op) — iOS 쪽 볼륨키 처리는 별도 모듈(PaceVolumeKeyModule)이 자체 관리.
+     */
+    bluetoothVolumeKeySkipEnabled: boolean;
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;

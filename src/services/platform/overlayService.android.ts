@@ -19,6 +19,7 @@ let PaceOverlay: {
     notifyBreak: boolean;
     hardBlockMode: boolean;
     sleepStillnessMinutes: number;
+    bluetoothVolumeKeySkipEnabled: boolean;
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
@@ -52,7 +53,7 @@ async function readNativeExpiry() {
 export const overlayService: OverlayService = {
   supportsSystemOverlay: PaceOverlay !== null,
 
-  async startSession({ remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode, sleepStillnessMinutes }) {
+  async startSession({ remainingMinutes, autoNext, sleepTimerMinutes, breakIntervalMinutes, notifyRemaining, notifyLimit, notifyBreak, hardBlockMode, sleepStillnessMinutes, bluetoothVolumeKeySkipEnabled }) {
     if (!PaceOverlay) return;
     if (!PaceOverlay.hasOverlayPermission()) {
       PaceOverlay.requestOverlayPermission();
@@ -74,6 +75,7 @@ export const overlayService: OverlayService = {
       notifyBreak,
       hardBlockMode,
       sleepStillnessMinutes,
+      bluetoothVolumeKeySkipEnabled,
     });
   },
 

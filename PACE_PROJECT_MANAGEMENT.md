@@ -1762,3 +1762,19 @@ Instagram/TikTok은 그대로라 라벨 일관성 깨짐). 사장님 확인 전�
 (Windows 세션, 이 문서 갱신과 함께 커밋). 스토어 리스팅 쪽 상표 주의(`APP_STORE_LISTING.md`의 Screen
 Time/Family Controls 언급 제거, `b88a65d`)는 이미 별개로 처리돼 있어 그대로 유효 — **인앱 UI 리브랜드는
 더 이상 진행하지 말 것.**
+
+### 2026-07-28 — 비공개 테스트 빌드 준비: 버전명 확인 요청 (Windows→Mac)
+
+사장님 지시로 오늘 밤 Android 전수감사 진행 + 비공개 테스트용 빌드 준비 중. **버전 불일치 발견**:
+- `app.json`의 `version`은 `"1.0.1"` (Mac 세션이 2026-07-27 낮 감사에서 "버전 1.0.1/빌드1 일관"으로
+  확인한 값 — 그 문맥은 iOS Info.plist/GoogleService 쪽이었던 것으로 보임).
+- 그런데 `android/app/build.gradle`의 `versionName`은 아직 `"1.0.0"`, `versionCode`는 `1`. Android
+  네이티브 프로젝트가 `app.json` 변경과 자동 동기화되는 구조가 아니라(prebuild --clean 안 하면 반영 안
+  됨) 둘이 벌어져 있었던 것으로 추정.
+
+**Mac 세션에 요청**: iOS 쪽 현재 실제 빌드 버전/빌드번호가 뭔지, 그리고 오늘 밤 비공개 테스트 빌드에
+쓸 버전명을 몇으로 맞출지 확인 부탁드립니다(예: 그냥 `1.0.1`로 Android도 맞출지, 아니면 이번 라운드
+전체를 `1.1.0`처럼 올릴지). 확인되는 대로 Android 쪽 `versionName`/`versionCode`를 맞추고 Play Console
+비공개 테스트 트랙용 AAB를 빌드하겠습니다. **Play Console 실제 업로드는 서비스 계정 키가 이 저장소에
+없어(eas.json의 submit.production이 비어있음) 자동화 불가 — AAB만 준비해두고 실제 업로드는 사장님이
+직접 하셔야 합니다.**

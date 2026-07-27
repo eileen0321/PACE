@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -187,6 +188,8 @@ export default function FocusScreen() {
             home.tsx의 onSelectPlatform과 동일 기준(D9). */}
         <View>
           <Text style={styles.sectionLabel}>{t('focus.handsFreeSection')}</Text>
+          {/* layout 래퍼 — 하위 토글이 접힐 때 카드 높이가 툭 줄지 않고 부드럽게 전환되게(사용자 지적 "버벅거림"). */}
+          <Animated.View layout={LinearTransition.duration(200)}>
           <GlassSurface style={styles.card}>
             {/* 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별"로 분리. 마스터 OFF면 하위 숨김.
                 라벨/아이콘은 온보딩 가이드(handsFreeSheet)와 통일 — 손짓=handWaveLabel+GestureFlickIllustration,
@@ -205,7 +208,12 @@ export default function FocusScreen() {
               />
             </View>
             {masterOn && isIOS && (
-              <View style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}>
+              <Animated.View
+                entering={FadeInDown.duration(180)}
+                exiting={FadeOutUp.duration(160)}
+                layout={LinearTransition.duration(180)}
+                style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}
+              >
                 <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
                 <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
                 <Switch
@@ -215,10 +223,15 @@ export default function FocusScreen() {
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              </View>
+              </Animated.View>
             )}
             {masterOn && (
-              <View style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}>
+              <Animated.View
+                entering={FadeInDown.duration(180).delay(isIOS ? 40 : 0)}
+                exiting={FadeOutUp.duration(160)}
+                layout={LinearTransition.duration(180)}
+                style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}
+              >
                 <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
                 <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
                 <Switch
@@ -228,9 +241,10 @@ export default function FocusScreen() {
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              </View>
+              </Animated.View>
             )}
           </GlassSurface>
+          </Animated.View>
         </View>
 
         {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로

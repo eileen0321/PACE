@@ -1706,3 +1706,28 @@ JS 쪽 나머지 배선은 `4fef7c7`로 별도 커밋+푸시 완료.
 2. 🔴 iOS `handsFreeGesture` 죽은 설정 — `feed/index.tsx`에서 실제로 참조하도록 연결할지, 아니면 UI에서
    빼야 할지 판단 필요(이것도 사장님이 D9 정책 재확인 후 결정)
 3. 🟡 `autoNext` 오버레이 알약 토글 — 우선순위 낮음, 필요시에만
+
+### 2026-07-28 사용자 실기기 지적("홈에서 버튼눌렀는데 왜 유투브 홈으로 가 쇼츠로 안가고") — YouTube
+Shorts 딥링크가 다시 YouTube 홈 탭으로 열림 (Android)
+
+**증상**: Home 탭에서 YouTube Shorts 카드를 눌렀는데, YouTube 앱의 Shorts가 아니라 일반 홈(구독 피드)
+탭이 열림. 이 정확히 같은 증상이 2026-07-18에 한 번 있었고(`src/constants/supportedApps.ts:37-42`
+주석 참고) 그때 원인은 "커스텀 스킴(`vnd.youtube://`)으로 열면 앱 설치 시 항상 성공 처리돼 App Link
+경로(`https://m.youtube.com/shorts`, Shorts 전용)가 영영 안 쓰였다"였음 → 우선순위를 뒤집어 App Link를
+먼저 시도하도록 이미 고쳐져 있는 상태(`launchPlatformApp()`)인데도 오늘 다시 재발.
+
+**아직 코드를 안 고치고 여기만 남기는 이유**: `git log`로 확인한바 `supportedApps.ts`는 최근 커밋
+이력에 안 걸림(이번 라이브 반영 작업이 건드린 파일이 아님) — 즉 이번 세션의 변경이 원인이 아니라
+기존부터 있었거나 다시 나타난 문제. 코드상으로는 이미 App Link(`m.youtube.com/shorts`)를 우선
+시도하게 돼 있는데도 실패하는 거라, 유력한 원인은 코드 로직이 아니라:
+- YouTube 앱이 Android App Links 도메인 검증(`m.youtube.com`)을 이 기기/이 YouTube 앱 버전에서
+  실패해 브라우저로 안 가고 그냥 앱을 기본 진입점(홈)으로 열었을 가능성
+- `webFallback` URL이 특정 영상 ID 없이 `/shorts`로만 끝나는 경로라(`https://m.youtube.com/shorts`),
+  YouTube 쪽이 이걸 "유효한 Shorts 딥링크"로 인식 못 하고 그냥 앱 기본 화면(홈)으로 폴백했을 가능성
+
+**다음 확인/수정 방향**: 실기기에서 `adb shell am start -a android.intent.action.VIEW -d
+"https://m.youtube.com/shorts"` 직접 실행해 재현되는지, `adb logcat`으로 Intent 라우팅이 실제로
+YouTube 네이티브 앱으로 가는지 브라우저로 새는지 확인 필요. 재현되면 대안으로 (a) 특정 인기 Shorts
+영상 ID를 붙인 `https://www.youtube.com/shorts/<videoId>` 형태로 바꿔보거나, (b) `Linking.openURL`
+대신 `IntentLauncher`로 패키지명(`com.google.android.youtube`)을 명시해 강제로 네이티브 앱을 열게
+하는 방법을 검토할 것.

@@ -1894,3 +1894,51 @@ Mac 세션이 바로 확인 부탁드립니다. 참고로 코드상 iOS 수면�
 회귀했는지, (b) `sleepStillnessMinutes`/`useSleepGuard`의 `enabled` 조건(`playing && !sleepBlackout`)이
 지금 상태에서 애초에 false로 막혀 있는 건 아닌지, (c) 오늘 밤 손짓 전환-정지(`setWavePaused`,
 `pauseWaveForTransition`) 변경이 실수로 수면감지 훅에도 영향을 준 건 아닌지 확인 필요.
+
+### 2026-07-28 (낮) — Mac 세션: 수면감지 방법 B + 기능별 웹리서치 최적화 + 릴리즈 블로커 발굴
+
+사장님 지시("각 기능 웹스크롤링해서 최적화, 하루종일 8시까지 / 안된다고 묻지 말고 다 하라"). 4개 리서치
+서브에이전트(손짓·피드·Flip수면·볼륨키/광고/구독)로 기능별 최적화 조사 + 적용. **작동 중인 기능 회귀
+방지 원칙** — 검증된 저위험만 즉시 적용, 기기 튜닝/코디 필요한 건 아래에 문서화.
+
+#### ✅ 즉시 적용한 최적화(커밋됨)
+- **수면감지 방법 B**(별도 커밋): 백그라운드 오디오 방식(A안)이 iOS26 불안정+배터리↑+심사리스크라 리서치로
+  기각 → CMMotionActivityManager 모션-보조프로세서 이력 조회로 전환(배터리 거의 0, 앱이 죽어도 이력 남음).
+  authorizationStatus 체크 + from을 now-7d로 클램프(이력 7일 한계) + onset을 세션시작 이전으로 못 잡게 클램프.
+- **손짓 저위험 4종**: 카메라 BGRA→420f YUV(색공간 변환 제거, avgLuma는 Y평면), 해상도 VGA→CIF352x288
+  (MediaPipe 내부 ≤224 다운샘플이라 정확도 무손실), MPImage/detectAsync autoreleasepool(메모리), 처리간격
+  150→100ms(빠른 접근 growth 안정).
+
+#### 🔴 사장님 필수 조치 — 제출 전 반드시(릴리즈/계정정지 블로커)
+1. **[광고 계정정지 벡터] 사장님 iPhone을 AdMob 테스트기기로 등록** — `src/services/ads/adsConfig.ts`
+   `TEST_DEVICE_IDS`에 Android ID만 있음. 릴리즈/TestFlight(실광고 ON)에서 iOS는 **실광고**가 떠서 사장님이
+   실수로 탭/노출하면 계정정지·수익환수. 실기기 1회 광고요청 후 Xcode 콘솔의 `testDeviceIdentifiers = @["<HASH>"]`
+   해시를 잡아 iOS ID 추가 필요. **이번 라운드 최고 심각도.**
+2. **[구독 무음 블로커] RevenueCat 대시보드에 In-App Purchase Key(.p8) 업로드 확인** — RN-purchases v10은
+   StoreKit2 기본이라 .p8+Issuer ID 없으면 결제가 기록 안 돼 "돈 냈는데 잠금 안 풀림". 대시보드 확인(코드무관).
+3. **[심사 2.3.1] 리뷰어 이메일 프리미엄 우회** — `constants/reviewers.ts`가 하드코딩 이메일에 로컬 프리미엄
+   부여 = "숨겨진 기능"으로 반려 위험. (a)Review Notes에 명시 공개하거나 (b)RC 대시보드 프로모 entitlement +
+   데모계정으로 교체 권장.
+4. **[심사 2.5.9] 볼륨키 하이재킹** — 표준 볼륨스위치 기능 변경은 반려 사유. 세션 중에만 국한(이미 됨)+화면
+   탭 대안 있음(이미 됨)을 Review Notes에 방어 설명. 코드무관, 자세 문제.
+
+#### 🟠 후속 코드 최적화(안전하나 기기검증/코디 필요 — 미적용, 문서화)
+- **손짓 #5 바운딩박스 크기 지표**(리서치 최대 정확도 개선): 손목↔중지MCP 거리는 손 회전 시 foreshorten돼
+  growth를 굶김 → 21개 랜드마크 바운딩박스 대각선으로 바꾸면 회전무관. **단 임계값(minHandSize/reappearMinSize)
+  재튜닝 필요 + 안드 parity 깨짐 → 기기 테스트 가능할 때.**
+- **손짓 #7** 신뢰도 0.5→0.3(초반 프레임 더 일찍 포착) — 오탐↑ 위험이라 #5와 함께 튜닝.
+- **피드**: (a)AVAudioSession `.playback`로 무음스위치 켜도 소리(기기검증), (b)전환 커버를 마지막프레임
+  freeze+크로스페이드(까만 번쩍 완화, 기기검증), (c)YouTube SPA soft-nav로 1.6s 붕괴 시도(고위험, 플래그 뒤 실험),
+  (d)프로덕션에서 무거운 WebView 진단(MUTEBLOCKS/MUTEICON/VEV DOM스캔) 제거.
+- **Flip/수면**: (a)pace-sleep의 startDeviceMotionUpdates(자이로 켜짐)→startAccelerometerUpdates(배터리, MOTION_EPSILON
+  재튜닝 필요), (b)iOS16.4+ CMMotionActivityManager false-stationary 버그(애플 미수정)라 onset이 이르게 잡힐 수
+  있음 → 최소30분+화면OFF+시간대 코로보레이션으로 완화.
+- **볼륨키**: (1.2/1.3)interruption/route-change/foreground에 baseline 재무장(iOS18 outputVolume stale 버그),
+  (1.4)PACEVOL NSLog 제거.
+- **광고**: (2.2)SKAdNetworkItems를 Info.plist에(iOS 수익/어트리뷰션), (2.3)UMP 동의 플로우(EEA/UK 규정),
+  (2.4)배너 로드 실패시 지수백오프(현재 첫 실패에 세션 내내 영영 안 뜸).
+- **구독**: (3.3)app_user_id 이메일→UUID(PII/GDPR, 마이그레이션 코디 필요), (3.4)크로스플랫폼 이중결제 가드,
+  (3.5)페이월 가격/기간 prominence(3.1.2 반려 흔함).
+
+전체 리서치 상세(출처 URL 포함)는 이 세션 로그 참고. co-session(Android)에도 공통 항목(광고 테스트기기/UMP/
+SKAdNetwork/구독 email→UUID) 공유 필요.

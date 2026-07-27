@@ -32,6 +32,38 @@ export async function endSession(sessionId: string, durationSeconds: number, vid
   );
 }
 
+// iOS 백그라운드 수면 감지(방법 B, 2026-07-28) — 아직 sleep_detected가 아닌 "가장 최근에 끝난 세션" 1건.
+// 재개 시 이 세션 구간에 모션 보조프로세서 이력상 장시간 정지가 있으면 markSleepDetected로 보정한다.
+export async function getMostRecentSession(userId: string): Promise<ViewingSession | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<any>(
+    `SELECT * FROM viewing_sessions WHERE user_id = ? AND ended_at IS NOT NULL AND status != 'sleep_detected'
+     ORDER BY started_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    durationSeconds: row.duration_seconds,
+    videosWatched: row.videos_watched,
+    platformApp: row.platform_app,
+    status: row.status,
+  };
+}
+
+// backfill 보정 — 이미 끝난 세션을 "잠든 시각"(sleepOnsetIso)으로 sleep_detected 전환. videos_watched는 보존하고
+// duration만 시작~잠든시각으로 재계산(endSession은 videos를 덮어써서 보정엔 부적합해 별도 함수).
+export async function markSleepDetected(sessionId: string, startedAtIso: string, sleepOnsetIso: string): Promise<void> {
+  const db = await getDb();
+  const dur = Math.max(0, Math.round((new Date(sleepOnsetIso).getTime() - new Date(startedAtIso).getTime()) / 1000));
+  await db.runAsync(
+    `UPDATE viewing_sessions SET status = 'sleep_detected', ended_at = ?, duration_seconds = ? WHERE id = ?`,
+    [sleepOnsetIso, dur, sessionId]
+  );
+}
+
 // 수면 감지(스펙 §1-B "새벽 1시 23분에 잠드셨습니다" 요약)용 — 가장 최근의 sleep_detected 세션 1건.
 // 홈 화면이 앱을 열 때마다 이 값을 조회해 아직 안 보여준 것(useSleepInsightStore가 id로 dedupe)이면
 // 인사이트 배너로 보여준다.

@@ -6,7 +6,8 @@ import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
-import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
+import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow, getMostRecentSession, markSleepDetected } from '../database/repositories/sessionsRepository';
+import { requireNativeModule } from 'expo-modules-core';
 import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
 import { useSessionStore } from '../store/useSessionStore';
 import { useTimerStore } from '../store/useTimerStore';
@@ -217,6 +218,38 @@ export default function RootLayout() {
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
+
+  // iOS 백그라운드 수면 감지(방법 B, 2026-07-28 사장님 결정 — 리서치로 백그라운드-오디오 방식이 iOS26
+  // 불안정+배터리↑+심사리스크라 전환). CMMotionManager 실시간(useSleepGuard)은 "화면 켜고 조는" 포그라운드만
+  // 잡는다 → 실제 수면(전원 끄고 잠)은 앱이 정지돼 0건이었다. 대신 모션 "보조프로세서"가 저압으로 항상
+  // 기록하는 활동 이력을, 앱이 포그라운드로 돌아올 때 조회해 "최근 세션 구간에 ≥30분 연속 정지(=잠듦)"가
+  // 있으면 그 시작을 잠든 시각으로 보정한다. 배터리 거의 0, 앱이 밤새 죽어도 이력은 남아 아침에 산출된다.
+  const sleepBackfillUserId = useUserStore((s) => s.user?.id);
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !sleepBackfillUserId) return;
+    let sleepMod: { queryStationaryOnset(sinceMs: number, minMs: number): Promise<number | null> } | null = null;
+    try { sleepMod = requireNativeModule('PaceSleep'); } catch { return; }
+    const backfill = async () => {
+      const userId = useUserStore.getState().user?.id;
+      if (!userId || !sleepMod) return;
+      try {
+        const recent = await getMostRecentSession(userId);
+        if (!recent?.endedAt) return;
+        const startedMs = new Date(recent.startedAt).getTime();
+        const endedMs = new Date(recent.endedAt).getTime();
+        if (Date.now() - endedMs > 24 * 3600 * 1000) return; // 어제 것만 — 오래된 세션 재검사 안 함
+        const stillnessMin = useSettingsStore.getState().settings.sleepStillnessMinutes || 10;
+        const minStationaryMs = Math.max(stillnessMin * 60_000, 30 * 60_000); // 최소 30분 연속 정지 = 실수면(오탐 방지)
+        const onset = await sleepMod.queryStationaryOnset(startedMs, minStationaryMs).catch(() => null);
+        if (onset && onset > startedMs && onset < endedMs + 5 * 60_000) {
+          await markSleepDetected(recent.id, recent.startedAt, new Date(onset).toISOString());
+        }
+      } catch { /* 부가 기능 — 실패해도 앱 사용에 지장 없어야 함 */ }
+    };
+    backfill();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') backfill(); });
+    return () => { try { sub.remove(); } catch {} };
+  }, [sleepBackfillUserId]);
 
   // 2026-07-27 밤 맥 세션 전수감사 발견(#1 블로커, Windows 인계) — overlay/index.tsx의
   // keepSessionAliveOnUnmountRef가 "화면만 Home으로 바꾸고 세션은 유지"하려고 네이티브 종료 호출을

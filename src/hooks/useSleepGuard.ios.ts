@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
 import { requireNativeModule } from 'expo-modules-core';
 
 // iOS 취침 감지 가드 (스펙 §4-B) — 피드 시청 중 잠들면(무진동 지속) 강제 종료를 트리거한다.
@@ -10,14 +9,14 @@ import { requireNativeModule } from 'expo-modules-core';
 // 이어폰/블루투스 탈착은 "보조 신호"로만 — 단독 트리거 아님, 그 뒤로도 무진동이 이어질 때만 6분으로 단축.
 // (통화하러 잠깐 뺐다 움직이면 millisSinceMotion이 리셋돼 발동 안 함.)
 type SleepModule = {
-  start(): Promise<void>;
+  start(stillnessMs: number, shortMs: number): Promise<void>;
   stop(): void;
   millisSinceMotion(): number;
   addListener(event: 'onAudioRouteLost', listener: () => void): { remove: () => void };
+  addListener(event: 'onSleepDetected', listener: (p: { stillMs: number }) => void): { remove: () => void };
 };
 
 const DEFAULT_STILLNESS_MINUTES = 10; // 설정 미지정 시(안드 free 기본과 동일)
-const TICK_MS = 20 * 1000; // 20초마다 검사
 
 // 2026-07-27 안드로이드 parity — 예전엔 임계값이 10분 하드코딩이라 설정의 sleepStillnessMinutes(안드는
 // 사용, D8 프리미엄 조절 5~20분)를 무시했다. 이제 stillnessMinutes를 받아 임계값으로 쓴다. 오디오 라우트가
@@ -39,32 +38,22 @@ export function useSleepGuard({ enabled, onSleep, stillnessMinutes }: { enabled:
       return;
     }
     const m = mod;
-
-    let audioLost = false;
     let fired = false;
-    m.start().catch((err) => { if (__DEV__) console.warn('[sleep] start 실패:', String(err)); });
 
-    const sub = m.addListener('onAudioRouteLost', () => {
-      audioLost = true; // 임계값 단축(무진동이 이어질 때만 실제 발동)
-      if (__DEV__) console.log('[sleep] 🎧 오디오 라우트 끊김 → 임계값 단축(6분)');
+    // 무진동 "판정"은 이제 네이티브(PaceSleep)가 소유 — 임계값만 넘기고, 넘으면 onSleepDetected로 통보받는다.
+    // 이렇게 해야 화면이 꺼져도(=실제 수면) 영상 오디오가 앱을 살려두는 동안 감지가 된다(예전 JS setInterval+
+    // AppState 가드는 백그라운드에서 throttle·차단돼 "화면 켜고 조는" 경우만 잡혔다).
+    m.start(stillnessMs, stillnessShortMs).catch((err) => { if (__DEV__) console.warn('[sleep] start 실패:', String(err)); });
+
+    const sub = m.addListener('onSleepDetected', ({ stillMs }) => {
+      if (fired) return;
+      fired = true;
+      if (__DEV__) console.log('[sleep] 😴 무진동', Math.round(stillMs / 1000), 's → 취침 감지(네이티브) → 종료');
+      // ⭐ 잠든 "실제 시각" = 지금 - 무진동 지속시간(마지막으로 움직인 시각). DB ended_at에 그대로 기록.
+      onSleepRef.current(Date.now() - stillMs);
     });
 
-    const tick = setInterval(() => {
-      if (fired) return;
-      if (AppState.currentState !== 'active') return; // 포그라운드(화면 켜진 시청 중)에서만 인정
-      const still = m.millisSinceMotion();
-      const threshold = audioLost ? stillnessShortMs : stillnessMs;
-      if (still >= threshold) {
-        fired = true;
-        if (__DEV__) console.log('[sleep] 😴 무진동', Math.round(still / 1000), 's → 취침 감지 → 종료');
-        // ⭐ 안드 parity — 잠든 "실제 시각"은 임계값 넘긴 지금이 아니라 "마지막으로 움직인 시각"이다
-        //    (지금 - 무진동 지속시간). 그 시각을 onSleep에 넘겨 DB ended_at에 정확히 기록되게 한다.
-        onSleepRef.current(Date.now() - still);
-      }
-    }, TICK_MS);
-
     return () => {
-      clearInterval(tick);
       try { sub.remove(); } catch {}
       try { m.stop(); } catch {}
     };

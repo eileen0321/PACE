@@ -19,15 +19,22 @@ export const SUPPORTED_APPS = {
   // 홈). www.youtube.com/shorts(같은 경로, m. 대신 www. 서브도메인)는 영상 ID 없이도 정확히 Shorts
   // 풀스크린 피드로 연결됨을 adb am start로 직접 검증. m. 서브도메인만 도메인 검증/라우팅 테이블에서
   // 빠져있는 것으로 추정 — 원인 추적보다 검증된 URL로 교체.
-  youtube: { packageNames: ['com.google.android.youtube'], label: 'YouTube Shorts', androidScheme: 'vnd.youtube://', webFallback: 'https://www.youtube.com/shorts' },
-  instagram: { packageNames: ['com.instagram.android'], label: 'Instagram Reels', androidScheme: 'instagram://app', webFallback: 'https://www.instagram.com/reels/' },
+  youtube: { packageNames: ['com.google.android.youtube'], label: 'YouTube Shorts', androidScheme: 'vnd.youtube://', webFallback: 'https://www.youtube.com/shorts', preferScheme: false },
+  // 2026-07-28 실기기 재현(adb am start로 직접 검증, YouTube와 정반대 결과) — 여기는 https App Link
+  // (`www.instagram.com/reels/`)가 "성공"하면서 Reels가 아니라 그냥 홈 피드를 연다. 반면 커스텀 스킴
+  // `instagram://reels_home`은 정확히 릴스 탭(상단 "릴스" 선택된 풀스크린 영상 피드)으로 바로 연결됨을
+  // 확인 — YouTube와 우선순위를 반대로(`preferScheme: true`) 둬야 한다. 예전 `instagram://app`은
+  // 릴스 전용이 아니라 그냥 앱 진입점이라 이걸로 교체.
+  instagram: { packageNames: ['com.instagram.android'], label: 'Instagram Reels', androidScheme: 'instagram://reels_home', webFallback: 'https://www.instagram.com/reels/', preferScheme: true },
   // 2026-07-18: 사용자 지시로 healthy-shorts-assistant(2) 원본 그대로 TikTok도 Home 플랫폼 선택에
   // 복원(원래 MVP 축소안에선 제외했었음) — "제품 전략 피벗" 문서에 이 오버라이드를 기록해둘 것.
   // ⚠️ 2026-07-18 실기기(한국 리전 설치본) 검증 중 발견: 글로벌 패키지명(com.zhiliaoapp.musically)
   // 하나만 등록했더니 실제 한국 리전 TikTok(com.ss.android.ugc.trill)에서 앱 실행 자체는 정상
   // 동작하는데 오버레이가 전혀 안 뜨는 버그로 이어졌다(ForegroundAppWatcher가 포그라운드 패키지를
   // 못 알아봄) — 두 패키지명 다 등록.
-  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou' },
+  // 2026-07-28 실기기 재현으로 webFallback(`www.tiktok.com/foryou`) 확인 — YouTube/Instagram과 달리
+  // 정확히 추천(For You) 풀스크린 피드로 바로 열림. 기본 우선순위(webFallback 먼저)로 그대로 둠.
+  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: false },
 } as const;
 
 // 2026-07-20 실기기 검증 중 발견: 이 함수를 세션 시작 useEffect 안(DB 조회 2번 + Connecting 애니메이션
@@ -45,9 +52,14 @@ export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
   // YouTube 홈이 뜬다"는 사용자 지적으로 발견). https Shorts URL은 Android App Links로 앱이 설치돼
   // 있으면 네이티브 앱의 Shorts 탭으로, 안 돼있으면 브라우저로 자동 라우팅되므로 —
   // 커스텀 스킴 우선순위를 뒤집어 App Link(webFallback)를 먼저 시도.
+  // 2026-07-28 Instagram은 정반대로 확인돼(위 주석) `preferScheme` 플래그로 플랫폼별 우선순위를
+  // 분리한다 — 모든 플랫폼에 같은 순서를 강제하면 한쪽은 항상 틀린 화면으로 열린다.
+  const [first, second] = app.preferScheme
+    ? [app.androidScheme, app.webFallback]
+    : [app.webFallback, app.androidScheme];
   try {
-    await Linking.openURL(app.webFallback);
+    await Linking.openURL(first);
   } catch {
-    await Linking.openURL(app.androidScheme).catch(() => {});
+    await Linking.openURL(second).catch(() => {});
   }
 }

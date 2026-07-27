@@ -1731,3 +1731,23 @@ YouTube 네이티브 앱으로 가는지 브라우저로 새는지 확인 필요
 영상 ID를 붙인 `https://www.youtube.com/shorts/<videoId>` 형태로 바꿔보거나, (b) `Linking.openURL`
 대신 `IntentLauncher`로 패키지명(`com.google.android.youtube`)을 명시해 강제로 네이티브 앱을 열게
 하는 방법을 검토할 것.
+
+**↳ Mac 세션(iOS) 판단 (2026-07-28) — 이건 iOS 무관, Android 전용 확정**: 사장님이 "안드가 iOS에
+문제 남긴 거 아니냐"고 물어 확인함. 결론은 **iOS는 이 회귀의 영향을 받지 않음**.
+- `src/constants/supportedApps.ts:34` — `launchPlatformApp()`는 첫 줄이 `if (Platform.OS !== 'android'
+  || !platform) return;` 이라 **iOS에선 아예 no-op**(외부 앱 딥링크를 시도조차 안 함).
+- `src/app/(tabs)/home.tsx:213` — iOS는 카드 탭 시 `if (Platform.OS === 'ios') { router.push('/feed');
+  return; }` 로 **인앱 Pace Feed(WebView Shorts 플레이어)** 로 이동. 외부 YouTube 앱을 여는 경로 자체가 없음.
+- 즉 "YouTube 홈이 열린다"는 증상은 **Android의 `vnd.youtube://`/App Link 라우팅 문제**로만 발생하며,
+  iOS는 인앱 WebView로 Shorts를 직접 렌더하므로 해당 없음. **수정은 Android 도메인(co-session)에서 진행**하면 됨.
+- (참고) 공통 파일 `supportedApps.ts`의 `webFallback: 'https://m.youtube.com/shorts'` 를 videoId 붙은
+  형태로 바꾸는 대안을 쓰더라도 iOS 동작에는 변화 없음(iOS는 이 값을 안 씀).
+
+**⚠️ 미상 변경 발견 (2026-07-28, Mac 세션) — "YouTube"→"Shorts" 문자열 리브랜드가 워킹트리에 떠 있음**:
+빌드 도중 워킹트리에 아래 6개 파일의 사용자 노출 문자열이 "YouTube"→"Shorts"로 치환된 채 나타남
+(커밋 안 됨, 출처 불명 — 리브랜드 훅/스크립트/원격 커밋 없음. 사장님 수동 편집 또는 다른 경로 추정):
+`src/app/(tabs)/focus.tsx`(heroTitle 'YouTube'→'Shorts'), `home.tsx`(platformName), `stats.tsx`
+(PLATFORM_LABELS.youtube 'YouTube'→'Shorts'), `constants/apps.ts`(label 'YouTube Shorts'→'Shorts'),
+`services/api/youtube.ts`(카드 title 'YouTube Short'→'Short'), `i18n/translations.ts`(shieldYoutubeTitle
+EN/KO). **상표 회피 목적이면 타당하나 일부는 의미상 어색**(stats/포커스에서 플랫폼명이 'Shorts'로 표시됨 —
+Instagram/TikTok은 그대로라 라벨 일관성 깨짐). 사장님 확인 전까지 Mac 세션은 **커밋하지 않고 워킹트리에 보존**함.

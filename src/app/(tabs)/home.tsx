@@ -326,7 +326,7 @@ export default function HomeScreen() {
 
       <ConnectingOverlay
         visible={connectingPlatform !== null}
-        platformName={connectingPlatform ? 'Shorts' : ''}
+        platformName={connectingPlatform ? 'YouTube' : ''}
         platformFullTitle={connectingCard?.title ?? ''}
         onComplete={handleConnectingComplete}
       />

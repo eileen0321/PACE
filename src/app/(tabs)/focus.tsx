@@ -107,7 +107,7 @@ export default function FocusScreen() {
             <Text style={styles.liveTagText}>{t('focus.liveEngine')}</Text>
           </View>
           <Text style={styles.heroLabel}>{t('focus.focusSession')}</Text>
-          <Text style={styles.heroTitle}>Shorts</Text>
+          <Text style={styles.heroTitle}>YouTube</Text>
 
           <View style={styles.splitRow}>
             <View style={styles.splitCol}>

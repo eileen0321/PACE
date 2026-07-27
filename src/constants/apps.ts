@@ -3,7 +3,7 @@
 export type ShortFormApp = 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'naver_clip';
 
 export const SHORT_FORM_APPS: Record<ShortFormApp, { label: string; androidPackage: string; iosBundleId: string }> = {
-  youtube: { label: 'Shorts', androidPackage: 'com.google.android.youtube', iosBundleId: 'com.google.ios.youtube' },
+  youtube: { label: 'YouTube Shorts', androidPackage: 'com.google.android.youtube', iosBundleId: 'com.google.ios.youtube' },
   instagram: { label: 'Instagram Reels', androidPackage: 'com.instagram.android', iosBundleId: 'com.burbn.instagram' },
   tiktok: { label: 'TikTok', androidPackage: 'com.zhiliaoapp.musically', iosBundleId: 'com.zhiliaoapp.musically' },
   facebook: { label: 'Facebook Reels', androidPackage: 'com.facebook.katana', iosBundleId: 'com.facebook.Facebook' },

@@ -1751,3 +1751,14 @@ YouTube 네이티브 앱으로 가는지 브라우저로 새는지 확인 필요
 `services/api/youtube.ts`(카드 title 'YouTube Short'→'Short'), `i18n/translations.ts`(shieldYoutubeTitle
 EN/KO). **상표 회피 목적이면 타당하나 일부는 의미상 어색**(stats/포커스에서 플랫폼명이 'Shorts'로 표시됨 —
 Instagram/TikTok은 그대로라 라벨 일관성 깨짐). 사장님 확인 전까지 Mac 세션은 **커밋하지 않고 워킹트리에 보존**함.
+
+**↳ 최종 결정 (2026-07-28, 사장님 확인 완료) — 인앱 UI 문구는 원복, "YouTube" 그대로 사용**:
+이후 Mac 세션이 `d3a2753`로 이 리브랜드를 실제 커밋·푸시했으나, 사장님이 애플/구글 정책을 재확인한 결과
+**인앱 화면 문구에서 "YouTube"/"Instagram"/"TikTok"을 설명적으로(nominative use) 언급하는 것 자체는
+문제없음**으로 결론. 진짜 주의가 필요한 건 (1) 앱 아이콘/앱 이름 자체에 상표 넣기, (2) 로고 도용,
+(3) "공식/제휴" 오인 표현, (4) **스토어 리스팅(스크린샷/설명문)에서 상표명을 ASO 키워드로 도배**하는
+것 — 이 4가지뿐. 인앱 UI는 이미 설치된 제3자 앱을 가리키는 용도라 One Sec/Opal/Freedom 같은 실제
+스크린타임 앱들도 화면 안에서 브랜드명을 그대로 씀. → **`d3a2753`의 7곳 전부 원래 이름으로 원복함**
+(Windows 세션, 이 문서 갱신과 함께 커밋). 스토어 리스팅 쪽 상표 주의(`APP_STORE_LISTING.md`의 Screen
+Time/Family Controls 언급 제거, `b88a65d`)는 이미 별개로 처리돼 있어 그대로 유효 — **인앱 UI 리브랜드는
+더 이상 진행하지 말 것.**

@@ -22,7 +22,10 @@ public class PaceVolumeKeyModule: Module {
   private let session = AVAudioSession.sharedInstance()
   private var observer: NSKeyValueObservation?
   private var volumeView: MPVolumeView?
-  private let baseline: Float = 0.5
+  // baseline: 사용자가 맞춰둔 실제 볼륨을 캡처해 그 값으로 유지한다(예전엔 0.5로 강제해 영상 볼륨이 사용자
+  // 설정과 무관하게 0.5로 고정/들쑥날쑥해지는 문제가 있었음 — 사용자 실기기 지적). start()에서 현재 볼륨으로
+  // 세팅하되, 양극단(0/1)이면 눌림 감지 여지가 없어 [0.1, 0.9]로만 살짝 클램프한다.
+  private var baseline: Float = 0.5
   private var ignoreNext = false
   private var nextTarget: Any?
   private var prevTarget: Any?
@@ -44,8 +47,11 @@ public class PaceVolumeKeyModule: Module {
           Self.topWindow()?.addSubview(mv)
           self.volumeView = mv
         }
-        self.setSystemVolume(self.baseline)
-        NSLog("PACEVOL start OK — outputVolume KVO + MPRemoteCommandCenter(하이브리드) baseline=\(self.baseline)") // 진단(테스트 후 제거)
+        // 사용자가 맞춰둔 현재 볼륨을 baseline으로 캡처(0.5 강제 금지). 양극단이면만 [0.1,0.9]로 클램프.
+        let cur = self.session.outputVolume
+        self.baseline = min(0.9, max(0.1, cur))
+        self.setSystemVolume(self.baseline) // cur이 [0.1,0.9]면 사실상 변화 없음
+        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur) 캡처)") // 진단(테스트 후 제거)
         self.observer = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
           guard let self = self else { return }
           if self.ignoreNext { self.ignoreNext = false; return }

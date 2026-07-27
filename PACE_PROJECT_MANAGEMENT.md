@@ -1565,9 +1565,9 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 - 인증 감사 결론: 게스트/심사원 경로 견고(로그인벽 없음, 오프라인 degrade, 사인아웃 프리미엄 누수 없음).
 
 **🔴🔴 [사장님 — 오늘밤 제출 전 반드시, 코드로 못 고침]:**
-1. **개인정보처리방침 URL** — `src/constants/legal.ts`의 `PRIVACY_POLICY_URL`이 지금 **임시 placeholder**다. 실제로
-   호스팅된 개인정보처리방침 페이지를 하나 만들고(정적 페이지/Notion 공개/백엔드 라우트 등) 그 URL로 교체해야 한다.
-   이 URL이 안 열리면 심사 거부(B1/B2의 유일한 미완 부분). 이용약관은 Apple 표준 EULA라 그대로 OK.
+1. ~~개인정보처리방침 URL~~ ✅ **해결(346fd81)** — 사장님이 실제 Notion 공개페이지 제공, `legal.ts`에 반영.
+   페이월/설정 링크 정상. **단 남은 확인 2가지**: (a) 그 Notion 페이지가 로그인 없이 열리는 "공개(Publish)" 상태인지,
+   (b) App Store Connect > App Information > **Privacy Policy URL 칸에도 같은 URL 입력**(앱 내 링크와 별개로 콘솔에도 필요).
 2. **프로덕션 빌드 env 주입 확인** — `.env`는 gitignore라 EAS 클라우드 빌드엔 안 올라간다. `EXPO_PUBLIC_API_BASE_URL/
    YOUTUBE_PROXY_URL/GOOGLE_*_CLIENT_ID/RC_*_KEY/PEXELS_KEY`를 `eas env`(또는 eas.json build.production.env)에 등록
    했는지 확인. 안 하면 **소셜로그인·iOS 피드가 프로덕션에서 죽는다**(심사원도 못 봄). 로컬 archive면 .env 읽혀 무관.

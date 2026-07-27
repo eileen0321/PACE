@@ -578,7 +578,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // ("지맘대로 넘어감")했다. 평활로 빠른 진동을 죽이고 "지속적으로 다가오는" 추세만 남긴다(회전 무관).
     smoothedSize = smoothedSize <= 0 ? raw : smoothedSize * 0.7 + raw * 0.3
     let size = smoothedSize
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f n=%d armed=%@", Double(size), Double(raw), samples.count + 1, armed ? "1" : "0")) }
     // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
     // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
     // 재무장: 손을 뒤로 뺐거나(크기 25%↓) refractory(1.2초)가 지나면 다시 발화 허용. ⚠️ 실기기 로그로 확정한
@@ -590,21 +589,46 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     let t = now
     samples.append((t, size))
-    samples.removeAll { t - $0.t > windowSec } // 창(500ms) 밖 제거
+    samples.removeAll { t - $0.t > windowSec } // 창 밖 제거
     guard samples.count >= 2, let oldest = samples.first else { return }
 
-    // 창 안 최고령(가장 오래된) 크기 대비 현재 크기가 growthRatio 이상 = "손이 급히 다가옴".
-    // ⚠️ 과발화 방지(사용자 "한 손짓에 여러 번 넘어감"): refractory만으로는 부족 — 손이 프레임에 계속
-    //    있으면 창이 갱신되며 반복 발화됨. "발화 후 손이 한 번 빠져야(no-hand/작아짐) 재무장(armed)"
-    //    게이트를 둬 한 제스처=한 번만 넘어가게 한다.
+    // 발화 = "손이 카메라로 다가옴"(너클 폭이 창 안에서 growthRatio 이상 커짐). 아이콘이 그리는 실제 동작 —
+    // "아래에서 주먹으로 시작 → 편 손으로 폰(카메라) 쪽으로 다가와 화면을 덮음"(훠이)과 일치한다. ⚠️ 좌우로
+    // 젓는 건 이 제스처가 아니다(아이콘 주석의 사용자 정정: "가로젓는 게 아니잖아, 훠이는") — 성장만 본다.
+    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f armed=%@", Double(size), Double(raw), armed ? "1" : "0")) }
     if armed && size >= oldest.size * growthRatio {
       guard now - lastFire > refractorySec else { return }
       lastFire = now
-      armed = false // 손이 뒤로 빠질(크기 25%↓) 때까지 재발화 금지
-      lastFireSize = size // 재무장 판정 기준(이 크기의 75% 아래로 줄면 재무장)
+      armed = false
+      lastFireSize = size // 재무장 판정 기준
       samples.removeAll() // 트리거 후 이력 초기화
       onDiag("👋 WAVE!")
       DispatchQueue.main.async { self.onWave() }
     }
+  }
+
+  // 손 중심 x좌표 시퀀스에서 "유의미한 방향 전환(왕복) 횟수"를 센다. 좌우 흔들기 판정용.
+  // 히스테리시스 — 마지막 극점 대비 반대 방향으로 minAmp 이상 움직여야 1회 전환으로 카운트한다.
+  // 이로써 미세 지터(드리프트/떨림)는 무시하고, 단일 스윕(한쪽으로만 쓸기)은 0회로 남겨 오발화를 막는다.
+  // 예: 좌→우→좌 흔들기 = 방향 전환 2회. 발화 조건은 reversals >= 2.
+  private static func countReversals(_ xs: [CGFloat], minAmp: CGFloat) -> Int {
+    guard xs.count >= 3 else { return 0 }
+    var reversals = 0
+    var dir = 0          // -1: 감소중, +1: 증가중, 0: 방향 미정
+    var extreme = xs[0]  // 마지막 극점(방향 전환 지점) 좌표
+    for x in xs.dropFirst() {
+      switch dir {
+      case 1: // 증가중
+        if x > extreme { extreme = x }                          // 계속 오름 → 극점 갱신
+        else if extreme - x >= minAmp { reversals += 1; dir = -1; extreme = x } // minAmp 이상 꺾임 → 전환
+      case -1: // 감소중
+        if x < extreme { extreme = x }
+        else if x - extreme >= minAmp { reversals += 1; dir = 1; extreme = x }
+      default: // 방향 미정 — 첫 유의미한 움직임으로 방향 확정(전환으로 세지 않음)
+        if x - extreme >= minAmp { dir = 1; extreme = x }
+        else if extreme - x >= minAmp { dir = -1; extreme = x }
+      }
+    }
+    return reversals
   }
 }

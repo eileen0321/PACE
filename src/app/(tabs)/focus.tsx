@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,6 +10,7 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { bluetoothService } from '../../services/platform';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -57,13 +58,18 @@ export default function FocusScreen() {
     ? t('focus.handsFreeMethodsAndroid')
     : t('focus.handsFreeMethodsIos');
   // 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별" 구조로 분리(마스터 OFF면 하위 숨김).
-  // 플랫폼별로 쓰는 필드가 다르다: iOS는 순수 설정(handsFreeEnabled/handsFreeGesture/volumeKeyRemote), Android는
-  // 마스터가 네이티브 autoModeEnabled(손짓은 네이티브가 마스터에 번들), 블루투스만 bluetoothVolumeKeySkipEnabled.
+  // 손짓도 블루투스와 대칭으로 마스터와 완전히 독립된 자체 on/off를 갖는다(사용자 지적 "왜 손짓을
+  // 빼니" — 이전엔 안드로이드만 네이티브가 마스터에 손짓을 번들해서 별도 행이 없었다. 이제
+  // PaceOverlayService.setHandsFreeGestureEnabled()로 분리 — 마스터가 켜진 중에도 손짓만 따로
+  // 끄고 켤 수 있고, 마스터를 다시 켜면 그 손짓 설정값을 그대로 존중한다).
   const isIOS = Platform.OS === 'ios';
   const masterOn = isIOS ? settings.handsFreeEnabled : autoModeEnabled;
   const setMaster = (v: boolean) => { if (isIOS) update({ handsFreeEnabled: v }); else onToggleHandsFree(); };
-  const gestureOn = settings.handsFreeGesture; // iOS 손짓 개별 스위치(Android는 마스터에 번들이라 별도 행 안 보임)
-  const setGesture = (v: boolean) => update({ handsFreeGesture: v });
+  const gestureOn = settings.handsFreeGesture;
+  const setGesture = (v: boolean) => {
+    update({ handsFreeGesture: v });
+    if (!isIOS) bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
+  };
   const volumeSkipOn = isIOS ? settings.volumeKeyRemote : settings.bluetoothVolumeKeySkipEnabled;
   const setVolumeSkip = (v: boolean) => update(isIOS ? { volumeKeyRemote: v } : { bluetoothVolumeKeySkipEnabled: v });
   // 감사 발견 subscription-C1(2026-07-27) — 핸즈프리는 D9 결정 번복으로 "무료 개방"됐다(home.tsx는
@@ -188,12 +194,12 @@ export default function FocusScreen() {
             home.tsx의 onSelectPlatform과 동일 기준(D9). */}
         <View>
           <Text style={styles.sectionLabel}>{t('focus.handsFreeSection')}</Text>
-          {/* ⚠️ GlassSurface(BlurView)에 layout 애니메이션을 걸면 블러가 매 프레임 리렌더되며 "번쩍"인다(사용자
-              지적). BlurView는 크기 애니메이션과 상성이 나빠 layout 래퍼를 걸지 않는다 — 하위 행의 fade로만 전환. */}
+          {/* ⚠️ GlassSurface(BlurView)는 크기가 바뀌면 매 프레임 다시 블러해야 해서 "번쩍"인다(사용자 지적,
+              이전 수정에서 확인). 그래서 블러 카드(마스터 행)는 항상 고정 크기로 두고, 진짜 아코디언 동작
+              (사용자 지적 "아코디언으로 내려와야지")이 필요한 하위 손짓/블루투스 행은 블러 없는 별도 패널로
+              분리한다 — 이 패널은 layout={LinearTransition}으로 부드럽게 늘어나고 줄어든다(블러가 없어
+              매 프레임 다시 그릴 게 없으니 번쩍임 자체가 발생하지 않음). */}
           <GlassSurface style={styles.card}>
-            {/* 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별"로 분리. 마스터 OFF면 하위 숨김.
-                라벨/아이콘은 온보딩 가이드(handsFreeSheet)와 통일 — 손짓=handWaveLabel+GestureFlickIllustration,
-                블루투스=bluetoothRemoteLabel+RemoteClickIllustration. */}
             <View style={styles.interventionRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.interventionTitle}>{t('focus.handsFreeMode')}</Text>
@@ -207,11 +213,19 @@ export default function FocusScreen() {
                 ios_backgroundColor="#262626"
               />
             </View>
-            {masterOn && isIOS && (
+          </GlassSurface>
+          {/* 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별"로 분리, 안드로이드도 iOS와
+              동일하게 손짓 행을 보여준다(예전엔 안드로이드만 네이티브가 마스터에 손짓을 번들해서 숨겨져
+              있었음 — 이제 PaceOverlayService.setHandsFreeGestureEnabled()로 완전히 독립). 마스터 OFF면
+              패널 전체가 접힌다. 라벨/아이콘은 온보딩 가이드(handsFreeSheet)와 통일 — 손짓=
+              handWaveLabel+GestureFlickIllustration, 블루투스=bluetoothRemoteLabel+RemoteClickIllustration. */}
+          <Animated.View layout={LinearTransition.duration(220)} style={styles.handsFreeExpandWrap}>
+            {masterOn && (
               <Animated.View
                 entering={FadeInDown.duration(180)}
                 exiting={FadeOutUp.duration(160)}
-                style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}
+                layout={LinearTransition.duration(180)}
+                style={styles.handsFreeSubCard}
               >
                 <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
                 <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
@@ -226,9 +240,10 @@ export default function FocusScreen() {
             )}
             {masterOn && (
               <Animated.View
-                entering={FadeInDown.duration(180).delay(isIOS ? 40 : 0)}
+                entering={FadeInDown.duration(180).delay(40)}
                 exiting={FadeOutUp.duration(160)}
-                style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}
+                layout={LinearTransition.duration(180)}
+                style={styles.handsFreeSubCard}
               >
                 <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
                 <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
@@ -241,7 +256,7 @@ export default function FocusScreen() {
                 />
               </Animated.View>
             )}
-          </GlassSurface>
+          </Animated.View>
         </View>
 
         {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로
@@ -290,7 +305,21 @@ const styles = StyleSheet.create({
   attendanceFooterText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },
 
   interventionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
-  handsFreeSubRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
+  // 2026-07-27 — 블러 카드(마스터)와 분리된 진짜 아코디언 패널(사용자 지적 대응). handsFreeExpandWrap
+  // 자체는 배경 없는 순수 레이아웃 컨테이너라 layout 애니메이션을 걸어도 블러 재계산이 없어 번쩍이지
+  // 않는다 — 실제 카드 배경은 각 handsFreeSubCard가 개별로 갖는다(GlassSurface 아님, 평범한 View).
+  handsFreeExpandWrap: { gap: spacing.xs, marginTop: spacing.xs },
+  handsFreeSubCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    borderRadius: radius.card,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.lg,
+  },
   handsFreeIcon: { width: 48, height: 44, alignItems: 'center', justifyContent: 'center' },
   interventionTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   interventionSub: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8', marginTop: 2 },

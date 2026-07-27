@@ -24,8 +24,10 @@ export const bluetoothService: BluetoothService = {
   async next() {},
   async previous() {},
   async toggleAutoMode() {},
+  async setHandsFreeGestureEnabled() {}, // no-op — handsFreeGesture는 순수 JS 설정, feed/index.tsx가 직접 읽음
   async setFocusSessionDurationMinutes() {},
   async getFocusSessionDurationMinutes() { return 10; },
+  async setSleepStillnessMinutes() {}, // no-op — iOS는 sleepStillnessMinutes 네이티브 경로 자체가 없음
   async consumeFocusSessionTimedOut() { return false; },
   async extendFocusSession() {},
   async hasRecordAudioPermission() { return true; },

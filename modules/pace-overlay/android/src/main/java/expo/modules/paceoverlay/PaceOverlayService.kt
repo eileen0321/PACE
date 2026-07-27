@@ -576,6 +576,10 @@ class PaceOverlayService : Service() {
     // 아니라 "마지막으로 움직인 시각"으로 정확히 기록하게 한다(consumeExpired 참고).
     const val PREF_SLEEP_ONSET_AT_MS = "sleep_onset_at_ms"
     const val PREF_AUTO_MODE = "bt_auto_mode"
+    // 2026-07-27 사용자 지시("왜 손짓을 빼니" — 마스터와 독립적으로 손짓만 따로 끄고 켤 수 있어야 함) —
+    // 기존엔 setAutoMode(enable)의 enable 하나가 손짓 감지 시작/중지까지 같이 묶어버렸다. 블루투스
+    // 볼륨키 스킵과 동일한 원칙으로, 손짓도 마스터(Focus Session)와 별개인 자체 on/off를 갖는다.
+    private const val PREF_HANDSFREE_GESTURE_ENABLED = "handsfree_gesture_enabled"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
     private const val PREF_SESSION_ACTIVE = "session_active"
@@ -670,6 +674,19 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getInt(PREF_FOCUS_SESSION_MINUTES, DEFAULT_FOCUS_SESSION_MINUTES)
 
+    // 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 focusSessionDurationMinutes는 여기 위
+    // setFocusSessionDurationMinutes로 네이티브에 push되는데, sleepStillnessMinutes(D8, 무진동
+    // 수면감지 임계값)는 그 경로가 없어서 이미 도는 중인 세션은 다운그레이드 이후에도 계속 프리미엄
+    // 시절 임계값(최대 20분)으로 동작했다. sleepStillnessMinutes는 performTick()이 매 틱마다 인스턴스
+    // 필드를 다시 읽는 "라이브" 값(setHandsFreeGestureEnabled와 같은 패턴)이라, 다음 세션까지 기다릴
+    // 필요 없이 지금 도는 세션에도 즉시 반영 가능 — instance가 있으면 바로 갱신한다.
+    fun setSleepStillnessMinutes(context: Context, minutes: Int) {
+      val clamped = minutes.coerceIn(5, 20)
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putInt(PREF_SLEEP_STILLNESS_MINUTES, clamped).apply()
+      instance?.sleepStillnessMinutes = clamped
+    }
+
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT(스토어 제출용 킬스위치)는 JS 전용
     // 빌드타임 플래그라 JS의 startAutoNextWatching()/stopAutoNextWatching() 호출부만 막았다. 그런데
     // 알약 탭(triggerNext/triggerPrevious → setAutoMode)과 블루투스 하드웨어 리모컨(MediaSession
@@ -731,7 +748,11 @@ class PaceOverlayService : Service() {
         // 2026-07-24 손 밀어내기(shoo) — 핑거스냅과 같은 Focus Session 안에서 나란히 도는 세 번째
         // 핸즈프리 트리거. 카메라 권한이 없으면 PaceHandWaveDetector.start()가 조용히 no-op한다
         // (PaceSnapDetector의 RECORD_AUDIO 방어와 동일한 원칙).
-        PaceHandWaveDetector.start(context) { triggerNext(context) }
+        // 2026-07-27 — 마스터가 켜져도 손짓 자체를 개별로 꺼뒀으면(PREF_HANDSFREE_GESTURE_ENABLED)
+        // 시작하지 않는다 — 블루투스 볼륨키 스킵과 대칭되는 독립 토글.
+        if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, true)) {
+          PaceHandWaveDetector.start(context) { triggerNext(context) }
+        }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
         focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
       } else {
@@ -751,6 +772,20 @@ class PaceOverlayService : Service() {
         it.applyAutoBadgeStyle()
       }
       showToast(context, if (enable) "🎯 Focus Session Started (${getFocusSessionDurationMinutes(context)}m)" else "🎯 Focus Session Ended")
+    }
+
+    // 2026-07-27 사용자 지시 — 손짓을 마스터(Focus Session)와 독립적으로 켜고 끌 수 있게. 값을
+    // 영속화하고, 마스터가 이미 켜져 있는 중이면(=PaceHandWaveDetector가 지금 돌고 있을 수 있음)
+    // 다음 세션까지 기다리지 않고 즉시 반영한다 — 블루투스 볼륨키 토글(다음 세션 시작 때만 반영)과
+    // 달리 이건 라이브 스위치라 즉시 반영이 더 자연스럽다(손짓은 세션 도중 계속 켜져 있는 감지기라
+    // 다시 시작할 필요 없이 그냥 지금 stop/start만 하면 됨).
+    fun setHandsFreeGestureEnabled(context: Context, enabled: Boolean) {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      prefs.edit().putBoolean(PREF_HANDSFREE_GESTURE_ENABLED, enabled).apply()
+      val masterOn = prefs.getBoolean(PREF_AUTO_MODE, false)
+      if (masterOn) {
+        if (enabled) PaceHandWaveDetector.start(context) { triggerNext(context) } else PaceHandWaveDetector.stop()
+      }
     }
 
     private fun bumpBluetoothCounter(context: Context, key: String) {

@@ -292,11 +292,23 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.setAutoMode(context, enable) }
     }
 
+    // 2026-07-27 사용자 지시 — 손짓(카메라 제스처)을 마스터(Focus Session)와 별개로 켜고 끄는 독립 토글.
+    Function("setHandsFreeGestureEnabled") { enable: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setHandsFreeGestureEnabled(context, enable) }
+    }
+
     // 2026-07-20 사용자 지시 — Focus Session 지속 시간을 10분 하드코딩이 아니라 사용자가 직접
     // 고르게 한다(정책상으로도 문제없음, PACE_ARCHITECTURE.md 참고). 다음 setBluetoothAutoMode(true)
     // 호출부터 반영된다 — 이미 도는 중인 세션의 예약된 자동 종료 시각은 안 바뀜.
     Function("setFocusSessionDurationMinutes") { minutes: Int ->
       appContext.reactContext?.let { context -> PaceOverlayService.setFocusSessionDurationMinutes(context, minutes) }
+    }
+
+    // 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 sleepStillnessMinutes(D8, 무진동
+    // 수면감지 임계값)를 이미 도는 중인 세션에도 즉시 반영하기 위한 경로(setFocusSessionDurationMinutes는
+    // 다음 세션부터만 반영되지만, 이건 라이브 값이라 지금 바로 반영됨 — PaceOverlayService 참고).
+    Function("setSleepStillnessMinutes") { minutes: Int ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setSleepStillnessMinutes(context, minutes) }
     }
 
     Function("getFocusSessionDurationMinutes") {

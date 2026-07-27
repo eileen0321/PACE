@@ -120,9 +120,22 @@ export interface BluetoothService {
   next(): Promise<void>;
   previous(): Promise<void>;
   toggleAutoMode(enable: boolean): Promise<void>;
+  /**
+   * 2026-07-27 사용자 지시("손짓을 마스터랑 독립적으로 켜고 끌 수 있어야지") — 카메라 손짓(hand-wave)
+   * 감지를 Focus Session 마스터 토글과 별개로 켜고 끈다. Android: 마스터가 이미 켜져 있으면 즉시
+   * PaceHandWaveDetector를 시작/중지(다음 세션까지 안 기다림). iOS: no-op(handsFreeGesture는
+   * 순수 JS 설정이라 feed/index.tsx가 직접 읽음, 네이티브 브릿지 불필요).
+   */
+  setHandsFreeGestureEnabled(enable: boolean): Promise<void>;
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;
+  /**
+   * 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 이미 도는 중인 세션의 무진동 수면감지
+   * 임계값(sleepStillnessMinutes)을 즉시 무료 기본값으로 되돌린다(focusSessionDurationMinutes와
+   * 달리 이건 라이브 값이라 다음 세션까지 안 기다리고 바로 반영됨). Android만 실제 동작, iOS는 no-op.
+   */
+  setSleepStillnessMinutes(minutes: number): Promise<void>;
   /**
    * 2026-07-26 사용자 지시("무료일땐 10분 고정, 보상광고 보면 늘려줘") — Focus Session이 설정된
    * 시간이 다 돼서(사용자가 직접 끈 게 아니라) 자동으로 꺼졌는지 1회성 소비 확인(읽으면 즉시

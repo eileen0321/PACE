@@ -1373,14 +1373,11 @@ Time 삭제 후 iOS 피드에 안드로이드 오버레이가 하던 기능들�
 에이전트 위임 2차 전체 감사 결과. 안전한 건 바로 고쳤고(아래), **두 건은 방향/작업 필요라 사장님께
 먼저 보고만 하고 미착수 — 다음에 다시 잊지 않도록 여기 기록**:
 
-**🔴 [HIGH, Mac 세션 담당] iOS `feed/index.tsx`(Pace Feed)는 안에 있는 동안 Daily Limit이 전혀
-집행 안 됨.** `overlayService.ios.ts`는 `remainingMinutes`(Live Activity용)만 쓰고 나머지 필드는
-전부 무시 — feed 화면 자체에 `todayUsageMinutes` vs `dailyLimitMinutes` 실시간 체크가 없다.
-`LimitReachedOverlay`는 `home.tsx`에만 마운트돼 있어 Home 탭으로 돌아가야만 한도 도달 팝업이 뜬다.
-즉 iOS에서 Pace Feed 안에만 머물면 하루 한도가 사실상 없다(Android는 네이티브 오버레이가 남은시간
-0분에서 실제로 막음 — 플랫폼 패리티 깨짐). **미결정**: JS만으로(feed 안에 sleepBlackout과 같은 패턴의
-한도-도달 블랙아웃/팝업 추가) Windows 세션이 구현할지, Mac 세션이 iOS 네이티브 관점에서 다르게
-풀지 사장님 지시 대기 중.
+**✅ 해결됨(Mac 세션, 같은 날 동시 발견) — [HIGH] iOS `feed/index.tsx`(Pace Feed) Daily Limit 미집행.**
+Mac 세션도 같은 날 독립적으로 이 갭을 발견해 커밋 `1a9c21b`("iOS Feed 일일한도 강제+브레이크알림+
+저시간알림 이식, 안드 parity")로 이미 고쳐뒀음(Windows가 이 상태 기록 후 뒤늦게 확인) — `feed/index.tsx`
+에 안드로이드 오버레이의 60초 네이티브 tick과 동등한 JS tick 추가: 저시간(5분/1분) 알림, Break
+Reminder, 일일 한도 도달 시 정지+홈 복귀까지 전부 구현됨. 더 이상 미결정 아님.
 
 **🟡 [MEDIUM, Android] 세션 중 오버레이 펼침카드에서 Sleep Timer를 바꿔도 실제 타이머는 안 바뀜.**
 `overlay/index.tsx`의 `onCycleSleepTimer`가 JS 설정만 갱신하고, 네이티브(`PaceOverlayModule`/

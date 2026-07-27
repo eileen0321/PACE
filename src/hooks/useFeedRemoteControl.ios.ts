@@ -41,13 +41,11 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 과발화 안전망(사용자 "한 손짓에 여러 번 넘어감"): 네이티브 재무장 게이트에 더해, JS에서도 직전
   // 넘김 후 1.5초 내 재호출은 무시한다(연속/누적 이벤트가 여러 영상을 순삭하는 것 방지).
-  const fireNext = () => {
-    const nowMs = Date.now();
-    if (nowMs - lastNextRef.current < 1500) return;
-    lastNextRef.current = nowMs;
-    // 전환(YouTube 페이지 리로드 ~1.6s) 동안 손짓 추론을 멈춰 CPU를 페이지 로드에 양보 → 전환 체감 개선.
-    // 고정 타임아웃으로 자동 재개(onReady 신호에 의존하지 않아 "ready 누락→영구 정지" 위험 없음).
-    // 불응(네이티브 1200ms)이 어차피 재발화를 막으므로 이 구간에 손짓을 놓칠 일도 없다.
+  // 전환(YouTube 페이지 리로드 ~1.6s) 동안 손짓 추론을 멈춰 CPU를 페이지 로드에 양보 → 전환 체감 개선.
+  // 고정 타임아웃으로 자동 재개(onReady 신호에 의존하지 않아 "ready 누락→영구 정지" 위험 없음).
+  // 불응(네이티브 1200ms)이 어차피 재발화를 막으므로 이 구간에 손짓을 놓칠 일도 없다.
+  // 손짓/볼륨뿐 아니라 자연 종료(onEnded)·수동 Next 등 "모든 전환"에서 불리게 피드 goNext가 직접 호출한다.
+  const pauseWaveForTransition = () => {
     try {
       modRef.current?.setWavePaused?.(true);
       if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
@@ -55,7 +53,12 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
         try { modRef.current?.setWavePaused?.(false); } catch {}
       }, 1600);
     } catch {}
-    cbRef.current.onNext();
+  };
+  const fireNext = () => {
+    const nowMs = Date.now();
+    if (nowMs - lastNextRef.current < 1500) return;
+    lastNextRef.current = nowMs;
+    cbRef.current.onNext(); // onNext(=피드 goNext)가 pauseWaveForTransition을 부른다 — 중복 방지 위해 여기선 안 부름
   };
 
   // 마운트: 네이티브 모듈 로드 + 이벤트 리스너 등록. 감지 start는 아래 headDetectActive effect가 제어.
@@ -104,4 +107,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
       try { mod.stop(); } catch {}
     }
   }, [callbacks.headDetectActive]);
+
+  // 피드가 모든 전환(goNext) 시작 시 호출 → 전환 동안 손짓 추론 정지(CPU를 페이지 로드에 양보).
+  return { pauseWaveForTransition };
 }

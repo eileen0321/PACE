@@ -49,4 +49,8 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
       PaceOverlay?.stopFeedMediaSession();
     };
   }, []);
+
+  // iOS와 시그니처 대칭용 no-op — Android 손짓은 네이티브 PaceOverlay(오버레이 서비스) 경로라
+  // JS에서 전환 중 추론을 멈출 필요가 없다(iOS의 전면카메라 MediaPipe와 구조가 다름).
+  return { pauseWaveForTransition: () => {} };
 }

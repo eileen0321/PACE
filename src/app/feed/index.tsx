@@ -280,7 +280,11 @@ export default function PaceFeedScreen() {
   // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
   const sessionRemainingMin = sessionEndsAt != null ? Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000)) : null;
 
+  // 전환 동안 손짓 추론 정지(iOS) → 페이지 로드에 CPU 양보. 손짓/볼륨/자연종료/수동 등 모든 넘김이
+  // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
+  const pauseWaveRef = useRef<(() => void) | null>(null);
   const goNext = () => {
+    pauseWaveRef.current?.();
     setStatus('PLAYING');
     advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
@@ -321,7 +325,7 @@ export default function PaceFeedScreen() {
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
-  useFeedRemoteControl({
+  const feedRemote = useFeedRemoteControl({
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
     onToggleAutoMode: toggleAutoMode,
@@ -332,6 +336,8 @@ export default function PaceFeedScreen() {
     // 릴리즈에선 완전히 끄고(__DEV__ false), dev에서만 진단 유지. 손짓 발화는 onHandWave라 이와 무관.
     onDiag: (kind, text) => { if (__DEV__) setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })); },
   });
+  // 전환 정지 함수를 goNext가 쓰는 ref에 연결(iOS=실제 정지, Android=no-op).
+  pauseWaveRef.current = feedRemote?.pauseWaveForTransition ?? null;
 
   // 볼륨키 → Short 넘김. ⚠️ 2026-07-27 iOS 플랫폼 한계 확정(웹 리서치): iOS는 볼륨 변화의 출처(폰 버튼 vs
   // BT 리모컨)를 알 수 없고(안드 KeyEvent.getDevice() 대응 API 없음), 사람들이 쓰는 싸구려 카메라 리모컨은

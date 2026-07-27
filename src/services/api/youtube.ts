@@ -138,7 +138,7 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   const ids = Array.from(new Set(scoped.length ? scoped : broad));
   const shorts: YouTubeShort[] = ids.slice(0, 20).map((id) => ({
     videoId: id,
-    title: 'YouTube Short',
+    title: 'Short',
     channelTitle: '',
     thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
   }));

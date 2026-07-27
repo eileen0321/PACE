@@ -243,7 +243,7 @@ export default function StatsScreen() {
 }
 
 // YouTube/Instagram/TikTok은 고유명사라 로케일과 무관하게 그대로 둔다 — 'other'만 실제 번역 대상.
-const PLATFORM_LABELS: Record<string, string> = { youtube: 'YouTube', instagram: 'Instagram Reels', tiktok: 'TikTok' };
+const PLATFORM_LABELS: Record<string, string> = { youtube: 'Shorts', instagram: 'Instagram Reels', tiktok: 'TikTok' };
 
 const DAY_ABBR_KEYS: TranslationKey[] = ['stats.daySun', 'stats.dayMon', 'stats.dayTue', 'stats.dayWed', 'stats.dayThu', 'stats.dayFri', 'stats.daySat'];
 const DAY_NAME_KEYS: TranslationKey[] = ['stats.dayNameSun', 'stats.dayNameMon', 'stats.dayNameTue', 'stats.dayNameWed', 'stats.dayNameThu', 'stats.dayNameFri', 'stats.dayNameSat'];

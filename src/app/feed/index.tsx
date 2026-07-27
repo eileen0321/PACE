@@ -68,6 +68,11 @@ export default function PaceFeedScreen() {
   const userId = useUserStore((s) => s.user?.id);
   // 현재 "활성 시청 세그먼트" 시작 시각. null이면 카운트 안 함(백그라운드/flush 직후). 사용시간 측정용.
   const watchSegmentStartRef = useRef<number | null>(Date.now());
+  // 감사 MED3 — 일일한도 tick의 누적 분/브레이크 카운트다운. 예전엔 effect 지역 let이라 playing/설정 변경으로
+  // effect가 재생성될 때(정지·엎어놓기 등)마다 0으로 리셋돼 누적 시청분이 유실됐다(한도 도달이 무한 지연).
+  // ref로 옮겨 effect 재생성에도 살아남게 한다(피드 이탈=언마운트 시에만 자연 리셋 — 피드 방문당 누적이 목적).
+  const watchedMinRef = useRef(0);
+  const nextBreakInRef = useRef(0);
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
@@ -152,16 +157,15 @@ export default function PaceFeedScreen() {
   // (홈의 LimitReachedOverlay가 연장 UX 담당 — 안드로이드가 세션 종료 후 한도화면 띄우는 것과 동등).
   useEffect(() => {
     if (!playing || sleepBlackout) return;
-    const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes;
-    let watchedThisSession = 0; // 분
-    let nextBreakIn = breakIntervalMinutes; // 다음 브레이크까지 남은 분
+    if (nextBreakInRef.current <= 0) nextBreakInRef.current = breakIntervalMinutes; // 최초/브레이크 후 초기화
     const id = setInterval(() => {
-      watchedThisSession += 1;
-      const remaining = effectiveDailyLimit - todayUsageMinutes - watchedThisSession;
+      watchedMinRef.current += 1; // 누적 — pause/resume·설정변경으로 effect가 재생성돼도 유지(MED3)
+      const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes;
+      const remaining = effectiveDailyLimit - todayUsageMinutes - watchedMinRef.current;
       if (remaining === 5 || remaining === 1) notifyLowTime(remaining).catch(() => {}); // 저시간 알림
       if (breakIntervalMinutes > 0) { // 브레이크 리마인더
-        nextBreakIn -= 1;
-        if (nextBreakIn <= 0) { notifyBreakReminder().catch(() => {}); nextBreakIn = breakIntervalMinutes; }
+        nextBreakInRef.current -= 1;
+        if (nextBreakInRef.current <= 0) { notifyBreakReminder().catch(() => {}); nextBreakInRef.current = breakIntervalMinutes; }
       }
       if (remaining <= 0) { // 일일 한도 도달 → 종료 + 홈 복귀
         notifyLimitReached().catch(() => {});
@@ -191,12 +195,10 @@ export default function PaceFeedScreen() {
   }, []);
 
 
-  // 시간 상태바용 벽시계 — 30초마다 갱신(분 단위 표시라 그 이상 촘촘할 필요 없음).
-  const [clock, setClock] = useState(() => formatClock(new Date()));
-  useEffect(() => {
-    const id = setInterval(() => setClock(formatClock(new Date())), 30 * 1000);
-    return () => clearInterval(id);
-  }, []);
+  // 감사 MED1(2026-07-27) — 시간 상태바가 제거됐는데 벽시계 clock state + 30초 setInterval이 남아,
+  // 재생 중 30초마다 PaceFeedScreen(웹뷰 서브트리 포함) 전체를 무의미하게 리렌더하고 있었다(diag·setProgress와
+  // 같은 "씹힘" 부류의 잔존 리렌더 소스). clock/인터벌/formatClock 모두 제거. (sessionRemainingMin은 렌더 안
+  // 되는 죽은 계산이라 리렌더 비용 없음 — 그대로 둠.)
 
   // 2026-07-21 기기 디버깅: 까만화면이 "큐 0개"인지 vs "WebView 재생 실패"인지 로그로 가른다.
   useEffect(() => {
@@ -465,12 +467,6 @@ export default function PaceFeedScreen() {
   );
 }
 
-// 벽시계 HH:MM(24시간) — 상태바용. 로케일 무관하게 항상 24h로 통일(숫자 시계 톤).
-function formatClock(d: Date): string {
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },

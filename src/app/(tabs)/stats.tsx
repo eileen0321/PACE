@@ -51,7 +51,7 @@ export default function StatsScreen() {
   const user = useUserStore((s) => s.user);
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
-  const { weeklyStats, previousWeekTotalMinutes, focusScore, refresh } = useStatsStore();
+  const { weeklyStats, previousWeekStats, focusScore, refresh } = useStatsStore();
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
   // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)", 양쪽 플랫폼 다 실제 계측.
@@ -75,14 +75,39 @@ export default function StatsScreen() {
   );
 
   const todayStr = toLocalDateStr(new Date());
-  const totalMinutesThisWeek = weeklyStats.reduce((acc, d) => acc + d.totalMinutes, 0);
-  const weeklyAvgMinutes = weeklyStats.length ? Math.round(totalMinutesThisWeek / weeklyStats.length) : 0;
+  // 2026-07-28 감사 발견 — getWeeklyStats()는 "이번 주"가 아니라 오늘 포함 최근 7일 롤링 윈도우다
+  // (요일 무관, 예: 오늘이 수요일이면 지난주 목~일 + 이번주 월~수). WeeklyGraphCard는 이미 이 배열에서
+  // 진짜 월요일~오늘 구간만 골라 쓰는데(2026-07-27 "61분인데 왜 9분" 수정), 바로 위 히어로 카드
+  // ("This Week")와 일평균 카드는 그 필터링 없이 롤링 7일 전체를 "이번 주"로 표시하고 있었다 — 같은
+  // 화면에서 두 카드가 서로 다른 "주간" 숫자를 보여주는 모순. WeeklyGraphCard와 동일한
+  // 월요일 기준 계산을 여기서도 적용해 두 카드가 일치하게 한다.
+  const today = new Date(todayStr + 'T00:00:00');
+  const isoDow = (today.getDay() + 6) % 7; // 0=Mon..6=Sun
+  const elapsedDaysThisWeek = isoDow + 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - isoDow);
+  const mondayStr = toLocalDateStr(monday);
+  const thisWeekStats = weeklyStats.filter((d) => d.date >= mondayStr);
+  const totalMinutesThisWeek = thisWeekStats.reduce((acc, d) => acc + d.totalMinutes, 0);
+  const weeklyAvgMinutes = elapsedDaysThisWeek ? Math.round(totalMinutesThisWeek / elapsedDaysThisWeek) : 0;
   const streak = computeStreak(weeklyStats, todayStr);
   const todayEntry = weeklyStats.find((d) => d.date === todayStr);
   const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
   const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
-  const weekTrendPct = previousWeekTotalMinutes && previousWeekTotalMinutes > 0
-    ? Math.round(((totalMinutesThisWeek - previousWeekTotalMinutes) / previousWeekTotalMinutes) * 100)
+  // "지난주 대비" 트렌드도 같은 이유로 지난주 전체(7일)가 아니라 지난주의 같은 요일 구간(월~오늘과
+  // 같은 위치)만 잘라 공정 비교한다 — 안 그러면 예를 들어 월요일 아침엔 "이번 주"(하루치)를 "지난주"
+  // (7일치)와 비교해 항상 큰 폭으로 줄어든 것처럼 보인다.
+  const lastWeekMonday = new Date(monday);
+  lastWeekMonday.setDate(monday.getDate() - 7);
+  const lastWeekMondayStr = toLocalDateStr(lastWeekMonday);
+  const lastWeekSameWeekday = new Date(lastWeekMonday);
+  lastWeekSameWeekday.setDate(lastWeekMonday.getDate() + isoDow);
+  const lastWeekSameWeekdayStr = toLocalDateStr(lastWeekSameWeekday);
+  const previousWeekPartialTotal = previousWeekStats
+    .filter((d) => d.date >= lastWeekMondayStr && d.date <= lastWeekSameWeekdayStr)
+    .reduce((acc, d) => acc + d.totalMinutes, 0);
+  const weekTrendPct = previousWeekPartialTotal > 0
+    ? Math.round(((totalMinutesThisWeek - previousWeekPartialTotal) / previousWeekPartialTotal) * 100)
     : null;
 
   return (

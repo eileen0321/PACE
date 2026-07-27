@@ -17,8 +17,10 @@ function computeFocusScore(weeklyStats: DailyStats[], dailyLimitMinutes: number)
 type StatsState = {
   todayUsageMinutes: number;
   weeklyStats: DailyStats[];
-  /** 지난주(-13일~-7일) 총 사용 분 — "지난주 대비 X%" 트렌드 계산용. 데이터가 아예 없으면 null. */
-  previousWeekTotalMinutes: number | null;
+  /** 지난주(-13일~-7일) 일별 원본 배열 — "지난주 대비 X%" 트렌드 계산용. stats.tsx가 이번 주
+   * 경과일수와 같은 범위로 잘라서(요일 단위 공정 비교) 합산한다(2026-07-28 감사 수정,
+   * 아래 weeklyStats 주석 참고 — 미리 합쳐서 total만 저장하면 이 잘라내기가 불가능했다). */
+  previousWeekStats: DailyStats[];
   focusScore: number | null;
   isLoading: boolean;
   refresh: (userId: string) => Promise<void>;
@@ -27,7 +29,7 @@ type StatsState = {
 export const useStatsStore = create<StatsState>((set) => ({
   todayUsageMinutes: 0,
   weeklyStats: [],
-  previousWeekTotalMinutes: null,
+  previousWeekStats: [],
   focusScore: null,
   isLoading: false,
 
@@ -40,11 +42,10 @@ export const useStatsStore = create<StatsState>((set) => ({
         getPreviousWeekStats(userId),
       ]);
       const dailyLimitMinutes = useSettingsStore.getState().settings.dailyLimitMinutes;
-      const previousWeekTotalMinutes = previousWeek.length ? previousWeek.reduce((acc, d) => acc + d.totalMinutes, 0) : null;
       set({
         todayUsageMinutes: today,
         weeklyStats: weekly,
-        previousWeekTotalMinutes,
+        previousWeekStats: previousWeek,
         focusScore: computeFocusScore(weekly, dailyLimitMinutes),
       });
     } finally {

@@ -284,22 +284,7 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 볼륨키 리모컨 (iOS 전용 — 2026-07-27 사장님 지시). 안드로이드는 네이티브 MediaSession이 폰 볼륨키와
-            BT 리모컨을 KeyEvent 출처로 구분하므로 이 토글이 필요 없다. iOS는 볼륨 변화의 출처를 알 수 없어
-            "리모컨만 스킵"이 불가능하므로, 사용자가 리모컨 쓸 때 직접 켜는 명시적 스위치로 처리한다. */}
-        {Platform.OS === 'ios' && (
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.playbackControls')}</Text>
-          <GlassSurface style={styles.card}>
-            <NotifRow
-              title={t('settings.volumeKeyRemote')}
-              desc={t('settings.volumeKeyRemoteDesc')}
-              value={settings.volumeKeyRemote}
-              onChange={(v) => update({ volumeKeyRemote: v })}
-            />
-          </GlassSurface>
-        </View>
-        )}
+        {/* 2026-07-27 사용자 지시 — 볼륨키/블루투스 토글은 Focus 탭 핸즈프리 섹션(마스터+손짓+블루투스)으로 이전. */}
 
         {/* 2026-07-27 사용자 지적("세션 상태 박스 남은시간이 왜 0이야") — 이 카드의 remainingMinutes는
             진짜 실시간 세션 카운트다운이 아니라 "일일한도+보너스-오늘사용량"을 매번 새로 계산한 값이라
@@ -338,24 +323,9 @@ export default function SettingsScreen() {
           </View>
         )}
 
-        {/* 5.65 Bluetooth Volume-Key Skip(2026-07-27 사용자 지시) — 블루투스 스피커/이어폰(에어팟 등)을
-            순수 감상용으로만 쓰는 사용자를 위해, 연결된 블루투스 기기의 볼륨(+/-) 버튼을 다음/이전 영상
-            넘기기 신호로 쓸지 여부를 독립적으로 끌 수 있게 한다. 위 카메라 제스처 Hands-Free 토글(Focus
-            탭)과는 별개 스위치 — 아래 "Playback Controls" 섹션(하드웨어 리모컨 상태 표시, Android는 항상
-            안 됨이 확인돼 숨김)과 혼동하지 말 것: 이건 실제로 동작하는 별도 기능이다. */}
-        {Platform.OS === 'android' && (
-          <View>
-            <Text style={styles.sectionLabel}>{t('settings.bluetoothSection')}</Text>
-            <GlassSurface style={styles.card}>
-              <NotifRow
-                title={t('settings.bluetoothVolumeKeySkip')}
-                desc={t('settings.bluetoothVolumeKeySkipDesc')}
-                value={settings.bluetoothVolumeKeySkipEnabled}
-                onChange={(value) => update({ bluetoothVolumeKeySkipEnabled: value })}
-              />
-            </GlassSurface>
-          </View>
-        )}
+        {/* 2026-07-27 사용자 지시로 Bluetooth Volume-Key Skip 토글을 Focus 탭 핸즈프리 섹션(마스터+손짓+블루투스)
+            으로 이전 — 설정/집중에 흩어져 있던 걸 집중 한 곳으로 통합. Android는 여기서 bluetoothVolumeKeySkipEnabled를
+            그 섹션의 "블루투스 리모컨" 하위 토글이 읽고 쓴다. */}
 
         {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
         {/* 2026-07-27: iOS에선 이 "블루투스 기기 연결 상태" 섹션을 숨김 — bluetoothService.ios.ts가 no-op

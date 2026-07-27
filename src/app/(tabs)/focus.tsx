@@ -13,6 +13,8 @@ import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
+import { GestureFlickIllustration } from '../../components/home/GestureFlickIllustration';
+import { RemoteClickIllustration } from '../../components/home/RemoteClickIllustration';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -53,6 +55,16 @@ export default function FocusScreen() {
   const handsFreeMethods = Platform.OS === 'android'
     ? t('focus.handsFreeMethodsAndroid')
     : t('focus.handsFreeMethodsIos');
+  // 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별" 구조로 분리(마스터 OFF면 하위 숨김).
+  // 플랫폼별로 쓰는 필드가 다르다: iOS는 순수 설정(handsFreeEnabled/handsFreeGesture/volumeKeyRemote), Android는
+  // 마스터가 네이티브 autoModeEnabled(손짓은 네이티브가 마스터에 번들), 블루투스만 bluetoothVolumeKeySkipEnabled.
+  const isIOS = Platform.OS === 'ios';
+  const masterOn = isIOS ? settings.handsFreeEnabled : autoModeEnabled;
+  const setMaster = (v: boolean) => { if (isIOS) update({ handsFreeEnabled: v }); else onToggleHandsFree(); };
+  const gestureOn = settings.handsFreeGesture; // iOS 손짓 개별 스위치(Android는 마스터에 번들이라 별도 행 안 보임)
+  const setGesture = (v: boolean) => update({ handsFreeGesture: v });
+  const volumeSkipOn = isIOS ? settings.volumeKeyRemote : settings.bluetoothVolumeKeySkipEnabled;
+  const setVolumeSkip = (v: boolean) => update(isIOS ? { volumeKeyRemote: v } : { bluetoothVolumeKeySkipEnabled: v });
   // 감사 발견 subscription-C1(2026-07-27) — 핸즈프리는 D9 결정 번복으로 "무료 개방"됐다(home.tsx는
   // 세션 시작 시 무료로 auto-mode를 켜고, paywall도 benefitRemoteControl를 이미 제거). 그런데 여기 focus.tsx만
   // 프리미엄 게이팅이 남아, home에서 무료로 켜진 auto-mode를 free 사용자가 Focus 탭에서 "끄려고" 탭하면
@@ -176,39 +188,48 @@ export default function FocusScreen() {
         <View>
           <Text style={styles.sectionLabel}>{t('focus.handsFreeSection')}</Text>
           <GlassSurface style={styles.card}>
-            {/* 2026-07-27(Mac 밤샘 감사) — iOS는 Android와 실행구조가 근본적으로 다르다. iOS 핸즈프리
-                (볼륨키+카메라 손짓)는 Pace Feed 화면 안에서 useFeedRemoteControl.ios/제스처로 "항상"
-                동작하며, 이 토글(useBluetoothStore=네이티브 SharedPreferences)과는 무관하다. 예전엔 iOS에서도
-                Android용 토글을 그대로 노출해 (1)프리미엄 결제 유도 (2)가짜 "켜짐" 토스트 (3)refresh 시
-                autoModeEnabled=false 스텁값으로 다시 꺼짐 — 결제해도 아무것도 안 되는 기만이었다. iOS에선
-                "피드에서 항상 켜짐"을 비활성 스위치로 정직하게 표시(사용자에게 보여줄 개념은 동일, 기만 제거). */}
-            <Pressable
-              style={styles.interventionRow}
-              onPress={Platform.OS === 'ios' ? undefined : onToggleHandsFree}
-              disabled={Platform.OS === 'ios'}
-            >
+            {/* 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별"로 분리. 마스터 OFF면 하위 숨김.
+                라벨/아이콘은 온보딩 가이드(handsFreeSheet)와 통일 — 손짓=handWaveLabel+GestureFlickIllustration,
+                블루투스=bluetoothRemoteLabel+RemoteClickIllustration. */}
+            <View style={styles.interventionRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.interventionTitle}>{t('focus.handsFreeMode')}</Text>
                 <Text style={styles.interventionSub}>{handsFreeMethods}</Text>
               </View>
-              {Platform.OS === 'ios' ? (
+              <Switch
+                value={masterOn}
+                onValueChange={setMaster}
+                trackColor={{ true: colors.primary, false: '#262626' }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor="#262626"
+              />
+            </View>
+            {masterOn && isIOS && (
+              <View style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}>
+                <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
+                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
                 <Switch
-                  value
-                  disabled
+                  value={gestureOn}
+                  onValueChange={setGesture}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              ) : (
+              </View>
+            )}
+            {masterOn && (
+              <View style={[styles.handsFreeSubRow, { borderTopWidth: 1, borderTopColor: colors.borderSubtle }]}>
+                <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
+                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
                 <Switch
-                  value={autoModeEnabled}
-                  onValueChange={onToggleHandsFree}
+                  value={volumeSkipOn}
+                  onValueChange={setVolumeSkip}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              )}
-            </Pressable>
+              </View>
+            )}
           </GlassSurface>
         </View>
 
@@ -258,6 +279,8 @@ const styles = StyleSheet.create({
   attendanceFooterText: { fontSize: 12, fontFamily: typography.bodyFontFamilySemibold, color: colors.textSecondary },
 
   interventionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
+  handsFreeSubRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
+  handsFreeIcon: { width: 48, height: 44, alignItems: 'center', justifyContent: 'center' },
   interventionTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   interventionSub: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8', marginTop: 2 },
   premiumTag: { backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },

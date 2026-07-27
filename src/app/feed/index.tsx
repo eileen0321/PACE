@@ -54,7 +54,9 @@ export default function PaceFeedScreen() {
   const sleepTimerMinutes = useSettingsStore((s) => s.settings.sleepTimerMinutes); // iOS 슬립 타이머(안드 parity)
   const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
   const breakIntervalMinutes = useSettingsStore((s) => s.settings.breakIntervalMinutes); // 브레이크 리마인더(안드 parity)
-  const volumeKeyRemote = useSettingsStore((s) => s.settings.volumeKeyRemote); // "BT 볼륨키로 영상 넘기기" 명시적 토글(2026-07-27)
+  const volumeKeyRemote = useSettingsStore((s) => s.settings.volumeKeyRemote); // BT 볼륨키 하위 토글(핸즈프리 분리, 2026-07-27)
+  const handsFreeEnabled = useSettingsStore((s) => s.settings.handsFreeEnabled); // 핸즈프리 마스터(OFF면 손짓·볼륨키 둘 다 무력)
+  const handsFreeGesture = useSettingsStore((s) => s.settings.handsFreeGesture); // 손짓(hand-wave) 하위 토글
   const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes); // 세션 시작 전 오늘 사용시간(일일한도 계산)
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
@@ -188,7 +190,8 @@ export default function PaceFeedScreen() {
   //
   // 2026-07-26 사장님 결정 번복 — D9 프리미엄 게이팅을 다시 무료로 개방. Focus Session(isAutoMode)
   // 중에는 무료/유료 동일하게 손짓 감지가 켜진다.
-  const handsFreeDetectActive = isAutoMode;
+  // 손짓 감지 ON 조건 = Focus Session 중 && 핸즈프리 마스터 && 손짓 하위토글(2026-07-27 핸즈프리 분리).
+  const handsFreeDetectActive = isAutoMode && handsFreeEnabled && handsFreeGesture;
 
   useEffect(() => {
     loadInitial();
@@ -338,9 +341,9 @@ export default function PaceFeedScreen() {
   // + 피드 화면"일 때만 하이재킹을 국한한다. 평소 폰 볼륨은 항상 정상, 핸즈프리로 피드 볼 때만 볼륨키=스킵
   // (그 상황에선 리모컨을 쓰는 중이라 폰 볼륨 상실이 사실상 문제 안 됨). up=다음/down=이전.
   useVolumeNext({
-    // 설정 토글 ON + Focus Session(핸즈프리) ON일 때만 하이재킹 — 손짓 제스처(handsFreeDetectActive=isAutoMode)와
-    // 동일한 조건으로 묶어, 평소·그냥 볼 땐 폰 볼륨이 정상이고 명시적으로 핸즈프리 세션을 켠 동안만 볼륨키=스킵.
-    enabled: volumeKeyRemote && isAutoMode,
+    // 볼륨키 스킵 ON 조건 = Focus Session 중 && 핸즈프리 마스터 && 블루투스 하위토글. 손짓과 동일 계층으로 묶어,
+    // 평소·그냥 볼 땐 폰 볼륨이 정상이고 핸즈프리+블루투스 하위토글을 켠 동안만 볼륨키=스킵(2026-07-27 핸즈프리 분리).
+    enabled: isAutoMode && handsFreeEnabled && volumeKeyRemote,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
   });

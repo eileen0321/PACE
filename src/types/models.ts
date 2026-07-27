@@ -72,6 +72,14 @@ export type UserSettings = {
    * 둘 다 Short 넘김으로 쓰고(하이브리드), OFF면 볼륨키는 정상 음량 조절. 기본 OFF.
    */
   volumeKeyRemote: boolean;
+  /**
+   * 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별" 구조로 분리. handsFreeEnabled=마스터
+   * (OFF면 하위 둘 다 무력·UI 숨김), handsFreeGesture=손짓(카메라 hand-wave) 개별 스위치. 블루투스 볼륨키는
+   * 기존 volumeKeyRemote(iOS)/bluetoothVolumeKeySkipEnabled(Android)를 그대로 하위로 쓴다. iOS 전용(안드는
+   * autoModeEnabled 마스터 + 네이티브가 손짓 번들). 기본 둘 다 true.
+   */
+  handsFreeEnabled: boolean;
+  handsFreeGesture: boolean;
 };
 
 // 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService

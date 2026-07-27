@@ -25,6 +25,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   focusSessionDurationMinutes: 10,
   sleepStillnessMinutes: 10,
   volumeKeyRemote: false,
+  handsFreeEnabled: true,
+  handsFreeGesture: true,
 };
 
 type SettingsState = {

@@ -67,8 +67,14 @@ public class PaceSleepModule: Module {
     // 앱이 밤새 죽어도 보조프로세서 이력이 남아 "몇시부터 계속 정지=잠든 시각"을 아침에 산출할 수 있다.
     AsyncFunction("queryStationaryOnset") { (sinceEpochMs: Double, minStationaryMs: Double, promise: Promise) in
       guard CMMotionActivityManager.isActivityAvailable() else { promise.resolve(nil); return }
-      let from = Date(timeIntervalSince1970: sinceEpochMs / 1000.0)
+      // Motion & Fitness 미허용이면 이력이 안 와 조용히 실패 → 그냥 nil(앱 사용엔 지장 없음). NSMotionUsageDescription은 존재.
+      let auth = CMMotionActivityManager.authorizationStatus()
+      guard auth == .authorized || auth == .notDetermined else { promise.resolve(nil); return }
       let to = Date()
+      // 활동 이력은 7일만 보관(그 이전은 데이터 없음) → from을 max(요청, now-7d)로 클램프.
+      let earliest = to.addingTimeInterval(-7 * 24 * 3600)
+      let requested = Date(timeIntervalSince1970: sinceEpochMs / 1000.0)
+      let from = requested < earliest ? earliest : requested
       guard to > from else { promise.resolve(nil); return }
       self.activityManager.queryActivityStarting(from: from, to: to, to: self.activityQueue) { activities, error in
         guard error == nil, let acts = activities, !acts.isEmpty else { promise.resolve(nil); return }
@@ -95,7 +101,10 @@ public class PaceSleepModule: Module {
         }
         flush()
         if let s = bestStart, bestDur * 1000.0 >= minStationaryMs {
-          promise.resolve(s.timeIntervalSince1970 * 1000.0) // 잠든 시각(epoch ms)
+          // 첫 세그먼트는 from 이전에 시작된 활동일 수 있어 startDate가 from보다 과거일 수 있다 → from으로 클램프
+          // (잠든 시각이 세션 시작 전으로 기록되지 않게).
+          let onset = max(s, from)
+          promise.resolve(onset.timeIntervalSince1970 * 1000.0) // 잠든 시각(epoch ms)
         } else {
           promise.resolve(nil)
         }

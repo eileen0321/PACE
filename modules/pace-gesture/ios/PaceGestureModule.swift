@@ -401,7 +401,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
   private var logTick = 0
-  private let processIntervalMs: Double = 150      // 안드 PROCESS_INTERVAL_MS
+  private let processIntervalMs: Double = 100      // 2026-07-28 리서치(#6): 150→100ms. 700ms 창에 ~7샘플이라
+                                                    // 빠른 손 접근의 growth 곡선이 덜 끊긴다(150ms는 ~4샘플로 초반 놓침).
+                                                    // CPU 추론 ≤40ms라 여유. 안드(150ms)와 의도적 divergence(iOS가 더 촘촘).
   private let refractoryMs: Double = 1200           // 안드 REFRACTORY_MS
   private let growthWindowMs: Double = 700          // 안드 GROWTH_WINDOW_MS
   private let growthRatioThreshold: Double = 1.2    // 안드 GROWTH_RATIO_THRESHOLD
@@ -484,7 +486,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func configureAndRun() {
     session.beginConfiguration()
-    session.sessionPreset = .vga640x480 // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감)
+    // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감). 2026-07-28 리서치(#3) — MediaPipe는 내부적으로
+    // ≤224×224로 다운샘플하므로 VGA는 과함. CIF(352×288)로 낮춰 ISP/메모리대역 절감(감지 정확도 손실 없음).
+    session.sessionPreset = session.canSetSessionPreset(.cif352x288) ? .cif352x288 : .vga640x480
     guard
       let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
       let input = try? AVCaptureDeviceInput(device: device),
@@ -503,7 +507,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true
-    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA] // Vision이 확실히 처리하는 포맷
+    // 2026-07-28 리서치 최적화(#1) — 전면카메라 네이티브 포맷인 420f YUV로 받는다. BGRA를 요청하면 매 프레임
+    // (스로틀로 버리는 것 포함) 풀프레임 색공간 변환이 강제돼 배터리/발열 낭비. MPImage는 YUV도 그대로 처리하고,
+    // occlusion 밝기는 Y(루마) 평면을 바로 평균내면 돼 RGB 가중합보다 싸고 정확하다.
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
     output.setSampleBufferDelegate(self, queue: queue)
     guard session.canAddOutput(output) else {
       session.commitConfiguration()
@@ -592,17 +599,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard nowMs - lastProcessedMs >= processIntervalMs else { return } // 안드와 동일 150ms 간격
     lastProcessedMs = nowMs
     guard let lm = landmarker else { return }
-    // occlusion 안전망 — BGRA 평균 밝기(전부 camera queue라 상태 접근 안전)
+    // occlusion 안전망 — Y(루마) 평면 평균 밝기(전부 camera queue라 상태 접근 안전)
     if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
       let luma = avgLuma(pb)
       if luma >= 0 { checkOcclusion(luma, nowMs) }
     }
-    // MediaPipe 비동기 추론 — 결과는 handLandmarker(_:didFinishDetection:...) 델리게이트로 온다.
-    do {
-      let image = try MPImage(sampleBuffer: sampleBuffer, orientation: .up)
-      try lm.detectAsync(image: image, timestampInMilliseconds: Int(nowMs))
-    } catch {
-      // 간헐 실패는 무시(다음 프레임)
+    // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
+    // CMSampleBuffer→MPImage 래핑이 오토릴리즈 객체를 쌓아 장시간 세션에서 메모리 증가 보고가 있다(값싼 보험).
+    autoreleasepool {
+      do {
+        let image = try MPImage(sampleBuffer: sampleBuffer, orientation: .up)
+        try lm.detectAsync(image: image, timestampInMilliseconds: Int(nowMs))
+      } catch {
+        // 간헐 실패는 무시(다음 프레임)
+      }
     }
   }
 
@@ -659,10 +669,29 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     DispatchQueue.main.async { self.onWave() }
   }
 
-  // BGRA 중앙영역 평균 밝기(0~255) — occlusion 판정용(ML 안 거치고 싸게 계산).
+  // Y(루마) 평면 평균 밝기(0~255) — occlusion 판정용(ML 안 거치고 싸게 계산). 2026-07-28 리서치(#1) —
+  // 420f YUV의 plane 0이 곧 루마라 바이트 평균만 하면 된다(예전 BGRA 가중합보다 싸고 정확). BGRA 폴백도 유지.
   private func avgLuma(_ pb: CVPixelBuffer) -> Double {
     CVPixelBufferLockBaseAddress(pb, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+    let fmt = CVPixelBufferGetPixelFormatType(pb)
+    let isYUV = (fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || fmt == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    if isYUV && CVPixelBufferGetPlaneCount(pb) > 0 {
+      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return -1 }
+      let w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0)
+      let bpr = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
+      let ptr = base.assumingMemoryBound(to: UInt8.self)
+      var sum = 0, cnt = 0
+      let sx = max(1, w / 24), sy = max(1, h / 24)
+      var y = 0
+      while y < h {
+        var x = 0
+        while x < w { sum += Int(ptr[y * bpr + x]); cnt += 1; x += sx }
+        y += sy
+      }
+      return cnt > 0 ? Double(sum) / Double(cnt) : -1
+    }
+    // BGRA 폴백(포맷이 YUV가 아닐 때)
     guard let base = CVPixelBufferGetBaseAddress(pb) else { return -1 }
     let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
     let bpr = CVPixelBufferGetBytesPerRow(pb)

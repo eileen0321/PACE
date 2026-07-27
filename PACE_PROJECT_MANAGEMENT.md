@@ -1562,9 +1562,9 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 - 인증 감사 결론: 게스트/심사원 경로 견고(로그인벽 없음, 오프라인 degrade, 사인아웃 프리미엄 누수 없음).
 
 **🔴🔴 [사장님 — 오늘밤 제출 전 반드시, 코드로 못 고침]:**
-1. **개인정보처리방침 URL** — `src/constants/legal.ts`의 `PRIVACY_POLICY_URL`이 지금 **임시 placeholder**다. 실제로
-   호스팅된 개인정보처리방침 페이지를 하나 만들고(정적 페이지/Notion 공개/백엔드 라우트 등) 그 URL로 교체해야 한다.
-   이 URL이 안 열리면 심사 거부(B1/B2의 유일한 미완 부분). 이용약관은 Apple 표준 EULA라 그대로 OK.
+1. ~~개인정보처리방침 URL~~ ✅ **해결(346fd81)** — 사장님이 실제 Notion 공개페이지 제공, `legal.ts`에 반영.
+   페이월/설정 링크 정상. **단 남은 확인 2가지**: (a) 그 Notion 페이지가 로그인 없이 열리는 "공개(Publish)" 상태인지,
+   (b) App Store Connect > App Information > **Privacy Policy URL 칸에도 같은 URL 입력**(앱 내 링크와 별개로 콘솔에도 필요).
 2. **프로덕션 빌드 env 주입 확인** — `.env`는 gitignore라 EAS 클라우드 빌드엔 안 올라간다. `EXPO_PUBLIC_API_BASE_URL/
    YOUTUBE_PROXY_URL/GOOGLE_*_CLIENT_ID/RC_*_KEY/PEXELS_KEY`를 `eas env`(또는 eas.json build.production.env)에 등록
    했는지 확인. 안 하면 **소셜로그인·iOS 피드가 프로덕션에서 죽는다**(심사원도 못 봄). 로컬 archive면 .env 읽혀 무관.
@@ -1576,3 +1576,17 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 게스트로 강등될 수 있음 — 단 심사원은 게스트라 무관). SKAdNetworkItems(수익), track-player 미사용 의존성 제거(슬림).
 
 **🟢 [co-session] 내가 넘긴 Android 데이터 3건(HIGH2 이중집계/MEDIUM5 consumeExpired 레이스/LOW-MED6 진행중세션 0집계) 전부 해결 확인(6a8e87f). D7 릴리즈 SHA-1도 등록됨.**
+
+### 2026-07-27 저녁 — Mac 추가 전수감사 (보안 + 네이티브Swift + 성능/UX) + 수정
+
+**✅ [Mac 즉시수정] 성능/UX(감사 Part B):**
+- **MED1** 피드의 죽은 `clock` 30초 setInterval 제거 — 상태바 제거 후에도 재생 중 30초마다 웹뷰 포함 전체 리렌더(씹힘 부류)하던 잔존 소스.
+- **MED3** 일일한도 tick 누적(watchedMin/nextBreakIn)을 ref로 보존 — pause/엎어놓기/설정변경으로 effect 재생성 시 0으로 리셋돼 한도도달이 무한 지연되던 버그.
+- **MED2** WeeklyGraphCard가 실제 dailyLimitMinutes로 목표선·건강배지 계산(60분 하드코딩+무조건 HEALTHY 제거).
+
+**✅ 보안 감사 — CRITICAL 없음.** .env git 유출 없음(히스토리 확인), WebView 주입JS 정적(XSS 없음), 딥링크 하드코딩 상수만, 공개키(RC/OAuth/AdMob) 분류 정상, ATS arbitraryLoads=false, 릴리즈에 non-__DEV__ console.log 0.
+- 🟡 **[사장님/후속] Pexels 키 번들 노출**: 단 **현재 iOS 피드는 YouTube라 Pexels(`fetchPaceFeed`)는 런타임 호출 안 되는 죽은 코드** → 앱은 안 쓰지만 키 문자열은 번들에 인라인됨. 실위험=사장님 Pexels 무료계정 쿼터 남용 수준(유저 피해·앱동작 영향 없음). 조치: 프로덕션 env에서 `EXPO_PUBLIC_PEXELS_KEY` 빼거나(죽은 코드라 안전) Pexels 대시보드에서 키 제한/로테이트. 릴리즈 차단 아님.
+- 🟡 **[후속] 인증 토큰 AsyncStorage 평문 저장** → expo-secure-store(Keychain)로 이전 권장(client.ts get/set/clearToken 국소, 네이티브 모듈 추가라 오늘은 위험 — 출시 후). **M2** RevenueCat app_user_id에 이메일(PII) 사용 → 불투명 userId 권장 or 개인정보방침에 RC 프로세서 명시. **L1** `.env_development`의 YouTube 키는 번들 미포함(Expo가 그 파일 안 읽음)이나 Google Cloud에서 referrer 제한 권장.
+
+**✅ 네이티브 Swift 감사(Part A) — 릴리즈 차단 CRITICAL 없음.** 손짓(WaveDetector)/수면(PaceSleep)/flip 전부 [weak self]·직렬큐·lock, 위험 force-unwrap 없음, 카메라/모션 lifecycle 반납 정상, 시뮬레이터 nil 가드 완비. **오늘 손대지 말 것 권고**(실기기 검증된 튜닝상수·수면 로직).
+- 🟢 [후속 방어] PaceSleep `start()` 재호출 시 routeObserver 중복 — JS가 항상 stop() 먼저 불러 실경로 안전, 1줄 방어수정은 출시 후. 손짓 카메라 세션 내내 ON은 2026-07-26 "안드 parity" 의도된 동작(버그 아님, 사용설명 문자열 있어 심사 통과 가능성 높음).

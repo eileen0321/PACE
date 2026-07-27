@@ -216,7 +216,13 @@ export default function HomeScreen() {
 
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
-    if (isLimitReached) {
+    // 2026-07-27 사용자 지적("이게 쇼츠를 막으란거였어?") — LimitReachedOverlay 설계 의도(tier 3+는
+    // "차단 아님, 그냥 알려주기만")와 이 게이트가 모순돼 있었다: tier와 무관하게 isLimitReached이기만
+    // 하면 무조건 새 세션 시작 자체를 막아버려서, 3차 이상 도달한 뒤엔 안내 토스트만 뜨고 실제로는
+    // 계속 볼 방법이 없었다. 사용자 확인 — tier 1/2(정확히 도달~+5분)는 그대로 마찰(다이얼로그로
+    // "여기까지"를 명시적으로 고르게)을 유지하고, tier 3+(그 이상)부터는 안내만 하고 새 세션 시작을
+    // 허용한다.
+    if (isLimitReached && limitTier < 3) {
       setDismissedHitCount(0);
       return;
     }
@@ -235,7 +241,7 @@ export default function HomeScreen() {
         setPendingPlatform(platform);
       }
     }).catch(() => startSession(platform));
-  }, [startSession, isLimitReached]);
+  }, [startSession, isLimitReached, limitTier]);
 
   const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
     AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});

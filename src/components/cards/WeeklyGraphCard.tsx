@@ -97,6 +97,10 @@ export function WeeklyGraphCard({ weeklyStats, dailyLimitMinutes }: { weeklyStat
             {weeklyData.map((d) => {
               const isToday = d.dayIndex === currentDayIndex;
               const isSelected = selectedDay?.dayIndex === d.dayIndex;
+              // 2026-07-27 사용자 지시 — 일일 제한을 넘긴 날은 빨간색으로 다르게 표시(막대그래프에도
+              // "요일별 안전 한도 분석" 카드와 같은 초과 표시가 필요하다는 지적). 오늘/선택 상태보다
+              // 우선 — 초과했다는 사실이 가장 중요한 신호라 다른 강조보다 먼저 보여야 한다.
+              const isOver = goalMinutes > 0 && d.minutes > goalMinutes;
               const heightPct = Math.max(8, (d.minutes / maxMinutes) * 100);
               return (
                 <Pressable key={d.dayIndex} style={styles.barCol} onPress={() => setSelectedDay(d)}>
@@ -106,11 +110,11 @@ export function WeeklyGraphCard({ weeklyStats, dailyLimitMinutes }: { weeklyStat
                       style={[
                         styles.bar,
                         { height: `${heightPct}%` },
-                        isToday ? styles.barToday : isSelected ? styles.barSelected : styles.barDefault,
+                        isOver ? styles.barOverLimit : isToday ? styles.barToday : isSelected ? styles.barSelected : styles.barDefault,
                       ]}
                     />
                   </View>
-                  <Text style={[styles.dayLabel, isToday && styles.dayLabelToday]}>{t(DAY_INDEX_KEYS[d.dayIndex]).slice(0, 1)}</Text>
+                  <Text style={[styles.dayLabel, isToday && styles.dayLabelToday, isOver && styles.dayLabelOver]}>{t(DAY_INDEX_KEYS[d.dayIndex]).slice(0, 1)}</Text>
                 </Pressable>
               );
             })}
@@ -155,8 +159,10 @@ const styles = StyleSheet.create({
   barToday: { backgroundColor: colors.primary },
   barSelected: { backgroundColor: '#818CF8' },
   barDefault: { backgroundColor: 'rgba(255,255,255,0.1)' },
+  barOverLimit: { backgroundColor: colors.danger },
   dayLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyBold, color: '#8E8E93', marginTop: spacing.xs },
   dayLabelToday: { color: colors.primary, fontFamily: typography.bodyFontFamilyExtrabold },
+  dayLabelOver: { color: colors.danger, fontFamily: typography.bodyFontFamilyExtrabold },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, paddingTop: spacing.sm + 4, borderTopWidth: 1, borderTopColor: colors.borderSubtle },
   footerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },

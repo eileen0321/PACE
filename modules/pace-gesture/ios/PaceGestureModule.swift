@@ -581,7 +581,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f n=%d armed=%@", Double(size), Double(raw), samples.count + 1, armed ? "1" : "0")) }
     // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
     // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
-    if !armed && size < lastFireSize * 0.75 { armed = true }
+    // 재무장: 손을 뒤로 뺐거나(크기 25%↓) refractory(1.2초)가 지나면 다시 발화 허용. ⚠️ 실기기 로그로 확정한
+    // 진짜 원인 — 크기 조건만 두니 발화가 손 작을 때 걸리면 lastFireSize가 작아, 손이 화면에 남아있는 한 영영
+    // 재무장이 안 돼 다음 손짓이 5초+ 씹혔다("한번 되면 계속 안됨"). refractory 경과 재무장을 OR로 추가해,
+    // 손을 안 빼도 1.2초마다 다음 손짓이 잡히게 한다. 과발화는 성장감지(1.3x)+refractory+JS디바운스가 계속 방어.
+    if !armed && (size < lastFireSize * 0.75 || now - lastFire > refractorySec) { armed = true }
     guard size >= minHandSize else { armed = true; return } // 너무 작으면(먼 배경/손 빠짐) 무시 + 재무장
 
     let t = now

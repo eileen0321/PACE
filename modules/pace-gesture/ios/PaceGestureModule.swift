@@ -3,6 +3,7 @@ import AVFoundation
 import SoundAnalysis
 import ARKit
 import Vision
+import MediaPipeTasksVision
 
 // Pace iOS 핸즈프리 "다음 영상 넘기기" 트리거 모듈 (2026-07-20, 사용자 지시).
 // AirPods 블루투스 리모컨(구 useFeedRemoteControl.ios.ts)을 대체 — 두 가지 무접촉 신호로 넘긴다:
@@ -371,39 +372,69 @@ private final class HeadDetector: NSObject, ARSessionDelegate {
 
 // MARK: - 손짓 감지 (Vision 손 포즈 + 전면카메라, 모션-기반 "다가오는 손")
 @available(iOS 14.0, *)
-private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+// 2026-07-27 사용자 결정(A) — Apple Vision → MediaPipe HandLandmarker 전환. 안드로이드 PaceHandWaveDetector와
+// "동일한 모델(hand_landmarker.task) + 동일한 알고리즘"(손목↔중지뿌리 거리 growth 1.2배/700ms + 밝기 급감
+// occlusion 안전망)을 그대로 이식한다 — Vision이 빠른 손짓/근접에서 손을 놓치던(실기기 로그 확정) 문제를
+// 구글 전용 손 추적 ML로 해결. 카메라 캡처(AVCaptureSession)·워치독·인터럽션 복구는 그대로 유지.
+private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, HandLandmarkerLiveStreamDelegate {
   private let session = AVCaptureSession()
   private let queue = DispatchQueue(label: "pace.wave.camera")
-  private let request = VNDetectHumanHandPoseRequest()
+  private var landmarker: HandLandmarker?
   private let onWave: () -> Void
   private let onError: (String) -> Void
   private let onDiag: (String) -> Void
 
-  // 최근 (시각, 손 크기) 샘플 — 500ms 창에서 크기가 1.5배 이상 커지면 "다가오는 손짓"으로 판정.
-  private var samples: [(t: TimeInterval, size: CGFloat)] = []
-  private var lastFire: TimeInterval = 0
-  private var lastAnalyze: TimeInterval = 0
-  private var lastFrameAt: TimeInterval = 0 // 마지막 카메라 프레임 도착 시각 — 워치독이 정지 감지에 사용
-  private var watchdog: Timer? // 프레임이 끊기면(인터럽션 미복구/조용한 정지) 카메라를 강제 재시작
+  // ── 안드로이드 PaceHandWaveDetector와 동일한 파라미터/상태 ──
+  private var sizeHistory: [(t: Double, size: Double)] = []  // (ms, handSize=손목↔중지뿌리)
+  private var lumaHistory: [(t: Double, luma: Double)] = []  // (ms, 평균밝기) — occlusion 안전망
+  private var lastTriggerMs: Double = 0
+  private var lastProcessedMs: Double = 0
+  private var lastFrameAt: TimeInterval = 0 // 워치독용
+  private var watchdog: Timer?
   private var logTick = 0
-  private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
-  private var noHandStreak = 0 // 연속 no-hand 프레임 수 — 일정 이상이면 lockedOri를 풀어 재탐색(잘못 잠긴 lock 복구)
-  private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
-  private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
-  private var smoothedSize: CGFloat = 0 // EMA 평활된 손 크기(회전 오실레이션 제거). 손 없으면 0으로 리셋
-  private let windowSec: TimeInterval = 0.6
-  private let growthRatio: CGFloat = 1.3          // 너클 폭이 1.3배 커짐 = 손이 다가옴. 안정적 지표라 지터 오발화 없음(재무장+JS디바운스도 방어)
-  private let minHandSize: CGFloat = 0.02         // 너클 폭 스케일(바운딩박스보다 작음) — 너무 멀면 무시
-  private let refractorySec: TimeInterval = 1.2   // 안드 REFRACTORY_MS=1200
-  private let analyzeIntervalSec: TimeInterval = 0.1 // 100ms — 160ms로 낮추니 창 샘플부족으로 손짓 과발화("지맘대로
-  // 지나감"), 게다가 씹힘도 안 줄어(카메라 경합이 씹힘 원인 아님 확인) → 손짓 잘 되던 100ms로 복구.
+  private let processIntervalMs: Double = 150      // 안드 PROCESS_INTERVAL_MS
+  private let refractoryMs: Double = 1200           // 안드 REFRACTORY_MS
+  private let growthWindowMs: Double = 700          // 안드 GROWTH_WINDOW_MS
+  private let growthRatioThreshold: Double = 1.2    // 안드 GROWTH_RATIO_THRESHOLD
+  private let minHandSize: Double = 0.03            // 안드 MIN_HAND_SIZE
+  private let lumaWindowMs: Double = 400            // 안드 LUMA_WINDOW_MS
+  private let lumaDropRatio: Double = 0.45          // 안드 LUMA_DROP_RATIO
+  private let lumaDarkAbsMax: Double = 70           // 안드 LUMA_DARK_ABS_MAX
 
   init(onWave: @escaping () -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
     self.onWave = onWave
     self.onError = onError
     self.onDiag = onDiag
     super.init()
-    request.maximumHandCount = 1
+    setupLandmarker()
+  }
+
+  private static func modelPath() -> String? {
+    // podspec s.resources로 앱 번들에 포함됨. main 우선, 없으면 전체 번들/프레임워크 검색(정적 프레임워크 대비).
+    if let p = Bundle.main.path(forResource: "hand_landmarker", ofType: "task") { return p }
+    for b in Bundle.allBundles + Bundle.allFrameworks {
+      if let p = b.path(forResource: "hand_landmarker", ofType: "task") { return p }
+    }
+    return nil
+  }
+
+  private func setupLandmarker() {
+    guard let modelPath = Self.modelPath() else {
+      NSLog("[pace-wave] hand_landmarker.task 모델 못 찾음")
+      onError("hand model not found"); return
+    }
+    let options = HandLandmarkerOptions()
+    options.baseOptions.modelAssetPath = modelPath
+    options.runningMode = .liveStream
+    options.numHands = 1
+    options.handLandmarkerLiveStreamDelegate = self
+    do {
+      landmarker = try HandLandmarker(options: options)
+      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공: %@", modelPath)
+    } catch {
+      NSLog("[pace-wave] HandLandmarker init 실패: %@", String(describing: error))
+      onError("hand landmarker init failed")
+    }
   }
 
   func start() {
@@ -516,119 +547,96 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if self.session.isRunning { self.session.stopRunning() }
       for i in self.session.inputs { self.session.removeInput(i) }
       for o in self.session.outputs { self.session.removeOutput(o) }
-      self.samples.removeAll()
+      self.sizeHistory.removeAll()
+      self.lumaHistory.removeAll()
     }
   }
 
-  // AVCaptureVideoDataOutputSampleBufferDelegate
+  // AVCaptureVideoDataOutputSampleBufferDelegate — 프레임을 MediaPipe에 흘리고, 밝기 occlusion도 여기서 본다.
   func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
     let now = CFAbsoluteTimeGetCurrent()
-    lastFrameAt = now // 워치독용 — 실제 프레임이 들어올 때마다 갱신(스로틀 전에)
-    guard now - lastAnalyze >= analyzeIntervalSec else { return } // 프레임 스로틀
-    lastAnalyze = now
-    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-    // ⭐ orientation 자동 탐색: 실기기 로그에서 .up이 손을 전혀 못 잡음(no hand 100%). 어느 방향이 맞는지
-    //    모르므로 8개 orientation을 순서대로 시도해 손이 잡히는 첫 방향을 쓰고, 한 번 성공하면 그 방향을 고정
-    //    (lockedOri)해 이후 프레임은 그 방향만 — 8회 perform 비용은 손 찾기 전까지만.
-    let allOri: [CGImagePropertyOrientation] = [.up, .right, .left, .down, .upMirrored, .rightMirrored, .leftMirrored, .downMirrored]
-    // 평소엔 잠긴 방향만(값싸다). 단, 잠긴 채로 오래(≥10프레임) 손을 못 잡으면 10프레임마다 한 번씩 전체 8방향을
-    // 재탐색한다 — lock이 잘못 걸렸는데 손이 다른 방향에 있으면 그때 발견해 올바른 방향으로 재잠금(아래). 영구
-    // 해제(매 프레임 8회 탐색)는 idle 배터리를 먹어서 안 하고, 주기적 1회 재탐색으로 복구만 한다.
-    let forceFullSearch = lockedOri != nil && noHandStreak >= 10 && noHandStreak % 10 == 0
-    let tryOri: [CGImagePropertyOrientation] = (lockedOri != nil && !forceFullSearch) ? [lockedOri!] : allOri
-    logTick += 1
-    var obsOpt: VNHumanHandPoseObservation? = nil
-    var usedOri: CGImagePropertyOrientation = .up
-    for ori in tryOri {
-      let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: ori, options: [:])
-      if (try? handler.perform([request])) == nil { continue }
-      if let r = request.results?.first { obsOpt = r; usedOri = ori; break }
+    lastFrameAt = now // 워치독용(스로틀 전)
+    let nowMs = now * 1000
+    guard nowMs - lastProcessedMs >= processIntervalMs else { return } // 안드와 동일 150ms 간격
+    lastProcessedMs = nowMs
+    guard let lm = landmarker else { return }
+    // occlusion 안전망 — BGRA 평균 밝기(전부 camera queue라 상태 접근 안전)
+    if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
+      let luma = avgLuma(pb)
+      if luma >= 0 { checkOcclusion(luma, nowMs) }
     }
-    guard let obs = obsOpt else {
-      noHandStreak += 1
-      // 관용(grace): 순간 모션블러로 한두 프레임 손을 놓쳐도 성장 이력을 지우지 않는다(예전엔 매 프레임 즉시
-      // removeAll+평활리셋이라, 손짓 도중 신뢰도가 한 번만 떨어져도 누적 성장이 통째로 날아가 발화를 못 했다 —
-      // "10번에 1번"의 핵심). 3프레임 연속 놓쳤을 때만 진짜 "손 빠짐"으로 보고 리셋한다.
-      if noHandStreak >= 3 { samples.removeAll(); armed = true; smoothedSize = 0 }
-      if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
-      return
-    }
-    if lockedOri == nil { lockedOri = usedOri; onDiag("HAND FOUND ori=\(usedOri.rawValue)") } // 첫 감지 방향 고정+로그
-    else if usedOri != lockedOri { lockedOri = usedOri; onDiag("ori RELOCK=\(usedOri.rawValue)") } // 재탐색으로 올바른 방향 발견 → 갱신(잘못 잠긴 lock 복구)
-
-    // 손 "크기" = 검지MCP ↔ 새끼MCP(너클 폭). ⚠️ 실기기 로그로 확정: "모든 점 바운딩박스"는 감지점
-    // 개수(pts 13~21)가 프레임마다 바뀌며 크기가 0.29↔0.73으로 요동쳐(손끝 지터) 성장 감지가 오작동했다.
-    // 너클(MCP)은 손가락 끝과 달리 팔 구조라 안정적이고 항상 함께 잡혀, 손이 다가올 때만 폭이 커진다.
-    // 두 너클을 못 잡으면(신뢰도 낮음) no-hand로 취급(재무장) — 잡힐 때만 안정적으로 판정.
-    guard
-      let imcp = try? obs.recognizedPoint(.indexMCP),
-      let lmcp = try? obs.recognizedPoint(.littleMCP),
-      imcp.confidence > 0.2, lmcp.confidence > 0.2 // 0.3→0.2: 빠른 손짓의 모션블러 프레임을 덜 버림
-    else {
-      noHandStreak += 1
-      if noHandStreak >= 3 { armed = true; smoothedSize = 0 } // 관용 — 순간 저신뢰 프레임엔 성장 이력 보존
-      if logTick % 6 == 0 { onDiag("hand no-knuckle") }
-      return
-    }
-    noHandStreak = 0 // 너클까지 잡힌 정상 프레임 — 놓침 카운터 리셋
-    let kdx = imcp.location.x - lmcp.location.x, kdy = imcp.location.y - lmcp.location.y
-    let raw = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
-    // EMA 평활 — 너클 폭은 손 회전(좌우로 흔들면 원근단축)에 프레임마다 0.06↔0.15로 오실레이션해 오발화
-    // ("지맘대로 넘어감")했다. 평활로 빠른 진동을 죽이고 "지속적으로 다가오는" 추세만 남긴다(회전 무관).
-    smoothedSize = smoothedSize <= 0 ? raw : smoothedSize * 0.7 + raw * 0.3
-    let size = smoothedSize
-    // 재무장(완화): 발화 시점 크기 대비 25% 이상 줄면(손을 뒤로 뺐다) 다시 발화 허용. 자연스러운 반복
-    // 손짓은 매번 뺐다 밀므로 잘 재무장되고, 손을 가만히 크게 둔 채면 재무장 안 돼 과발화만 막힌다.
-    // 재무장: 손을 뒤로 뺐거나(크기 25%↓) refractory(1.2초)가 지나면 다시 발화 허용. ⚠️ 실기기 로그로 확정한
-    // 진짜 원인 — 크기 조건만 두니 발화가 손 작을 때 걸리면 lastFireSize가 작아, 손이 화면에 남아있는 한 영영
-    // 재무장이 안 돼 다음 손짓이 5초+ 씹혔다("한번 되면 계속 안됨"). refractory 경과 재무장을 OR로 추가해,
-    // 손을 안 빼도 1.2초마다 다음 손짓이 잡히게 한다. 과발화는 성장감지(1.3x)+refractory+JS디바운스가 계속 방어.
-    if !armed && (size < lastFireSize * 0.75 || now - lastFire > refractorySec) { armed = true }
-    guard size >= minHandSize else { armed = true; return } // 너무 작으면(먼 배경/손 빠짐) 무시 + 재무장
-
-    let t = now
-    samples.append((t, size))
-    samples.removeAll { t - $0.t > windowSec } // 창 밖 제거
-    guard samples.count >= 2, let oldest = samples.first else { return }
-
-    // 발화 = "손이 카메라로 다가옴"(너클 폭이 창 안에서 growthRatio 이상 커짐). 아이콘이 그리는 실제 동작 —
-    // "아래에서 주먹으로 시작 → 편 손으로 폰(카메라) 쪽으로 다가와 화면을 덮음"(훠이)과 일치한다. ⚠️ 좌우로
-    // 젓는 건 이 제스처가 아니다(아이콘 주석의 사용자 정정: "가로젓는 게 아니잖아, 훠이는") — 성장만 본다.
-    if logTick % 3 == 0 { onDiag(String(format: "hand=%.3f raw=%.3f armed=%@", Double(size), Double(raw), armed ? "1" : "0")) }
-    if armed && size >= oldest.size * growthRatio {
-      guard now - lastFire > refractorySec else { return }
-      lastFire = now
-      armed = false
-      lastFireSize = size // 재무장 판정 기준
-      samples.removeAll() // 트리거 후 이력 초기화
-      onDiag("👋 WAVE!")
-      DispatchQueue.main.async { self.onWave() }
+    // MediaPipe 비동기 추론 — 결과는 handLandmarker(_:didFinishDetection:...) 델리게이트로 온다.
+    do {
+      let image = try MPImage(sampleBuffer: sampleBuffer, orientation: .up)
+      try lm.detectAsync(image: image, timestampInMilliseconds: Int(nowMs))
+    } catch {
+      // 간헐 실패는 무시(다음 프레임)
     }
   }
 
-  // 손 중심 x좌표 시퀀스에서 "유의미한 방향 전환(왕복) 횟수"를 센다. 좌우 흔들기 판정용.
-  // 히스테리시스 — 마지막 극점 대비 반대 방향으로 minAmp 이상 움직여야 1회 전환으로 카운트한다.
-  // 이로써 미세 지터(드리프트/떨림)는 무시하고, 단일 스윕(한쪽으로만 쓸기)은 0회로 남겨 오발화를 막는다.
-  // 예: 좌→우→좌 흔들기 = 방향 전환 2회. 발화 조건은 reversals >= 2.
-  private static func countReversals(_ xs: [CGFloat], minAmp: CGFloat) -> Int {
-    guard xs.count >= 3 else { return 0 }
-    var reversals = 0
-    var dir = 0          // -1: 감소중, +1: 증가중, 0: 방향 미정
-    var extreme = xs[0]  // 마지막 극점(방향 전환 지점) 좌표
-    for x in xs.dropFirst() {
-      switch dir {
-      case 1: // 증가중
-        if x > extreme { extreme = x }                          // 계속 오름 → 극점 갱신
-        else if extreme - x >= minAmp { reversals += 1; dir = -1; extreme = x } // minAmp 이상 꺾임 → 전환
-      case -1: // 감소중
-        if x < extreme { extreme = x }
-        else if x - extreme >= minAmp { reversals += 1; dir = 1; extreme = x }
-      default: // 방향 미정 — 첫 유의미한 움직임으로 방향 확정(전환으로 세지 않음)
-        if x - extreme >= minAmp { dir = 1; extreme = x }
-        else if extreme - x >= minAmp { dir = -1; extreme = x }
+  // MediaPipe 결과 델리게이트 — 안드 onResult와 동일: 손목(0)↔중지뿌리(9) 거리 growth가 창 안에서 임계 이상이면 발화.
+  func handLandmarker(_ handLandmarker: HandLandmarker, didFinishDetection result: HandLandmarkerResult?, timestampInMilliseconds: Int, error: Error?) {
+    let nowMs = Double(timestampInMilliseconds)
+    queue.async { // 상태(sizeHistory/lastTriggerMs)를 camera queue 하나로 직렬화(occlusion과 공유)
+      guard let hand = result?.landmarks.first, hand.count > 9 else {
+        self.logTick += 1; if self.logTick % 10 == 0 { self.onDiag("no hand") }
+        return
+      }
+      let wrist = hand[0], mcp = hand[9]
+      let handSize = Double(hypot(wrist.x - mcp.x, wrist.y - mcp.y))
+      if handSize < self.minHandSize { return }
+      self.sizeHistory.append((nowMs, handSize))
+      while let f = self.sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.sizeHistory.removeFirst() }
+      guard let oldest = self.sizeHistory.first else { return }
+      let growth = handSize / oldest.size
+      self.logTick += 1
+      if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f", handSize, growth)) }
+      if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.fireTrigger(String(format: "growth=%.2f", growth), nowMs)
       }
     }
-    return reversals
+  }
+
+  // occlusion(렌즈 가림) — 안드 checkOcclusion과 동일: 창 안 최대밝기 대비 급감 + 절대 어두움.
+  private func checkOcclusion(_ luma: Double, _ nowMs: Double) {
+    lumaHistory.append((nowMs, luma))
+    while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
+    guard let brightest = lumaHistory.map({ $0.luma }).max(), brightest > 0 else { return }
+    if luma / brightest <= lumaDropRatio && luma <= lumaDarkAbsMax && nowMs - lastTriggerMs > refractoryMs {
+      fireTrigger(String(format: "occlusion luma=%.0f", luma), nowMs)
+    }
+  }
+
+  // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·메인 dispatch).
+  private func fireTrigger(_ reason: String, _ nowMs: Double) {
+    lastTriggerMs = nowMs
+    sizeHistory.removeAll(); lumaHistory.removeAll()
+    NSLog("[pace-wave] 👋 WAVE! %@", reason)
+    onDiag("👋 WAVE! \(reason)")
+    DispatchQueue.main.async { self.onWave() }
+  }
+
+  // BGRA 중앙영역 평균 밝기(0~255) — occlusion 판정용(ML 안 거치고 싸게 계산).
+  private func avgLuma(_ pb: CVPixelBuffer) -> Double {
+    CVPixelBufferLockBaseAddress(pb, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(pb) else { return -1 }
+    let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+    let bpr = CVPixelBufferGetBytesPerRow(pb)
+    let ptr = base.assumingMemoryBound(to: UInt8.self)
+    var sum = 0, cnt = 0
+    let sx = max(1, w / 24), sy = max(1, h / 24)
+    var y = 0
+    while y < h {
+      var x = 0
+      while x < w {
+        let o = y * bpr + x * 4
+        let b = Int(ptr[o]), g = Int(ptr[o + 1]), r = Int(ptr[o + 2])
+        sum += (r * 299 + g * 587 + b * 114) / 1000; cnt += 1
+        x += sx
+      }
+      y += sy
+    }
+    return cnt > 0 ? Double(sum) / Double(cnt) : -1
   }
 }

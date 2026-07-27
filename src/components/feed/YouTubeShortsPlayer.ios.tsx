@@ -294,6 +294,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   web: { flex: 1, backgroundColor: '#000000' },
   loadingCover: {
+    // RN 0.86 타입에서 StyleSheet.absoluteFillObject가 안 잡혀(tsc 에러) 명시적 절대위치로 대체 — 동일 효과.
     position: 'absolute',
     top: 0,
     left: 0,

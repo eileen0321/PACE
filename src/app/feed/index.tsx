@@ -191,7 +191,9 @@ export default function PaceFeedScreen() {
   // 2026-07-26 사장님 결정 번복 — D9 프리미엄 게이팅을 다시 무료로 개방. Focus Session(isAutoMode)
   // 중에는 무료/유료 동일하게 손짓 감지가 켜진다.
   // 손짓 감지 ON 조건 = Focus Session 중 && 핸즈프리 마스터 && 손짓 하위토글(2026-07-27 핸즈프리 분리).
-  const handsFreeDetectActive = isAutoMode && handsFreeEnabled && handsFreeGesture;
+  // ⚠️ 기존 사용자의 저장된 설정엔 새 키(handsFreeEnabled/Gesture)가 없어 undefined일 수 있다 — 그때 손짓이
+  // 통째로 안 켜지면 안 되므로 `!== false`로 "명시적으로 끈 게 아니면 켜짐"(기본 ON) 처리한다.
+  const handsFreeDetectActive = isAutoMode && handsFreeEnabled !== false && handsFreeGesture !== false;
 
   useEffect(() => {
     loadInitial();
@@ -343,7 +345,7 @@ export default function PaceFeedScreen() {
   useVolumeNext({
     // 볼륨키 스킵 ON 조건 = Focus Session 중 && 핸즈프리 마스터 && 블루투스 하위토글. 손짓과 동일 계층으로 묶어,
     // 평소·그냥 볼 땐 폰 볼륨이 정상이고 핸즈프리+블루투스 하위토글을 켠 동안만 볼륨키=스킵(2026-07-27 핸즈프리 분리).
-    enabled: isAutoMode && handsFreeEnabled && volumeKeyRemote,
+    enabled: isAutoMode && handsFreeEnabled !== false && volumeKeyRemote,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
   });

@@ -385,6 +385,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastAnalyze: TimeInterval = 0
   private var logTick = 0
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
+  private var noHandStreak = 0 // 연속 no-hand 프레임 수 — 일정 이상이면 lockedOri를 풀어 재탐색(잘못 잠긴 lock 복구)
   private var armed = true // 과발화 방지: 발화 후 손이 뒤로 빠져야(크기 25%↓/no-hand) 다시 true
   private var lastFireSize: CGFloat = 0 // 마지막 발화 시 손 크기 — 재무장(축소) 판정 기준
   private var smoothedSize: CGFloat = 0 // EMA 평활된 손 크기(회전 오실레이션 제거). 손 없으면 0으로 리셋
@@ -508,7 +509,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     //    모르므로 8개 orientation을 순서대로 시도해 손이 잡히는 첫 방향을 쓰고, 한 번 성공하면 그 방향을 고정
     //    (lockedOri)해 이후 프레임은 그 방향만 — 8회 perform 비용은 손 찾기 전까지만.
     let allOri: [CGImagePropertyOrientation] = [.up, .right, .left, .down, .upMirrored, .rightMirrored, .leftMirrored, .downMirrored]
-    let tryOri: [CGImagePropertyOrientation] = lockedOri != nil ? [lockedOri!] : allOri
+    // 평소엔 잠긴 방향만(값싸다). 단, 잠긴 채로 오래(≥10프레임) 손을 못 잡으면 10프레임마다 한 번씩 전체 8방향을
+    // 재탐색한다 — lock이 잘못 걸렸는데 손이 다른 방향에 있으면 그때 발견해 올바른 방향으로 재잠금(아래). 영구
+    // 해제(매 프레임 8회 탐색)는 idle 배터리를 먹어서 안 하고, 주기적 1회 재탐색으로 복구만 한다.
+    let forceFullSearch = lockedOri != nil && noHandStreak >= 10 && noHandStreak % 10 == 0
+    let tryOri: [CGImagePropertyOrientation] = (lockedOri != nil && !forceFullSearch) ? [lockedOri!] : allOri
     logTick += 1
     var obsOpt: VNHumanHandPoseObservation? = nil
     var usedOri: CGImagePropertyOrientation = .up
@@ -518,12 +523,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let r = request.results?.first { obsOpt = r; usedOri = ori; break }
     }
     guard let obs = obsOpt else {
-      samples.removeAll()
-      armed = true; smoothedSize = 0 // 손 빠짐 → 재무장 + 평활 리셋
+      noHandStreak += 1
+      // 관용(grace): 순간 모션블러로 한두 프레임 손을 놓쳐도 성장 이력을 지우지 않는다(예전엔 매 프레임 즉시
+      // removeAll+평활리셋이라, 손짓 도중 신뢰도가 한 번만 떨어져도 누적 성장이 통째로 날아가 발화를 못 했다 —
+      // "10번에 1번"의 핵심). 3프레임 연속 놓쳤을 때만 진짜 "손 빠짐"으로 보고 리셋한다.
+      if noHandStreak >= 3 { samples.removeAll(); armed = true; smoothedSize = 0 }
       if logTick % 6 == 0 { onDiag(lockedOri != nil ? "no hand(locked)" : "no hand(all ori)") }
       return
     }
     if lockedOri == nil { lockedOri = usedOri; onDiag("HAND FOUND ori=\(usedOri.rawValue)") } // 첫 감지 방향 고정+로그
+    else if usedOri != lockedOri { lockedOri = usedOri; onDiag("ori RELOCK=\(usedOri.rawValue)") } // 재탐색으로 올바른 방향 발견 → 갱신(잘못 잠긴 lock 복구)
 
     // 손 "크기" = 검지MCP ↔ 새끼MCP(너클 폭). ⚠️ 실기기 로그로 확정: "모든 점 바운딩박스"는 감지점
     // 개수(pts 13~21)가 프레임마다 바뀌며 크기가 0.29↔0.73으로 요동쳐(손끝 지터) 성장 감지가 오작동했다.
@@ -532,12 +541,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard
       let imcp = try? obs.recognizedPoint(.indexMCP),
       let lmcp = try? obs.recognizedPoint(.littleMCP),
-      imcp.confidence > 0.3, lmcp.confidence > 0.3
+      imcp.confidence > 0.2, lmcp.confidence > 0.2 // 0.3→0.2: 빠른 손짓의 모션블러 프레임을 덜 버림
     else {
-      armed = true; smoothedSize = 0
+      noHandStreak += 1
+      if noHandStreak >= 3 { armed = true; smoothedSize = 0 } // 관용 — 순간 저신뢰 프레임엔 성장 이력 보존
       if logTick % 6 == 0 { onDiag("hand no-knuckle") }
       return
     }
+    noHandStreak = 0 // 너클까지 잡힌 정상 프레임 — 놓침 카운터 리셋
     let kdx = imcp.location.x - lmcp.location.x, kdy = imcp.location.y - lmcp.location.y
     let raw = CGFloat((kdx * kdx + kdy * kdy).squareRoot())
     // EMA 평활 — 너클 폭은 손 회전(좌우로 흔들면 원근단축)에 프레임마다 0.06↔0.15로 오실레이션해 오발화

@@ -65,6 +65,13 @@ export type UserSettings = {
    * 이 값을 읽는 곳이 없음(무해).
    */
   sleepStillnessMinutes: number;
+  /**
+   * 2026-07-27 사장님 지시 — "블루투스 볼륨키로 영상 넘기기" 명시적 토글. iOS는 볼륨키 출처(폰 vs BT 리모컨)를
+   * 구분할 수 없어(안드 KeyEvent.getDevice() 대응 API 없음) "리모컨만 스킵"이 불가능하므로, 사용자가 리모컨을
+   * 쓸 때 직접 켜는 스위치로 처리한다. ON이면 피드에서 볼륨키(싸구려 카메라 리모컨)·미디어 전송버튼(에어팟 등)
+   * 둘 다 Short 넘김으로 쓰고(하이브리드), OFF면 볼륨키는 정상 음량 조절. 기본 OFF.
+   */
+  volumeKeyRemote: boolean;
 };
 
 // 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService

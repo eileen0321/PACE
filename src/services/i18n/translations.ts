@@ -238,6 +238,8 @@ export const translations = {
       bluetoothVolumeKeySkipDesc: 'Use the volume buttons on a connected Bluetooth speaker or earbuds to skip to the next or previous video. Turn this off if you only use Bluetooth for audio.',
       // 2026-07-21 감사 발견 — Playback Controls 카드(Bluetooth Hands-Free)가 t() 없이 하드코딩돼 있었음.
       playbackControls: 'Playback Controls',
+      volumeKeyRemote: 'Skip with Bluetooth remote',
+      volumeKeyRemoteDesc: 'When on, volume keys skip Shorts while watching (for BT camera remotes / earbuds). Turn off to use volume keys normally.',
       handsFreeControl: 'Hands-Free Control',
       connectedDevice: 'Connected Device',
       playPauseAction: 'Play/Pause Action',
@@ -646,6 +648,8 @@ export const translations = {
       bluetoothVolumeKeySkip: '볼륨키로 영상 넘기기',
       bluetoothVolumeKeySkipDesc: '연결된 블루투스 스피커나 이어폰의 볼륨 버튼으로 다음/이전 영상으로 넘깁니다. 블루투스를 순수 음향 감상용으로만 쓰신다면 꺼주세요.',
       playbackControls: '재생 컨트롤',
+      volumeKeyRemote: '블루투스 리모컨으로 넘기기',
+      volumeKeyRemoteDesc: '켜면 시청 중 볼륨키로 Shorts를 넘깁니다(BT 카메라 리모컨·이어버드용). 끄면 볼륨키는 평소대로 음량 조절.',
       handsFreeControl: '핸즈프리 컨트롤',
       connectedDevice: '연결된 기기',
       playPauseAction: '재생/일시정지 동작',

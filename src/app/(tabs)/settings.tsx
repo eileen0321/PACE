@@ -288,6 +288,23 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
+        {/* 볼륨키 리모컨 (iOS 전용 — 2026-07-27 사장님 지시). 안드로이드는 네이티브 MediaSession이 폰 볼륨키와
+            BT 리모컨을 KeyEvent 출처로 구분하므로 이 토글이 필요 없다. iOS는 볼륨 변화의 출처를 알 수 없어
+            "리모컨만 스킵"이 불가능하므로, 사용자가 리모컨 쓸 때 직접 켜는 명시적 스위치로 처리한다. */}
+        {Platform.OS === 'ios' && (
+        <View>
+          <Text style={styles.sectionLabel}>{t('settings.playbackControls')}</Text>
+          <GlassSurface style={styles.card}>
+            <NotifRow
+              title={t('settings.volumeKeyRemote')}
+              desc={t('settings.volumeKeyRemoteDesc')}
+              value={settings.volumeKeyRemote}
+              onChange={(v) => update({ volumeKeyRemote: v })}
+            />
+          </GlassSurface>
+        </View>
+        )}
+
         {/* 4.5 Session Status (2026-07-22 사용자 지시로 Focus 탭에서 이전) */}
         <View>
           <Text style={styles.sectionLabel}>{t('focus.sessionStatus')}</Text>

@@ -104,9 +104,10 @@ public class PaceGestureModule: Module {
   // ⚠️ 실기기(Xcode) 미검증 — Mac 세션에서 실기기로 빌드/확인 필요.
   private func isBluetoothAudioConnected() -> Bool {
     let bluetoothPortTypes: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
-    return AVAudioSession.sharedInstance().currentRoute.outputs.contains {
-      bluetoothPortTypes.contains($0.portType)
-    }
+    let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+    let connected = outputs.contains { bluetoothPortTypes.contains($0.portType) }
+    NSLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
+    return connected
   }
 
   private func startSnap() {

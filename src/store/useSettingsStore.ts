@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   bluetoothVolumeKeySkipEnabled: true,
   focusSessionDurationMinutes: 10,
   sleepStillnessMinutes: 10,
+  volumeKeyRemote: false,
 };
 
 type SettingsState = {

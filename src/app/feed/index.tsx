@@ -54,6 +54,7 @@ export default function PaceFeedScreen() {
   const sleepTimerMinutes = useSettingsStore((s) => s.settings.sleepTimerMinutes); // iOS 슬립 타이머(안드 parity)
   const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
   const breakIntervalMinutes = useSettingsStore((s) => s.settings.breakIntervalMinutes); // 브레이크 리마인더(안드 parity)
+  const volumeKeyRemote = useSettingsStore((s) => s.settings.volumeKeyRemote); // "BT 볼륨키로 영상 넘기기" 명시적 토글(2026-07-27)
   const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes); // 세션 시작 전 오늘 사용시간(일일한도 계산)
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
@@ -329,29 +330,17 @@ export default function PaceFeedScreen() {
     onDiag: (kind, text) => { if (__DEV__) setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })); },
   });
 
-  // 볼륨키 → 다음 Short. ⚠️ 2026-07-26 사용자 지적: 볼륨키 하이재킹은 "블루투스 리모컨(에어팟/버즈/
-  // 다이소 리모컨)이 실제로 연결됐을 때만" 해야 한다 — 폰만 있을 땐 볼륨키가 음량 조절이어야 하는데
-  // 세션 ON만으로 무조건 가로채 음량 조절을 막고 있었다. Focus Session ON && BT 오디오 연결됨일 때만 활성.
-  // GAP4 수정(2026-07-27 패리티 감사) — 예전엔 useBluetoothStore.isConnected를 봤는데 그건 iOS에서
-  // no-op 스텁(항상 false)이라 볼륨키가 영영 활성화되지 않았다(구현돼 있는데 죽은 기능). 실제 BT 오디오
-  // 연결 여부를 제스처 모듈(AVAudioSession.currentRoute)로 감지해 사용. 마운트+포그라운드복귀+5초 주기로 갱신.
-  const [isBluetoothConnected, setIsBluetoothConnected] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      try {
-        const mod = requireOptionalNativeModule<{ isBluetoothAudioConnected(): boolean }>('PaceGesture');
-        setIsBluetoothConnected(!!mod?.isBluetoothAudioConnected?.());
-      } catch { setIsBluetoothConnected(false); }
-    };
-    check();
-    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
-    const id = setInterval(check, 5000);
-    return () => { sub.remove(); clearInterval(id); };
-  }, []);
-  // 2026-07-26 — 위 손짓 감지와 동일하게 블루투스 리모컨(볼륨키)도 무료로 개방.
+  // 볼륨키 → Short 넘김. ⚠️ 2026-07-27 iOS 플랫폼 한계 확정(웹 리서치): iOS는 볼륨 변화의 출처(폰 버튼 vs
+  // BT 리모컨)를 알 수 없고(안드 KeyEvent.getDevice() 대응 API 없음), 사람들이 쓰는 싸구려 카메라 리모컨은
+  // 볼륨키 HID라 MPRemoteCommandCenter로도 못 잡고 GCKeyboard 연결감지도 안 된다. 그래서 예전의 "BT 오디오
+  // 연결됨일 때만" 게이트는 (a)카메라 리모컨은 오디오기기가 아니라 영영 안 켜지고 (b)BT 스피커만 연결해도
+  // 폰 볼륨을 뺏는, 정확히 반대로 동작하는 잘못된 신호였다. 유일하게 맞는 방식 = "핸즈프리(Focus Session) ON
+  // + 피드 화면"일 때만 하이재킹을 국한한다. 평소 폰 볼륨은 항상 정상, 핸즈프리로 피드 볼 때만 볼륨키=스킵
+  // (그 상황에선 리모컨을 쓰는 중이라 폰 볼륨 상실이 사실상 문제 안 됨). up=다음/down=이전.
   useVolumeNext({
-    enabled: isAutoMode && isBluetoothConnected,
+    enabled: volumeKeyRemote, // 설정 토글 ON일 때만 하이재킹(사장님이 리모컨 쓸 때 켬) — 평소 폰 볼륨 정상
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
+    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면

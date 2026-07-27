@@ -10,6 +10,14 @@ let PaceOverlay: {
   getBluetoothState(): BluetoothState;
   setBluetoothAutoMode(enable: boolean): void;
   setHandsFreeGestureEnabled(enable: boolean): void;
+  setBluetoothVolumeKeySkipEnabled(enable: boolean): void;
+  updateLiveSessionConfig(config: {
+    breakIntervalMinutes: number;
+    notifyRemaining: boolean;
+    notifyLimit: boolean;
+    notifyBreak: boolean;
+    hardBlockMode: boolean;
+  }): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
   setSleepStillnessMinutes(minutes: number): void;
@@ -82,6 +90,22 @@ export const bluetoothService: BluetoothService = {
       PaceOverlay?.setHandsFreeGestureEnabled(enable);
     } catch (e) {
       console.warn('[bluetoothService.android] setHandsFreeGestureEnabled failed', e);
+    }
+  },
+
+  async setBluetoothVolumeKeySkipEnabled(enable: boolean) {
+    try {
+      PaceOverlay?.setBluetoothVolumeKeySkipEnabled(enable);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setBluetoothVolumeKeySkipEnabled failed', e);
+    }
+  },
+
+  async updateLiveSessionConfig(config) {
+    try {
+      PaceOverlay?.updateLiveSessionConfig(config);
+    } catch (e) {
+      console.warn('[bluetoothService.android] updateLiveSessionConfig failed', e);
     }
   },
 

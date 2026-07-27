@@ -19,7 +19,7 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useToastStore } from '../../store/useToastStore';
 import { clearUserHistory } from '../../database/repositories/sessionsRepository';
-import { capabilities, overlayService, autoNextService } from '../../services/platform';
+import { capabilities, overlayService, autoNextService, bluetoothService } from '../../services/platform';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { requestNotificationPermission, notifyAccessibilityNeeded } from '../../services/notifications';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -124,11 +124,28 @@ export default function SettingsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAccessibilityOnboarding]);
 
+  // 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 휴식 간격/
+  // 알림 3종/Hard Block은 여태 세션 시작 시점 값만 네이티브에 넘어가서, 세션이 이미 도는 중에 이
+  // 화면에서 바꿔도 다음 세션 시작 전까지 전혀 반영이 안 됐다(손짓/블루투스 볼륨키와 같은 종류의
+  // 결함). update() 직후(Zustand set은 동기라 즉시 반영됨) 최신 settings를 네이티브로 즉시 push.
+  const pushLiveSessionConfig = () => {
+    if (Platform.OS !== 'android') return;
+    const s = useSettingsStore.getState().settings;
+    bluetoothService.updateLiveSessionConfig({
+      breakIntervalMinutes: s.breakIntervalMinutes,
+      notifyRemaining: s.notifyRemaining,
+      notifyLimit: s.notifyLimit,
+      notifyBreak: s.notifyBreak,
+      hardBlockMode: s.hardBlockMode,
+    }).catch(() => {});
+  };
+
   // 2026-07-18: 알림 토글은 이전엔 화면 로컬 state라 탭을 벗어나면 항상 기본값으로 리셋되고 실제
   // 알림 발송 여부(services/notifications)에도 전혀 반영되지 않았다 — useSettingsStore에 직결해
   // ON을 켜면 requestNotificationPermission()도 즉시 트리거(권한이 없으면 알림이 안 갈 걸 미리 확인).
   const onToggleNotif = (key: 'notifyRemaining' | 'notifyLimit' | 'notifyBreak') => (value: boolean) => {
     update({ [key]: value });
+    pushLiveSessionConfig();
     if (value) requestNotificationPermission().catch(() => {});
   };
 
@@ -242,7 +259,19 @@ export default function SettingsScreen() {
             <DefaultRow
               title={t('settings.defaultLimit')} desc={t('settings.defaultLimitDesc')}
               value={`${settings.dailyLimitMinutes}m`} bordered
-              onPress={() => update({ dailyLimitMinutes: cycle(DAILY_LIMIT_OPTIONS, settings.dailyLimitMinutes) })}
+              onPress={() => {
+                const nextLimit = cycle(DAILY_LIMIT_OPTIONS, settings.dailyLimitMinutes);
+                update({ dailyLimitMinutes: nextLimit });
+                // 2026-07-27 사용자 지시 — 일일 제한도 같은 결함(세션 도중 바꿔도 다음 세션까지 반영
+                // 안 됨). 이미 존재하는 updateRemaining()(연장 시간에서 쓰는 경로와 동일)을 재사용해
+                // "새 한도 + 오늘 보너스 - 오늘 사용량"으로 즉시 다시 계산해 넘긴다.
+                if (Platform.OS === 'android') {
+                  const bonus = useDailyBonusStore.getState().extraMinutes;
+                  const used = useStatsStore.getState().todayUsageMinutes;
+                  const newRemaining = Math.max(0, nextLimit + bonus - used);
+                  overlayService.updateRemaining(newRemaining).catch(() => {});
+                }
+              }}
             />
           </GlassSurface>
         </View>
@@ -256,7 +285,7 @@ export default function SettingsScreen() {
             <DefaultRow
               title={t('settings.defaultBreak')} desc={t('settings.defaultBreakDesc')}
               value={settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : t('focus.off')}
-              onPress={() => update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) })}
+              onPress={() => { update({ breakIntervalMinutes: cycle(BREAK_OPTIONS, settings.breakIntervalMinutes) }); pushLiveSessionConfig(); }}
             />
             <DefaultRow
               title={t('settings.defaultSleep')} desc={t('settings.defaultSleepDesc')}
@@ -276,9 +305,13 @@ export default function SettingsScreen() {
                   router.push('/paywall');
                   return;
                 }
-                update({ sleepStillnessMinutes: cycle(SLEEP_STILLNESS_OPTIONS, settings.sleepStillnessMinutes) });
-                // Android만 실제 효과 있음(다음 세션 시작 시 overlayService.startSession의 새 파라미터로
-                // 전달돼 PaceOverlayService가 읽음) — iOS는 수면감지 자체가 아직 없어 무해하게 무시됨.
+                const nextStillness = cycle(SLEEP_STILLNESS_OPTIONS, settings.sleepStillnessMinutes);
+                update({ sleepStillnessMinutes: nextStillness });
+                // 2026-07-27 감사 발견 — setSleepStillnessMinutes는 세션 시작 시점 값이 아니라
+                // performTick()이 매 틱마다 다시 읽는 라이브 인스턴스 필드(_layout.tsx의 프리미엄→무료
+                // 강제 다운그레이드 경로가 이미 이 함수로 즉시 반영되고 있었다)라, 사용자가 직접 바꿀
+                // 때도 다음 세션까지 기다릴 이유가 없다 — 같은 함수를 여기서도 호출해 즉시 반영.
+                if (Platform.OS === 'android') bluetoothService.setSleepStillnessMinutes(nextStillness).catch(() => {});
               }}
             />
           </GlassSurface>
@@ -317,7 +350,7 @@ export default function SettingsScreen() {
                 title={t('settings.hardBlockMode')}
                 desc={t('settings.hardBlockModeDesc')}
                 value={settings.hardBlockMode}
-                onChange={(value) => update({ hardBlockMode: value })}
+                onChange={(value) => { update({ hardBlockMode: value }); pushLiveSessionConfig(); }}
               />
             </GlassSurface>
           </View>

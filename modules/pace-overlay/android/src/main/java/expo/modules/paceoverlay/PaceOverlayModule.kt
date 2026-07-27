@@ -35,6 +35,16 @@ class StartSessionOptions : Record {
   @Field val bluetoothVolumeKeySkipEnabled: Boolean = true
 }
 
+// 2026-07-27 사용자 지시 — 이미 도는 세션에 즉시 반영해야 하는 설정 묶음(휴식 간격/알림 3종/Hard
+// Block). StartSessionOptions와 동일한 이유(위치 인자 8개 제한)로 Record 하나로 묶는다.
+class LiveSessionConfig : Record {
+  @Field val breakIntervalMinutes: Int = 0
+  @Field val notifyRemaining: Boolean = true
+  @Field val notifyLimit: Boolean = true
+  @Field val notifyBreak: Boolean = true
+  @Field val hardBlockMode: Boolean = false
+}
+
 // Expo Modules API(2026 기준 권장 패턴 — 구식 NativeModules+@ReactMethod 대신) 로컬 모듈.
 // JS 쪽 바인딩은 modules/pace-overlay/index.ts, 상위 서비스 인터페이스는
 // src/services/platform/overlayService.android.ts(OverlayService)와 1:1 대응.
@@ -295,6 +305,27 @@ class PaceOverlayModule : Module() {
     // 2026-07-27 사용자 지시 — 손짓(카메라 제스처)을 마스터(Focus Session)와 별개로 켜고 끄는 독립 토글.
     Function("setHandsFreeGestureEnabled") { enable: Boolean ->
       appContext.reactContext?.let { context -> PaceOverlayService.setHandsFreeGestureEnabled(context, enable) }
+    }
+
+    // 2026-07-27 사용자 실기기 지적 — 블루투스 볼륨키 스킵도 손짓과 동일하게 이미 도는 세션에
+    // 즉시 반영돼야 한다(예전엔 다음 세션 시작 때만 반영되는 StartSessionOptions뿐이었음).
+    Function("setBluetoothVolumeKeySkipEnabled") { enable: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setBluetoothVolumeKeySkipEnabled(context, enable) }
+    }
+
+    // 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 휴식 간격/
+    // 알림 3종/Hard Block을 이미 도는 세션에 즉시 반영.
+    Function("updateLiveSessionConfig") { config: LiveSessionConfig ->
+      appContext.reactContext?.let { context ->
+        PaceOverlayService.updateLiveSessionConfig(
+          context,
+          config.breakIntervalMinutes,
+          config.notifyRemaining,
+          config.notifyLimit,
+          config.notifyBreak,
+          config.hardBlockMode
+        )
+      }
     }
 
     // 2026-07-20 사용자 지시 — Focus Session 지속 시간을 10분 하드코딩이 아니라 사용자가 직접

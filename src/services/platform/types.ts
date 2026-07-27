@@ -127,6 +127,26 @@ export interface BluetoothService {
    * 순수 JS 설정이라 feed/index.tsx가 직접 읽음, 네이티브 브릿지 불필요).
    */
   setHandsFreeGestureEnabled(enable: boolean): Promise<void>;
+  /**
+   * 2026-07-27 사용자 실기기 지적("핸즈프리 켰는데 블루투스 여전히 안 됨") — 블루투스 볼륨키 스킵을
+   * 이미 도는 세션에 즉시 반영한다(그동안은 세션 시작 시점 값(bluetoothVolumeKeySkipEnabled in
+   * startSession)만 있어서 세션 도중 설정을 바꿔도 다음 세션까지 전혀 안 먹혔다). Android만 실제
+   * 동작(PaceAccessibilityService의 companion 플래그를 즉시 갱신). iOS는 no-op.
+   */
+  setBluetoothVolumeKeySkipEnabled(enable: boolean): Promise<void>;
+  /**
+   * 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 세션 시작
+   * 시점 값만 읽던 휴식 간격/알림 3종/Hard Block도 위와 같은 결함이 있었다. 이미 도는 세션에 즉시
+   * 반영한다. Android만 실제 동작, iOS는 no-op(이 설정들을 쓰는 네이티브 세션 개념 자체가 없음 —
+   * iOS는 이 값들을 feed/index.tsx의 JS tick이 직접 참조).
+   */
+  updateLiveSessionConfig(config: {
+    breakIntervalMinutes: number;
+    notifyRemaining: boolean;
+    notifyLimit: boolean;
+    notifyBreak: boolean;
+    hardBlockMode: boolean;
+  }): Promise<void>;
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;

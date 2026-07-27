@@ -788,6 +788,53 @@ class PaceOverlayService : Service() {
       }
     }
 
+    // 2026-07-27 사용자 실기기 지적("핸즈프리 켰는데 블루투스 여전히 안 됨") — 손짓(위 함수)과 달리
+    // 이건 detector를 start/stop하는 게 아니라 PaceAccessibilityService.onKeyEvent가 매 키 입력마다
+    // 직접 읽는 companion 플래그라, 세션 도중 설정을 바꿔도 그 플래그만 즉시 갱신해주면 된다(재시작
+    // 불필요) — 근데 이 함수 자체가 아예 없어서 JS의 bluetoothVolumeKeySkipEnabled 변경이 세션 시작
+    // 시점에만(StartSessionOptions) 반영되고 이미 도는 세션에는 다음 세션까지 전혀 안 먹혔다.
+    fun setBluetoothVolumeKeySkipEnabled(context: Context, enabled: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, enabled).apply()
+      PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = enabled
+    }
+
+    // 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 위
+    // Bluetooth/손짓과 같은 종류의 결함이 Settings 화면의 나머지 설정(휴식 간격/알림 3종/Hard Block)
+    // 에도 전부 있었다: onStartCommand(ACTION_START)가 세션 "시작 시점" 값만 읽어서, 이미 도는 세션
+    // 중에 Settings에서 값을 바꿔도 다음 세션 시작 전까지 전혀 반영이 안 됐다. 이 함수 하나로 이미
+    // 도는 세션의 인스턴스 필드+SharedPreferences를 함께 즉시 갱신한다(세션 재시작 불필요) —
+    // dailyLimitMinutes/sleepTimerMinutes는 "새 한도 대비 현재 남은시간"을 다시 계산해야 하는 별개
+    // 문제라 여기 포함 안 함(오늘 사용량이 필요해 JS가 계산해서 overlayService.updateRemaining()으로
+    // 넘기는 기존 경로를 재사용해야 함 — home.tsx/overlay/index.tsx의 remainingMinutes 계산과 동일).
+    fun updateLiveSessionConfig(
+      context: Context,
+      breakIntervalMinutes: Int,
+      notifyRemaining: Boolean,
+      notifyLimit: Boolean,
+      notifyBreak: Boolean,
+      hardBlockMode: Boolean
+    ) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putInt(PREF_BREAK_INTERVAL, breakIntervalMinutes)
+        .putBoolean(PREF_NOTIFY_REMAINING, notifyRemaining)
+        .putBoolean(PREF_NOTIFY_LIMIT, notifyLimit)
+        .putBoolean(PREF_NOTIFY_BREAK, notifyBreak)
+        .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
+        .apply()
+      instance?.let {
+        // 새 간격이 지금까지 카운트해온 것보다 짧으면(예: 30분→10분) 그 자리에서 클램프해 다음 tick에
+        // 바로 반영되게 한다 — 길어졌으면(10분→30분) 이미 흘러간 시간은 그대로 인정하고 새 간격만 저장.
+        it.breakIntervalMinutes = breakIntervalMinutes
+        if (breakIntervalMinutes <= 0) it.nextBreakInMinutes = 0
+        else it.nextBreakInMinutes = minOf(it.nextBreakInMinutes, breakIntervalMinutes)
+        it.notifyRemaining = notifyRemaining
+        it.notifyLimit = notifyLimit
+        it.notifyBreak = notifyBreak
+        it.hardBlockMode = hardBlockMode
+      }
+    }
+
     private fun bumpBluetoothCounter(context: Context, key: String) {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()

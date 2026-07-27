@@ -71,7 +71,13 @@ export default function FocusScreen() {
     if (!isIOS) bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
   };
   const volumeSkipOn = isIOS ? settings.volumeKeyRemote : settings.bluetoothVolumeKeySkipEnabled;
-  const setVolumeSkip = (v: boolean) => update(isIOS ? { volumeKeyRemote: v } : { bluetoothVolumeKeySkipEnabled: v });
+  const setVolumeSkip = (v: boolean) => {
+    update(isIOS ? { volumeKeyRemote: v } : { bluetoothVolumeKeySkipEnabled: v });
+    // 2026-07-27 사용자 실기기 지적("핸즈프리 켰는데 블루투스 여전히 안 됨") — 예전엔 settings만
+    // 바꿔서 다음 세션 시작(startSession의 bluetoothVolumeKeySkipEnabled) 전까지 이미 도는 세션엔
+    // 전혀 반영이 안 됐다. 손짓(setHandsFreeGestureEnabled)과 동일하게 네이티브 플래그를 즉시 갱신.
+    if (!isIOS) bluetoothService.setBluetoothVolumeKeySkipEnabled(v).catch(() => {});
+  };
   // 감사 발견 subscription-C1(2026-07-27) — 핸즈프리는 D9 결정 번복으로 "무료 개방"됐다(home.tsx는
   // 세션 시작 시 무료로 auto-mode를 켜고, paywall도 benefitRemoteControl를 이미 제거). 그런데 여기 focus.tsx만
   // 프리미엄 게이팅이 남아, home에서 무료로 켜진 auto-mode를 free 사용자가 Focus 탭에서 "끄려고" 탭하면
@@ -180,7 +186,24 @@ export default function FocusScreen() {
             </View>
             <Switch
               value={settings.breakIntervalMinutes > 0}
-              onValueChange={(v) => update({ breakIntervalMinutes: v ? DEFAULT_SETTINGS.breakIntervalMinutes : 0 })}
+              onValueChange={(v) => {
+                const nextInterval = v ? DEFAULT_SETTINGS.breakIntervalMinutes : 0;
+                update({ breakIntervalMinutes: nextInterval });
+                // 2026-07-27 감사 발견 — settings.tsx의 같은 필드(Breaks & Sleep Detection 카드)는
+                // pushLiveSessionConfig()로 이미 도는 세션에 즉시 반영되도록 고쳐졌는데, 같은
+                // breakIntervalMinutes를 바꾸는 이 화면의 스위치는 update()만 호출해 다음 세션까지
+                // 반영이 안 되는 불일치가 있었다 — 같은 라이브 경로를 여기서도 호출해 통일.
+                if (Platform.OS === 'android') {
+                  const s = useSettingsStore.getState().settings;
+                  bluetoothService.updateLiveSessionConfig({
+                    breakIntervalMinutes: nextInterval,
+                    notifyRemaining: s.notifyRemaining,
+                    notifyLimit: s.notifyLimit,
+                    notifyBreak: s.notifyBreak,
+                    hardBlockMode: s.hardBlockMode,
+                  }).catch(() => {});
+                }
+              }}
               trackColor={{ true: colors.primary, false: '#262626' }}
               thumbColor="#FFFFFF"
               ios_backgroundColor="#262626"

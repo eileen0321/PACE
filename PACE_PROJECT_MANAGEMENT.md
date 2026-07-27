@@ -1667,3 +1667,42 @@ secure enabled_accessibility_services` 로 복구) → 앱 재실행, logcat에 
 
 커밋: Kotlin 쪽(`PaceOverlayService.kt`/`PaceOverlayModule.kt`)은 자동커밋으로 `375d4ad`에 이미 포함,
 JS 쪽 나머지 배선은 `4fef7c7`로 별도 커밋+푸시 완료.
+
+### 2026-07-27 (계속) — 전수감사: "쇼츠 화면이 썸네일로 작아졌다 다시 켰을 때 설정 변경이 하나도
+반영 안 됨" — 필드별 라이브 반영 여부 정리 (사장님 지시: 고치지 말고 정리만)
+
+**배경**: Android 세션은 시작하자마자(`overlay/index.tsx`) Home으로 리다이렉트되고, 실제 감시/카운트다운/
+차단은 전부 네이티브(`PaceOverlayService.kt`)가 세션 시작 시점 값의 스냅샷으로 자기 완결적으로 담당한다.
+그래서 세션이 이미 도는 중에 Settings/Focus 탭에서 설정을 바꿔도, "이미 도는 세션에 즉시 반영하는 별도
+네이티브 push 함수"가 없는 필드는 다음 세션을 새로 시작해야만 반영된다. 사장님이 실사용 중 이 클래스의
+버그를 직접 발견 → 같은 시각 다른 세션/작업이 `pushLiveSessionConfig()`(`settings.tsx`) +
+`updateLiveSessionConfig`(Kotlin, `PaceOverlayService.kt:810-836`) 경로를 이미 만들며 병렬로 고치고 있었음
+(이 대화 도중 파일이 실시간으로 바뀌는 게 관찰됨). 아래는 그 시점 기준 전수 점검 결과.
+
+**UserSettings 필드별 라이브 반영 여부**:
+
+| 필드 | 상태 | 근거 |
+|---|---|---|
+| `dailyLimitMinutes` | ✅ 라이브(즉시) | `settings.tsx` DefaultRow onPress — `overlayService.updateRemaining(새한도+보너스-오늘사용량)` 재계산 push |
+| `breakIntervalMinutes` | ✅ 라이브(즉시) — **양쪽 진입점 통일 완료** | Settings 탭은 기존에 `pushLiveSessionConfig()`로 이미 라이브였고, Focus 탭 "Break Reminder" 스위치만 `update()`만 부르고 안 밀어주는 불일치가 있어 오늘 같은 라이브 경로(`bluetoothService.updateLiveSessionConfig`)를 추가해 통일함(`focus.tsx`) |
+| `notifyRemaining` / `hardBlockMode` | ✅ 라이브(즉시) | `settings.tsx`의 `pushLiveSessionConfig()` 경로 |
+| `notifyLimit` / `notifyBreak` | 해당없음 | 파이프라인 자체는 이미 값을 실어 나르지만 UI 토글이 아예 없음(2026-07-27 사용자 지시로 제거됨) — 라이브 여부 논쟁 자체가 무의미 |
+| `sleepStillnessMinutes` | ✅ 라이브(즉시) — **오늘 수정** | 원래 프리미엄→무료 강제 다운그레이드 경로(`_layout.tsx`)만 라이브 함수(`setSleepStillnessMinutes`, 이 세션에서 신설)를 쓰고, 사용자가 Settings에서 직접 값을 바꾸는 UI는 `update()`만 부르는 불일치가 있어 같은 라이브 함수를 호출하도록 추가(`settings.tsx`) |
+| `bluetoothVolumeKeySkipEnabled` / `handsFreeGesture`(Android) | ✅ 라이브(즉시) | `focus.tsx` — 각각 `setBluetoothVolumeKeySkipEnabled`/`setHandsFreeGestureEnabled` 네이티브 즉시 갱신 |
+| `focusSessionDurationMinutes` | ⚪ 의도된 설계(다음 세션부터만) | Focus Session 자동종료 타이머는 이미 예약된 것이라 재조정 안 함(`PaceOverlayModule.kt` 주석에 명시) — 버그 아님 |
+| **`sleepTimerMinutes`** | 🔴 **미해결 — 다음 세션까지 반영 안 됨** | `settings.tsx`/`overlay/index.tsx` 둘 다 `update()`만 호출. `PaceOverlayService.kt:807-809` 주석: "dailyLimitMinutes/sleepTimerMinutes는 '새 한도 대비 현재 남은시간'을 다시 계산해야 하는 별개 문제라 `updateLiveSessionConfig`에 포함 안 함" — dailyLimitMinutes는 그 후 `updateRemaining()` 재사용으로 고쳐졌지만 sleepTimerMinutes는 아직 그 경로가 없음. 네이티브 쪽 `sleepTimerRemainingMinutes`(`PaceOverlayService.kt:115`)가 세션 시작 시점 값에서 매 틱 감소하는 순수 카운트다운이라, 고치려면 "남은 취침 카운트다운을 새 값으로 전부 리셋할지" vs "경과시간을 보존해 비례 조정할지" 제품 판단이 먼저 필요함(다른 필드처럼 기계적으로 미러링 불가) — **그래서 이번엔 코드를 건드리지 않고 여기 기록만 남김** |
+| `autoNext` | 🟡 낮은 우선순위, 사실상 도달 불가 | 토글 UI가 오버레이 알약(`overlay/index.tsx:371,390`)에만 있는데, Android는 세션 시작 즉시 이 화면을 Home으로 리다이렉트해서 실사용에서 거의 안 보임. 네이티브 push 자체가 없음 |
+| `handsFreeGesture`(iOS) | 🔴 **별개 버그 — 죽은 설정, 라이브/다음세션과 무관** | iOS `feed/index.tsx`가 손짓 게이팅을 `handsFreeDetectActive = isAutoMode`로만 결정하고 `settings.handsFreeGesture` 값 자체를 아예 참조 안 함(의도적으로 분리된 코드) — 이 토글은 켜든 끄든 iOS에서 현재 아무 효과가 없음. 세션-도중-반영 문제가 아니라 토글 자체가 죽어있는 별개 이슈라 오늘 스코프 밖으로 분리 |
+| `appShields` | 해당없음 | UI에서 바꿀 방법 자체가 없음("Connected Apps" 섹션 삭제됨) |
+| `theme`/`language`/`preSessionBreathing` | 세션 실시간 동작과 무관 | 스킵 |
+
+**iOS는 구조가 근본적으로 다름**: 네이티브 "세션 스냅샷" 개념 자체가 없다. `feed/index.tsx`가 매 렌더
+`useSettingsStore`를 직접 구독하는 순수 JS 상태 머신이라(`useEffect` deps에 설정값이 들어있는 한) 설정
+변경이 리렌더로 자연스럽게 즉시 반영됨 — Android처럼 명시적 네이티브 push가 필요 없는 구조. 유일한 예외가
+위 `handsFreeGesture`(iOS) 죽은 설정.
+
+**다음 세션에 남길 것**:
+1. 🔴 `sleepTimerMinutes` 라이브 반영 — 리셋형 vs 비례조정형 제품 판단 먼저 필요(사장님 확인 필요)
+2. 🔴 iOS `handsFreeGesture` 죽은 설정 — `feed/index.tsx`에서 실제로 참조하도록 연결할지, 아니면 UI에서
+   빼야 할지 판단 필요(이것도 사장님이 D9 정책 재확인 후 결정)
+3. 🟡 `autoNext` 오버레이 알약 토글 — 우선순위 낮음, 필요시에만

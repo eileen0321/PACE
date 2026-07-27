@@ -1970,9 +1970,18 @@ SKAdNetwork/구독 email→UUID) 공유 필요.
   잘 돼 있어 추가 조치 불필요.
 - Foreground Service 타입 선언(`specialUse|microphone|camera` + `PROPERTY_SPECIAL_USE_FGS_SUBTYPE`)과
   AlarmManager `setAndAllowWhileIdle`(Doze 대응) 둘 다 이미 올바르게 구현돼 있음을 코드로 재확인.
-- **비공개 테스트 EAS 빌드 시작함** — `eas build --platform android --profile production`, 빌드 ID
+- **✅ 비공개 테스트 EAS 빌드 완료** — `eas build --platform android --profile production`, 빌드 ID
   `84c4b39a-1f4d-430d-9034-458d03398aac`, 서명키는 EAS가 새로 자동 생성(Expo 서버 관리, 로컬에 없던
-  release keystore 문제 해결). 완료되면 AAB 다운로드해서 Play Console 비공개 테스트 트랙에 올릴 예정
-  (실제 업로드 자체는 서비스 계정 키가 없어 자동화 불가 — 그건 여전히 사장님 몫).
-- Play Store 스크린샷: Mac 세션의 `APP_STORE_SCREENSHOTS.md`(iOS) 참고해 Android용도 동일 원칙으로
-  준비 중(광고 없는 상태로 촬영 — 리뷰어 계정 로그인 필요, 진행 중).
+  release keystore 문제 해결 — 다음 빌드부터도 계속 이 키로 서명됨, 별도 조치 불필요). 빌드 성공,
+  AAB 다운로드 완료(144MB). **다운로드 링크(Expo 서버 영구 보관, 로그인 필요)**:
+  https://expo.dev/artifacts/eas/mWsBMXw6TQEPFcbBE0z8ScWlrtZG_Sfy1lBqNSGu-Z0.aab — 또는
+  `eas build:view 84c4b39a-1f4d-430d-9034-458d03398aac`로 언제든 재확인 가능.
+  **사장님이 하실 일**: 이 AAB를 Play Console > 프로덕션(또는 비공개 테스트 트랙) > 새 버전에 업로드만
+  하면 됨(서명은 이미 끝났음, 서비스 계정 키가 없어 업로드 자체의 자동화만 불가).
+- **Play Store 스크린샷**: 시도했으나 오늘 밤 실기기 UI 자동화가 계속 불안정(좌표 스케일링 반복
+  실패 + 개발 클라이언트의 LogBox/테스트광고 배너가 화면을 가림)해서 깨끗한 캡처를 못 만들었음 —
+  Mac 세션처럼 "광고 없는 상태(리뷰어 로그인)로 촬영"이 원칙인데, 이 화면 자동화로 억지로 밀어붙이는
+  것보다 **Play Console에 위 AAB를 비공개 테스트 트랙에 올린 뒤 그 빌드를 실기기에 설치해서 캡처하는
+  게 더 빠르고 확실함**(release 빌드라 LogBox/개발배너 자체가 없어 이 문제가 구조적으로 해결됨).
+  Mac의 `APP_STORE_SCREENSHOTS.md`와 동일한 리스트/구도로 캡처하면 됨(홈/집중/통계/설정 4~7장,
+  리뷰어 계정 로그인 상태 권장).

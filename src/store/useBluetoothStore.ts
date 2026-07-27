@@ -1,8 +1,10 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bluetoothService } from '../services/platform';
 import { useToastStore } from './useToastStore';
 import { useSettingsStore } from './useSettingsStore';
 import { translate, resolveSystemLocale } from '../services/i18n';
+import { STORAGE_KEYS } from '../services/storage/keys';
 
 // notifications/index.ts의 currentLocale()과 동일한 패턴 — Zustand 액션은 컴포넌트가 아니라
 // useTranslation() 훅을 못 쓰므로, 호출 시점에 fresh하게 현재 언어를 읽어 translate()에 넘긴다.
@@ -84,6 +86,14 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
     }
     await bluetoothService.toggleAutoMode(next);
     set({ autoModeEnabled: next, autoToggleCount: get().autoToggleCount + 1 });
+    // 2026-07-27 사용자 실기기 지적("핸즈프리 껐는데 왜 계속 켜져있음") — home.tsx의 startSession()이
+    // 세션을 시작할 때마다 AsyncStorage의 autoModeOptIn(온보딩에서 Enable을 고른 적 있는지, 한 번
+    // true가 되면 영구 보존)을 읽어 true면 무조건 enableAutoModeForSession()을 다시 부른다. 근데 이
+    // 토글은 그 키를 건드리지 않아서, 사용자가 여기서 방금 끈 선택은 저장 안 되고 다음 세션 시작에서
+    // 그대로 덮어써졌다 — Focus 탭 스위치를 꺼도 다음 유튜브 진입 즉시 도로 켜지는 버그. 온보딩 화면
+    // (dismissOnboarding)과 동일하게 여기서도 사용자의 최신 선택을 저장해 다음 세션 시작이 그 값을
+    // 존중하게 한다.
+    AsyncStorage.setItem(STORAGE_KEYS.autoModeOptIn, String(next)).catch(() => {});
     // iOS는 네이티브 토스트가 없으므로(하드웨어 리모컨 미구현) 인앱 버튼 탭에서는 여기서 직접 표시.
     useToastStore.getState().show(translate(currentLocale(), next ? 'home.focusSessionEnabledToast' : 'home.focusSessionDisabledToast'));
   },

@@ -338,7 +338,9 @@ export default function PaceFeedScreen() {
   // + 피드 화면"일 때만 하이재킹을 국한한다. 평소 폰 볼륨은 항상 정상, 핸즈프리로 피드 볼 때만 볼륨키=스킵
   // (그 상황에선 리모컨을 쓰는 중이라 폰 볼륨 상실이 사실상 문제 안 됨). up=다음/down=이전.
   useVolumeNext({
-    enabled: volumeKeyRemote, // 설정 토글 ON일 때만 하이재킹(사장님이 리모컨 쓸 때 켬) — 평소 폰 볼륨 정상
+    // 설정 토글 ON + Focus Session(핸즈프리) ON일 때만 하이재킹 — 손짓 제스처(handsFreeDetectActive=isAutoMode)와
+    // 동일한 조건으로 묶어, 평소·그냥 볼 땐 폰 볼륨이 정상이고 명시적으로 핸즈프리 세션을 켠 동안만 볼륨키=스킵.
+    enabled: volumeKeyRemote && isAutoMode,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
   });

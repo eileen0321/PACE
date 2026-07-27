@@ -5,6 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../constants/theme';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useBluetoothStore } from '../store/useBluetoothStore';
+import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useTranslation } from '../services/i18n';
 
 // 2026-07-25 사용자 지적("몇번을 말하는데 안고쳐") — QuickControlSheet를 RN <Modal>로 띄우는 한
@@ -32,6 +33,7 @@ export default function QuickControlSheetScreen() {
   const { t } = useTranslation();
   const { settings, update } = useSettingsStore();
   const bluetooth = useBluetoothStore();
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
   const close = () => router.back();
   const offLabel = t('focus.off');
 
@@ -44,6 +46,7 @@ export default function QuickControlSheetScreen() {
           options: DAILY_LIMIT_OPTIONS.map((m) => ({ label: `${m}m`, value: m })),
           selectedValue: settings.dailyLimitMinutes,
           onSelect: (v: number) => update({ dailyLimitMinutes: v }),
+          lockedValues: [] as number[],
         }
       : kind === 'breakReminder'
         ? {
@@ -53,13 +56,14 @@ export default function QuickControlSheetScreen() {
             options: BREAK_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
             selectedValue: settings.breakIntervalMinutes,
             onSelect: (v: number) => update({ breakIntervalMinutes: v }),
+            lockedValues: [] as number[],
           }
         : kind === 'focusSessionDuration'
           ? {
-              // 2026-07-27 사용자 지시 — Home 하단 빠른 설정의 Sleep Timer 자리를 Focus Session
-              // 길이로 교체(사용 빈도상 더 핵심 설정이라는 판단, settings.tsx DefaultRow와 동일 옵션/
-              // 부수효과 재사용). 프리미엄 게이팅은 QuickControlsGrid의 탭 핸들러가 이 화면을 열기
-              // 전에 이미 처리하므로(무료면 /paywall로 보냄) 여기 도달했다는 건 항상 프리미엄.
+              // 2026-07-27 사용자 지시 — Home 빠른 설정의 Focus Session 길이. 무료는 10분 고정
+              // (enforceFreeFocusSessionDuration이 10으로 되돌림)이므로, 시트를 열어 10분은 선택 가능하게
+              // 두고 나머지 프리미엄 전용 길이는 자물쇠로 표시한다. 자물쇠를 누르면 그때 페이월로 안내한다
+              // (예전엔 시트를 열기도 전에 무조건 /paywall로 튕겨 뭘 잠근 건지 안 보였다 — 사용자 지시로 개선).
               title: t('settings.focusSessionDuration'),
               description: t('settings.focusSessionDurationDesc'),
               icon: 'zap' as const,
@@ -69,6 +73,8 @@ export default function QuickControlSheetScreen() {
                 update({ focusSessionDurationMinutes: v });
                 if (Platform.OS === 'android') bluetooth.setFocusSessionDurationMinutes(v);
               },
+              // 무료: 10분 외 전부 잠금. 프리미엄: 잠금 없음.
+              lockedValues: isPremium ? [] as number[] : FOCUS_SESSION_DURATION_OPTIONS.filter((m) => m !== 10),
             }
           : {
               title: t('focus.sleepTimer'),
@@ -77,6 +83,7 @@ export default function QuickControlSheetScreen() {
               options: SLEEP_TIMER_OPTIONS.map((m) => ({ label: m === 0 ? offLabel : `${m}m`, value: m })),
               selectedValue: settings.sleepTimerMinutes ?? 0,
               onSelect: (v: number) => update({ sleepTimerMinutes: v === 0 ? null : v }),
+              lockedValues: [] as number[],
             };
 
   return (
@@ -96,14 +103,19 @@ export default function QuickControlSheetScreen() {
         <View style={styles.options}>
           {config.options.map((opt) => {
             const selected = opt.value === config.selectedValue;
+            const locked = config.lockedValues.includes(opt.value);
             return (
               <Pressable
                 key={String(opt.value)}
-                onPress={() => { config.onSelect(opt.value); close(); }}
+                // 잠긴 옵션(프리미엄 전용)을 누르면 값을 바꾸지 않고 페이월로 안내. 무료 가능 값만 실제 선택.
+                onPress={() => {
+                  if (locked) { close(); router.push('/paywall'); return; }
+                  config.onSelect(opt.value); close();
+                }}
                 style={[styles.option, selected && styles.optionSelected]}
               >
-                <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{opt.label}</Text>
-                {selected && <Feather name="check" size={16} color={colors.primary} />}
+                <Text style={[styles.optionText, selected && styles.optionTextSelected, locked && styles.optionTextLocked]}>{opt.label}</Text>
+                {locked ? <Feather name="lock" size={14} color={colors.textSecondary} /> : selected ? <Feather name="check" size={16} color={colors.primary} /> : null}
               </Pressable>
             );
           })}
@@ -128,4 +140,5 @@ const styles = StyleSheet.create({
   optionSelected: { backgroundColor: `${colors.primary}1A`, borderColor: `${colors.primary}4D` },
   optionText: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
   optionTextSelected: { color: colors.primary, fontFamily: typography.bodyFontFamilyExtrabold },
+  optionTextLocked: { color: colors.textSecondary, opacity: 0.5 },
 });

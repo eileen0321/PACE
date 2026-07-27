@@ -3,7 +3,6 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import type { QuickControlSheetKind } from '../../app/quick-control-sheet';
 
 // healthy-shorts-assistant(2) App.tsx "Quick Controls" 3단 그리드 포팅(App.tsx:401-456). focus.tsx
@@ -19,19 +18,16 @@ import type { QuickControlSheetKind } from '../../app/quick-control-sheet';
 export function QuickControlsGrid() {
   const router = useRouter();
   const { settings } = useSettingsStore();
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
 
   const focusSessionLabel = `${settings.focusSessionDurationMinutes}m`;
   const limitLabel = `${settings.dailyLimitMinutes}m`;
   const breakLabel = settings.breakIntervalMinutes ? `${settings.breakIntervalMinutes}m` : 'OFF';
 
   const openSheet = (kind: QuickControlSheetKind) => router.push({ pathname: '/quick-control-sheet', params: { kind } });
-  // 2026-07-27 사용자 지시 — Sleep Timer보다 매 세션 실제로 확인/조정하는 빈도가 높은 Focus Session
-  // 길이로 첫 타일을 교체(무료는 페이월 유도 지점 겸함, settings.tsx DefaultRow와 동일 게이팅).
-  const openFocusSessionDuration = () => {
-    if (!isPremium) { router.push('/paywall'); return; }
-    openSheet('focusSessionDuration');
-  };
+  // 2026-07-27 사용자 지시 — Sleep Timer보다 매 세션 실제로 확인/조정하는 빈도가 높은 Focus Session 길이로
+  // 첫 타일을 교체. 예전엔 무료면 여기서 바로 /paywall로 튕겼는데, 사용자 지시로 "시트를 열어 무료 가능 값은
+  // 선택, 프리미엄 전용 값은 자물쇠로 표시하고 그걸 누를 때만 페이월"로 변경 → 게이팅은 시트 안에서 처리.
+  const openFocusSessionDuration = () => openSheet('focusSessionDuration');
 
   return (
     <View style={styles.wrap}>

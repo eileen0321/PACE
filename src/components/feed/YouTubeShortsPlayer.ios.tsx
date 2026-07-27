@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
@@ -270,6 +270,13 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           }
         }}
       />
+      {/* 영상 전환 중(새 videoId 페이지 로드) WebView가 통째로 까맣게 보이던 "까만 화면 번쩍"을 가린다.
+          preload(다음 영상 미리로드)일 땐 화면에 안 보이므로 커버 불필요 — 활성 영상 로딩 때만 표시. */}
+      {!ready && !preload && (
+        <View style={styles.loadingCover} pointerEvents="none">
+          <ActivityIndicator size="large" color="#FFFFFF" />
+        </View>
+      )}
     </View>
   );
 }
@@ -277,4 +284,10 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },
   web: { flex: 1, backgroundColor: '#000000' },
+  loadingCover: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

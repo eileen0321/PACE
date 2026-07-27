@@ -389,6 +389,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lumaHistory: [(t: Double, luma: Double)] = []  // (ms, 평균밝기) — occlusion 안전망
   private var lastTriggerMs: Double = 0
   private var lastProcessedMs: Double = 0
+  private var lastHandSeenMs: Double = 0 // 손이 마지막으로 보인 시각 — "부재→근접 등장" 안전망용
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
   private var logTick = 0
@@ -397,6 +398,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let growthWindowMs: Double = 700          // 안드 GROWTH_WINDOW_MS
   private let growthRatioThreshold: Double = 1.2    // 안드 GROWTH_RATIO_THRESHOLD
   private let minHandSize: Double = 0.03            // 안드 MIN_HAND_SIZE
+  // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
+  // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
+  // = 폰 쪽으로 접근한 것으로 보고 발화한다.
+  private let reappearGapMs: Double = 300
+  private let reappearMinSize: Double = 0.10
   private let lumaWindowMs: Double = 400            // 안드 LUMA_WINDOW_MS
   private let lumaDropRatio: Double = 0.45          // 안드 LUMA_DROP_RATIO
   private let lumaDarkAbsMax: Double = 70           // 안드 LUMA_DARK_ABS_MAX
@@ -425,24 +431,18 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     let options = HandLandmarkerOptions()
     options.baseOptions.modelAssetPath = modelPath
-    options.baseOptions.delegate = .GPU // ML 추론을 GPU로 — CPU(영상 디코딩/RN 스레드) 경쟁을 줄여 재생 버벅임 완화
+    // CPU 추론 — GPU로 돌렸더니 WebView 영상 GPU 합성과 경쟁해 재생이 버벅였다. hand_landmarker는 150ms
+    // 간격 추론이라 A16 CPU 한 코어로 충분(≈20~40ms)하고, GPU를 영상 디코딩/합성에 온전히 양보한다.
+    options.baseOptions.delegate = .CPU
     options.runningMode = .liveStream
     options.numHands = 1
     options.handLandmarkerLiveStreamDelegate = self
     do {
       landmarker = try HandLandmarker(options: options)
-      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(GPU): %@", modelPath)
+      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(CPU): %@", modelPath)
     } catch {
-      // GPU 델리게이트 실패(기기/드라이버 문제 가능) → CPU로 폴백해 감지는 무조건 되게 한다.
-      NSLog("[pace-wave] GPU init 실패 → CPU 폴백: %@", String(describing: error))
-      options.baseOptions.delegate = .CPU
-      do {
-        landmarker = try HandLandmarker(options: options)
-        NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(CPU 폴백)")
-      } catch {
-        NSLog("[pace-wave] HandLandmarker init 실패(CPU도): %@", String(describing: error))
-        onError("hand landmarker init failed")
-      }
+      NSLog("[pace-wave] HandLandmarker init 실패: %@", String(describing: error))
+      onError("hand landmarker init failed")
     }
   }
 
@@ -479,16 +479,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     session.addInput(input)
 
-    // 카메라 캡처를 15fps로 제한 — 처리는 150ms(≈6fps)만 쓰므로 30fps 캡처는 낭비다. 캡처 부하를 줄여
-    // 영상 디코딩/RN 스레드와의 경쟁(버벅임)을 완화한다.
-    if (try? device.lockForConfiguration()) != nil {
-      let fps = CMTime(value: 1, timescale: 15)
-      if device.activeFormat.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 15 && 15 <= $0.maxFrameRate }) {
-        device.activeVideoMinFrameDuration = fps
-        device.activeVideoMaxFrameDuration = fps
-      }
-      device.unlockForConfiguration()
-    }
+    // 프레임레이트는 캡하지 않는다(안드로이드와 동일: 네이티브 ~30fps).
+    // 15fps로 캡했더니 alwaysDiscardsLateVideoFrames와 겹쳐 부하 시 실효 fps가 더 떨어져,
+    // 손이 접근하는 "초반의 작은 프레임"을 놓쳐 growth 기준점이 커지고 → 감지가 5번에 1번으로 들쭉날쭉했다.
+    // 처리 자체는 여전히 150ms 간격(captureOutput에서 throttle)이라 추론 비용은 그대로다.
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true
@@ -605,6 +599,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let wrist = hand[0], mcp = hand[9]
       let handSize = Double(hypot(wrist.x - mcp.x, wrist.y - mcp.y))
       if handSize < self.minHandSize { return }
+      // 부재→근접 등장 안전망: 이전에 손을 본 적이 있고(lastHandSeenMs>0), 그 뒤 ≥reappearGapMs 동안
+      // 손이 안 보이다가 지금 ≥reappearMinSize로 크게 나타났다면 폰 쪽으로 접근한 것 → 발화.
+      // (growth 경로는 접근 "초반의 작은 프레임"이 있어야 하는데 부하 시 그걸 놓치므로 이 경로로 보완.)
+      let gap = nowMs - self.lastHandSeenMs
+      let prevSeen = self.lastHandSeenMs
+      self.lastHandSeenMs = nowMs
+      if prevSeen > 0 && gap > self.reappearGapMs && handSize >= self.reappearMinSize
+          && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.fireTrigger(String(format: "reappear size=%.3f gap=%.0f", handSize, gap), nowMs)
+        return
+      }
       self.sizeHistory.append((nowMs, handSize))
       while let f = self.sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.sizeHistory.removeFirst() }
       guard let oldest = self.sizeHistory.first else { return }

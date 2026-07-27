@@ -1614,3 +1614,25 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 없고 이 안드로이드 버전엔 `cmd locale` 셸 명령도 없어 adb만으로는 시스템 로케일을 못 바꿨음, 수동으로
 설정 앱에서 언어 변경 후 재확인 권장) — 안드로이드 `values`/`values-ko` 리소스 한정자 메커니즘 자체는
 표준·검증된 OS 기능이고 빌드도 리소스 충돌 없이 성공해서 신뢰도는 높음. 커밋 `c9e3673`.
+
+### 2026-07-27 밤 — [Windows 세션에 넘김] Focus 탭 핸즈프리 토글 번쩍임(flicker) — 사장님 지시로 이관
+
+**증상**: Focus 탭 "핸즈프리 모드" 마스터 토글을 끄면 하위 2개 행(손짓/블루투스)이 사라지면서 화면이 번쩍인다.
+Mac이 애니메이션(Reanimated FadeIn/Out, LinearTransition)으로 여러 번 시도했으나 못 잡음 → 사장님이 Windows에 이관 지시.
+
+**Mac 진단(근본 원인)**: 애니메이션 문제가 아니라 **GlassSurface(=BlurView)가 크기 바뀔 때 블러 backdrop을 다시
+캡처하며 번쩍이는 iOS BlurView 고질 이슈**다. 하위 행을 조건부 렌더(`{masterOn && ...}`)로 숨기면 카드 높이가
+바뀌고, 그때마다 BlurView가 flash한다. layout 애니메이션을 걸면 매 프레임 리캡처라 더 심해진다(그래서 제거함).
+
+**권장 해결(둘 중 하나)**:
+1. **하위 2개를 언마운트하지 말 것** — 항상 렌더하고 마스터 OFF면 `opacity: 0.35` + Switch `disabled`로 흐리게.
+   카드 크기가 안 변하니 BlurView flash가 원천 제거됨(가장 확실, iOS Settings 표준 패턴).
+2. 하위 2개를 GlassSurface(BlurView) **밖**의 일반 View로 빼서 렌더 — 숨겨도 블러 리캡처가 없어 flash 없음.
+
+현재 코드(`src/app/(tabs)/focus.tsx` 핸즈프리 섹션): 마스터+손짓+블루투스 분리 구조 + FadeInDown/FadeOutUp
+하위 행. 여기서 위 1안(항상 마운트+dim)으로 바꾸면 됨. 설정 필드: handsFreeEnabled(마스터)/handsFreeGesture(손짓)/
+volumeKeyRemote(iOS 블루투스)/bluetoothVolumeKeySkipEnabled(Android 블루투스).
+
+**별개 미해결(iOS 네이티브, 손짓 감지율)**: 손짓(WaveDetector) 감지율이 낮음(사장님 "10번에 1번"). 어제 로그에
+`PACEWAVE no hand(locked)` 다수 — orientation lock이 잘못 걸리면 이후 프레임에서 손을 못 잡는 것으로 추정.
+튜닝(growthRatio 1.3 / EMA 0.7·0.3 / analyzeInterval 0.1)은 그대로. 이건 iOS pace-gesture라 Mac 담당이나 미해결 상태.

@@ -79,8 +79,6 @@ export default function SettingsScreen() {
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { settings, update } = useSettingsStore();
-  const { todayUsageMinutes } = useStatsStore();
-  const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
   const bluetooth = useBluetoothStore();
@@ -125,8 +123,6 @@ export default function SettingsScreen() {
     return () => { cancelled = true; sub.remove(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAccessibilityOnboarding]);
-
-  const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + bonusMinutes - todayUsageMinutes);
 
   // 2026-07-18: 알림 토글은 이전엔 화면 로컬 state라 탭을 벗어나면 항상 기본값으로 리셋되고 실제
   // 알림 발송 여부(services/notifications)에도 전혀 반영되지 않았다 — useSettingsStore에 직결해
@@ -305,27 +301,11 @@ export default function SettingsScreen() {
         </View>
         )}
 
-        {/* 4.5 Session Status (2026-07-22 사용자 지시로 Focus 탭에서 이전) */}
-        <View>
-          <Text style={styles.sectionLabel}>{t('focus.sessionStatus')}</Text>
-          <GlassSurface style={[styles.card, styles.singleCard]} intensity={20}>
-            <View style={styles.statusTopRow}>
-              <Text style={styles.statusTitle}>{t('focus.sessionActive')}</Text>
-              <View style={styles.pulsePill}>
-                <View style={styles.pulseDot} />
-                <Text style={styles.pulsePillText}>{settings.autoNext ? t('focus.on') : t('focus.off')}</Text>
-              </View>
-            </View>
-            <View style={[styles.statusRow, styles.statusRowBordered]}>
-              <Text style={styles.statusRowLabel}>{t('focus.remainingTime')}</Text>
-              <Text style={styles.statusRowValueMono}>{remainingMinutes}m {t('focus.remaining')}</Text>
-            </View>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusRowLabel}>{t('focus.sleepTimer')}</Text>
-              <Text style={styles.statusRowValueMonoPrimary}>{settings.sleepTimerMinutes ? `${settings.sleepTimerMinutes}m` : t('focus.disabled')}</Text>
-            </View>
-          </GlassSurface>
-        </View>
+        {/* 2026-07-27 사용자 지적("세션 상태 박스 남은시간이 왜 0이야") — 이 카드의 remainingMinutes는
+            진짜 실시간 세션 카운트다운이 아니라 "일일한도+보너스-오늘사용량"을 매번 새로 계산한 값이라
+            (settings.tsx 상단 참고), 테스트로 오늘 사용량이 한도를 넘긴 뒤로는 실제 세션이 몇 분 남았든
+            항상 0으로 보였다 — Focus 탭에 이미 진짜 실시간 상태 히어로 카드가 따로 있어 완전히 중복이기도
+            했다. 잘못된 값을 보여주느니 지우는 게 낫다고 판단해 제거 — 실시간 세션 상태는 Focus 탭 참고. */}
 
         {/* 5. Notifications — 2026-07-27 사용자 지시로 limitAlert/breakReminder 알림 토글 제거.
             notifyLimit은 한도 도달 시 항상 뜨는 전체화면 차단(옵트아웃 불가)과 중복이었고,

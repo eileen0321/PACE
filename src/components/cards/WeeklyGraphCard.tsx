@@ -49,7 +49,13 @@ export function WeeklyGraphCard({ weeklyStats, dailyLimitMinutes }: { weeklyStat
   const weeklyData = buildWeekArray(weeklyStats, todayStr);
   const goalMinutes = dailyLimitMinutes > 0 ? dailyLimitMinutes : 60;
   const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), goalMinutes);
-  const weeklyAvg = Math.round(weeklyData.reduce((acc, d) => acc + d.minutes, 0) / 7);
+  // 2026-07-27 사용자 지적("61분 썼는데 왜 9분이냐고") — 항상 7로 나누면 아직 안 지난(미래) 요일까지
+  // 분모에 들어가 주 초반엔 실제 사용량과 무관하게 항상 낮게 나온다(월요일에 61분 써도 61/7≈9분).
+  // 아직 오지 않은 날은 "0분을 썼다"가 아니라 "데이터가 없다"이므로 평균에 포함시키면 안 된다 —
+  // 이번 주 월요일부터 오늘까지 지난 날짜 수로만 나눈다(오늘이 월요일이면 1, 화요일이면 2...).
+  const isoDow = (new Date(todayStr + 'T00:00:00').getDay() + 6) % 7; // 0=Mon..6=Sun
+  const elapsedDaysThisWeek = isoDow + 1;
+  const weeklyAvg = Math.round(weeklyData.reduce((acc, d) => acc + d.minutes, 0) / elapsedDaysThisWeek);
   const isHealthy = weeklyAvg <= goalMinutes; // 주간 평균이 한도 이하일 때만 건강 배지
 
   return (

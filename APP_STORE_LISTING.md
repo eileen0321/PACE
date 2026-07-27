@@ -14,7 +14,7 @@
 ---
 
 ## 1. 앱 정보 (App Information) — [앱 정보] 탭
-- **이름(Name, 30자)**: `Pace` *(또는 `Pace: Focus & Screen Time`)*
+- **이름(Name, 30자)**: 사장님이 최종 결정 (짧은 "Pace"는 선점됨 → 유니크한 이름 필요). ⚠️ **"Screen Time" 넣지 말 것**(애플 기능명 + D3에서 삭제한 기능). 예시안: `Pace: Focus & Digital Detox`, `Pace: Beat Mindless Scrolling`, `PACE now`
 - **부제(Subtitle, 30자)**:
   - EN: `Less scrolling, more focus` (26)
   - KO: `덜 스크롤, 더 집중` (10)
@@ -37,8 +37,8 @@ Pace helps you spend less time mindlessly scrolling — and more time on what yo
 FOCUS SESSIONS
 Start a timed Focus Session with clear on-screen progress and gentle reminders. Native timers and local notifications keep you on track, even in the background.
 
-SEE YOUR SCREEN TIME
-Track your usage and see clear daily insights and statistics — so the invisible hours become visible, and easier to change.
+SEE YOUR USAGE
+Track your own usage and see clear daily insights and statistics — so the invisible hours become visible, and easier to change.
 
 FLIP MODE
 Place your phone face down to start screen-free rest. Pace quietly measures the time you spend away from the screen, and rewards the break.
@@ -65,7 +65,7 @@ Pace는 무의식적으로 흘려보내는 스크롤 시간을 줄이고, 원래
 집중 세션
 화면에 진행 상황이 또렷이 보이는 타이머 기반 집중 세션을 시작하세요. 네이티브 타이머와 알림이 백그라운드에서도 흐름을 지켜줍니다.
 
-내 스크린 타임 보기
+내 사용 시간 보기
 사용 시간을 기록하고 하루 단위 통계로 한눈에 확인하세요. 보이지 않던 시간이 보이면, 바꾸기도 쉬워집니다.
 
 플립 모드(Flip Mode)
@@ -87,8 +87,8 @@ Pace 프리미엄
 ```
 
 ### 키워드 (Keywords, 100자 — 쉼표 구분, 공백 없이)
-- **EN**: `focus,screen time,digital wellbeing,scrolling,detox,productivity,timer,habit,mindful,break,sleep,attention`
-- **KO**: `집중,스크린타임,디지털디톡스,스크롤,생산성,타이머,습관,휴식,수면,절제,도파민,주의력`
+- **EN**: `focus,usage tracker,digital wellbeing,scrolling,detox,productivity,timer,habit,mindful,break,sleep,attention`
+- **KO**: `집중,사용시간,디지털디톡스,스크롤,생산성,타이머,습관,휴식,수면,절제,도파민,주의력`
 
 ### 지원 URL / 마케팅 URL
 - 지원(Support) URL: `(개인정보처리방침과 같은 사이트의 문의/지원 페이지, 또는 mailto가 아닌 웹페이지)` — 없으면 GitHub Pages 한 장이라도 필요
@@ -130,7 +130,7 @@ Pace 프리미엄
 
 권장 5~6장 + 캡션(EN/KO):
 1. **집중 세션 진행 화면** — "Focus, one deliberate pace at a time" / "무의식적 스크롤을 끊는 집중 세션"
-2. **스크린타임 통계** — "See the hours you couldn't see" / "보이지 않던 시간을 한눈에"
+2. **사용 시간 통계** — "See the hours you couldn't see" / "보이지 않던 시간을 한눈에"
 3. **플립 모드** — "Flip to rest. Screen-free, measured." / "엎어두면 시작되는 화면 없는 휴식"
 4. **핸즈프리 손짓** — "Next, hands-free. On-device only." / "손대지 않고 넘기기 — 전부 기기 안에서"
 5. **홈/온보딩(브랜드 무드)** — "Take back your attention" / "내 주의력, 내 속도로"

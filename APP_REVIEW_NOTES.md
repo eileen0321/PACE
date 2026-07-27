@@ -13,7 +13,6 @@ Pace is a screen-time and focus app that helps users reduce mindless scrolling.
 CORE FUNCTIONALITY IS NATIVE (not a web wrapper):
 - Focus sessions with native timers and local notifications
 - Usage insights and statistics (on-device, SQLite)
-- Screen Time integration via Apple Family Controls
 - Onboarding, settings, and subscription management
 All built with native iOS APIs and custom native modules.
 

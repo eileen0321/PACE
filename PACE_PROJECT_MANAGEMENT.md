@@ -1942,3 +1942,37 @@ Mac 세션이 바로 확인 부탁드립니다. 참고로 코드상 iOS 수면�
 
 전체 리서치 상세(출처 URL 포함)는 이 세션 로그 참고. co-session(Android)에도 공통 항목(광고 테스트기기/UMP/
 SKAdNetwork/구독 email→UUID) 공유 필요.
+
+**↳ Windows 세션(Android) 대응 (2026-07-28 낮)**: 공유 코드(`constants/reviewers.ts`,
+`useSubscriptionStore.ts`, `AdBanner.tsx`) 기준으로 4개 블로커 Android 쪽 상태 확인함 —
+
+1. **광고 테스트기기**: `adsConfig.ts`의 `TEST_DEVICE_IDS`에 Android ID는 이미 등록돼 있음(주석에서도
+   확인) — **Android는 이 블로커 해당 없음**, iOS만 사장님 조치 필요.
+2. **구독 무음 블로커(.p8)**: 이건 Apple StoreKit2 전용이라 Android엔 직접 해당 없음. 근데 **Android
+   버전의 동일 리스크**가 있음 — RevenueCat 대시보드에 **Google Play 서비스 계정(JSON) 키**가 연동
+   안 돼 있으면 Android도 똑같이 "결제는 됐는데 서버가 확인을 못 해 프리미엄이 안 풀리는" 무음 실패가
+   날 수 있음. **사장님이 RC 대시보드 > Project Settings > Google Play Store 통합에서 서비스 계정
+   연동 여부 확인 필요**(코드로는 확인 불가, 대시보드 전용 설정).
+3. **리뷰어 이메일 우회(2.3.1류)**: `reviewers.ts` 주석에 "이미 구글 플레이 콘솔 [앱 액세스 권한]에
+   제출해둔 테스트 계정을 재사용"이라고 명시돼 있어 — **Android는 이미 Play Console에 공개 신고가
+   돼 있는 상태로 보임(추가 조치 불필요, 확인만 권장)**. Apple 쪽은 Review Notes에 아직 명시가
+   안 됐다는 게 Mac 세션이 찾은 갭이라 그쪽만 조치 필요.
+4. **볼륨키 하이재킹**: Google Play 정책엔 Apple 2.5.9같은 명시적 조항은 없어 상대적으로 리스크
+   낮음. 이미 세션 중으로만 국한 + 화면 탭 대안이 있어 그대로도 방어 가능 — 급한 조치 아님.
+5. **app_user_id=email(PII/GDPR)**: `useSubscriptionStore.ts:32` 주석에 "jlpt-master 계약상 이메일"이라고
+   명시된 대로 공유 아키텍처 결정이라 Windows 세션에서 임의로 안 건드림 — Mac 세션 말대로 UUID
+   마이그레이션은 기존 구독자 entitlement 매핑이 걸린 위험한 변경이라 **양쪽 세션 코디 후 진행**할 것.
+
+**오늘 밤 Windows 세션(Android) 자체 진행분**:
+- 배터리 최적화 제외 배너 추가(`dae12c7`, 실기기 종단검증 완료 — whitelist 강제로 빼서 배너 노출 확인
+  → 탭 → 실제 시스템 다이얼로그("배터리 사용량 최적화 중지") 뜨는 것까지 확인 → 원복).
+- 알림 권한(`POST_NOTIFICATIONS`) 요청 방식 확인 — 이미 lazy/contextual(필요한 시점에만 요청) 패턴으로
+  잘 돼 있어 추가 조치 불필요.
+- Foreground Service 타입 선언(`specialUse|microphone|camera` + `PROPERTY_SPECIAL_USE_FGS_SUBTYPE`)과
+  AlarmManager `setAndAllowWhileIdle`(Doze 대응) 둘 다 이미 올바르게 구현돼 있음을 코드로 재확인.
+- **비공개 테스트 EAS 빌드 시작함** — `eas build --platform android --profile production`, 빌드 ID
+  `84c4b39a-1f4d-430d-9034-458d03398aac`, 서명키는 EAS가 새로 자동 생성(Expo 서버 관리, 로컬에 없던
+  release keystore 문제 해결). 완료되면 AAB 다운로드해서 Play Console 비공개 테스트 트랙에 올릴 예정
+  (실제 업로드 자체는 서비스 계정 키가 없어 자동화 불가 — 그건 여전히 사장님 몫).
+- Play Store 스크린샷: Mac 세션의 `APP_STORE_SCREENSHOTS.md`(iOS) 참고해 Android용도 동일 원칙으로
+  준비 중(광고 없는 상태로 촬영 — 리뷰어 계정 로그인 필요, 진행 중).

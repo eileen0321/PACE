@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { colors } from '../../constants/theme';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -34,8 +34,24 @@ const adModuleAvailable = Boolean(BannerAd && BannerAdSize && BANNER_UNIT_ID);
 
 export function AdBanner() {
   const [failed, setFailed] = useState(false);
+  const attemptRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setHeight = useAdBannerStore((s) => s.setHeight);
   const visible = adModuleAvailable && !failed;
+
+  // 2026-07-28 리서치(광고 2.4) — 예전엔 첫 로드 실패에 failed=true로 박아 세션 내내 배너가 영영 안 떴다
+  // (일시적 no-fill 하나로 수익 0). 구글 권고대로 지수 백오프+지터로 재시도(5→10→20→40s 상한 60s) —
+  // failed를 잠깐 true로 뒀다 타이머로 되돌리면 BannerAd가 remount되며 새로 로드한다. 성공 시 attempt 리셋.
+  const handleFailed = () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    const n = Math.min(attemptRef.current, 3); // 0,1,2,3 → 5,10,20,40s
+    const base = 5000 * Math.pow(2, n);
+    const delay = Math.min(60000, base) + Math.floor(base * 0.2 * ((attemptRef.current % 5) / 5)); // 결정론적 지터
+    attemptRef.current += 1;
+    setFailed(true);
+    retryTimerRef.current = setTimeout(() => setFailed(false), delay);
+  };
+  useEffect(() => () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); }, []);
 
   // 2026-07-25 — 화면(Home/Focus/Stats/Settings)들이 이 배너의 실제 렌더 높이만큼 스크롤 하단
   // 여백을 잡아야 광고가 마지막 콘텐츠를 안 가린다(ANCHORED_ADAPTIVE_BANNER는 기기 너비에 따라
@@ -59,7 +75,8 @@ export function AdBanner() {
         // 감사 H1(2026-07-27) — UMP 동의 플로우가 없어 EEA에서 개인화 광고는 정책 위반이 될 수 있다.
         // 비개인화로 요청해 동의 없이도 안전하게 서빙(앱의 NSPrivacyTracking=false/ATT 미사용 정합).
         requestOptions={{ requestNonPersonalizedAdsOnly: true }}
-        onAdFailedToLoad={() => setFailed(true)}
+        onAdLoaded={() => { attemptRef.current = 0; }}
+        onAdFailedToLoad={handleFailed}
       />
     </View>
   );

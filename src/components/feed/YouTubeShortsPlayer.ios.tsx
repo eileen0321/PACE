@@ -269,7 +269,13 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
           } else if (msg.type === 'ended') {
             onEnded();
           } else if (msg.type === 'progress') {
-            if (typeof msg.value === 'number') onProgress?.(msg.value);
+            if (typeof msg.value === 'number') {
+              // 실패망: progress>0 = 실제 재생 중 = 로드 완료. 'ready' 메시지가 브릿지에서 드롭돼도
+              // 로딩 커버가 재생 중 영상 위에 남아 까만화면이 되지 않게, 첫 진행에서 ready로 승격.
+              // (onMessage 클로저는 매 렌더 최신 ready를 캡처 → 정상 ready 후엔 이 분기 안 탐.)
+              if (msg.value > 0 && !ready) { setReady(true); onReady?.(); }
+              onProgress?.(msg.value);
+            }
           } else if (msg.type === 'error') {
             onError?.(msg.code ?? -1);
           } else if (msg.type === 'novideo') {

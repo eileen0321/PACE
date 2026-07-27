@@ -1834,3 +1834,52 @@ Time/Family Controls 언급 제거, `b88a65d`)는 이미 별개로 처리돼 있
   ~1초 안에 최근앱→복귀 시 재현). `AppState` 'active' 복귀 시 강제 완료 처리 추가 권장.
 - 🟡 `stats.tsx`의 Rest Time 카드가 `putDownSeconds` 값에 따라 애니메이션 없이 마운트/언마운트돼
   아래 카드들이 순간 밀림 — 드문 타이밍이라 낮은 우선순위.
+
+### 2026-07-28 (밤) — Mac 세션: 손짓 신뢰성 + 전환 체감 최적화 + 밤샘 자율검증
+
+**배경**: 사장님이 "손짓이 5번에 1번만 되고, 넘어갈 때 버벅이고 까만화면 번쩍, 화면전환 느림"을 실기기로
+반복 지적 → 잠들며 "밤새 검증해" 지시. iOS 손짓은 이미 MediaPipe로 전환돼 있었으나 감지가 들쭉날쭉했다.
+
+**진단(실기기 콘솔 실측)**: 손짓이 잡힐 땐 growth 1.2+로 완벽한데, 영상 전환 시 WebView가 youtube.com/shorts
+페이지를 **통째로 리로드**(~1.6s, 실측 WAVE→VEV playing) → 그 동안 MediaPipe가 프레임을 굶어 손 접근
+**초반의 작은 프레임**을 놓침 → growth 기준점(oldest)이 커져 안 터짐 → "5번에 1번" + "한번 막히면 계속".
+
+**수정(커밋)**:
+1. `f45ba16` 손짓 감지 3종: (a) 내가 앞서 넣었던 **15fps 캡 제거**(alwaysDiscardsLateVideoFrames와 겹쳐 부하
+   시 실효 fps↓ → 초반 프레임 굶김), Android처럼 native ~30fps. (b) **부재→근접 등장 안전망**: 손이 ≥300ms
+   사라졌다 ≥0.10 크기로 재등장하면 발화(growth 초반 굶겨도 보완). (c) 로딩 커버(까만화면 가림).
+   → 실측으로 확인: 15회 발화 중 growth 13 + reappear 2. reappear가 growth로 못 잡던 케이스를 실제로 잡음.
+2. `perf(pace-gesture)` **MediaPipe 델리게이트 GPU→CPU**: GPU 추론이 WebView 영상 GPU 합성과 경쟁해
+   버벅였음 → CPU로 옮겨 GPU를 영상에 양보. 실기기 로그 `로드 성공(CPU)` 확인.
+3. `72ed440`/`c70a5e6` **전환 중 손짓 추론 일시정지**: 네이티브 `setWavePaused`(paused 플래그, captureOutput
+   에서 lastFrameAt=워치독만 갱신하고 추론 skip, 재개 시 히스토리 초기화). 훅 `pauseWaveForTransition`을
+   피드 `goNext` 한 곳에서 호출(손짓/볼륨/**자연종료(onEnded)/수동 Next 모든 전환**) → 페이지 로드에 CPU
+   양보. **1600ms 고정 타임아웃 자동 재개**(ready 신호 의존 X, 영구정지 위험 0). Android 훅은 시그니처 대칭 no-op.
+4. 플레이어 **스피너 450ms 지연**(빠른 전환엔 스피너 미표시) + `9d5b3ad` **로딩 커버 실패망**(ready
+   postMessage 드롭돼도 progress>0이면 커버 해제 — 감사에서 나온 유일 should-fix).
+
+**전환 속도 결정(사장님)**: 1.6초 자체는 YouTube 페이지 리로드(네트워크 바운드)라 구조적. "풀스크린 vs 속도"에서
+예전에 풀스크린 택함. 이번엔 **"현재 유지 + 미세 최적화"** 선택 → 위 pause/스피너로 체감만 개선(프리로드는
+2번째 WebView 디코더 경합으로 재생 중 멈춤 유발해 반려된 상태, IFrame loadVideoById는 필러박스로 반려).
+
+**밤샘 자율검증 결과(사장님 부재로 UI 조작·손짓은 불가, 가능한 범위 전부)**:
+- ✅ 클린 Release 빌드 성공(컴파일 01:12) — ⚠️ **`expo run:ios`가 컴파일 후 install 단계에서 반복적으로
+  멈춤**(자식 프로세스 없이 node만 alive). **해결: `.app`을 `xcrun devicectl device install`로 수동 설치**하면
+  100% 신뢰성. 앞으로 이 패턴 권장(expo의 install 단계 신뢰 불가). 컴파일 자체는 항상 성공.
+- ✅ 기기 헬스체크: 클린 부팅, JS 번들 평가, **크래시/레드박스 0**, 피드 자동 복귀해 **영상 재생 + 오디오
+  정상**(audible-ok muted=false), 리브랜드 되돌림 확인(YouTube 표기 복원).
+- ✅ 전수 회귀 감사(서브에이전트, 4개 변경파일+호출부 전수 트레이스): **블로커 0**. pause 스턱-트루 불가능,
+  goNext null-throw 불가, reappear/growth 이중발화 불가(refractory+JS 1500ms 이중가드), CPU 델리게이트/캡제거
+  잔재 없음, 리브랜드 되돌림 클린, tsc exit 0. 유일 should-fix(로딩 커버 실패망)는 위 `9d5b3ad`로 처리 완료.
+- ✅ git: co-session의 YouTube 되돌림/딥링크수정/버전질문 전부 리베이스·머지·응답, 매 커밋 푸시.
+
+**"시뮬레이터로 안되?" 답**: (a) 기기 빌드는 사실 **컴파일은 항상 성공**하고 expo install 단계만 멈추는 것 —
+devicectl 수동설치로 우회하면 기기 워크플로우가 신뢰성 있음(밤새 그렇게 함). (b) 시뮬레이터는 **전면카메라가
+없어 손짓(WaveDetector)이 근본적으로 테스트 불가**, YouTube 비로그인이라 재생도 "앱에서 보기"로 막힘 → 이 앱의
+핵심 2기능(손짓·실제재생)은 시뮬로 검증 불가. UI/레이아웃/로직 이터레이션엔 시뮬 OK지만 **최종 검증은 실기기 필수**.
+
+**남은 것(사장님 확인 후)**: (1) 아침에 손짓 신뢰성/전환체감 최종 확인 → 만족하면 (2) 진단로그 제거
+(NSLog `[pace-wave]`/PACEWV/PACEWAVE ~21줄 + JS domlog/VEV/MUTEBLOCKS ~9줄 + feed onDiag/setDiag, 카탈로그
+완료) → (3) failsafe 포함 클린 재빌드 → 제출. (4) Podfile의 GTMSessionFetcher fix+use_modular_headers를
+EAS 클라우드용 config plugin으로 이관(현재 로컬 Podfile only). (5) [사장님] ASC 개인정보 설문+Privacy URL,
+env 주입, 광고 실물탭 금지, Notion 공개 확인.

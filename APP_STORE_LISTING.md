@@ -47,7 +47,7 @@ A CALMER FEED
 When you do want to unwind, the optional Pace Feed offers short, calming videos from curated wellbeing categories — a slower, more deliberate alternative to endless social feeds. No infinite outrage, no algorithmic rabbit holes.
 
 HANDS-FREE
-During a Focus Session you can move to the next Short hands-free — with a simple hand wave over the front camera, a finger snap, or your headphone volume buttons. Camera and microphone signals are processed entirely on your device and are never recorded or uploaded.
+During a Focus Session you can move to the next Short hands-free — with a simple hand wave over the front camera or your headphone volume buttons. The camera signal is processed entirely on your device and is never recorded or uploaded.
 
 PACE PREMIUM
 Go further with an optional subscription:
@@ -75,7 +75,7 @@ Pace는 무의식적으로 흘려보내는 스크롤 시간을 줄이고, 원래
 쉬고 싶을 땐, 선택형 Pace Feed가 엄선된 웰빙 카테고리의 짧고 차분한 영상을 보여줍니다. 끝없는 소셜 피드 대신, 조금 더 느리고 의도적인 대안입니다.
 
 핸즈프리
-집중 세션 중에는 손대지 않고 다음 영상으로 넘길 수 있어요 — 전면 카메라 위 손짓, 핑거스냅, 또는 이어폰 볼륨 버튼으로. 카메라·마이크 신호는 전부 기기 안에서만 처리되며 절대 녹화·업로드되지 않습니다.
+집중 세션 중에는 손대지 않고 다음 영상으로 넘길 수 있어요 — 전면 카메라 위 손짓 또는 이어폰 볼륨 버튼으로. 카메라 신호는 전부 기기 안에서만 처리되며 절대 녹화·업로드되지 않습니다.
 
 Pace 프리미엄
 선택형 구독으로 더 나아가세요:
@@ -119,7 +119,7 @@ Pace 프리미엄
 | **사용자 ID / 기기 ID** | 예 | 예 | 아니오 | 앱 기능(계정·동기화) |
 | **사용 데이터(시청 세션/일일 통계)** | 예(로그인 시 백엔드 동기화) | 예 | 아니오 | 앱 기능(통계 표시). 게스트는 온디바이스만 |
 | **구매(구독 상태)** | 예 | 예 | 아니오 | 앱 기능(프리미엄) — RevenueCat |
-| **카메라/마이크(손짓·스냅)** | **아니오** | — | — | 전적으로 온디바이스 처리, 녹화·업로드 없음 → "수집" 아님 |
+| **카메라·모션(손짓·플립모드)** | **아니오** | — | — | 전적으로 온디바이스 처리, 녹화·업로드 없음 → "수집" 아님. (핑거스냅 제거로 마이크 미사용) |
 | **광고 관련(AdMob)** | ⚠️ 예 가능 | 아니오 권장 | **아니오** | 비개인화 광고. 기기 식별자/기초 사용데이터가 "제3자 광고"로 분류될 수 있음 — AdMob 문서 기준으로 정직하게. **NSPrivacyTracking=false**(ATT 미사용)와 정합 |
 
 **요점**: "**데이터를 추적(Track)에 사용하지 않음**"으로 답할 수 있음(ATT 미사용, 비개인화 광고). 단 AdMob은 "수집" 쪽에서 최소 항목 신고가 필요할 수 있으니 AdMob의 App Privacy 가이드 한 번 대조.

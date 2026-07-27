@@ -425,15 +425,24 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     let options = HandLandmarkerOptions()
     options.baseOptions.modelAssetPath = modelPath
+    options.baseOptions.delegate = .GPU // ML 추론을 GPU로 — CPU(영상 디코딩/RN 스레드) 경쟁을 줄여 재생 버벅임 완화
     options.runningMode = .liveStream
     options.numHands = 1
     options.handLandmarkerLiveStreamDelegate = self
     do {
       landmarker = try HandLandmarker(options: options)
-      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공: %@", modelPath)
+      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(GPU): %@", modelPath)
     } catch {
-      NSLog("[pace-wave] HandLandmarker init 실패: %@", String(describing: error))
-      onError("hand landmarker init failed")
+      // GPU 델리게이트 실패(기기/드라이버 문제 가능) → CPU로 폴백해 감지는 무조건 되게 한다.
+      NSLog("[pace-wave] GPU init 실패 → CPU 폴백: %@", String(describing: error))
+      options.baseOptions.delegate = .CPU
+      do {
+        landmarker = try HandLandmarker(options: options)
+        NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(CPU 폴백)")
+      } catch {
+        NSLog("[pace-wave] HandLandmarker init 실패(CPU도): %@", String(describing: error))
+        onError("hand landmarker init failed")
+      }
     }
   }
 
@@ -469,6 +478,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       return
     }
     session.addInput(input)
+
+    // 카메라 캡처를 15fps로 제한 — 처리는 150ms(≈6fps)만 쓰므로 30fps 캡처는 낭비다. 캡처 부하를 줄여
+    // 영상 디코딩/RN 스레드와의 경쟁(버벅임)을 완화한다.
+    if (try? device.lockForConfiguration()) != nil {
+      let fps = CMTime(value: 1, timescale: 15)
+      if device.activeFormat.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 15 && 15 <= $0.maxFrameRate }) {
+        device.activeVideoMinFrameDuration = fps
+        device.activeVideoMaxFrameDuration = fps
+      }
+      device.unlockForConfiguration()
+    }
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true

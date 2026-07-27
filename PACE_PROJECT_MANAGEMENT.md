@@ -1883,3 +1883,14 @@ devicectl 수동설치로 우회하면 기기 워크플로우가 신뢰성 있�
 완료) → (3) failsafe 포함 클린 재빌드 → 제출. (4) Podfile의 GTMSessionFetcher fix+use_modular_headers를
 EAS 클라우드용 config plugin으로 이관(현재 로컬 Podfile only). (5) [사장님] ASC 개인정보 설문+Privacy URL,
 env 주입, 광고 실물탭 금지, Notion 공개 확인.
+
+### 🔴 2026-07-28 밤 — 긴급: "수면감지가 전혀 안돼" (사장님 실기기 실시간 지적, Windows→Mac)
+
+Windows 세션은 iOS 기기/코드 접근이 없어(이 저장소 체크아웃에 `ios/` 폴더 자체가 없음) 직접 조사 불가 —
+Mac 세션이 바로 확인 부탁드립니다. 참고로 코드상 iOS 수면감지는 `feed/index.tsx`의 `useSleepGuard`가
+담당하고, 2026-07-27에 "화면이 꺼지면 CMMotionManager가 무진동을 못 잡는다"는 전제조건 버그를
+`expo-keep-awake`로 고쳤다고 기록돼 있음(`feed/index.tsx:125-135`, `activateKeepAwakeAsync`) — 그런데도
+지금 전혀 안 된다면: (a) 그 keep-awake 수정이 오늘 밤 다른 커밋(예: 손짓/전환 관련 변경)과 상호작용해서
+회귀했는지, (b) `sleepStillnessMinutes`/`useSleepGuard`의 `enabled` 조건(`playing && !sleepBlackout`)이
+지금 상태에서 애초에 false로 막혀 있는 건 아닌지, (c) 오늘 밤 손짓 전환-정지(`setWavePaused`,
+`pauseWaveForTransition`) 변경이 실수로 수면감지 훅에도 영향을 준 건 아닌지 확인 필요.

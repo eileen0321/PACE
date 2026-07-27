@@ -383,6 +383,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var samples: [(t: TimeInterval, size: CGFloat)] = []
   private var lastFire: TimeInterval = 0
   private var lastAnalyze: TimeInterval = 0
+  private var lastFrameAt: TimeInterval = 0 // 마지막 카메라 프레임 도착 시각 — 워치독이 정지 감지에 사용
+  private var watchdog: Timer? // 프레임이 끊기면(인터럽션 미복구/조용한 정지) 카메라를 강제 재시작
   private var logTick = 0
   private var lockedOri: CGImagePropertyOrientation? = nil // 손이 처음 잡힌 orientation 고정(자동 탐색)
   private var noHandStreak = 0 // 연속 no-hand 프레임 수 — 일정 이상이면 lockedOri를 풀어 재탐색(잘못 잠긴 lock 복구)
@@ -471,6 +473,25 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     nc.addObserver(self, selector: #selector(sessionRuntimeError(_:)), name: .AVCaptureSessionRuntimeError, object: session)
     session.startRunning()
     NSLog("[pace-wave] camera started (front, portrait+mirror)")
+    // 워치독: 프레임이 2.5초 이상 안 오면(인터럽션이 안 끝나거나 조용히 정지) 원인 불문 카메라를 강제 재시작.
+    // "잘되다가 갑자기 안되고 계속 안됨"의 근본 대응 — 인터럽션-종료 알림에만 의존하던 복구의 사각지대를 메운다.
+    lastFrameAt = CFAbsoluteTimeGetCurrent()
+    DispatchQueue.main.async {
+      self.watchdog?.invalidate()
+      self.watchdog = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        guard let self = self else { return }
+        let idle = CFAbsoluteTimeGetCurrent() - self.lastFrameAt
+        if idle > 2.5 {
+          NSLog("[pace-wave] watchdog: no frames %.1fs → 카메라 강제 재시작", idle)
+          self.onDiag("watchdog restart")
+          self.queue.async {
+            if self.session.isRunning { self.session.stopRunning() }
+            self.session.startRunning()
+          }
+          self.lastFrameAt = CFAbsoluteTimeGetCurrent() // 재시작 직후 재트리거 방지
+        }
+      }
+    }
   }
 
   @objc private func sessionInterrupted(_ n: Notification) {
@@ -490,6 +511,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   func stop() {
     NotificationCenter.default.removeObserver(self)
+    DispatchQueue.main.async { self.watchdog?.invalidate(); self.watchdog = nil }
     queue.async {
       if self.session.isRunning { self.session.stopRunning() }
       for i in self.session.inputs { self.session.removeInput(i) }
@@ -501,6 +523,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // AVCaptureVideoDataOutputSampleBufferDelegate
   func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
     let now = CFAbsoluteTimeGetCurrent()
+    lastFrameAt = now // 워치독용 — 실제 프레임이 들어올 때마다 갱신(스로틀 전에)
     guard now - lastAnalyze >= analyzeIntervalSec else { return } // 프레임 스로틀
     lastAnalyze = now
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }

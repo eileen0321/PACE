@@ -1636,3 +1636,34 @@ volumeKeyRemote(iOS 블루투스)/bluetoothVolumeKeySkipEnabled(Android 블루�
 **별개 미해결(iOS 네이티브, 손짓 감지율)**: 손짓(WaveDetector) 감지율이 낮음(사장님 "10번에 1번"). 어제 로그에
 `PACEWAVE no hand(locked)` 다수 — orientation lock이 잘못 걸리면 이후 프레임에서 손을 못 잡는 것으로 추정.
 튜닝(growthRatio 1.3 / EMA 0.7·0.3 / analyzeInterval 0.1)은 그대로. 이건 iOS pace-gesture라 Mac 담당이나 미해결 상태.
+
+### 2026-07-27 (계속) — Windows 세션 (프리미엄→무료 다운그레이드 전수감사 — sleepStillnessMinutes 네이티브 push 누락 발견/수정)
+
+사장님 지시("유료-무료-유료 전환등")로 `useSubscriptionStore`/`_layout.tsx`의 구독 다운그레이드 처리를
+전수 재검토. `enforceFreeFocusSessionDuration()`이 isPremium 변화마다(부팅뿐 아니라 앱 켜진 채로 만료돼도
+RC `addCustomerInfoUpdateListener`가 잡아서) 무료 기본값을 강제하는 구조 자체는 견고했음(과거 여러 차례
+감사·수정된 이력 확인 — 구매/복원/로그아웃 안전 기본값 등 전부 정상).
+
+**발견한 구멍**: `focusSessionDurationMinutes`는 다운그레이드 시 `bluetoothService.
+setFocusSessionDurationMinutes()`로 네이티브에 push되는데, 같은 D8 정책(무료=10분 고정)이 적용되는
+`sleepStillnessMinutes`(무진동 수면감지 임계값)는 그 push 경로 자체가 없었다. `PaceOverlayService.kt`
+안에서 `sleepStillnessMinutes`는 세션 **시작** 시점(Intent extra)에만 읽히고 프로세스 인스턴스 필드에
+고정되는 값이라, 세션이 이미 도는 중에 구독이 만료돼도 그 세션은 계속 프리미엄 시절 임계값(최대 20분)으로
+동작 — 다음 세션을 새로 시작해야만 10분으로 정정됐다.
+
+**수정**: `PaceOverlayService.setSleepStillnessMinutes(context, minutes)` companion 함수 신규 추가
+(SharedPreferences 영속화 + `instance?.sleepStillnessMinutes` 즉시 갱신 — `performTick()`이 매 틱마다
+인스턴스 필드를 다시 읽으므로 재시작 없이 바로 반영됨, `setHandsFreeGestureEnabled`와 동일한 "라이브 값"
+패턴). `PaceOverlayModule.kt`에 `Function("setSleepStillnessMinutes")` 브릿지 추가, JS 쪽
+`bluetoothService.{android,ios}.ts`/`types.ts`/`modules/pace-overlay/index.ts`에 타입·구현 추가, `_layout.tsx`의
+`enforceFreeFocusSessionDuration()`에서 `focusSessionDurationMinutes`와 나란히 push하도록 배선.
+
+검증: `./gradlew :pace-overlay:compileDebugKotlin` + `assembleDebug` 성공, `npx tsc --noEmit` 클린,
+`R3CN80S5GWW` 실기기에 재설치 후 접근성 서비스 재활성화(재설치 후 매번 꺼지는 기존 패턴, `settings put
+secure enabled_accessibility_services` 로 복구) → 앱 재실행, logcat에 FATAL/AndroidRuntime 없음, MainActivity
+정상 resumed 확인. (구독 만료를 실시간으로 트리거해 도중 세션에서 실제 임계값 변화까지 라이브로 찍어보는
+검증은 테스트 계정으로 진행 중인 세션을 인위적으로 다운그레이드시켜야 해서 이번 라운드에선 안 함 — 코드
+경로는 `focusSessionDurationMinutes`의 기존 검증된 패턴을 그대로 미러링해 신뢰도 높음.)
+
+커밋: Kotlin 쪽(`PaceOverlayService.kt`/`PaceOverlayModule.kt`)은 자동커밋으로 `375d4ad`에 이미 포함,
+JS 쪽 나머지 배선은 `4fef7c7`로 별도 커밋+푸시 완료.

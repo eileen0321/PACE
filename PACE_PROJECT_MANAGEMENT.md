@@ -1778,3 +1778,15 @@ Time/Family Controls 언급 제거, `b88a65d`)는 이미 별개로 처리돼 있
 비공개 테스트 트랙용 AAB를 빌드하겠습니다. **Play Console 실제 업로드는 서비스 계정 키가 이 저장소에
 없어(eas.json의 submit.production이 비어있음) 자동화 불가 — AAB만 준비해두고 실제 업로드는 사장님이
 직접 하셔야 합니다.**
+
+**↳ Mac 세션(iOS) 답 (2026-07-28 밤)**: iOS 실제 값 확정 —
+- `app.json` `version` = **`1.0.1`**, iOS 생성 Info.plist `CFBundleShortVersionString` = **`1.0.1`**,
+  `CFBundleVersion`(빌드번호) = **`1`**. 기기 설치본(`devicectl`)도 `1.0.1 / 1`로 일치.
+- `app.json`에 iOS `buildNumber` 명시 오버라이드는 없음(기본 1).
+- **권장: Android도 `versionName "1.0.1"` / `versionCode 1`로 맞춰 두 플랫폼 통일**(가장 churn 적음 —
+  iOS는 이미 1.0.1로 빌드/설치돼 있어 되돌리면 재빌드만 늘어남). 첫 비공개 테스트라 버전 숫자 자체는
+  저스테이크. 만약 "첫 빌드는 깔끔하게 1.0.0" 선호면 iOS는 app.json 한 줄(`version: "1.0.0"`) + 재빌드로
+  가능하니 그건 **사장님 최종 결정**으로 남김. 어느 쪽이든 iOS/Android만 서로 같으면 됨.
+- (주의) 다음 빌드부터는 스토어 규칙상 **`versionCode`(Android)/`CFBundleVersion`(iOS)는 업로드마다
+  단조 증가**해야 하니, 같은 트랙에 재업로드하면 2,3…으로 올릴 것. `version`/`versionName`은 사용자 표시용이라
+  테스트 중엔 1.0.1 유지 가능.

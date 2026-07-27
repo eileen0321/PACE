@@ -961,7 +961,13 @@ class PaceOverlayService : Service() {
       if (sleepTimerRemainingMinutes > 0) {
         sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
       }
-      if (breakIntervalMinutes > 0) {
+      // 2026-07-27 사용자 실기기 지적("쇼츠 안 보고 Pace 화면만 보이는데 왜 휴식 팝업 떠") — 위
+      // remainingMinutes 차감은 isPlaying==false(재생 안 함이 확인됨)일 때 건너뛰도록 이미 고쳐져
+      // 있는데, 이 카운트다운은 그 가드 없이 세션이 활성인 동안 무조건 매분 깎였다. 그 결과 사용자가
+      // Pace 자체 화면(Home/Focus/Settings)만 보고 있거나 일시정지 중이어도 벽시계 기준으로 계속
+      // 흘러가 실제로 안 보고 있을 때도 알림이 떴다. remainingMinutes와 동일한 조건(재생 중이 아님이
+      // 확인된 경우만 건너뜀 — 신호 없음/불확실이면 안전하게 계속 차감)으로 통일한다.
+      if (breakIntervalMinutes > 0 && isPlaying != false) {
         nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
         if (nextBreakInMinutes <= 0) {
           if (notifyBreak) {

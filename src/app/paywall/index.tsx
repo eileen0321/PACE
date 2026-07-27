@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, StyleSheet, Text, View, Pressable, FlatList } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
@@ -23,6 +24,24 @@ export default function PaywallScreen() {
   // 있었다(이중 결제 위험). 하나의 플래그로 두 액션을 함께 막는다 — 동시에 둘 다 누를 이유가
   // 없으므로 굳이 따로 안 나눔.
   const [purchasing, setPurchasing] = useState(false);
+  // 2026-07-27 — jlpt-master의 reloadWithBackoff 이식: 스토어 연결 실패가 진짜 오프라인이 아니라
+  // 순간적인 네트워크 흔들림인 경우가 많아, "다시 시도" 버튼 한 번에 즉시 재요청 하나만 쏘는 대신
+  // 짧은 지수 백오프(1s/2s/4s)로 최대 3번 시도한다 — 마지막 시도까지 실패해야만 사용자가 다시
+  // 버튼을 눌러야 하는 상태로 남는다.
+  const [retrying, setRetrying] = useState(false);
+  const retryWithBackoff = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await init();
+        if (!useSubscriptionStore.getState().initError) break;
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+      }
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const blockIfNotSignedIn = (): boolean => {
     const notSignedIn = !user || user.isGuest || !user.email;
@@ -117,16 +136,28 @@ export default function PaywallScreen() {
         ListEmptyComponent={
           // 2026-07-21 감사 발견 — init()이 실패하면(오프라인 등) 예전엔 "불러오는 중..."에서
           // 영원히 멈췄다(기존 QA #6). initError일 때는 재시도 버튼이 있는 실패 상태를 보여준다.
+          // 2026-07-27 사용자 지적("구독화면 왜 이렇게 없어 보이니") — jlpt-master(PremiumPaywallModal)
+          // 참고: 실패 상태를 화면 한가운데 텍스트만 덩그러니 두지 않고, 나머지 카드들과 같은
+          // 톤의 카드(아이콘 포함)로 감싸 "빈 화면"이 아니라 "디자인된 상태"로 보이게 한다 — 실제
+          // 가격 정보는 잘못 표시하면(구버전 가격 등) 법적/신뢰 문제라 지어내지 않고, 대신 재시도를
+          // 백오프로 몇 번 자동 반복해(1s/2s/4s) 진짜 일시적 네트워크 흔들림이면 사용자가 버튼을
+          // 다시 누르기 전에 스스로 회복할 기회를 준다.
           initError ? (
-            <View style={styles.emptyState}>
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIconWrap}>
+                <Feather name="cloud-off" size={22} color={colors.textSecondary} />
+              </View>
               <Text style={styles.emptyTitle}>{t('paywall.loadFailedTitle')}</Text>
               <Text style={styles.empty}>{t('paywall.loadFailedMessage')}</Text>
-              <Pressable style={styles.retryBtn} onPress={() => init()}>
-                <Text style={styles.retryText}>{t('paywall.retry')}</Text>
+              <Pressable style={styles.retryBtn} onPress={() => retryWithBackoff()} disabled={retrying}>
+                {retrying ? <ActivityIndicator color={colors.textPrimary} /> : <Text style={styles.retryText}>{t('paywall.retry')}</Text>}
               </Pressable>
             </View>
           ) : (
-            <Text style={styles.empty}>{isReady ? t('paywall.loadFailedMessage') : t('paywall.loadingOfferings')}</Text>
+            <View style={styles.emptyCard}>
+              <ActivityIndicator color={colors.textSecondary} />
+              <Text style={[styles.empty, { marginTop: spacing.sm }]}>{isReady ? t('paywall.loadFailedMessage') : t('paywall.loadingOfferings')}</Text>
+            </View>
           )
         }
         ListFooterComponent={
@@ -136,7 +167,9 @@ export default function PaywallScreen() {
             <Pressable style={styles.restoreBtn} onPress={onRestore} disabled={purchasing}>
               {purchasing ? <ActivityIndicator color={colors.textSecondary} /> : <Text style={styles.restoreText}>{t('paywall.restore')}</Text>}
             </Pressable>
-            <Text style={styles.autoRenewNotice}>{t('paywall.autoRenewNotice')}</Text>
+            <Text style={styles.autoRenewNotice}>
+              {t('paywall.autoRenewNotice', { store: Platform.OS === 'ios' ? 'Apple ID' : 'Google Play' })}
+            </Text>
             <View style={styles.legalRow}>
               <Text style={styles.legalLink} onPress={() => Linking.openURL(TERMS_OF_USE_URL).catch(() => {})}>{t('paywall.termsOfUse')}</Text>
               <Text style={styles.legalDot}> · </Text>
@@ -163,9 +196,25 @@ const styles = StyleSheet.create({
   packageDisabled: { opacity: 0.5 },
   packageTitle: { fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
   packagePrice: { color: colors.textSecondary, marginTop: 4 },
-  empty: { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.lg },
-  emptyState: { alignItems: 'center', gap: spacing.sm, marginTop: spacing.lg, paddingHorizontal: spacing.lg },
-  emptyTitle: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold, fontSize: 15 },
+  empty: { color: colors.textSecondary, textAlign: 'center' },
+  emptyCard: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    padding: spacing.lg,
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+  },
+  emptyIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xs,
+  },
+  emptyTitle: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold, fontSize: 15, textAlign: 'center' },
   retryBtn: { marginTop: spacing.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, backgroundColor: colors.card, borderRadius: radius.pill },
   retryText: { color: colors.textPrimary, fontFamily: typography.bodyFontFamilySemibold, fontSize: 13 },
   restoreBtn: { paddingVertical: spacing.md, alignItems: 'center' },

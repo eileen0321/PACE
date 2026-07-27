@@ -1476,6 +1476,19 @@ tryAudible는 기능이라 보존. 상세 위치는 감사 리포트에 파일:�
 `sleepStillnessMinutes`(feed:115)를 **직접** 소비한다. **페이월 3개 혜택 iOS에서 다 실효 → 허위광고 아님, 페이월
 손대지 말 것.** i18n도 키층 339/339 완벽, QuickControlsGrid 영어 하드코딩은 "번역 시 타일 오버플로" 때문의 의도.
 
+**💡 [보류 — 출시 후 아이디어] "Hot Shorts with PACE" 카드**: 사장님 제안 — Home에 "Shorts with PACE"(기존 힐링
+카테고리 로테이션, 안 건드림) 아래 예전에 지웠던 두 번째 카드 자리를 되살려 "Hot Shorts with PACE"(조회수순 인기
+쇼츠, 백엔드가 계속 업데이트하는 리스트)를 추가하는 안. 오늘 밤 출시엔 보류로 결정됨. 조사 결과 남김:
+- 백엔드 쪽(리스트를 "계속 업데이트"하는 부분)은 쉬움 — `api/youtube-shorts.ts`에 이미 스크래핑+CDN캐싱
+  인프라(카테고리 로테이션)가 있어서, "조회수순" 모드 하나만 나란히 추가하면 됨(sp= 필터 파라미터 리서치만 필요).
+- **`YouTubeShortsPlayer.tsx`는 iOS 전용이 아니라 완전히 플랫폼 범용이다** — 공식 IFrame Embed API가 아니라
+  `react-native-webview`로 진짜 `youtube.com/shorts/{id}` 페이지를 직접 로드하는 방식(2026-07-20 재작성, IFrame이
+  실기기에서 WebView Media Integrity API에 막혀서 전환됨). `Platform.OS` 분기가 컴포넌트에도 `feed/index.tsx`에도
+  전혀 없음 — 즉 이 재생 방식 자체는 안드로이드에서도 그대로 동작할 가능성이 높음.
+- 진짜 남은 일은 "안드로이드에 이 화면을 아예 새로 라우팅하고, 그 화면 전용 세션추적/일일한도 로직을 붙이는 것"
+  뿐(안드로이드는 지금 오버레이-어시스턴트 모델이라 인앱 피드 화면 자체가 없음) — 처음 생각했던 것보다 작은
+  작업일 수 있음. 나중에 다시 논의 시 위 조사 내용부터 참고할 것.
+
 ### 2026-07-27 낮 — Windows 세션: 위 Android 도메인 3건(HIGH2/MEDIUM5/LOW-MED6) 전부 수정 완료 (`6a8e87f`)
 
 **✅ HIGH2 (겹치는 세션 이중집계)**: `home.tsx`의 `onSelectPlatform`에 running 세션 가드 추가 — 이미

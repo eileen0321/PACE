@@ -28,6 +28,12 @@ export const STORAGE_KEYS = {
   // 하나로 묶어 저장 — Flip Mode의 credits(오늘 쉰 시간 기반, 매일 리셋)와 달리 이건 매일 리셋되지
   // 않는 "적립 지갑"이라 별도 스토어로 분리했다.
   attendance: 'pace_attendance',
+  // 2026-07-28 밤 감사 — "배터리 사용량 최적화 제외"가 Settings 안쪽 한 줄로만 있어 대부분의 사용자가
+  // 아예 발견을 못 한다(실기기로 직접 확인: 몇 시간 테스트해도 whitelist에 안 올라가 있었음). 삼성
+  // One UI가 접근성/오버레이/사용정보 접근을 회수하는 1순위 타깃이라는 게 이미 알려진 문제라, Home에
+  // 배너로 1회 능동 안내한다. 이 키는 "배너를 보여줬는지"만 기록(허용 여부와 무관) — 매 세션마다
+  // 시스템 다이얼로그를 다시 띄우면 사용자 짜증 + Google Play가 이 권한 오남용으로 보는 리스크가 있다.
+  batteryOptimizationPromptSeen: 'pace_battery_optimization_prompt_seen',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

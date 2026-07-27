@@ -143,6 +143,7 @@ export const translations = {
       autoNextAccessibilityStatusDesc: 'Accessibility permission for advancing videos',
       batteryStatus: 'Battery Optimization',
       batteryStatusDesc: 'Prevents the OS from silently disabling Pace',
+      batteryPromptBanner: 'Tap to stop the OS from silently turning Pace off',
       connected: 'Connected',
       notConnected: 'Not Connected',
       // 2026-07-21 감사 발견 — AccessibilityOnboardingSheet.tsx가 useTranslation을 아예 안 써서
@@ -564,6 +565,7 @@ export const translations = {
       autoNextAccessibilityStatusDesc: '영상 넘김에 필요한 접근성 권한',
       batteryStatus: '배터리 최적화',
       batteryStatusDesc: 'OS가 Pace를 조용히 꺼버리는 걸 방지',
+      batteryPromptBanner: '탭하면 OS가 Pace를 조용히 꺼버리는 걸 막을 수 있어요',
       connected: '연결됨',
       notConnected: '미연결',
       a11ySheetTitle: '핸즈프리 Shorts',

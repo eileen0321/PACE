@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -66,6 +66,7 @@ export default function HomeScreen() {
   const { endedAt: sleepInsightEndedAt, check: checkSleepInsight, dismiss: dismissSleepInsight } = useSleepInsightStore();
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
+  const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
   // 2026-07-22 — 예전엔 "한 번 닫으면 오늘 하루 끝"인 단일 boolean이었는데, 3단계 시스템에선 3차
   // 토스트가 5분마다 계속 다시 떠야 한다(그래야 "완화된 반복 알림"이 됨). dismissedHitCount로
   // "이 hitCount는 이미 보여준 적 있다"만 기록 — hitCount가 다음 5분 임계값으로 올라가면 그 값보다
@@ -135,8 +136,27 @@ export default function HomeScreen() {
       // 수면 감지 인사이트(스펙 §1-B) — 홈에 돌아올 때마다 아직 안 보여준 sleep_detected 세션이
       // 있는지 확인. 대개 "밤새 켜둔 채 잠들었다가 아침에 앱을 여는" 시나리오라 focus effect가 자연스러움.
       if (user?.id) checkSleepInsight(user.id);
+      // 2026-07-28 밤 감사 — 배터리 최적화 제외 배너, 1회만. Settings 안에 이미 있는 행(guardRow)과
+      // 별개 진입점 — 능동적으로 안 찾아보는 사용자가 대부분이라 발견성을 높인다.
+      if (Platform.OS === 'android') {
+        (async () => {
+          const alreadyExempt = await overlayService.hasBatteryOptimizationExemption().catch(() => true);
+          if (alreadyExempt) return;
+          const seen = await AsyncStorage.getItem(STORAGE_KEYS.batteryOptimizationPromptSeen);
+          if (!seen) setShowBatteryPrompt(true);
+        })();
+      }
     }, [user?.id, refresh, refreshBluetooth, checkSleepInsight])
   );
+
+  const dismissBatteryPrompt = useCallback(() => {
+    setShowBatteryPrompt(false);
+    AsyncStorage.setItem(STORAGE_KEYS.batteryOptimizationPromptSeen, 'true').catch(() => {});
+  }, []);
+  const acceptBatteryPrompt = useCallback(() => {
+    overlayService.requestBatteryOptimizationExemption();
+    dismissBatteryPrompt();
+  }, [dismissBatteryPrompt]);
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
@@ -275,6 +295,14 @@ export default function HomeScreen() {
             <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt, t)}</Text>
             <Text style={styles.sleepInsightDismiss} onPress={dismissSleepInsight}>✕</Text>
           </View>
+        )}
+
+        {showBatteryPrompt && (
+          <Pressable style={styles.sleepInsightBanner} onPress={acceptBatteryPrompt}>
+            <Text style={styles.sleepInsightIcon}>🔋</Text>
+            <Text style={styles.sleepInsightText}>{t('focus.batteryPromptBanner')}</Text>
+            <Text style={styles.sleepInsightDismiss} onPress={dismissBatteryPrompt}>✕</Text>
+          </Pressable>
         )}
 
         <SessionHeroCard minutesWatched={todayUsageMinutes} limitMinutes={effectiveDailyLimitMinutes} autoNextEnabled={settings.autoNext} restSeconds={restSeconds} />

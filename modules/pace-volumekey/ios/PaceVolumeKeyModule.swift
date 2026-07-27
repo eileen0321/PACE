@@ -26,7 +26,6 @@ public class PaceVolumeKeyModule: Module {
   // 설정과 무관하게 0.5로 고정/들쑥날쑥해지는 문제가 있었음 — 사용자 실기기 지적). start()에서 현재 볼륨으로
   // 세팅하되, 양극단(0/1)이면 눌림 감지 여지가 없어 [0.1, 0.9]로만 살짝 클램프한다.
   private var baseline: Float = 0.5
-  private var ignoreNext = false
   private var nextTarget: Any?
   private var prevTarget: Any?
 
@@ -47,19 +46,25 @@ public class PaceVolumeKeyModule: Module {
           Self.topWindow()?.addSubview(mv)
           self.volumeView = mv
         }
-        // 사용자가 맞춰둔 현재 볼륨을 baseline으로 캡처(0.5 강제 금지). 양극단이면만 [0.1,0.9]로 클램프.
+        // 사용자가 맞춰둔 현재 볼륨을 baseline으로 캡처(0.5 강제 금지). iOS 볼륨은 1/16 스텝이라, 리셋이 정확히
+        // baseline에 안착하도록 스텝에 정렬한다(안 그러면 리셋값이 스텝에 반올림돼 baseline과 어긋나고, 그
+        // 어긋남이 "눌림"으로 오인돼 이벤트가 겹치거나 씹힌다). 양극단은 감지 여지를 위해 [0.125,0.875]로 클램프.
         let cur = self.session.outputVolume
-        self.baseline = min(0.9, max(0.1, cur))
-        self.setSystemVolume(self.baseline) // cur이 [0.1,0.9]면 사실상 변화 없음
-        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur) 캡처)") // 진단(테스트 후 제거)
+        let clamped = min(0.875, max(0.125, cur))
+        self.baseline = (clamped * 16).rounded() / 16
+        self.setSystemVolume(self.baseline)
+        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur))") // 진단(테스트 후 제거)
         self.observer = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
           guard let self = self else { return }
-          if self.ignoreNext { self.ignoreNext = false; return }
           let v = s.outputVolume
+          // 우리가 baseline으로 되돌린 것 때문에 생긴 KVO면 무시(값이 baseline과 거의 같음 = 같은 스텝).
+          // 사용자 눌림은 baseline에서 한 스텝(±0.0625) 벗어나므로 확실히 구분된다. 예전 ignoreNext 플래그
+          // 방식은 리셋 KVO가 타이밍/정렬 문제로 안 오면 다음 눌림을 잡아먹어 "두 번 눌러야 넘어감" 버그가
+          // 났다 — 상태 없는 값 비교로 대체.
+          if abs(v - self.baseline) < 0.03 { return }
           let direction = v >= self.baseline ? "up" : "down"
           NSLog("PACEVOL onVolumeButton(KVO) dir=\(direction) v=\(v)") // 진단(테스트 후 제거)
           self.sendEvent("onVolumeButton", ["direction": direction])
-          self.ignoreNext = true
           self.setSystemVolume(self.baseline)
         }
 

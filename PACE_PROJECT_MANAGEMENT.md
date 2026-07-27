@@ -1538,3 +1538,31 @@ recentlyUsed 폴백은 그 시각보다 실제로 더 최신일 때만 적용하
 느린 UsageStatsManager 폴백에만 의존하게 됨(오버레이 표시가 즉각적이지 않고 지연/불안정할 수 있음).
 4번째 패키지 추가해 동기화, 재빌드+실기기 설치 후 크래시 없음 및 방금 고친 오버레이 숨김 버그도
 여전히 정상임을 재확인. 커밋 `8ae21a6`.
+
+### 2026-07-27 오후 — Mac 출시전 최종 전수감사 (제출거부·크래시·인증 3도메인) + 코드수정
+
+**✅ [Mac 즉시수정 완료] App Store 제출 블로커·크래시 보험:**
+- **B3** ITSAppUsesNonExemptEncryption=false(제출 시 암호화 질문 제거) — app.json.
+- **B1/B2** 페이월에 자동갱신 고지 + 이용약관(Apple 표준 EULA) + 개인정보 링크(3.1.2), 설정에 개인정보 링크(5.1.1).
+  약관/고지/UI는 코드 완비. i18n en/ko 대칭 유지.
+- **M1** dev/shorts-poc 라우트 릴리즈 빌드에서 제외(__DEV__ 게이트).
+- **크래시** 최상위 ErrorBoundary(프로바이더 트리 throw 백색화면 방지) + 런치체인 .catch. (JSON.parse 가드는 co-session이 이미 추가.)
+- **H1(광고)** 배너/리워드 비개인화 요청(EEA UMP 회피). 
+- 크래시 감사 결론: **BLOCKER 없음** — 권한거부/빈데이터/오프라인/신규계정 전부 통과(앱이 이례적으로 잘 방어됨).
+- 인증 감사 결론: 게스트/심사원 경로 견고(로그인벽 없음, 오프라인 degrade, 사인아웃 프리미엄 누수 없음).
+
+**🔴🔴 [사장님 — 오늘밤 제출 전 반드시, 코드로 못 고침]:**
+1. **개인정보처리방침 URL** — `src/constants/legal.ts`의 `PRIVACY_POLICY_URL`이 지금 **임시 placeholder**다. 실제로
+   호스팅된 개인정보처리방침 페이지를 하나 만들고(정적 페이지/Notion 공개/백엔드 라우트 등) 그 URL로 교체해야 한다.
+   이 URL이 안 열리면 심사 거부(B1/B2의 유일한 미완 부분). 이용약관은 Apple 표준 EULA라 그대로 OK.
+2. **프로덕션 빌드 env 주입 확인** — `.env`는 gitignore라 EAS 클라우드 빌드엔 안 올라간다. `EXPO_PUBLIC_API_BASE_URL/
+   YOUTUBE_PROXY_URL/GOOGLE_*_CLIENT_ID/RC_*_KEY/PEXELS_KEY`를 `eas env`(또는 eas.json build.production.env)에 등록
+   했는지 확인. 안 하면 **소셜로그인·iOS 피드가 프로덕션에서 죽는다**(심사원도 못 봄). 로컬 archive면 .env 읽혀 무관.
+3. **App Store Connect 메타데이터**: App Privacy(개인정보) 설문에 AdMob 수집(식별자·사용데이터)+계정(이메일) 선언,
+   Terms/Privacy URL 등록. (코드가 아니라 콘솔 작업.)
+4. **광고 A1 철칙**: production/TestFlight 빌드를 아이폰에서 열면 실광고가 뜬다 → **절대 탭 금지**(AdMob 밴). dev 빌드는 안전.
+
+**🟡 [사장님/선택·후속]:** 백엔드 JWT TTL을 길게(주 단위) 두거나 401→refresh 재시도 배선(H1-auth: 만료 시 로그인 사용자가
+게스트로 강등될 수 있음 — 단 심사원은 게스트라 무관). SKAdNetworkItems(수익), track-player 미사용 의존성 제거(슬림).
+
+**🟢 [co-session] 내가 넘긴 Android 데이터 3건(HIGH2 이중집계/MEDIUM5 consumeExpired 레이스/LOW-MED6 진행중세션 0집계) 전부 해결 확인(6a8e87f). D7 릴리즈 SHA-1도 등록됨.**

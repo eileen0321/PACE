@@ -38,14 +38,19 @@ function buildWeekArray(weeklyStats: DailyStats[], todayStr: string): { dayIndex
   });
 }
 
-export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) {
+// 2026-07-27 감사 MED2 — 예전엔 목표를 60분 하드코딩하고 "HEALTHY" 배지를 무조건 띄워, 사용자가 일일한도를
+// 30/120분 등으로 바꾸면 실제 사용량과 모순되는 라벨(항상 "goal under 60m / HEALTHY")이 떴다. 실제
+// dailyLimitMinutes를 받아 목표선·건강 판정을 진짜 데이터로 계산한다(바로 위 Weekly Activity 그래프와 일관).
+export function WeeklyGraphCard({ weeklyStats, dailyLimitMinutes }: { weeklyStats: DailyStats[]; dailyLimitMinutes: number }) {
   const { t } = useTranslation();
   const [selectedDay, setSelectedDay] = useState<{ dayIndex: number; minutes: number } | null>(null);
   const todayStr = toLocalDateStr(new Date());
   const currentDayIndex = new Date(todayStr + 'T00:00:00').getDay();
   const weeklyData = buildWeekArray(weeklyStats, todayStr);
-  const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), 60);
+  const goalMinutes = dailyLimitMinutes > 0 ? dailyLimitMinutes : 60;
+  const maxMinutes = Math.max(...weeklyData.map((d) => d.minutes), goalMinutes);
   const weeklyAvg = Math.round(weeklyData.reduce((acc, d) => acc + d.minutes, 0) / 7);
+  const isHealthy = weeklyAvg <= goalMinutes; // 주간 평균이 한도 이하일 때만 건강 배지
 
   return (
     <View>
@@ -61,10 +66,12 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
               <View style={styles.avgRow}>
                 <Text style={styles.avgValue}>{weeklyAvg}</Text>
                 <Text style={styles.avgUnit}>{t('home.minUnit')}</Text>
-                <View style={styles.healthyBadge}>
-                  <Feather name="trending-up" size={11} color={colors.successLight} />
-                  <Text style={styles.healthyText}>{t('stats.healthy')}</Text>
-                </View>
+                {isHealthy && (
+                  <View style={styles.healthyBadge}>
+                    <Feather name="trending-up" size={11} color={colors.successLight} />
+                    <Text style={styles.healthyText}>{t('stats.healthy')}</Text>
+                  </View>
+                )}
               </View>
             </View>
             <View style={styles.tooltipWrap}>
@@ -108,7 +115,7 @@ export function WeeklyGraphCard({ weeklyStats }: { weeklyStats: DailyStats[] }) 
               <View style={styles.dot} />
               <Text style={styles.footerText}>{t('stats.todayFooterLabel', { day: t(DAY_INDEX_KEYS[currentDayIndex]) })}</Text>
             </View>
-            <Text style={styles.footerText}>{t('stats.goalUnderLabel', { n: 60 })}</Text>
+            <Text style={styles.footerText}>{t('stats.goalUnderLabel', { n: goalMinutes })}</Text>
           </View>
         </GlassSurface>
       </GlassSurface>

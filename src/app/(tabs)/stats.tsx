@@ -214,7 +214,7 @@ export default function StatsScreen() {
         )}
 
         {/* 7. WEEKLY USAGE GRAPH (App.tsx가 StatsTab 뒤에 별도로 덧붙이는 카드, WeeklyGraph.tsx) */}
-        <WeeklyGraphCard weeklyStats={weeklyStats} />
+        <WeeklyGraphCard weeklyStats={weeklyStats} dailyLimitMinutes={dailyLimitMinutes} />
 
         {/* 8. BLUETOOTH USAGE(2026-07-19, 사용자 지시) — 실제 집계된 카운터만 표시(누적, 세션 단위
             아님 — "몇 % 세션이 Hands-Free였는지"는 세션별 기록이 없어 정직하게 뺐다). */}

@@ -35,6 +35,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withPacePods",
       "@bacons/apple-targets",
       [
         "expo-router",

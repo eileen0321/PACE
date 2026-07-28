@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AppState, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -65,10 +66,37 @@ export default function FocusScreen() {
   const isIOS = Platform.OS === 'ios';
   const masterOn = isIOS ? settings.handsFreeEnabled : autoModeEnabled;
   const setMaster = (v: boolean) => { if (isIOS) update({ handsFreeEnabled: v }); else onToggleHandsFree(); };
-  const gestureOn = settings.handsFreeGesture;
+  // iOS 손짓은 카메라 권한 필요 — 거부(denied/restricted)면 토글이 켜져도 네이티브가 조용히 no-op이라
+  // "켠 것처럼 보이는데 안 됨"이 된다(사장님 지적). 권한 상태를 읽어 거부면 토글을 강제 OFF로 보여주고,
+  // 켜려 하면 설정으로 다이렉트 링크(Linking.openSettings). notDetermined면 시스템 권한 프롬프트를 띄운다.
+  const [camStatus, setCamStatus] = useState<string>('authorized');
+  const gestureMod = isIOS ? requireOptionalNativeModule<{ cameraPermissionStatus(): string; requestCameraPermission(): Promise<boolean> }>('PaceGesture') : null;
+  useEffect(() => {
+    if (!isIOS || !gestureMod) return;
+    const check = () => { try { setCamStatus(gestureMod.cameraPermissionStatus()); } catch {} };
+    check();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); }); // 설정에서 돌아오면 재확인
+    return () => sub.remove();
+  }, []);
+  const camDenied = isIOS && (camStatus === 'denied' || camStatus === 'restricted');
+  const gestureOn = settings.handsFreeGesture && !camDenied; // 권한 거부면 무조건 OFF 표시
   const setGesture = (v: boolean) => {
+    if (isIOS) {
+      if (v && gestureMod) {
+        const st = gestureMod.cameraPermissionStatus();
+        if (st === 'denied' || st === 'restricted') { setCamStatus(st); Linking.openSettings().catch(() => {}); return; } // 설정으로
+        if (st === 'notDetermined') {
+          gestureMod.requestCameraPermission().then((granted) => {
+            setCamStatus(granted ? 'authorized' : 'denied');
+            if (granted) update({ handsFreeGesture: true });
+          }).catch(() => {});
+          return;
+        }
+      }
+      update({ handsFreeGesture: v });
+      return;
+    }
     update({ handsFreeGesture: v });
-    if (isIOS) return;
     // 2026-07-28 감사 발견 — 마스터 토글(toggleAutoMode/enableAutoModeForSession)은 켤 때 카메라 권한을
     // 미리 요청하는데, 이 손짓 하위토글은 마스터와 독립적으로 켤 수 있게 분리된 뒤(2026-07-27)로도 권한
     // 요청 코드가 없었다 — 카메라 권한을 한 번도 안 준 기기에서 이 스위치만 켜면 JS는 ON으로 보이는데
@@ -289,7 +317,14 @@ export default function FocusScreen() {
                 style={styles.handsFreeSubCard}
               >
                 <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
-                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.interventionTitle}>{t('handsFreeSheet.handWaveLabel')}</Text>
+                  {camDenied && (
+                    <Text onPress={() => Linking.openSettings().catch(() => {})} style={styles.camDeniedHint}>
+                      {t('focus.cameraDeniedHint')}
+                    </Text>
+                  )}
+                </View>
                 <Switch
                   value={gestureOn}
                   onValueChange={setGesture}
@@ -367,6 +402,7 @@ const styles = StyleSheet.create({
   },
   handsFreeIcon: { width: 48, height: 44, alignItems: 'center', justifyContent: 'center' },
   interventionTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  camDeniedHint: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.primary, marginTop: 2, textDecorationLine: 'underline' },
   interventionSub: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: '#818CF8', marginTop: 2 },
   premiumTag: { backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   premiumTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5 },

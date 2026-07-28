@@ -423,6 +423,7 @@ export const translations = {
       bodyWithoutSnap: 'Pace can advance Shorts from your Bluetooth remote\'s volume button or a hand wave.',
       fingerSnapLabel: 'Finger snap',
       handWaveLabel: 'Hand wave',
+      handWaveHint: 'Sweep your open hand toward the front camera — start ~40 cm away and move in to ~15 cm. The approaching motion is what triggers it, not a fixed distance, so keep it moving (a still hand won\'t register). Detection may not always be accurate.',
       bluetoothRemoteLabel: 'Bluetooth remote',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: 'Recommended',
@@ -812,6 +813,7 @@ export const translations = {
       bodyWithoutSnap: '블루투스 리모컨의 볼륨 버튼 또는 손짓으로 Shorts를 넘길 수 있어요.',
       fingerSnapLabel: '핑거스냅',
       handWaveLabel: '손짓',
+      handWaveHint: '편 손을 전면 카메라 쪽으로 "훠이" 하듯 다가가세요 — 약 40cm에서 시작해 15cm까지. 고정 거리가 아니라 다가오는 "동작"이 인식돼요(가만히 있으면 안 됩니다). 인식이 항상 정확하지 않을 수 있어요.',
       bluetoothRemoteLabel: '블루투스 리모컨',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: '추천',

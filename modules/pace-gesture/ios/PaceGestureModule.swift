@@ -401,9 +401,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
   private var logTick = 0
-  private let processIntervalMs: Double = 100      // 2026-07-28 리서치(#6): 150→100ms. 700ms 창에 ~7샘플이라
-                                                    // 빠른 손 접근의 growth 곡선이 덜 끊긴다(150ms는 ~4샘플로 초반 놓침).
-                                                    // CPU 추론 ≤40ms라 여유. 안드(150ms)와 의도적 divergence(iOS가 더 촘촘).
+  private let processIntervalMs: Double = 150      // 안드 PROCESS_INTERVAL_MS (⚠️ 2026-07-28 100ms 롤백 — 어젯밤 검증값으로 복구)
   private let refractoryMs: Double = 1200           // 안드 REFRACTORY_MS
   private let growthWindowMs: Double = 700          // 안드 GROWTH_WINDOW_MS
   private let growthRatioThreshold: Double = 1.2    // 안드 GROWTH_RATIO_THRESHOLD
@@ -486,9 +484,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func configureAndRun() {
     session.beginConfiguration()
-    // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감). 2026-07-28 리서치(#3) — MediaPipe는 내부적으로
-    // ≤224×224로 다운샘플하므로 VGA는 과함. CIF(352×288)로 낮춰 ISP/메모리대역 절감(감지 정확도 손실 없음).
-    session.sessionPreset = session.canSetSessionPreset(.cif352x288) ? .cif352x288 : .vga640x480
+    session.sessionPreset = .vga640x480 // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감)
+    // ⚠️ 2026-07-28 롤백 — CIF(352×288)+YUV 최적화가 실기기에서 손짓을 깨뜨림(어젯밤 되던 게 안 됨). 어젯밤
+    // 검증된 VGA+BGRA로 복구. 리서치상 정확도 무손실이라 했지만 실기기 미검증 상태로 넣은 게 원인. 재도입은 기기 A/B로.
     guard
       let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
       let input = try? AVCaptureDeviceInput(device: device),
@@ -507,10 +505,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     let output = AVCaptureVideoDataOutput()
     output.alwaysDiscardsLateVideoFrames = true
-    // 2026-07-28 리서치 최적화(#1) — 전면카메라 네이티브 포맷인 420f YUV로 받는다. BGRA를 요청하면 매 프레임
-    // (스로틀로 버리는 것 포함) 풀프레임 색공간 변환이 강제돼 배터리/발열 낭비. MPImage는 YUV도 그대로 처리하고,
-    // occlusion 밝기는 Y(루마) 평면을 바로 평균내면 돼 RGB 가중합보다 싸고 정확하다.
-    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
+    // ⚠️ 2026-07-28 롤백 — 420f YUV 최적화가 실기기에서 손짓을 깨뜨려 BGRA로 복구(어젯밤 검증된 포맷).
+    output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
     output.setSampleBufferDelegate(self, queue: queue)
     guard session.canAddOutput(output) else {
       session.commitConfiguration()

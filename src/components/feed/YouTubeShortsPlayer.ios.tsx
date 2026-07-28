@@ -184,8 +184,8 @@ const INJECTED_JS_SWIPE = `
   var reportedReady = false, reportedEnded = false, lastT = -1;
   var curHref = '' + location.href, curV = null, globalsOn = false;
 
-  // 스와이프 주입 — dir>0 다음(아래로), dir<0 이전(위로). 여러 전략 시도(YouTube DOM 변동 대비).
-  function swipe(dir) {
+  // 실제 스와이프 동작(여러 전략) — dir>0 다음(아래로), dir<0 이전(위로).
+  function doSwipe(dir) {
     var dy = (dir > 0 ? 1 : -1) * (window.innerHeight || 800), tried = [];
     var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
     try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
@@ -195,7 +195,18 @@ const INJECTED_JS_SWIPE = `
       var k = new KeyboardEvent('keydown', { key: key, code: key, keyCode: kc, which: kc, bubbles: true });
       document.dispatchEvent(k); (document.activeElement || document.body).dispatchEvent(k); tried.push('key');
     } catch (e) {}
-    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + location.href.slice(-16) });
+    return tried;
+  }
+  // 자가치유 — 첫 스와이프가 YouTube를 "깨우는(priming)" 데만 쓰여 URL이 안 바뀌는 경우(사장님: "두 번째
+  // 손짓에서 반응")를 잡는다: 스와이프 후 URL이 그대로면 한 번 더 스와이프해 첫 손짓부터 넘어가게 한다.
+  // 실제로 넘어갔으면(href 변경) 재시도 안 함 → 이중 넘김 방지.
+  function swipe(dir) {
+    var before = '' + location.href;
+    var tried = doSwipe(dir);
+    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + before.slice(-16) });
+    setTimeout(function () {
+      if (('' + location.href) === before) { doSwipe(dir); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (priming)' }); }
+    }, 450);
   }
   window.paceAdvance = function () { swipe(1); };
   window.pacePrevious = function () { swipe(-1); };

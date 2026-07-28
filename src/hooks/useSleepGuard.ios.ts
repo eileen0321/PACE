@@ -24,7 +24,11 @@ const DEFAULT_STILLNESS_MINUTES = 10; // 설정 미지정 시(안드 free 기본
 export function useSleepGuard({ enabled, onSleep, stillnessMinutes }: { enabled: boolean; onSleep: (sleepOnsetAtMs?: number) => void; stillnessMinutes?: number }) {
   const onSleepRef = useRef(onSleep);
   onSleepRef.current = onSleep;
-  const mins = stillnessMinutes && stillnessMinutes > 0 ? stillnessMinutes : DEFAULT_STILLNESS_MINUTES;
+  // 2026-07-28 — 포그라운드 실시간 수면감지의 "책상 vs 수면" 오탐 완화(사장님 점심 실사용: 폰을 책상에 10분
+  // 놔뒀더니 무진동=수면으로 오판돼 세션이 끝나 손짓이 꺼짐). 실제 잠든 시각 인사이트는 방법 B(백그라운드
+  // 이력 조회, _layout backfill)가 별도로 처리하므로, 이 실시간 경로는 진짜 "오래 조는" 경우에만 발동하게
+  // 하한 15분을 둔다(설정값이 더 크면 그 값 사용). 짧은 식사·잠깐 내려둠엔 안 터진다.
+  const mins = Math.max(stillnessMinutes && stillnessMinutes > 0 ? stillnessMinutes : DEFAULT_STILLNESS_MINUTES, 15);
   const stillnessMs = mins * 60 * 1000;
   const stillnessShortMs = Math.round(mins * 0.6) * 60 * 1000;
 

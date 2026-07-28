@@ -6,8 +6,8 @@ import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
-import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow, getMostRecentSession, markSleepDetected } from '../database/repositories/sessionsRepository';
-import { requireNativeModule } from 'expo-modules-core';
+import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
+import { backfillSleepFromHistory } from '../services/sleepBackfill';
 import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
 import { useSessionStore } from '../store/useSessionStore';
 import { useTimerStore } from '../store/useTimerStore';
@@ -226,28 +226,10 @@ export default function RootLayout() {
   // 있으면 그 시작을 잠든 시각으로 보정한다. 배터리 거의 0, 앱이 밤새 죽어도 이력은 남아 아침에 산출된다.
   const sleepBackfillUserId = useUserStore((s) => s.user?.id);
   useEffect(() => {
-    if (Platform.OS !== 'ios' || !sleepBackfillUserId) return;
-    let sleepMod: { queryStationaryOnset(sinceMs: number, minMs: number): Promise<number | null> } | null = null;
-    try { sleepMod = requireNativeModule('PaceSleep'); } catch { return; }
-    const backfill = async () => {
-      const userId = useUserStore.getState().user?.id;
-      if (!userId || !sleepMod) return;
-      try {
-        const recent = await getMostRecentSession(userId);
-        if (!recent?.endedAt) return;
-        const startedMs = new Date(recent.startedAt).getTime();
-        const endedMs = new Date(recent.endedAt).getTime();
-        if (Date.now() - endedMs > 24 * 3600 * 1000) return; // 어제 것만 — 오래된 세션 재검사 안 함
-        const stillnessMin = useSettingsStore.getState().settings.sleepStillnessMinutes || 10;
-        const minStationaryMs = Math.max(stillnessMin * 60_000, 30 * 60_000); // 최소 30분 연속 정지 = 실수면(오탐 방지)
-        const onset = await sleepMod.queryStationaryOnset(startedMs, minStationaryMs).catch(() => null);
-        if (onset && onset > startedMs && onset < endedMs + 5 * 60_000) {
-          await markSleepDetected(recent.id, recent.startedAt, new Date(onset).toISOString());
-        }
-      } catch { /* 부가 기능 — 실패해도 앱 사용에 지장 없어야 함 */ }
-    };
-    backfill();
-    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') backfill(); });
+    if (!sleepBackfillUserId) return;
+    const run = () => { backfillSleepFromHistory(useUserStore.getState().user?.id); };
+    run();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') run(); });
     return () => { try { sub.remove(); } catch {} };
   }, [sleepBackfillUserId]);
 

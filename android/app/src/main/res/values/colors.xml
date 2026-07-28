@@ -1,0 +1,10 @@
+<resources>
+  <color name="splashscreen_background">#060709</color>
+  <color name="iconBackground">#060709</color>
+  <color name="colorPrimary">#023c69</color>
+  <!-- theme.ts colors.card와 동일(colors.background 아님) — 탭바 실제 표면색 + onboarding/index.tsx의
+       전체 화면 배경(absoluteFill)이 둘 다 card색이라 이걸 시스템 바에도 써야 두 군데 다 이음매 없이
+       맞는다. 상태바/내비게이션 바를 투명으로 두면 기기별로 edge-to-edge inset 처리가 어긋날 때 raw
+       검정으로 보이는 문제(실기기 확인)가 있어 고정 색으로 지정. -->
+  <color name="systemBarColor">#171A21</color>
+</resources>

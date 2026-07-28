@@ -42,7 +42,18 @@ yarn-error.*
 
 # generated native folders
 /ios
-/android
+
+# 2026-07-29 — android/는 더 이상 통째로 무시하지 않는다. 이전엔 prebuild로 매번 새로 생성되는
+# 폴더로 취급해 전체를 무시했는데, 그 안의 네이티브 커스터마이징(styles.xml 시스템 바 색 등)이
+# 커밋된 적이 한 번도 없어서 매번 조용히 사라졌었다(오늘 밤 내비바 색 버그가 반복 재발한 진짜 원인).
+# 빌드 산출물/기기별 로컬 설정만 계속 무시하고, 소스(styles.xml, MainActivity.kt 등)는 커밋한다.
+/android/app/build/
+/android/app/.cxx/
+/android/build/
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/app/debug.keystore
 
 # local Expo module build artifacts (source under modules/*/android is tracked, build output isn't)
 modules/**/android/build/

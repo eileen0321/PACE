@@ -1,0 +1,35 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <!-- 2026-07-25 THEME-1(QA findings) — 부모가 DayNight였을 때 라이트모드 기기에서 스플래시→RN
+       마운트 사이 흰색 네이티브 크롬이 실기기(Note20)에서 실제로 보였다(이 앱은 라이트/다크를
+       따라가지 않고 항상 다크 고정이므로 DayNight 자체가 불필요). NoActionBar(항상 다크)로 교체 +
+       windowBackground를 스플래시와 같은 배경색(#060709)으로 명시 고정 — 두 화면 전환 사이에
+       시스템 기본 배경(흰색)이 잠깐이라도 비칠 여지를 없앤다. -->
+  <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+    <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+    <item name="colorPrimary">@color/colorPrimary</item>
+    <!-- 2026-07-28 실기기(Note20, 3버튼 내비) 확인 — transparent로 두면 edge-to-edge inset이
+         기기별로 어긋날 때 탭바 배경색 대신 raw 검정이 비쳐 상하단 바만 색이 따로 논다. 앱 배경색을
+         고정 지정해 inset 처리 정확도와 무관하게 항상 맞도록 한다. -->
+    <item name="android:statusBarColor">@color/systemBarColor</item>
+    <item name="android:navigationBarColor">@color/systemBarColor</item>
+    <item name="android:windowBackground">@color/splashscreen_background</item>
+    <!-- jlpt-master(같은 패턴, 실기기 검증됨) 참고 — 이 theme attribute가 빠지면 삼성 SystemUI가
+         navigationBarColor를 지정해도 그 위에 자체 보호막(scrim)을 덧그려 계속 까맣게 보인다.
+         Window.isNavigationBarContrastEnforced 런타임 호출만으론 안 됐고, 테마에 정적으로 박아야
+         SystemUI가 창을 처음 만들 때부터 반영한다. -->
+    <item name="android:enforceNavigationBarContrast">false</item>
+    <item name="android:enforceStatusBarContrast">false</item>
+  </style>
+  <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">@color/splashscreen_background</item>
+    <item name="windowSplashScreenAnimatedIcon">@drawable/splashscreen_logo</item>
+    <item name="postSplashScreenTheme">@style/AppTheme</item>
+    <item name="android:windowSplashScreenBehavior">icon_preferred</item>
+    <!-- AppTheme에만 있던 바 설정이 스플래시 자체 테마엔 없어서, 스플래시가 떠 있는 동안만
+         하단 내비게이션 바가 기본값(흰색)으로 보였다 — 동일하게 고정. -->
+    <item name="android:statusBarColor">@color/systemBarColor</item>
+    <item name="android:navigationBarColor">@color/systemBarColor</item>
+    <item name="android:enforceNavigationBarContrast">false</item>
+    <item name="android:enforceStatusBarContrast">false</item>
+  </style>
+</resources>

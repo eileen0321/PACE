@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -33,6 +33,9 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
+// 2026-07-28 사장님 지시 — 수면 인사이트 배너("몇시에 잠드셨습니다") 아이콘을 이모지 대신 실제
+// 엎어놓은 폰 이미지로. phone03.png는 애플 로고를 "PACE" 워드마크로 대체한 상표-안전 버전.
+const SLEEP_INSIGHT_IMAGE = require('../../../assets/phone03.png');
 
 // healthy-shorts-assistant(2) App.tsx의 Home 탭(다크 리스킨)을 토씨 하나 안 틀리고 그대로 이식
 // (App.tsx:280-399, 사용자 명시적 지시). 3개 플랫폼 카드는 세로 풀와이드 스택(App.tsx:342
@@ -297,7 +300,7 @@ export default function HomeScreen() {
 
         {sleepInsightEndedAt && (
           <View style={styles.sleepInsightBanner}>
-            <Text style={styles.sleepInsightIcon}>🌙</Text>
+            <Image source={SLEEP_INSIGHT_IMAGE} style={styles.sleepInsightImage} resizeMode="contain" />
             <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt, t)}</Text>
             <Text style={styles.sleepInsightDismiss} onPress={dismissSleepInsight}>✕</Text>
           </View>
@@ -401,6 +404,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(129,140,248,0.25)',
   },
   sleepInsightIcon: { fontSize: 18 },
+  sleepInsightImage: { width: 28, height: 28, transform: [{ rotate: '-8deg' }] },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
   sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, marginTop: spacing.lg, marginBottom: 12 },

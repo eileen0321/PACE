@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, View } from 'react-native';
 
-const IMAGE = require('../../../assets/flip-phone.png');
+// 2026-07-28 사장님 지시 — 원본 flip-phone.png는 실제 애플 아이폰 사진(로고 그대로)이라 상표 리스크가
+// 있었다. "PACE" 워드마크로 로고를 대체한 phone03.png로 교체.
+const IMAGE = require('../../../assets/phone03.png');
 
 // 2026-07-27 사용자 지적("블러와 모션이 개 촌스러운데") — 이전 버전(보라색 글로우 블롭 여러 겹 +
 // 회전하는 그라데이션 링 + breathing pulse)이 정확히 "AI가 만든 것 같은 뻔한 디자인"의 전형(색색의

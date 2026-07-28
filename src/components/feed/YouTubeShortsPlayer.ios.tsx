@@ -187,13 +187,17 @@ const INJECTED_JS_SWIPE = `
   // 실제 스와이프 동작(여러 전략) — dir>0 다음(아래로), dir<0 이전(위로).
   function doSwipe(dir) {
     var dy = (dir > 0 ? 1 : -1) * (window.innerHeight || 800), tried = [];
+    // ⭐ 첫 손짓 무시 수정 — ArrowDown 키 스와이프는 플레이어에 focus가 있어야 먹히는데 로드 직후 focus가
+    //    없어 첫 키가 무시됐다. 매 스와이프 직전 플레이어를 focus해 첫 손짓부터 키가 먹히게 한다.
+    var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player') || document.querySelector('ytd-reel-video-renderer') || document.body;
+    try { mp && mp.focus && mp.focus({ preventScroll: true }); tried.push('focus'); } catch (e) {}
     var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
     try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
     try { window.scrollBy(0, dy); } catch (e) {}
     try {
       var key = dir > 0 ? 'ArrowDown' : 'ArrowUp', kc = dir > 0 ? 40 : 38;
       var k = new KeyboardEvent('keydown', { key: key, code: key, keyCode: kc, which: kc, bubbles: true });
-      document.dispatchEvent(k); (document.activeElement || document.body).dispatchEvent(k); tried.push('key');
+      (mp || document).dispatchEvent(k); document.dispatchEvent(k); (document.activeElement || document.body).dispatchEvent(k); tried.push('key');
     } catch (e) {}
     return tried;
   }

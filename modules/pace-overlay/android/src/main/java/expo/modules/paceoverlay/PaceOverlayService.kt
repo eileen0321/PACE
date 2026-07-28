@@ -59,10 +59,40 @@ class PaceOverlayService : Service() {
   // 되게 설계해 이 비대칭을 우회.
   private var autoNextEnabled = false
 
+  // 2026-07-28 사장님 실기기 지적("자꾸 오버레이 없어짐") — performTick()의 기존 자가복구
+  // (2026-07-26)는 `overlayView?.isAttachedToWindow`만 확인하는데, `dumpsys window`로 실기기에서
+  // 직접 확인한바 이 값이 true를 유지한 채로도 실제 창은 `mHasSurface=false`(=화면에 전혀 렌더링
+  // 안 됨, "유령" 상태)일 수 있었다 — isAttachedToWindow는 "뷰 계층에서 떨어져나갔는가"만 보고
+  // "실제로 화면에 서피스가 붙어있는가"는 안 본다. WindowManager.updateViewLayout()을 실제로 호출해
+  // 봐서 예외가 나는지로 더 확실하게 판별한다(진짜 유령 창이면 여기서 던진다). true=정상.
+  private fun isOverlaySurfaceHealthy(): Boolean {
+    val view = overlayView ?: return false
+    if (!view.isAttachedToWindow) return false
+    return try {
+      windowManager?.updateViewLayout(view, view.layoutParams)
+      true
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "overlay surface unhealthy (updateViewLayout threw)", e)
+      false
+    }
+  }
+
+  // 위 헬스체크가 false면 유령 창을 정리하고 다시 띄운다 — removeView 자체가 이미 죽은 창에 대해
+  // 던질 수 있어 try/catch로 감싼다(showOverlay의 `overlayView != null` 가드를 통과시키려면 null로
+  // 리셋은 반드시 필요).
+  private fun recoverOverlayIfNeeded(remainingMinutesForRecreate: Int) {
+    if (isOverlaySurfaceHealthy()) return
+    Log.w("PaceOverlay", "overlay view unhealthy — re-adding")
+    overlayView?.let { try { windowManager?.removeView(it) } catch (e: Exception) {} }
+    overlayView = null
+    showOverlay(remainingMinutesForRecreate)
+  }
+
   // 포그라운드 앱 감지 폴링 — SupportedApps.PACKAGES(YouTube/Instagram)에 있을 때만 오버레이를
   // 보이게 하고, 그 외(카카오톡/런처/Pace 자신 등)에서는 숨긴다(ForegroundAppWatcher.kt 참고,
   // UsageStatsManager 기반). 뷰를 매번 add/removeView하지 않고 visibility만 토글해 WindowManager
-  // churn을 피한다.
+  // churn을 피한다. 2026-07-28 — 매 폴(1초)마다 위 헬스체크도 같이 돌려서, 기존에 60초 틱에서만
+  // 감지하던(그것도 불완전하게) 유령 창을 훨씬 빠르게 복구한다.
   private val foregroundPollHandler = Handler(Looper.getMainLooper())
   private var isPolling = false
   private val foregroundPollRunnable = object : Runnable {
@@ -91,6 +121,7 @@ class PaceOverlayService : Service() {
           ForegroundAppWatcher.getForegroundPackage(applicationContext) ?: accessibilityForeground
         }
         val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
+        if (shouldShow) recoverOverlayIfNeeded(remainingMinutes)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
@@ -1058,11 +1089,9 @@ class PaceOverlayService : Service() {
       // 가정한 게 실제로는 안전하지 않았다. 이 틱이 도는 시점 자체가 이미 "세션이 활성"이라는
       // 뜻이므로(그렇지 않으면 애초에 이 코드에 안 옴), overlayView가 null이든 detach됐든 상관없이
       // 매 틱마다 무조건 상태를 확인해 필요하면 다시 띄운다.
-      if (overlayView?.isAttachedToWindow != true) {
-        Log.w("PaceOverlay", "overlay view missing (null=${overlayView == null}) — re-adding")
-        overlayView = null
-        showOverlay(remainingMinutes)
-      }
+      // 2026-07-28 — isAttachedToWindow 단독 체크 대신 isOverlaySurfaceHealthy()(updateViewLayout
+      // 실제 호출로 검증)로 교체. 이 60초 틱은 이제 보조 안전망 — 실제 복구는 위 1초 폴이 대부분 담당.
+      recoverOverlayIfNeeded(remainingMinutes)
       // 2026-07-26 사용자 지시("실제 재생 중일 때만 차감") — 예전엔 세션이 활성인 동안 실제 재생
       // 여부와 무관하게 매분 무조건 깎았다(일시정지/백그라운드도 "사용"으로 카운트되는 정확도 문제).
       // isLikelyPlaying()==false(재생 중이 아님이 확인됨)일 때만 건너뛰고, null(접근성 꺼짐 등 판단

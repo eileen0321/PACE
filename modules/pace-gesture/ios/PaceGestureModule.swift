@@ -23,21 +23,6 @@ public class PaceGestureModule: Module {
   private var headDetector: HeadDetector?
   private var waveDetector: WaveDetector?
 
-  // 임시 진단 파일 로거 — 기기 콘솔(devicectl/log)이 자꾸 끊겨 SWIPE/URLCHG/WAVE를 Documents/pace-debug.log에
-  // 남기고 devicectl로 뽑아 분석한다. ⚠️ 제출 전 진단 로그와 함께 제거.
-  static func fileLog(_ msg: String) {
-    guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-    let url = dir.appendingPathComponent("pace-debug.log")
-    let line = "\(Date().timeIntervalSince1970) \(msg)\n"
-    guard let data = line.data(using: .utf8) else { return }
-    if let fh = try? FileHandle(forWritingTo: url) {
-      defer { try? fh.close() }
-      fh.seekToEndOfFile(); fh.write(data)
-    } else {
-      try? data.write(to: url)
-    }
-  }
-
   public func definition() -> ModuleDefinition {
     Name("PaceGesture")
 
@@ -67,10 +52,9 @@ public class PaceGestureModule: Module {
       self.waveDetector = nil
     }
 
-    // 디버그: JS(WebView 등) 문자열을 NSLog + 파일에 기록(기기 콘솔이 자꾸 끊겨 파일을 devicectl로 뽑아 분석).
+    // 디버그: JS(WebView) 문자열을 NSLog로만(콘솔). 파일 로깅은 제출 전 제거함.
     Function("nativeLog") { (msg: String) in
       NSLog("PACEWV %@", msg)
-      Self.fileLog(msg)
     }
 
     // 카메라 권한 상태 — 손짓 토글이 "거부 시 disable + 설정 링크"를 판단하는 데 JS가 사용.
@@ -127,9 +111,9 @@ public class PaceGestureModule: Module {
     }
     if waveDetector != nil { NSLog("[pace-wave] startWave: 이미 실행중(skip)"); return }
     let d = WaveDetector(
-      onWave: { [weak self] in Self.fileLog("GESTURE-FIRE onHandWave→goNext"); self?.sendEvent("onHandWave", [:]) },
+      onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
-      onDiag: { [weak self] text in NSLog("PACEWAVE %@", text); Self.fileLog("WDIAG " + text); self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
+      onDiag: { [weak self] text in self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
     )
     waveDetector = d
     d.start()

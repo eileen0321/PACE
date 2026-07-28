@@ -79,6 +79,7 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
           <View style={styles.iconStage}><GestureFlickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
         </View>
+        <Text style={styles.handWaveHint}>{t('handsFreeSheet.handWaveHint')}</Text>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><RemoteClickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.bluetoothRemoteLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
@@ -117,6 +118,7 @@ const styles = StyleSheet.create({
   // 같은 x에서 시작하게 한다. 2026-07-27 — 아이콘 자체를 56x50으로 키워서 스테이지도 맞춰 확대.
   iconStage: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
+  handWaveHint: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textTertiary, lineHeight: 16, marginTop: -spacing.xs, marginBottom: spacing.xs, marginLeft: 44 },
   actionArrow: { color: colors.textTertiary },
   enableBtn: { marginTop: spacing.md, backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.sm + 2, alignItems: 'center' },
   enableBtnText: { color: '#FFFFFF', fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold },

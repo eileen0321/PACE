@@ -811,6 +811,7 @@ export const translations = {
       bodyWithoutSnap: '손짓 또는 블루투스 리모컨의 볼륨 버튼으로 Shorts를 넘길 수 있어요.',
       fingerSnapLabel: '핑거스냅',
       handWaveLabel: '손짓',
+      handWaveHint: '편 손을 전면 카메라 쪽으로 "훠이" 하듯 다가가세요 — 약 40cm에서 시작해 15cm까지. 고정 거리가 아니라 다가오는 "동작"이 인식돼요(가만히 있으면 안 됩니다). 인식이 항상 정확하지 않을 수 있어요.',
       bluetoothRemoteLabel: '블루투스 리모컨',
       nextShort: '다음 영상',
       handsFreeModeLabel: '핸즈프리 모드',

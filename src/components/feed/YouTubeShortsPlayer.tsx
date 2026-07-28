@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -124,9 +124,18 @@ const INJECTED_JS = `
 true;
 `;
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props) {
+// iOS(.ios.tsx)와 시그니처 대칭용 — Android는 이 웹뷰 피드를 /feed로 안 쓰지만(네이티브 오버레이 경로),
+// 공유 feed/index.tsx가 ref를 넘기므로 forwardRef로 받아 no-op 핸들을 노출한다(스와이프는 iOS 전용).
+export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
+export const SWIPE_NAV = false; // Android는 이 웹뷰 피드를 안 씀(iOS 전용 스와이프)
+
+export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag }: Props,
+  ref
+) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  useImperativeHandle(ref, () => ({ advance: () => {}, previous: () => {} }), []);
   const source = useMemo(() => ({ uri: `https://www.youtube.com/shorts/${videoId}` }), [videoId]);
 
   // videoId가 바뀌면(다음 영상) 새 페이지 로드이므로 ready를 다시 대기 상태로.
@@ -181,7 +190,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       />
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },

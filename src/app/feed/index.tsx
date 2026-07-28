@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
-import { YouTubeShortsPlayer } from '../../components/feed/YouTubeShortsPlayer';
+import { YouTubeShortsPlayer, SWIPE_NAV, type ShortsPlayerHandle } from '../../components/feed/YouTubeShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
@@ -283,10 +283,21 @@ export default function PaceFeedScreen() {
   // 전환 동안 손짓 추론 정지(iOS) → 페이지 로드에 CPU 양보. 손짓/볼륨/자연종료/수동 등 모든 넘김이
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
   const pauseWaveRef = useRef<(() => void) | null>(null);
+  const playerRef = useRef<ShortsPlayerHandle>(null);
   const goNext = () => {
     pauseWaveRef.current?.();
     setStatus('PLAYING');
-    advance(); // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
+    // 스와이프 모드(YouTube 네이티브): 리로드 없이 플레이어에 다음 스와이프 주입(큐 advance 안 함 → 플레이어가
+    // 첫 영상에 마운트된 채 유지, YouTube가 다음 쇼츠를 이어줌). reload 모드: 기존대로 큐 advance(videoId 변경).
+    if (SWIPE_NAV) { playerRef.current?.advance(); }
+    else { advance(); } // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
+  };
+  // 이전 — 스와이프 모드면 위로 스와이프 주입, 아니면 큐 goToPrevious. moved 반환(토스트 표시 판단용).
+  const goPrev = (): boolean => {
+    if (SWIPE_NAV) { playerRef.current?.previous(); setStatus('PLAYING'); return true; }
+    const moved = goToPrevious();
+    if (moved) setStatus('PLAYING');
+    return moved;
   };
 
 
@@ -311,9 +322,7 @@ export default function PaceFeedScreen() {
   };
   const retryFeed = () => { errorStreakRef.current = 0; setFeedBlocked(false); loadInitial(); };
 
-  const goPrevious = () => {
-    if (goToPrevious()) setStatus('PLAYING');
-  };
+  const goPrevious = () => { goPrev(); };
 
   const toggleAutoMode = () => {
     // 토스트(다른 컴포넌트 setState)를 setIsAutoMode 업데이터 안에서 호출하면 React가
@@ -327,7 +336,7 @@ export default function PaceFeedScreen() {
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
   const feedRemote = useFeedRemoteControl({
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
+    onPrevious: () => { if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
     // 감사 발견 C1(2026-07-27) — onDiag는 WaveDetector가 초당 ~3회 emit한다. setDiag는 렌더도 안 되는
@@ -351,7 +360,7 @@ export default function PaceFeedScreen() {
     // 평소·그냥 볼 땐 폰 볼륨이 정상이고 핸즈프리+블루투스 하위토글을 켠 동안만 볼륨키=스킵(2026-07-27 핸즈프리 분리).
     enabled: isAutoMode && volumeKeyRemote,
     onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { const moved = goToPrevious(); if (moved) { setStatus('PLAYING'); useToastStore.getState().show(t('feed.previousShortToast')); } },
+    onPrevious: () => { if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
@@ -373,6 +382,7 @@ export default function PaceFeedScreen() {
           멈춤이 더 나쁘므로 단일 플레이어로 유지한다. (next는 큐 프리페치/캐시로만 미리 확보.) */}
       {current && !feedBlocked && (
         <YouTubeShortsPlayer
+          ref={playerRef}
           videoId={current.videoId}
           playing={playing}
           onProgress={handleProgress}

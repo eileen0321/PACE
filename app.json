@@ -8,7 +8,8 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
+      "buildNumber": "2",
       "bundleIdentifier": "com.strides7.pace",
       "appleTeamId": "328BF833XS",
       "infoPlist": {

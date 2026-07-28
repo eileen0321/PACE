@@ -423,6 +423,7 @@ export const translations = {
       bodyWithoutSnap: 'Pace can advance Shorts from a hand wave or your Bluetooth remote\'s volume button.',
       fingerSnapLabel: 'Finger snap',
       handWaveLabel: 'Hand wave',
+      handWaveHint: 'Sweep your open hand toward the front camera — start ~40 cm away and move in to ~15 cm. The approaching motion is what triggers it, not a fixed distance, so keep it moving (a still hand won\'t register). Detection may not always be accurate.',
       bluetoothRemoteLabel: 'Bluetooth remote',
       nextShort: 'Next Short',
       handsFreeModeLabel: 'Hands-free mode',

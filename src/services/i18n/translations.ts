@@ -167,6 +167,10 @@ export const translations = {
       a11ySheetNotNow: 'Not Now',
       running: 'Running',
       permissionNeeded: 'Permission Needed',
+      // 2026-07-28 사장님 지시 — 권한 없이 눌리는 것처럼 보이던 손짓/블루투스 토글에 disable
+      // 상태 + 재요청 안내 추가.
+      accessibilityNeededToast: 'Accessibility permission is needed for hands-free controls to actually work',
+      cameraNeededToast: 'Camera permission is needed for hand-wave detection',
       extendTime: 'Extend Time',
       everyNMinutes: 'Every {{n}}m',
       handsFreeEnabledToast: 'Hands-Free Shorts Enabled',
@@ -597,6 +601,8 @@ export const translations = {
       a11ySheetNotNow: '나중에',
       running: '실행 중',
       permissionNeeded: '권한 필요',
+      accessibilityNeededToast: '핸즈프리가 실제로 동작하려면 접근성 권한이 필요해요',
+      cameraNeededToast: '손짓 감지에는 카메라 권한이 필요해요',
       extendTime: '시간 연장',
       everyNMinutes: '{{n}}분마다 작동',
       handsFreeEnabledToast: '핸즈프리 Shorts 활성화됨',

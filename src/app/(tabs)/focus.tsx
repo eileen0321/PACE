@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -10,7 +10,8 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
-import { bluetoothService } from '../../services/platform';
+import { bluetoothService, autoNextService } from '../../services/platform';
+import { useToastStore } from '../../store/useToastStore';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -96,6 +97,41 @@ export default function FocusScreen() {
   // 프리미엄 게이팅이 남아, home에서 무료로 켜진 auto-mode를 free 사용자가 Focus 탭에서 "끄려고" 탭하면
   // 페이월로 튕겨 끌 수조차 없는 함정이었다. D9 무료정책에 맞춰 게이트 제거(공용코드 — Android도 동일 적용).
   const onToggleHandsFree = () => { toggleAutoMode(); };
+
+  // 2026-07-28 사장님 지시("권한 설정을 안했을 때 관련 메뉴들이 disable로 보여야 한다") — 손짓/블루투스
+  // 토글이 이전엔 실제 권한 상태와 무관하게 항상 눌리는 것처럼 보였다(눌러도 조용히 안 먹힘, 오늘 밤
+  // 반복된 "보이는데 안 됨" 버그 계열). 탭에 포커스될 때마다 실제 권한을 다시 확인해 없으면 흐리게
+  // 표시하고, 탭하면 설정 대신 권한 재요청/설정화면으로 보낸다.
+  const [hasAccessibility, setHasAccessibility] = useState(true);
+  const [hasCameraPerm, setHasCameraPerm] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return;
+      autoNextService.hasPermission().then(setHasAccessibility).catch(() => {});
+      bluetoothService.hasCameraPermission().then(setHasCameraPerm).catch(() => {});
+    }, [])
+  );
+  // 실제 스와이프(dispatchGesture)는 결국 접근성 서비스를 거쳐야 하므로(PaceAccessibilityService.
+  // swipeOnce), 손짓/블루투스 둘 다 접근성이 꺼져 있으면 무력화된다 — 손짓은 카메라 권한도 추가로 필요.
+  const gestureBlocked = !isIOS && (!hasAccessibility || !hasCameraPerm);
+  const bluetoothBlocked = !isIOS && !hasAccessibility;
+  const explainAndOpenSettings = async (reason: 'camera' | 'accessibility') => {
+    if (reason === 'accessibility') {
+      useToastStore.getState().show(t('focus.accessibilityNeededToast'));
+      await autoNextService.requestPermission();
+      return;
+    }
+    useToastStore.getState().show(t('focus.cameraNeededToast'));
+    const granted = await bluetoothService.hasCameraPermission();
+    if (!granted) {
+      await bluetoothService.requestCameraPermission().catch(() => false);
+      const grantedAfter = await bluetoothService.hasCameraPermission().catch(() => false);
+      // 이미 한 번 거부해서 OS가 다이얼로그를 다시 안 띄워주는 경우(permanently denied) — 시스템
+      // 앱 설정 화면으로 직접 보낸다. requestCameraPermission이 즉시 false로 끝나면 그 신호로 판단.
+      if (!grantedAfter) Linking.openSettings().catch(() => {});
+    }
+    setHasCameraPerm(await bluetoothService.hasCameraPermission().catch(() => false));
+  };
 
   useEffect(() => {
     if (user?.id) refresh(user.id);
@@ -265,16 +301,22 @@ export default function FocusScreen() {
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
               >
-                <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
+                <View style={[styles.handsFreeIcon, bluetoothBlocked && styles.handsFreeRowBlocked]}><RemoteClickIllustration /></View>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.interventionTitle}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
-                  <View style={styles.recommendedBadge}>
-                    <Text style={styles.recommendedBadgeText}>{t('handsFreeSheet.recommended')}</Text>
-                  </View>
+                  <Text style={[styles.interventionTitle, bluetoothBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
+                  {bluetoothBlocked ? (
+                    <View style={styles.permissionNeededBadge}>
+                      <Text style={styles.permissionNeededBadgeText}>{t('focus.permissionNeeded')}</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.recommendedBadge}>
+                      <Text style={styles.recommendedBadgeText}>{t('handsFreeSheet.recommended')}</Text>
+                    </View>
+                  )}
                 </View>
                 <Switch
-                  value={volumeSkipOn}
-                  onValueChange={setVolumeSkip}
+                  value={volumeSkipOn && !bluetoothBlocked}
+                  onValueChange={(v) => (bluetoothBlocked ? explainAndOpenSettings('accessibility') : setVolumeSkip(v))}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
@@ -288,11 +330,18 @@ export default function FocusScreen() {
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
               >
-                <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
-                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
+                <View style={[styles.handsFreeIcon, gestureBlocked && styles.handsFreeRowBlocked]}><GestureFlickIllustration /></View>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.interventionTitle, gestureBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.handWaveLabel')}</Text>
+                  {gestureBlocked && (
+                    <View style={styles.permissionNeededBadge}>
+                      <Text style={styles.permissionNeededBadgeText}>{t('focus.permissionNeeded')}</Text>
+                    </View>
+                  )}
+                </View>
                 <Switch
-                  value={gestureOn}
-                  onValueChange={setGesture}
+                  value={gestureOn && !gestureBlocked}
+                  onValueChange={(v) => (gestureBlocked ? explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera') : setGesture(v))}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
@@ -319,6 +368,10 @@ const styles = StyleSheet.create({
   liveTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: '#A5B4FC', letterSpacing: 0.5, textTransform: 'uppercase' },
   recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
   recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },
+  // 2026-07-28 사장님 지시 — 권한 없을 때 관련 토글을 흐리게(disable처럼 보이게) 표시.
+  handsFreeRowBlocked: { opacity: 0.4 },
+  permissionNeededBadge: { backgroundColor: `${colors.warning}26`, borderWidth: 1, borderColor: `${colors.warning}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  permissionNeededBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.warning, letterSpacing: 0.4, textTransform: 'uppercase' },
   heroLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase' },
   heroTitle: { fontSize: 24, fontFamily: typography.displayFontFamily, color: colors.textPrimary, marginTop: 4 },
   splitRow: { flexDirection: 'row', gap: spacing.md, paddingTop: 6 },

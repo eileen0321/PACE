@@ -39,6 +39,15 @@ export const translations = {
       // 2026-07-26 감사 발견 — formatSleepInsight()(useSleepInsightStore.ts)가 언어 설정과 무관하게
       // 항상 한국어 문자열을 직접 조립해 반환했다. period/hour/minute는 ko 전용 파라미터.
       sleepInsightMessage: 'You fell asleep at {{time}}',
+      // 2026-07-28 사장님 지시 — "몇시에 잠들었습니다" 말고 다른 랜덤 사용 인사이트 알림도.
+      // usageInsight.ts가 데이터로 뭐가 "적용 가능"한지 판단해 이 중 하나를 랜덤으로 골라 노티로 띄운다.
+      usageInsightTitle: 'Pace Insight',
+      usageInsightYesterdayLastWatched1: 'You were still watching at {{time}} yesterday 🌙',
+      usageInsightYesterdayLastWatched2: 'Your last video yesterday was at {{time}} 👀 Remember that?',
+      usageInsightTodayMore1: "You're already {{diff}} min over your usual today 📈",
+      usageInsightTodayMore2: '{{diff}} min past your average! Time for an eye break? 😮‍💨',
+      usageInsightTodayLess1: "You're {{diff}} min under your average today — nice pace ✨",
+      usageInsightTodayLess2: 'Good pace today — {{diff}} min saved vs your average 💪',
       // 2026-07-26 감사 발견 — OTA 강제 업데이트 블로킹 화면(_layout.tsx)이 useTranslation을 아예
       // 안 써서 언어 설정과 무관하게 항상 한국어로만 떴다.
       updateDownloading: 'Downloading update...',
@@ -478,6 +487,13 @@ export const translations = {
       focusSessionEnabledToast: '🎧 Focus Session 켜짐',
       focusSessionDisabledToast: '🎧 Focus Session 꺼짐',
       sleepInsightMessage: '{{period}} {{hour}}시 {{minute}}분에 잠드셨습니다',
+      usageInsightTitle: 'Pace 인사이트',
+      usageInsightYesterdayLastWatched1: '어제는 {{time}}까지 보고 계셨네요 🌙',
+      usageInsightYesterdayLastWatched2: '어제 마지막 영상, {{time}}이었어요 👀 기억나세요?',
+      usageInsightTodayMore1: '오늘 벌써 평소보다 {{diff}}분 더 보고 있어요 📈',
+      usageInsightTodayMore2: '평균보다 {{diff}}분 초과! 슬슬 눈 좀 쉬어줄까요? 😮‍💨',
+      usageInsightTodayLess1: '오늘은 평균보다 {{diff}}분 덜 봤어요 — 좋은 흐름이에요 ✨',
+      usageInsightTodayLess2: '오늘 페이스 괜찮은데요? 평균보다 {{diff}}분 절약 중 💪',
       updateDownloading: '새 업데이트를 받는 중...',
       updateApplying: '적용하는 중...',
     },

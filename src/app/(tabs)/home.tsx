@@ -13,6 +13,8 @@ import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useSleepInsightStore, formatSleepInsight } from '../../store/useSleepInsightStore';
+import { maybeShowUsageInsight } from '../../services/usageInsight';
+import { notifyUsageInsight } from '../../services/notifications';
 import { useFlipStore } from '../../store/useFlipStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
@@ -136,6 +138,10 @@ export default function HomeScreen() {
       // 수면 감지 인사이트(스펙 §1-B) — 홈에 돌아올 때마다 아직 안 보여준 sleep_detected 세션이
       // 있는지 확인. 대개 "밤새 켜둔 채 잠들었다가 아침에 앱을 여는" 시나리오라 focus effect가 자연스러움.
       if (user?.id) checkSleepInsight(user.id);
+      // 2026-07-28 사장님 지시 — "몇시에 잠들었습니다" 말고 재미있는 랜덤 사용 인사이트 노티도
+      // 하루 1회. maybeShowUsageInsight 내부에서 오늘 이미 보여줬는지/적용 가능한 데이터가
+      // 있는지 전부 판단하므로 여기서는 그냥 호출만 한다.
+      if (user?.id) maybeShowUsageInsight(user.id, notifyUsageInsight).catch(() => {});
       // 2026-07-28 밤 감사 — 배터리 최적화 제외 배너, 1회만. Settings 안에 이미 있는 행(guardRow)과
       // 별개 진입점 — 능동적으로 안 찾아보는 사용자가 대부분이라 발견성을 높인다.
       if (Platform.OS === 'android') {

@@ -9,6 +9,42 @@ import type { DailyStats } from '../../types/models';
 // started_at~now 실제 경과초를 그 자리에서 계산해 합산한다 — 정상 종료 경로(closeOrphanedSession/
 // endSession)와 동일하게 4시간(14400초) 상한을 둬서, 만에 하나 청소가 안 된 채 오래 열려있는 행이 있어도
 // 합계가 무한정 커지지 않는다.
+// 2026-07-28 사장님 지시("몇시에 잠들었습니다 말고 다른 노티도 — 어제 몇시까지 봤다, 오늘 평균보다
+// 얼마 더/덜 봤다") — 재미있는 랜덤 사용 인사이트 알림용 원본 데이터. 어제 마지막 시청 종료시각,
+// 어제 총 사용량, 오늘 지금까지 사용량, 오늘을 뺀 최근 7일 평균을 한 번에 모아 반환한다
+// (usageInsight.ts가 이 값들로 어떤 템플릿이 "적용 가능한지" 판단).
+export type UsageInsightRaw = {
+  yesterdayLastWatchedIso: string | null;
+  yesterdayTotalMinutes: number;
+  avgMinutesExcludingToday: number | null;
+};
+
+export async function getUsageInsightData(userId: string): Promise<UsageInsightRaw> {
+  const db = await getDb();
+  const yesterday = await db.getFirstAsync<{ lastEnded: string | null; total: number | null }>(
+    `SELECT MAX(ended_at) as lastEnded, SUM(duration_seconds) as total
+     FROM viewing_sessions
+     WHERE user_id = ? AND ended_at IS NOT NULL AND date(started_at, 'localtime') = date('now', '-1 day', 'localtime')`,
+    [userId]
+  );
+  const avgRow = await db.getFirstAsync<{ avgMinutes: number | null }>(
+    `SELECT AVG(dayTotal) as avgMinutes FROM (
+       SELECT SUM(duration_seconds) / 60.0 as dayTotal
+       FROM viewing_sessions
+       WHERE user_id = ? AND ended_at IS NOT NULL
+         AND date(started_at, 'localtime') >= date('now', '-7 days', 'localtime')
+         AND date(started_at, 'localtime') < date('now', 'localtime')
+       GROUP BY date(started_at, 'localtime')
+     )`,
+    [userId]
+  );
+  return {
+    yesterdayLastWatchedIso: yesterday?.lastEnded ?? null,
+    yesterdayTotalMinutes: Math.floor((yesterday?.total ?? 0) / 60),
+    avgMinutesExcludingToday: avgRow?.avgMinutes ?? null,
+  };
+}
+
 export async function getTodayUsageMinutes(userId: string): Promise<number> {
   const db = await getDb();
   const row = await db.getFirstAsync<{ total: number | null }>(

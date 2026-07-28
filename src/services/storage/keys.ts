@@ -34,6 +34,9 @@ export const STORAGE_KEYS = {
   // 배너로 1회 능동 안내한다. 이 키는 "배너를 보여줬는지"만 기록(허용 여부와 무관) — 매 세션마다
   // 시스템 다이얼로그를 다시 띄우면 사용자 짜증 + Google Play가 이 권한 오남용으로 보는 리스크가 있다.
   batteryOptimizationPromptSeen: 'pace_battery_optimization_prompt_seen',
+  // 2026-07-28 사장님 지시 — 재미있는 랜덤 사용 인사이트 노티(어제 몇시까지 봤는지/오늘 평균 대비
+  // 얼마나 더·덜 봤는지)를 하루 1회만 띄우기 위한 "오늘 이미 보여줬는지" 날짜 문자열(YYYY-MM-DD).
+  lastUsageInsightShownDate: 'pace_last_usage_insight_shown_date',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

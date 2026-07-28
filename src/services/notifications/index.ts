@@ -44,6 +44,13 @@ async function fireLocal(title: string, body: string, data?: Record<string, stri
   await Notifications.scheduleNotificationAsync({ content: { title, body, data }, trigger: null });
 }
 
+// 2026-07-28 사장님 지시 — 랜덤 사용 인사이트 노티(usageInsight.ts가 어떤 문구를 보여줄지 결정,
+// 이 함수는 실제 발송만 담당). notifyRemaining/notifyLimit/notifyBreak 같은 세션 설정과 무관하게
+// 항상 켜져 있다 — 세션 중 알림이 아니라 하루 1회짜리 재미 요소라 별도 토글 없이 단순하게 둔다.
+export async function notifyUsageInsight(title: string, body: string): Promise<void> {
+  await fireLocal(title, body);
+}
+
 export async function notifyLowTime(remainingMinutes: number): Promise<void> {
   if (!useSettingsStore.getState().settings.notifyRemaining) return;
   const locale = currentLocale();

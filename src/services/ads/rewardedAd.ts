@@ -20,8 +20,15 @@ try {
 // 2026-07-26 사용자 지시 — 평소엔 테스트 광고, 실 ID는 출시 빌드(EXPO_PUBLIC_USE_REAL_ADS=true)만.
 // 자기 폰에서 실 광고 반복 시청은 AdMob invalid traffic(계정 정지) 위험. (Android 전용 기능.)
 const USE_REAL_ADS = process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true';
+// 2026-07-28 사장님 확인 — 보상형 실 ID가 iOS/Android 구분 없이 하나(5534238136=Android)만 박혀 있어
+// iOS에선 잘못된 단위였다. AdMob 콘솔에서 iOS 보상형 단위 = BonusCredit(6596038364) 확인 → 배너처럼 분리.
+const REAL_REWARDED_UNIT_ID = Platform.select({
+  ios: 'ca-app-pub-3201481146134957/6596038364',     // iOS: BonusCredit (보상형)
+  android: 'ca-app-pub-3201481146134957/5534238136', // Android: 기존 보상형 단위
+  default: 'ca-app-pub-3201481146134957/5534238136',
+}) as string;
 function getAdUnitId(): string {
-  if (USE_REAL_ADS) return 'ca-app-pub-3201481146134957/5534238136';
+  if (USE_REAL_ADS) return REAL_REWARDED_UNIT_ID;
   return TestIds?.REWARDED ?? 'ca-app-pub-3940256099942544/5224354917'; // 구글 공식 테스트 리워드 유닛
 }
 

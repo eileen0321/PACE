@@ -2088,3 +2088,78 @@ styles.xml`)의 이미 실기기 검증된 패턴을 그대로 참고해 추가.
 아주 살짝(한 톤) 다름 — 원래도 이 앱이 background/card 두 톤을 같이 쓰는 디자인이라 완벽한 단일 색 일치는
 구조적으로 불가능, 카드색을 택해 두 톤 중 더 넓게 쓰이는 쪽(탭바+온보딩)에 맞춤. 실사용 영향 적음(제스처
 내비 사용자는 이 문제 자체를 아예 안 봄 — 이 기기만 3버튼 내비).
+
+### 2026-07-29 — Windows 세션 (D12 신규: Auto-Next Play 정책 킬스위치 최종 결정 — ON으로 제출)
+
+**배경**: 2026-07-18부터 미결정 상태로 방치돼 있던 항목("구현은 해놓고 출시 전에 정책을 결정") —
+비공개 테스트 제출 준비 중 로컬 `.env`가 그동안의 실기기 테스트 때문에 `true`로 남아있던 걸 발견,
+사장님이 "원래 무료는 disable, 필요할 때만 키는 거 아니었냐"고 지적해서 일단 `false`로 되돌림.
+
+**되돌린 뒤 발견한 문제**: `EXPO_PUBLIC_ENABLE_AUTO_NEXT=false`는 자동넘김뿐 아니라 **Focus Session
+마스터 스위치(`PaceOverlayService.setAutoMode`) 자체를 통째로 막아서, 블루투스 볼륨키 리모컨까지
+같이 죽는다**(`autoNextService.android.ts`의 `ENABLE_AUTO_NEXT` 플래그가 `setBuildAutoNextEnabled`로
+네이티브에 전파돼 `setAutoMode(true)`를 무조건 no-op시킴). 스토어 설명 초안에서 "포커스 세션/핸즈프리
+컨트롤" 섹션을 통째로 빼야 했음 — 프리미엄 가치("Focus Session 시간 자유 설정")도 같이 무의미해짐.
+
+**Google Play 정책 원문 확인**(WebSearch, support.google.com/googleplay/android-developer/answer/10964491):
+- 금지: "앱이 자율적으로(autonomously) 행동을 계획·판단·실행"
+- **허용**: "결정론적(deterministic), 규칙 기반 자동화 — 'X가 발생하면 Y를 실행'"
+- Pace의 자동넘김(영상끝남 신호/45초 타임아웃 → 스와이프)·블루투스 볼륨키(버튼 → 스와이프)·손짓(손흔듦
+  → 스와이프) 전부 고정 트리거→액션 규칙이라 "허용" 카테고리 — 특히 블루투스/손짓은 사용자의 직접 물리
+  입력이 트리거라 더 명확한 assistive-input 성격.
+- 별도 요건: (1) 비접근성 목적 사용 시 **앱 내 명시적 사전고지+동의 화면** 필요 — 이미 있음
+  (`AccessibilityOnboardingSheet.tsx`, "PACE는 접근성 권한으로 포커스 세션 중 Shorts를 넘겨드립니다" +
+  명시적 "권한 켜기"/"나중에" 버튼). (2) **Play Console "민감한 앱 권한" 선언 양식**(App content →
+  Sensitive app permissions) — 아직 빌드를 한 번도 업로드 안 해서 Play Console에 이 항목 자체가 아직
+  안 뜬 상태(보통 AAB 업로드 후 자동으로 나타남). **다음 세션 확인 필요**: 빌드 업로드 후 이 선언 양식
+  작성.
+
+**최종 결정(사장님 확인)**: `EXPO_PUBLIC_ENABLE_AUTO_NEXT=true`로 제출. 이 결정 전에 `false`↔`true`를
+두 번 왔다갔다 했으니 — **다음에 이 값을 또 건드리기 전에 이 로그부터 읽을 것.** 스토어 등록정보의
+"자세한 설명"도 포커스 세션/핸즈프리 섹션 포함한 원래 전체 버전으로 최종 확정.
+
+**🔴🔴 이어서 발견한 훨씬 큰 문제 — 위 결정이 지금까지의 프로덕션 빌드에 반영된 적이 없었음**:
+사장님이 "빌드 다시 해야 하는 거 아냐?"라고 물어서 확인하다가 발견 — **`.env`는 `.gitignore` 대상이라
+EAS 클라우드 빌드(`eas build`)에는 애초에 안 올라간다.** `eas.json`의 `build.production.env`엔
+`EXPO_PUBLIC_USE_REAL_ADS` 딱 하나만 명시돼 있었고, `eas env:list --environment production`은 "No
+variables found"(EAS 서버에 등록된 환경변수 0개) — `eas config --profile production --platform
+android`로 실제 빌드가 읽어들이는 변수를 확인해도 `EXPO_PUBLIC_USE_REAL_ADS` 하나뿐이었음.
+
+**즉 이번 프로젝트의 첫 두 EAS 프로덕션 빌드(버전코드 1: 2026-07-28 07:52 완료, 버전코드 2: 2026-07-29
+00:34 완료 — `eas build:list`로 확인)는 다음이 전부 빠진 채로 만들어졌을 가능성이 매우 높음**:
+`EXPO_PUBLIC_ENABLE_AUTO_NEXT`(자동넘김/핸즈프리, 위 D12 논쟁 자체가 무의미했을 수 있음),
+`EXPO_PUBLIC_RC_ANDROID_KEY`/`RC_IOS_KEY`(RevenueCat — **구독 결제 전체가 죽어있었을 가능성**),
+`EXPO_PUBLIC_API_BASE_URL`(백엔드 — 구글/애플 로그인 실패, 게스트 폴백만 동작),
+`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`/`GOOGLE_IOS_CLIENT_ID`(구글 로그인),
+`EXPO_PUBLIC_YOUTUBE_API_KEY`/`YOUTUBE_PROXY_URL`. 로그 파일 자체(GCS 서명 URL)를 직접 받아 확인
+시도했으나 바이너리(압축?)라 파싱 실패 — 대신 `eas config`의 공식 "이 빌드가 실제로 로드하는 변수"
+출력으로 확정.
+
+**조치 완료**: `eas env:push production --path .env --force`로 로컬 `.env`의 변수 9개(위 목록 전부 +
+`EXPO_PUBLIC_USE_REAL_ADS`/`API_BASE_URL_DEV`)를 EAS 서버의 production 환경변수로 일괄 업로드.
+`eas env:list --environment production`/`eas config`로 재확인, 9개 전부 정상 등록되고 다음 빌드부터
+불러오는 것 확인함.
+
+**다음 빌드 전 확인 필요(사장님 또는 다음 세션)**:
+1. `EXPO_PUBLIC_USE_REAL_ADS=true`가 로컬 `.env`에 "2026-07-29 — Play Store 스크린샷 캡처용 임시
+   스위치... 스크린샷 몇 장만 찍고 바로 제거할 것"이라는 주석과 함께 박혀 있었음 — 다만 `eas.json`의
+   production 프로필도 이미 `true`라 EAS 저장값보다 우선 적용되므로 실제 프로덕션 빌드엔 영향 없음
+   (D10 결정과도 일치). **로컬 개발용 `.env`만 스크린샷 찍은 뒤 원래 값(false)으로 되돌릴 것** —
+   안 그러면 로컬 실기기 테스트 중 실수로 실광고 클릭 위험(계정 정지 리스크, `adsConfig.ts` 주석 참고).
+2. **위 env 값들을 반영한 새 프로덕션 빌드(`eas build --platform android --profile production`)를
+   다시 돌려야 함** — 지금까지 나온 버전코드 1/2 AAB는 폐기하고 새 빌드로 교체해서 제출할 것.
+3. 빌드 업로드 후 Play Console에 "민감한 앱 권한" 선언 양식이 새로 뜨는지 확인(위 항목 참고).
+
+**✅ 2번 완료(2026-07-29, Windows 세션)**: 재빌드 성공, 빌드 로그에 10개 변수 전부 `production`
+환경에서 로드 확인(`EXPO_PUBLIC_API_BASE_URL`, `..._DEV`, `ENABLE_AUTO_NEXT`, `GOOGLE_IOS/WEB_CLIENT_ID`,
+`RC_ANDROID/IOS_KEY`, `USE_REAL_ADS`, `YOUTUBE_API_KEY`, `YOUTUBE_PROXY_URL`). 빌드 로그: `https://
+expo.dev/accounts/strides7/projects/Pace/builds/042255b3-a405-4d64-9003-1dee2d52e8c1`, AAB: `https://
+expo.dev/artifacts/eas/4HmpJU0-aDiRKX-SJE7grwkYcbRGfEszNqVnallj_n8.aab` — **이게 Play Console에 올릴
+최종 AAB(versionCode 2)**. 이전 두 빌드(env 변수 누락분)는 폐기.
+
+**🔴 신규 발견(스토어 등록정보 문구 검토 중)**: 사장님이 작성한 Play Store 설명 초안에 "사용 기록과
+설정은 모두 기기 안에만 저장됩니다. 서버로 업로드되지 않아요"라는 문장이 있었는데, 코드 확인 결과
+**사실이 아님** — `src/services/sync/backendSync.ts`(`pushUnsyncedSessions`/`pushSettings`)가 로그인
+사용자(게스트 제외)의 시청 세션 기록과 설정을 실제로 Railway 백엔드에 동기화한다(dead code 아님,
+`useUserStore`/앱 흐름에 실제로 배선돼 호출됨). 이 문구 그대로 제출하면 사실과 다른 개인정보 주장 —
+Play 정책 리스크. 문구 수정 필요("로그인 시 계정 동기화를 위해 서버에 안전하게 저장, 제3자 미공유" 등).

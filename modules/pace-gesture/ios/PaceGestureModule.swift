@@ -129,7 +129,7 @@ public class PaceGestureModule: Module {
     let d = WaveDetector(
       onWave: { [weak self] in Self.fileLog("GESTURE-FIRE onHandWave→goNext"); self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
-      onDiag: { [weak self] text in NSLog("PACEWAVE %@", text); self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
+      onDiag: { [weak self] text in NSLog("PACEWAVE %@", text); Self.fileLog("WDIAG " + text); self?.sendEvent("onDiag", ["kind": "wave", "text": text]) }
     )
     waveDetector = d
     d.start()

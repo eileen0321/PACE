@@ -2064,6 +2064,18 @@ EAS 원격 빌드가 돌 때마다 `app.json`+plugins 기준으로 새로 생성
 세션도 동일하게 `ios/` 네이티브 수정(Info.plist, entitlements 등)이 커밋된 적 있는지 `git ls-files ios/`로
 꼭 확인해볼 것 — 같은 문제라면 같은 방식으로 고칠 수 있음.
 
+**재빌드 완료(2026-07-29)**: `android/` 커밋 반영해 `eas build --platform android --profile production` 재실행.
+1차 시도는 `app.json`의 `runtimeVersion: {policy: "appVersion"}`이 bare workflow(android/ 커밋 후 EAS가
+자동 감지)에서 미지원이라 즉시 실패(`CommandError: ... bare workflow, where runtime version policies are
+not supported`) — `android` 블록에만 `"runtimeVersion": "1.0.1"` 리터럴 오버라이드 추가해 해결(iOS는
+top-level `policy: appVersion` 그대로 유지, 영향 없음). `versionCode`도 1→2로 선제 범핑(이전 AAB가 Play
+Console에 업로드됐을 경우 동일 코드 재업로드 거부 방지). 재빌드 성공 — 빌드 로그: `https://expo.dev/
+accounts/strides7/projects/Pace/builds/a697a771-ece0-4aa4-8767-8b029ae72029`, AAB: `https://expo.dev/
+artifacts/eas/P4_9aUFbtxO1fOSWEqyaDBKzpd8U1PPBy-8_Yo24RyA.aab`. `EXPO_PUBLIC_USE_REAL_ADS=true`가
+`production` 프로파일에서 정상 주입 확인(로그에 명시). 이 AAB에는 이제 상태바/내비바 색 수정을 포함한
+모든 네이티브 변경이 실제로 반영되어 있음(이전 AAB `84c4b39a-...`와 달리) — Play Console 업로드는 이
+새 AAB로.
+
 **상태바/내비게이션 바 실제 색 불일치 수정**: 실기기(Note20, 3버튼 내비) 확인 결과 시스템 바가 앱 배경색과
 안 맞고 raw 검정(`#000000`)으로 보였음(휴식측정 온보딩 화면에서 가장 눈에 띔, 실제로는 전체 화면 공통
 문제). 원인 두 가지: (1) 테마에 `enforceNavigationBarContrast`/`enforceStatusBarContrast` 속성이 없어 삼성

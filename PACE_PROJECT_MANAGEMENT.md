@@ -119,6 +119,10 @@
 
 ## 4. iOS/Mac 할 일 리스트 (우선순위순, Mac 세션)
 
+0. [ ] **🔴 신규(2026-07-29)** `git ls-files ios/`로 iOS 네이티브 폴더가 실제 커밋되고 있는지 확인 —
+   Android는 `/android`가 `.gitignore`에 걸려 네이티브 커스터마이징이 전부 로컬에만 있었고 매
+   prebuild/EAS 빌드마다 조용히 사라지고 있었음(§6 "2026-07-29" 로그 필독). iOS도 같은 구조라면
+   Info.plist/entitlements 등 수동 수정분이 실제 빌드에 반영 안 되고 있었을 수 있음.
 1. [ ] **C3** Live Activity/다이나믹아일랜드 실기기 검증
 2. [ ] **C3** 취침감지 블랙아웃 실기기 검증
 3. [ ] **C4** 위젯 익스텐션 서명 첫 빌드 검증
@@ -2044,3 +2048,31 @@ vendorId/productId만으로 판별. 죽은 헬퍼 함수 + 미사용 import 정�
 **YouTube 스와이프 전환 착수**: reload(videoId마다 페이지 재로드=느림/깜박임) → 스와이프(SPA, 리로드 0)로 전환.
 NAV_MODE='swipe' 플래그(문제 시 'reload' 롤백). 스와이프 주입은 YouTube DOM 의존이라 domlog로 기기 검증하며
 다듬는 중. 대가: 영상이 큐 대신 YouTube 관련 피드(큐레이션 포기, 사장님 승인).
+
+### 2026-07-29 — Windows 세션: 상태바/내비바 색 불일치 근본 원인 발견 — `android/`가 git에 전혀 없었음
+
+**🔴 [공용, iOS도 같은 위험 가능성 — Mac 세션 필독] `android/`가 `.gitignore`(`/android`)에 걸려 지금까지
+한 번도 커밋된 적이 없었다** (`git ls-files android/` = 0개, 오늘 확인 전까지). 즉 `styles.xml`/`colors.xml`/
+`MainActivity.kt` 같은 네이티브 커스터마이징이 전부 **이 컴퓨터 로컬에만 있는 상태**였고, `expo prebuild`나
+EAS 원격 빌드가 돌 때마다 `app.json`+plugins 기준으로 새로 생성돼 조용히 리셋되고 있었다. 사장님이 "상하단
+색 여러 번 고치라고 했는데 계속 재발한다"고 한 게 바로 이 문제 — 고칠 때마다 다음 빌드에서 사라진 것.
+이미 만든 프로덕션 AAB(build ID `84c4b39a-...`, 지난 세션에서 EAS로 빌드)에도 이런 네이티브 수정이 하나도
+안 들어있었을 가능성이 높음 — 재빌드 권장.
+**조치(사장님 결정, "android/를 git에 커밋" 선택)**: `.gitignore`에서 `/android` 제거, 빌드 산출물(`app/build`,
+`.gradle`, `.cxx`)과 기기별 설정(`local.properties`, `debug.keystore`)만 별도로 무시하도록 세분화, 나머지
+54개 소스 파일 커밋(`beeeabc`). **`/ios`는 그대로 무시 처리 유지 — Mac 세션 판단 없이 손대지 않음.** Mac
+세션도 동일하게 `ios/` 네이티브 수정(Info.plist, entitlements 등)이 커밋된 적 있는지 `git ls-files ios/`로
+꼭 확인해볼 것 — 같은 문제라면 같은 방식으로 고칠 수 있음.
+
+**상태바/내비게이션 바 실제 색 불일치 수정**: 실기기(Note20, 3버튼 내비) 확인 결과 시스템 바가 앱 배경색과
+안 맞고 raw 검정(`#000000`)으로 보였음(휴식측정 온보딩 화면에서 가장 눈에 띔, 실제로는 전체 화면 공통
+문제). 원인 두 가지: (1) 테마에 `enforceNavigationBarContrast`/`enforceStatusBarContrast` 속성이 없어 삼성
+SystemUI가 지정한 색 위에 자체 보호막(scrim)을 덧그림 — jlpt-master(`android/app/src/main/res/values/
+styles.xml`)의 이미 실기기 검증된 패턴을 그대로 참고해 추가. (2) 시스템 바 색을 앱의 실제 표면색(`colors.card`,
+`#171A21` — 탭바와 onboarding/index.tsx의 전체 배경이 이 색)과 일치시켜 `MainActivity.onCreate`에서
+`Window.statusBarColor`/`navigationBarColor`에 직접 지정(테마 attribute만으론 타이밍 문제인지 반영 안 됨).
+실기기에서 픽셀 단위로(`R=23,G=26,B=33`) 확인 완료 — 탭 화면 하단, 온보딩 화면 상하단 전부 이음매 없이
+일치. **남은 미세한 불일치**: Home 탭 최상단(status bar 바로 아래)은 `colors.background`(`#0B0C0F`)라 카드색과
+아주 살짝(한 톤) 다름 — 원래도 이 앱이 background/card 두 톤을 같이 쓰는 디자인이라 완벽한 단일 색 일치는
+구조적으로 불가능, 카드색을 택해 두 톤 중 더 넓게 쓰이는 쪽(탭바+온보딩)에 맞춤. 실사용 영향 적음(제스처
+내비 사용자는 이 문제 자체를 아예 안 봄 — 이 기기만 3버튼 내비).

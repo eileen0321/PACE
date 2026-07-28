@@ -9,11 +9,11 @@
   <!-- 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager)용 — 런타임 권한이 아니라
        설정 > 특별 앱 액세스 > 사용정보 접근에서 사용자가 직접 승인해야 하는 특수 권한 -->
   <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-  <!-- 2026-07-20 핑거스냅 Hands-Free Next(PaceSnapDetector) — Focus Session이 켜져 있는 동안에만
-       AudioRecord를 여는 런타임(dangerous) 권한. 안드로이드는 서드파티 앱에 SoundTrigger 저전력
-       상시대기 경로를 안 열어주므로(시스템 어시스턴트 전용) 이 권한 없이는 대안이 없다. -->
-  <uses-permission android:name="android.permission.RECORD_AUDIO" />
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <!-- 2026-07-29 사장님 결정 — 핑거스냅(PaceSnapDetector)이 iOS/Android 둘 다 완전히 비활성화된 채라
+       (capabilities.supportsFingerSnap=false) RECORD_AUDIO/FOREGROUND_SERVICE_MICROPHONE을 선언만
+       해두고 안 쓰는 상태였음. Play Console 심사에서 민감 권한은 실사용을 소명해야 해서 반려 리스크만
+       키움 — 매니페스트 선언 제거(감지기 코드 자체는 재활성화 대비 그대로 둠, PaceSnapDetector.kt 참고).
+       재활성화 시 이 두 줄 + 아래 서비스 foregroundServiceType의 "microphone"만 되돌리면 됨. -->
   <!-- 2026-07-24 손 밀어내기(shoo) Hands-Free Next(PaceHandWaveDetector) — 앞카메라로 손 랜드마크만
        온디바이스로 추적, 영상/사진 저장이나 서버 전송 전혀 없음. Focus Session이 켜져 있는 동안만 연다. -->
   <uses-permission android:name="android.permission.CAMERA" />
@@ -34,7 +34,7 @@
     <service
       android:name="expo.modules.paceoverlay.PaceOverlayService"
       android:exported="false"
-      android:foregroundServiceType="specialUse|microphone|camera">
+      android:foregroundServiceType="specialUse|camera">
       <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Pace digital-wellbeing session overlay" />

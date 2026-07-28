@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { requireOptionalNativeModule } from 'expo-modules-core';
@@ -172,6 +172,101 @@ const INJECTED_JS = `
 true;
 `;
 
+// ── 2026-07-28 사장님 결정: YouTube 방식(스와이프) 전환 ──────────────────────────────────────────
+// 기존(reload) 방식은 특정 videoId마다 페이지를 통째로 새로 로드해 느리고 깜박였다. 이 스크립트는 쇼츠
+// 페이지를 "한 번만" 로드하고, 다음/이전은 YouTube 네이티브 피드를 **스와이프 시뮬레이션**으로 넘긴다
+// (리로드 0 → 즉시·매끈, 오디오도 재로드 안 하니 끊김 없음). 대가: 영상이 우리 큐가 아니라 YouTube 관련
+// 피드로 흐름(큐레이션 포기). ⚠️ YouTube DOM은 자주 바뀌므로 스와이프 전략을 여러 개 시도하고 domlog로
+// 기기에서 뭐가 먹히는지 관찰해 다듬는다. reload 모드(위 INJECTED_JS)는 플래그로 즉시 롤백 가능하게 유지.
+const INJECTED_JS_SWIPE = `
+(function () {
+  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  var reportedReady = false, reportedEnded = false, lastT = -1;
+  var curHref = '' + location.href, curV = null, globalsOn = false;
+
+  // 스와이프 주입 — dir>0 다음(아래로), dir<0 이전(위로). 여러 전략 시도(YouTube DOM 변동 대비).
+  function swipe(dir) {
+    var dy = (dir > 0 ? 1 : -1) * (window.innerHeight || 800), tried = [];
+    var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
+    try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
+    try { window.scrollBy(0, dy); } catch (e) {}
+    try {
+      var key = dir > 0 ? 'ArrowDown' : 'ArrowUp', kc = dir > 0 ? 40 : 38;
+      var k = new KeyboardEvent('keydown', { key: key, code: key, keyCode: kc, which: kc, bubbles: true });
+      document.dispatchEvent(k); (document.activeElement || document.body).dispatchEvent(k); tried.push('key');
+    } catch (e) {}
+    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + location.href.slice(-16) });
+  }
+  window.paceAdvance = function () { swipe(1); };
+  window.pacePrevious = function () { swipe(-1); };
+
+  function installGlobalsOnce() {
+    if (globalsOn) return; globalsOn = true;
+    function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
+    document.addEventListener('touchend', unmuteOnce, true);
+    document.addEventListener('click', unmuteOnce, true);
+    setInterval(function () {
+      // 스와이프로 새 쇼츠 로드(URL 변화, 리로드 없음) → 새 video에 재부착.
+      if (('' + location.href) !== curHref) {
+        curHref = '' + location.href;
+        reportedReady = false; reportedEnded = false; lastT = -1;
+        send({ type: 'domlog', text: 'URLCHG reattach ' + curHref.slice(-16) });
+        attach(40); return;
+      }
+      var v = curV; if (!v) return;
+      if (v.__ok && v.muted) { v.muted = false; v.volume = 1.0; }
+      if (!v.duration || isNaN(v.duration)) return;
+      var t = v.currentTime;
+      if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
+      if (reportedEnded) return;
+      var nearEnd = t >= v.duration - 0.5, loopedBack = lastT > 1 && t < lastT - 1;
+      if (nearEnd || loopedBack) { reportedEnded = true; send({ type: 'ended' }); return; }
+      lastT = t;
+    }, 500);
+  }
+
+  function attach(n) {
+    var v = document.querySelector('video');
+    if (!v) {
+      if (n > 0) { setTimeout(function () { attach(n - 1); }, 300); return; }
+      var href = '' + location.href;
+      var signin = /consent|accounts\\.google|signin|login/i.test(href) || !!document.querySelector('form[action*="consent"]');
+      send({ type: 'novideo', signin: signin, href: href.slice(0, 80) }); return;
+    }
+    curV = v;
+    window.pacePlay = function () { v.play().catch(function () {}); };
+    window.pacePause = function () { v.pause(); };
+    // 오디오: 처음부터 소리로 재생 + muted setter 가로채 유튜브 자동음소거 무시(재로드 없어 영상당 1회 깔끔).
+    try {
+      var md = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+      if (md && md.get && md.set && !v.__mo) {
+        v.__mo = true;
+        Object.defineProperty(v, 'muted', { configurable: true, get: function () { return md.get.call(this); },
+          set: function (val) { if (this.__ok && val === true) return; md.set.call(this, val); } });
+      }
+    } catch (e) {}
+    try { var ust = document.createElement('style'); ust.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}'; (document.head || document.documentElement).appendChild(ust); } catch (e) {}
+    v.muted = false; v.volume = 1.0;
+    v.play().then(function () { v.__ok = true; send({ type: 'audio', tag: 'audible-ok', muted: v.muted }); })
+      .catch(function (e) { send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name) }); v.muted = true; v.play().catch(function () {}); });
+    v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
+    v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
+    v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
+    if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
+    installGlobalsOnce();
+  }
+  attach(40);
+})();
+true;
+`;
+
+// 전환 방식 플래그 — 'swipe'(YouTube 네이티브, 빠름/큐레이션 없음) | 'reload'(특정 videoId, 느림/큐레이션).
+// 2026-07-28 사장님 결정으로 'swipe'. 문제 시 'reload'로 되돌리면 어젯밤까지의 검증된 동작으로 즉시 복귀.
+type NavMode = 'swipe' | 'reload';
+const NAV_MODE = 'swipe' as NavMode;
+// 피드가 goNext/goToPrevious를 "스와이프 주입"으로 바꿀지 판단(스와이프 모드면 큐 advance 대신 player.advance()).
+export const SWIPE_NAV = NAV_MODE === 'swipe';
+
 // 동의(consent) 쿠키 — youtube.com이 실기기에서 "쿠키 동의" 페이지로 튕겨 <video>가 안 뜨는 것 방지.
 const CONSENT_COOKIE =
   'SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCZW4gACgB; CONSENT=YES+1';
@@ -182,19 +277,33 @@ function isAllowedNavigation(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank';
 }
 
-export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, preload }: Props) {
+export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
+
+export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, preload }: Props,
+  ref
+) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   // 스피너는 로드가 길어질 때(≥450ms)만 표시 — 빠른 전환엔 스피너를 안 띄워 "기다림"을 강조하지 않는다.
   const [showSpinner, setShowSpinner] = useState(false);
   const wasPreloadRef = useRef<boolean>(!!preload);
+  // 스와이프 모드: 첫 영상만 로드하고 이후 videoId 변화는 무시(리로드 안 함) → source를 첫 영상으로 고정.
+  const firstVideoIdRef = useRef(videoId);
+  const navVideoId = NAV_MODE === 'swipe' ? firstVideoIdRef.current : videoId;
   const source = useMemo(
-    () => ({ uri: `https://www.youtube.com/shorts/${videoId}`, headers: { Cookie: CONSENT_COOKIE } }),
-    [videoId]
+    () => ({ uri: `https://www.youtube.com/shorts/${navVideoId}`, headers: { Cookie: CONSENT_COOKIE } }),
+    [navVideoId]
   );
 
-  // videoId가 바뀌면(다음 영상) 새 페이지 로드 → ready 리셋.
-  useEffect(() => { setReady(false); wasPreloadRef.current = !!preload; }, [videoId]);
+  // 스와이프로 다음/이전 — 리로드 없이 YouTube 네이티브 피드를 넘긴다(부모 goNext/goToPrevious가 호출).
+  useImperativeHandle(ref, () => ({
+    advance: () => { webRef.current?.injectJavaScript('window.paceAdvance&&window.paceAdvance();true;'); },
+    previous: () => { webRef.current?.injectJavaScript('window.pacePrevious&&window.pacePrevious();true;'); },
+  }), []);
+
+  // reload 모드에서만: videoId가 바뀌면 새 페이지 로드 → ready 리셋. (스와이프 모드는 리로드가 없어 불필요.)
+  useEffect(() => { if (NAV_MODE === 'reload') { setReady(false); wasPreloadRef.current = !!preload; } }, [videoId]);
 
   // 스피너 지연: 활성 로드가 450ms 넘게 걸릴 때만 스피너를 보인다(빠른 로드는 커버만·스피너 없음).
   useEffect(() => {
@@ -225,7 +334,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       <WebView
         ref={webRef}
         source={source}
-        injectedJavaScript={INJECTED_JS}
+        injectedJavaScript={NAV_MODE === 'swipe' ? INJECTED_JS_SWIPE : INJECTED_JS}
         // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
         injectedJavaScriptBeforeContentLoaded={`window.__pacePreload=${preload ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
         style={styles.web}
@@ -294,7 +403,7 @@ export function YouTubeShortsPlayer({ videoId, playing, onEnded, onReady, onErro
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000000' },

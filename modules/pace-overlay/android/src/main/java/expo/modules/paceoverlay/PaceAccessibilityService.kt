@@ -5,8 +5,6 @@ import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
 import android.graphics.Rect
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -327,7 +325,13 @@ class PaceAccessibilityService : AccessibilityService() {
     if (device != null) {
       Log.d("PaceAccessibility", "volume-key device check: name=${device.name} vendorId=${device.vendorId} productId=${device.productId} isExternal=${device.isExternal}")
     }
-    if (device == null || !device.isExternal || (device.vendorId == 0 && device.productId == 0) || !isBluetoothAudioConnected()) {
+    // 2026-07-28 사장님 실기기 지적("블루투스 누르면 왜 소리만 조절되냐") — isBluetoothAudioConnected()
+    // 는 A2DP/SCO(오디오 스트리밍) 프로필만 확인하는데, 순수 리모컨/셔터형 블루투스 기기(예: 다이소
+    // BT 리모컨)는 오디오를 전혀 스트리밍하지 않는 HID 입력 장치라 이 조건을 영원히 만족 못 했다 —
+    // 이 게이트 자체가 항상 false를 반환해 볼륨키가 매번 그냥 시스템 볼륨으로 새고 있었다(실제
+    // 재현·확인됨). 오디오 연결 여부는 "진짜 외부 기기인가"와 무관한 별개 신호라 제거 — isExternal()
+    // + vendorId/productId만으로 판별한다.
+    if (device == null || !device.isExternal || (device.vendorId == 0 && device.productId == 0)) {
       return false
     }
     // ACTION_DOWN에서만 처리 — ACTION_UP까지 같이 소비하면 한 번의 물리 입력이 두 번 카운트될 위험.
@@ -539,16 +543,6 @@ class PaceAccessibilityService : AccessibilityService() {
     dispatchSwipe(path)
   }
 
-  // 2026-07-27 — onKeyEvent의 볼륨키-블루투스 판별용. PaceOverlayService companion에 동일 로직이
-  // 이미 있지만(수면감지의 "세션 중 블루투스 연결 해제됐는가" 체크용) private이라 이 클래스에서
-  // 직접 못 부른다 — BLUETOOTH_CONNECT 런타임 권한 없이도 AudioManager.getDevices()만으로 충분한
-  // 짧은 로직이라 그대로 복제해 둔다.
-  private fun isBluetoothAudioConnected(): Boolean {
-    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
-    return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
-      it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-    }
-  }
 
   private fun dispatchSwipe(path: Path) {
     val gesture = GestureDescription.Builder()

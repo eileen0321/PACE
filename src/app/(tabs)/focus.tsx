@@ -255,6 +255,8 @@ export default function FocusScreen() {
               있었음 — 이제 PaceOverlayService.setHandsFreeGestureEnabled()로 완전히 독립). 마스터 OFF면
               패널 전체가 접힌다. 라벨/아이콘은 온보딩 가이드(handsFreeSheet)와 통일 — 손짓=
               handWaveLabel+GestureFlickIllustration, 블루투스=bluetoothRemoteLabel+RemoteClickIllustration. */}
+          {/* 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 문제로 블루투스 리모컨을 먼저(위)
+              보여주고 추천 배지를 단다. 손짓은 그 아래로 내림(온보딩 가이드 순서 변경과 통일). */}
           <Animated.View layout={LinearTransition.duration(220)} style={styles.handsFreeExpandWrap}>
             {masterOn && (
               <Animated.View
@@ -263,11 +265,16 @@ export default function FocusScreen() {
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
               >
-                <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
-                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
+                <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.interventionTitle}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
+                  <View style={styles.recommendedBadge}>
+                    <Text style={styles.recommendedBadgeText}>{t('handsFreeSheet.recommended')}</Text>
+                  </View>
+                </View>
                 <Switch
-                  value={gestureOn}
-                  onValueChange={setGesture}
+                  value={volumeSkipOn}
+                  onValueChange={setVolumeSkip}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
@@ -281,11 +288,11 @@ export default function FocusScreen() {
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
               >
-                <View style={styles.handsFreeIcon}><RemoteClickIllustration /></View>
-                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
+                <View style={styles.handsFreeIcon}><GestureFlickIllustration /></View>
+                <Text style={[styles.interventionTitle, { flex: 1 }]}>{t('handsFreeSheet.handWaveLabel')}</Text>
                 <Switch
-                  value={volumeSkipOn}
-                  onValueChange={setVolumeSkip}
+                  value={gestureOn}
+                  onValueChange={setGesture}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
@@ -310,6 +317,8 @@ const styles = StyleSheet.create({
   liveTag: { position: 'absolute', top: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
   liveTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: '#A5B4FC', letterSpacing: 0.5, textTransform: 'uppercase' },
+  recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },
   heroLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 2, textTransform: 'uppercase' },
   heroTitle: { fontSize: 24, fontFamily: typography.displayFontFamily, color: colors.textPrimary, marginTop: 4 },
   splitRow: { flexDirection: 'row', gap: spacing.md, paddingTop: 6 },

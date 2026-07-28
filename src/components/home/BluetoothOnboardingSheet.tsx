@@ -75,13 +75,18 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
             <Text style={styles.actionLabel}>{t('handsFreeSheet.fingerSnapLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
           </View>
         )}
-        <View style={styles.actionRow}>
-          <View style={styles.iconStage}><GestureFlickIllustration /></View>
-          <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
-        </View>
+        {/* 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 실사용 정확도 문제로 블루투스 리모컨을
+            먼저 보여주고 추천 배지를 단다. 손짓은 그 아래로 내림(순서만 변경, 기능 자체는 그대로 유지). */}
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><RemoteClickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.bluetoothRemoteLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
+          <View style={styles.recommendedBadge}>
+            <Text style={styles.recommendedBadgeText}>{t('handsFreeSheet.recommended')}</Text>
+          </View>
+        </View>
+        <View style={styles.actionRow}>
+          <View style={styles.iconStage}><GestureFlickIllustration /></View>
+          <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
         </View>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><Feather name="play-circle" size={16} color={colors.textSecondary} /></View>
@@ -118,6 +123,8 @@ const styles = StyleSheet.create({
   iconStage: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
   actionArrow: { color: colors.textTertiary },
+  recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 6 },
+  recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },
   enableBtn: { marginTop: spacing.md, backgroundColor: colors.primary, borderRadius: radius.button, paddingVertical: spacing.sm + 2, alignItems: 'center' },
   enableBtnText: { color: '#FFFFFF', fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold },
   laterBtn: { marginTop: spacing.sm, paddingVertical: spacing.sm, alignItems: 'center' },

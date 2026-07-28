@@ -419,11 +419,13 @@ export const translations = {
     handsFreeSheet: {
       title: 'Focus Session Controls',
       valueLine: 'Stay focused without touching your phone.',
-      bodyWithSnap: 'Pace can advance Shorts from a finger snap, a hand wave, or your Bluetooth remote\'s volume button.',
-      bodyWithoutSnap: 'Pace can advance Shorts from a hand wave or your Bluetooth remote\'s volume button.',
+      bodyWithSnap: 'Pace can advance Shorts from your Bluetooth remote\'s volume button, a finger snap, or a hand wave.',
+      bodyWithoutSnap: 'Pace can advance Shorts from your Bluetooth remote\'s volume button or a hand wave.',
       fingerSnapLabel: 'Finger snap',
       handWaveLabel: 'Hand wave',
       bluetoothRemoteLabel: 'Bluetooth remote',
+      // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
+      recommended: 'Recommended',
       nextShort: 'Next Short',
       handsFreeModeLabel: 'Hands-free mode',
       staysOnLabel: 'Stays on for your Focus Session',
@@ -806,11 +808,13 @@ export const translations = {
     handsFreeSheet: {
       title: '포커스 세션 컨트롤',
       valueLine: '화면을 만지지 않고도 집중을 유지하세요.',
-      bodyWithSnap: '핑거스냅, 손짓, 또는 블루투스 리모컨의 볼륨 버튼으로 Shorts를 넘길 수 있어요.',
-      bodyWithoutSnap: '손짓 또는 블루투스 리모컨의 볼륨 버튼으로 Shorts를 넘길 수 있어요.',
+      bodyWithSnap: '블루투스 리모컨의 볼륨 버튼, 핑거스냅, 또는 손짓으로 Shorts를 넘길 수 있어요.',
+      bodyWithoutSnap: '블루투스 리모컨의 볼륨 버튼 또는 손짓으로 Shorts를 넘길 수 있어요.',
       fingerSnapLabel: '핑거스냅',
       handWaveLabel: '손짓',
       bluetoothRemoteLabel: '블루투스 리모컨',
+      // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
+      recommended: '추천',
       nextShort: '다음 영상',
       handsFreeModeLabel: '핸즈프리 모드',
       staysOnLabel: 'Focus Session 동안 계속 유지',

@@ -34,5 +34,11 @@
         <data android:scheme="pace"/>
       </intent-filter>
     </activity>
+    <!-- 2026-07-29 실기기 발견("보상광고 뜰 때 하단키가 흰색") — Google Mobile Ads SDK가 전면(보상형/
+         전면) 광고를 자체 AdActivity(별도 Activity, play-services-ads AAR 안에 있어 우리 코드에서
+         안 보임)로 띄우는데, 이 액티비티는 우리 AppTheme(systemBarColor 통일)을 안 물려받고 SDK
+         기본 테마(라이트/화이트 시스템 바)를 쓴다. tools:replace로 우리 테마를 강제 지정해 광고
+         화면에서도 상태바/내비바 색이 앱과 통일되게 한다. -->
+    <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/AppTheme" tools:replace="android:theme" android:exported="false"/>
   </application>
 </manifest>

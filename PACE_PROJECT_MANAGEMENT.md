@@ -2163,3 +2163,55 @@ expo.dev/artifacts/eas/4HmpJU0-aDiRKX-SJE7grwkYcbRGfEszNqVnallj_n8.aab` — **�
 사용자(게스트 제외)의 시청 세션 기록과 설정을 실제로 Railway 백엔드에 동기화한다(dead code 아님,
 `useUserStore`/앱 흐름에 실제로 배선돼 호출됨). 이 문구 그대로 제출하면 사실과 다른 개인정보 주장 —
 Play 정책 리스크. 문구 수정 필요("로그인 시 계정 동기화를 위해 서버에 안전하게 저장, 제3자 미공유" 등).
+
+### 2026-07-29 (밤) — Mac 세션 (iOS 출시 제출 완료 + 랜덤 인사이트 배너 + 무입력 idle 하드상한 + 슬립 전수 감사)
+
+**A. iOS App Store 제출 완료 🎉** — 앱 1.0 (build 2, iPhone 전용) 심사 제출됨. 진행 경과:
+- App Store Connect가 `supportsTablet:true` 때문에 13" iPad 스크린샷을 요구 → PACE는 폰 집중앱이라
+  `app.json` iOS `supportsTablet:false` + `buildNumber:2`로 전환(커밋 `62c81ef`) → iPad 요구 제거.
+- EAS 프로덕션 빌드(`0c6463aa`) → `eas submit`(eas.json `submit.production.ios`에 `ascAppId:6793983617`,
+  `appleTeamId` 추가, 커밋 `1675868`) → App Store Connect 업로드 성공.
+- 개인정보 처리방침 URL(앱 정보) 입력 완료. 버전 페이지 "심사에 추가" → 앱만 제출.
+- **구독은 이번에 제외** — "새 구독 그룹은 첫 앱 버전과 함께 심사" 규칙 때문. 유료 앱 계약/은행/세금은
+  **이미 활성화됨**(비즈니스 페이지 확인) + 구독 상품(월₩2,200/연₩22,000)·현지화(PACE Premium) "제출 준비
+  중"까지 완료. → **다음 버전(v1.0.1) 제출 때 구독을 함께 담으면 됨**(클릭 몇 번). 사장님 결정: 앱 먼저.
+
+**B. "몇시에 잠드셨습니다" 인앱 배너 → 랜덤 사용 인사이트 배너로 교체** (사장님: 시간이 계속 엉터리).
+- 배너 시각은 수면감지 세션 `ended_at`(부정확) 기반이라 삭제. 대신 `usageInsight.getRandomInsightMessage()`
+  (신규 export, 노티와 같은 후보 로직 공유 — "어제 ~시까지 봤다 / 오늘 평균보다 더·덜", 실제 세션 기록 기반)를
+  **홈 인앱 배너로** 띄움(`home.tsx`, 앱 세션당 1회, P 배지 재사용). 푸시 노티(`maybeShowUsageInsight`)는
+  앱 닫힌 사이 도달용으로 유지. `checkSleepInsight` 호출/렌더 제거.
+- **죽은 코드(배너 제거로 미사용) — v1.0.1 정리 대상**: `useSleepInsightStore`(check/dismiss),
+  `formatSleepInsight`, `getLatestSleepDetectedSession`(transitively), `lastSeenSleepInsightSessionId` 키,
+  `sleepInsightMessage` 번역. 지금은 무해하지만 정리 권장.
+
+**C. 🔴 무한재생·배터리 방전 근본원인 확정 + "무입력 idle 하드상한" 추가** (사장님: 자면서 Focus ON시 영상이
+  계속 나오고 sleep에 안 들어감 → 배터리?). 웹 리서치로 메커니즘 규명:
+- **맨 유튜브**는 ~30분 무입력이면 "Continue watching?"으로 스스로 정지. **그러나 PACE 자동모드(isAutoMode)는
+  영상 끝날 때 프로그램으로 다음 영상 넘김(`advance()`/ArrowDown 주입) → 유튜브 idle 타이머가 매번 리셋 →
+  유튜브가 영영 안 멈춤 → 무한재생.** 이게 사장님이 본 300시간의 실제 메커니즘.
+- 기존 방어선은 ①일일한도(기본60분, 기기에서 실제 정지 확인 `feed/index.tsx:171`) ②무진동 수면감지(15분).
+  하지만 **한도를 높게 바꾸면 ①이 무력, ②는 폰 스피커 진동/침대 미세진동이 가속도계(MOTION_EPSILON 0.10G)를
+  계속 리셋하면 15분 무진동이 안 쌓여 안 터질 수 있음** → 둘 다 뚫리면 밤새 재생.
+- **해결(`feed/index.tsx`)**: PACE가 직접 소유하는 **무입력 idle 상한**. 실제 사용자 입력(화면 탭
+  `onStartShouldSetResponderCapture`·손짓·스냅·볼륨키·세션토글)이 **30분** 없으면 자동넘김 중이어도 정지+블랙아웃.
+  **자동넘김(`onEnded`)·에러 스킵은 리셋 안 함**(=사용자 입력 아님) → 자동넘김이 이 상한은 못 뚫음.
+  종료는 `sleep_detected`(ended_at=마지막 입력 시각, 과거-종료 특수처리 재사용)로 기록.
+- **값 근거(웹 리서치)**: YouTube 숏폼 idle 가드 ~30분 앵커. Netflix는 TV 3편+90분/기타 3편 연속(장편이라 더 김).
+  Actigraphy 수면 판정은 지속 부동(흔한 임계 5분+). 웰빙앱 성격상 짧게=더 보호적, 깨어있으면 탭1번 재개.
+
+**D. 슬립 로직 전수 감사 결과 (iOS)**:
+- 실시간 수면감지(`useSleepGuard.ios`+`PaceSleepModule.start`): 15분 무진동(하한, 설정값 더 크면 그 값),
+  0.10G(안드 parity), 오디오라우트 끊김 시 60% 단축. keepAwake로 재생 중 화면 유지 필요 → 최악 이제 30분(idle상한)
+  안에 정지. **취약점**: 스피커/침대 진동이 유일한 실시간 방어선을 뚫을 수 있음 → C의 idle 상한이 백스톱. ✅
+- 백필(방법B, `sleepBackfill.ios`+`queryStationaryOnset`): ≥30분 연속 stationary → ended_at 보정. **배너는
+  제거됐지만 랜덤 노티의 "어제 마지막 시청시각" 정확도에 여전히 기여** → 유지. ⚠️ **iOS 16.4+ CMMotionActivity
+  오탐(움직여도 stationary=true) 이슈** 존재 — 백필(insight)만 영향, 저위험.
+- 슬립타이머(사용자 설정 카운트다운): 정상. 일일한도 종료: 정상(기기 확인).
+
+**🔴 Windows(Android) 세션 확인 요청 — parity**: iOS에 추가한 "무입력 idle 상한(30분)"이 Android에도 필요한지
+검토 요망. Android는 `PaceOverlayService`(네이티브)가 세션/수면/한도를 관리하는데, Android 피드도 자동넘김이
+유튜브 idle을 무력화하는 구조라면 동일 상한이 있어야 "OS차이 없게" 원칙에 맞음. 현재 iOS에만 적용됨.
+
+**미커밋 상태**: B(랜덤 배너)+C(idle 상한) 변경은 **사장님 실기기 확인 후 커밋 예정**(현재 Release 빌드로 폰에
+설치돼 밤샘 테스트 중 — 30분 무입력 시 정지+블랙아웃, 아침 배터리 확인). 확인되면 커밋+푸시.

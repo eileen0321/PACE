@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,8 +12,7 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
-import { useSleepInsightStore, formatSleepInsight } from '../../store/useSleepInsightStore';
-import { maybeShowUsageInsight } from '../../services/usageInsight';
+import { maybeShowUsageInsight, getRandomInsightMessage } from '../../services/usageInsight';
 import { backfillSleepFromHistory } from '../../services/sleepBackfill';
 import { notifyUsageInsight } from '../../services/notifications';
 import { useFlipStore } from '../../store/useFlipStore';
@@ -66,7 +65,11 @@ export default function HomeScreen() {
   const enableAutoModeForSession = useBluetoothStore((s) => s.enableAutoModeForSession);
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
   const { hitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast } = useLimitHitStore();
-  const { endedAt: sleepInsightEndedAt, check: checkSleepInsight, dismiss: dismissSleepInsight } = useSleepInsightStore();
+  // 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(엉터리 시각) 대신, 실제 세션 기록 기반의 랜덤
+  // 사용 인사이트를 홈 인앱 배너로 띄운다. 앱을 켤 때마다 그날 적용 가능한 템플릿 중 하나를 랜덤
+  // 노출(앱 세션당 1회 — 매번 다시 계산해 지저분하지 않게 ref로 가드).
+  const [insightBanner, setInsightBanner] = useState<string | null>(null);
+  const insightBannerShownRef = useRef(false);
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
@@ -144,8 +147,14 @@ export default function HomeScreen() {
         const uid = user.id;
         (async () => {
           await backfillSleepFromHistory(uid);
-          checkSleepInsight(uid);
-          // 재미있는 랜덤 사용 인사이트 노티(하루 1회) — 내부에서 오늘 노출 여부/데이터 유무 전부 판단.
+          // 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(수면감지 시각이 부정확=엉터리) 배너 대신,
+          // 실제 세션 기록 기반의 랜덤 사용 인사이트를 배너로 띄운다. 앱 세션당 1회.
+          if (!insightBannerShownRef.current) {
+            insightBannerShownRef.current = true;
+            const msg = await getRandomInsightMessage(uid);
+            if (msg) setInsightBanner(msg);
+          }
+          // 앱을 닫아둔 사이에도 닿게 하는 푸시 노티(하루 1회) — 배너와 같은 후보 로직 공유.
           maybeShowUsageInsight(uid, notifyUsageInsight).catch(() => {});
         })();
       }
@@ -159,7 +168,7 @@ export default function HomeScreen() {
           if (!seen) setShowBatteryPrompt(true);
         })();
       }
-    }, [user?.id, refresh, refreshBluetooth, checkSleepInsight])
+    }, [user?.id, refresh, refreshBluetooth])
   );
 
   const dismissBatteryPrompt = useCallback(() => {
@@ -302,15 +311,15 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
 
-        {sleepInsightEndedAt && (
+        {/* 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(엉터리 시각) 대신 랜덤 사용 인사이트 배너.
+            브랜드 색 원형 배지 + P 모노그램은 그대로 재사용. */}
+        {insightBanner && (
           <View style={styles.sleepInsightBanner}>
-            {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
-                회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체. */}
             <View style={styles.sleepInsightBadge}>
               <Text style={styles.sleepInsightBadgeText}>P</Text>
             </View>
-            <Text style={styles.sleepInsightText}>{formatSleepInsight(sleepInsightEndedAt, t)}</Text>
-            <Text style={styles.sleepInsightDismiss} onPress={dismissSleepInsight}>✕</Text>
+            <Text style={styles.sleepInsightText}>{insightBanner}</Text>
+            <Text style={styles.sleepInsightDismiss} onPress={() => setInsightBanner(null)}>✕</Text>
           </View>
         )}
 

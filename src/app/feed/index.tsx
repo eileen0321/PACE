@@ -161,6 +161,16 @@ export default function PaceFeedScreen() {
     if (nextBreakInRef.current <= 0) nextBreakInRef.current = breakIntervalMinutes; // 최초/브레이크 후 초기화
     const id = setInterval(() => {
       watchedMinRef.current += 1; // 누적 — pause/resume·설정변경으로 effect가 재생성돼도 유지(MED3)
+      // 무입력 idle 하드상한 — 실제 사용자 입력이 IDLE_CAP_MINUTES분 없으면(자동넘김만 계속되면) 정지+블랙아웃.
+      // ended_at은 "마지막 입력 시각"(=지금 - 상한)으로 기록 → sleep_detected와 동일한 과거-종료 처리를 재사용.
+      idleMinRef.current += 1;
+      if (idleMinRef.current >= IDLE_CAP_MINUTES) {
+        setStatus('PAUSED');
+        setSleepBlackout(true);
+        flushWatchTime('sleep_detected', Date.now() - IDLE_CAP_MINUTES * 60 * 1000);
+        clearInterval(id);
+        return;
+      }
       const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes;
       const remaining = effectiveDailyLimit - todayUsageMinutes - watchedMinRef.current;
       if (remaining === 5 || remaining === 1) notifyLowTime(remaining).catch(() => {}); // 저시간 알림
@@ -284,6 +294,19 @@ export default function PaceFeedScreen() {
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
   const pauseWaveRef = useRef<(() => void) | null>(null);
   const playerRef = useRef<ShortsPlayerHandle>(null);
+
+  // 2026-07-29 사장님 지시 — "무입력 idle 하드상한". 유튜브는 ~30분 무입력이면 "Continue watching?"으로
+  // 스스로 멈추는데, PACE 자동모드의 프로그램 넘김(advance 주입)이 그 idle 타이머를 계속 리셋해 유튜브가
+  // 영영 안 멈춘다(무한재생·배터리 방전 — 무진동 수면감지가 스피커/침대 미세진동에 리셋되면 유일한 방어선이
+  // 뚫림). 그래서 PACE가 직접 소유하는 상한을 둔다: 실제 사용자 입력(탭/손짓/스냅/볼륨/토글)이
+  // IDLE_CAP_MINUTES분 없으면 자동넘김이라도 정지+블랙아웃. 자동넘김(onEnded)·에러 스킵은 사용자 입력이
+  // 아니므로 이 타이머를 리셋하지 않는다. 무진동 수면감지(15분)의 백스톱.
+  // 값 근거(웹 리서치 2026-07-29): YouTube 숏폼 idle 가드 ~30분에 맞춤(가장 유사한 앵커). Netflix는
+  // TV 3편+90분/기타 3편 연속(장편이라 더 김). 웰빙앱 성격상 짧게 잡아 더 보호적 — 깨어있으면 탭 1번으로 재개.
+  const IDLE_CAP_MINUTES = 30;
+  const idleMinRef = useRef(0);
+  const markUserInput = () => { idleMinRef.current = 0; };
+
   const goNext = () => {
     pauseWaveRef.current?.();
     setStatus('PLAYING');
@@ -328,6 +351,7 @@ export default function PaceFeedScreen() {
     // 토스트(다른 컴포넌트 setState)를 setIsAutoMode 업데이터 안에서 호출하면 React가
     // "Cannot update a component (ToastHost) while rendering..." 경고를 낸다(업데이터는 순수해야 함).
     // 이벤트 핸들러 본문(렌더 밖)에서 현재 값을 뒤집어 계산하고, 상태 변경과 토스트를 분리 호출한다.
+    markUserInput();
     const next = !isAutoMode;
     setIsAutoMode(next);
     useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
@@ -335,8 +359,8 @@ export default function PaceFeedScreen() {
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
   const feedRemote = useFeedRemoteControl({
-    onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
+    onNext: () => { markUserInput(); goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
+    onPrevious: () => { markUserInput(); if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
     // 감사 발견 C1(2026-07-27) — onDiag는 WaveDetector가 초당 ~3회 emit한다. setDiag는 렌더도 안 되는
@@ -374,8 +398,8 @@ export default function PaceFeedScreen() {
   useVolumeNext({
     // 볼륨키 스킵 ON 조건 = Focus Session 중 && 블루투스 토글 && 실제 BT 오디오 연결됨. BT 꺼져있으면 폰 볼륨 정상.
     enabled: isAutoMode && volumeKeyRemote && btConnected,
-    onNext: () => { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
+    onNext: () => { markUserInput(); goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
+    onPrevious: () => { markUserInput(); if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
@@ -389,7 +413,11 @@ export default function PaceFeedScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View
+      style={[styles.container, { paddingTop: insets.top }]}
+      // 화면 탭도 "사용자 입력"으로 idle 상한 리셋. return false로 responder를 뺏지 않아 WebView 조작을 방해하지 않음.
+      onStartShouldSetResponderCapture={() => { markUserInput(); return false; }}
+    >
       {/* 웹뷰를 시스템 상태바 아래로 내려 유튜브 자체 헤더가 상태바와 겹치지 않게 한다(사용자 지시).
           상단 insets.top만큼은 검은 스트립(상태바 영역), 그 아래로 영상+유튜브 UI. */}
       {/* ⚠️ 프리로드(다음영상 미리로드)는 기기에서 YouTube WebView 2개가 디코더/대역폭 경합 → 재생 중

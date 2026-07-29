@@ -46,6 +46,17 @@ function currentLocale() {
   return language === 'system' ? resolveSystemLocale() : language;
 }
 
+// 2026-07-29 사장님 지시 — "잠들었습니다" 배너 대신, 이 랜덤 인사이트를 홈 인앱 배너로도 띄운다.
+// 노티(maybeShowUsageInsight)와 같은 후보 로직을 공유하도록 배너용 공개 함수로 노출한다. 그날
+// 적용 가능한(데이터 있는) 템플릿이 하나도 없으면 null(배너 안 뜸).
+export async function getRandomInsightMessage(userId: string): Promise<string | null> {
+  try {
+    return await buildCandidateMessage(userId);
+  } catch {
+    return null;
+  }
+}
+
 async function buildCandidateMessage(userId: string): Promise<string | null> {
   const [raw, todayTotalMinutes] = await Promise.all([
     getUsageInsightData(userId),

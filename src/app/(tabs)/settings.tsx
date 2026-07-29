@@ -192,9 +192,9 @@ export default function SettingsScreen() {
           <GlassSurface style={[styles.card, styles.singleCard, styles.accountCard]}>
             <View style={styles.accountLeft}>
               <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
-              <View>
+              <View style={styles.accountInfo}>
                 <View style={styles.nameRow}>
-                  <Text style={styles.profileName}>{name.toUpperCase()}</Text>
+                  <Text style={styles.profileName} numberOfLines={1}>{name.toUpperCase()}</Text>
                   {isPremium && <View style={styles.premiumTag}><Text style={styles.premiumTagText}>{isReviewer ? 'REVIEWER' : t('settings.premium')}</Text></View>}
                 </View>
                 <Text style={styles.profileEmail}>{user?.isGuest ? t('settings.guestLabel') : user?.email ?? '-'}</Text>
@@ -619,15 +619,16 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderRadius: radius.card, paddingHorizontal: 20 },
   singleCard: { paddingVertical: 20 },
   accountCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  accountLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, flex: 1 },
+  accountLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2, flex: 1, minWidth: 0 },
+  accountInfo: { flexShrink: 1, minWidth: 0 },
   avatar: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: colors.primary, fontFamily: typography.displayFontFamily, fontSize: 16 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  profileName: { fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, letterSpacing: -0.2 },
+  profileName: { fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, letterSpacing: -0.2, flexShrink: 1 },
   premiumTag: { backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   premiumTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5 },
   profileEmail: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontFamily: typography.bodyFontFamilyMedium },
-  manageSubBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  manageSubBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0, marginLeft: spacing.sm },
   manageSubText: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8' },
   logoutRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: spacing.sm, paddingVertical: spacing.sm },
   logoutRowText: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.danger },

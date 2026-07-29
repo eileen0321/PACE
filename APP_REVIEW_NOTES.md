@@ -8,7 +8,7 @@
 ## ✅ 붙여넣을 영문 (App Review Notes)
 
 ```
-Pace is a screen-time and focus app that helps users reduce mindless scrolling.
+PACE FOCUS is a screen-time and focus app that helps users reduce mindless scrolling.
 
 CORE FUNCTIONALITY IS NATIVE (not a web wrapper):
 - Focus sessions with native timers and local notifications
@@ -17,23 +17,27 @@ CORE FUNCTIONALITY IS NATIVE (not a web wrapper):
 All built with native iOS APIs and custom native modules.
 
 THE "PACE FEED" (secondary, optional feature):
-As a calmer alternative to endless social feeds, Pace can show publicly
-available YouTube Shorts from curated wellbeing categories (nature, ASMR,
-crafts, etc.) inside an in-app web view using YouTube's own web player.
+As a calmer alternative to endless social feeds, PACE FOCUS provides in-app
+access to publicly available YouTube Shorts from curated wellbeing categories
+(nature, ASMR, crafts, etc.), viewed through YouTube's own web player — similar
+to opening them in a browser. PACE FOCUS does not own, license, host, or
+incorporate this content; it only provides access to it.
 
-Regarding third-party content, please note the app:
-- Does NOT download, save, convert, or export any media (no offline or
-  audio-only functionality of any kind).
-- Does NOT play audio in the background.
-- Preserves YouTube's native player, advertising, and branding — nothing is
-  stripped, blocked, or hidden.
-- Only displays content for viewing within YouTube's own player.
+Regarding this third-party content, the app:
+- Does NOT download, save, convert, or export any media.
+- Does NOT play audio or video in the background.
+- Does NOT block, strip, or hide anything — YouTube's native player,
+  advertising, and branding are fully preserved.
+- Only provides access for viewing within YouTube's own player.
 
 HOW TO REACH THE FEED (for review):
-Focus tab -> "Open Pace Feed". (It may also appear after onboarding.)
+On the Home tab, tap the "Shorts with PACE" card (the large card under
+"Choose Platform" with a play button).
 
-No login is required to review the app. Please reach out with any questions —
-we're happy to clarify or adjust.
+A reviewer account is provided above and automatically unlocks all premium
+features for testing. The app is also fully usable without an account via
+"Continue as Guest". Note: the reviewer account signs in with Google.
+Please reach out with any questions — we're happy to clarify or adjust.
 ```
 
 ---

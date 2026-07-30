@@ -5,9 +5,23 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useUserStore } from '../../store/useUserStore';
-import { useTranslation } from '../../services/i18n';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { TERMS_OF_USE_URL, PRIVACY_POLICY_URL } from '../../constants/legal';
+
+// 구독 기간(RevenueCat packageType) → 표시 라벨/가격 기간 접미사. ASC "표시 이름"이 월/연 동일해도
+// 앱에서 "연간/월간"으로 확실히 구분된다(2026-07-30 사장님 지적 대응).
+const PLAN_LABEL_KEY: Record<string, TranslationKey> = {
+  ANNUAL: 'paywall.planYearly',
+  MONTHLY: 'paywall.planMonthly',
+  WEEKLY: 'paywall.planWeekly',
+  LIFETIME: 'paywall.planLifetime',
+};
+const PRICE_PERIOD_KEY: Record<string, TranslationKey> = {
+  ANNUAL: 'paywall.pricePerYear',
+  MONTHLY: 'paywall.pricePerMonth',
+  WEEKLY: 'paywall.pricePerWeek',
+};
 
 // jlpt-master PremiumPaywallModal.tsx의 로직(로그인 필수 가드, 구매/복원 흐름)만 이식하고 비주얼
 // 처리는 이식하지 않는다 — 그라디언트/블러/컨페티는 기획서 "디자인 원칙"(No Gradients/No
@@ -127,12 +141,21 @@ export default function PaywallScreen() {
             ))}
           </View>
         }
-        renderItem={({ item }) => (
-          <Pressable style={[styles.package, purchasing && styles.packageDisabled]} onPress={() => onPurchase(item)} disabled={purchasing}>
-            <Text style={styles.packageTitle}>{item.product.title}</Text>
-            <Text style={styles.packagePrice}>{item.product.priceString}</Text>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          // 2026-07-30 사장님 지적 — 월/연 상품의 ASC 표시 이름이 둘 다 "PACE Premium"으로 같아서
+          // item.product.title만 쓰면 앱에서 구분이 안 됐다. 상품 "기간"(RC packageType)으로 연간/월간
+          // 라벨을 만들어(ASC 이름과 무관하게) 구분 + 가격 옆에 기간(/년,/월)을 붙여 명확히 한다.
+          const label = PLAN_LABEL_KEY[item.packageType]
+            ? t(PLAN_LABEL_KEY[item.packageType]!)
+            : item.product.title;
+          const per = PRICE_PERIOD_KEY[item.packageType] ? ` ${t(PRICE_PERIOD_KEY[item.packageType]!)}` : '';
+          return (
+            <Pressable style={[styles.package, purchasing && styles.packageDisabled]} onPress={() => onPurchase(item)} disabled={purchasing}>
+              <Text style={styles.packageTitle}>{label}</Text>
+              <Text style={styles.packagePrice}>{item.product.priceString}{per}</Text>
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           // 2026-07-21 감사 발견 — init()이 실패하면(오프라인 등) 예전엔 "불러오는 중..."에서
           // 영원히 멈췄다(기존 QA #6). initError일 때는 재시도 버튼이 있는 실패 상태를 보여준다.

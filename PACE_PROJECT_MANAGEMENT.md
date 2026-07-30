@@ -2245,3 +2245,41 @@ Play 정책 리스크. 문구 수정 필요("로그인 시 계정 동기화를 �
 빌드(APK/AAB에 JS가 이미 번들됨)에서는 구조적으로 재현 안 됨, Play Console 심사/실사용자 빌드와 무관.
 **맥 세션도 동일 패턴 인지 요망**: iOS도 dev-client로 테스트 중이면 Metro 연결 끊김 시 똑같이 멈춘
 것처럼 보일 수 있음 — 프로덕션(TestFlight/App Store) 빌드에서 발생하면 그건 진짜 버그니 구분 필요.
+
+### 2026-07-31 — Windows 세션: 오버레이 P 메뉴(앱으로/Shorts HOT/Saved/Favorite) 신규 기능
+
+사장님 지시로 오버레이 "P" 아이콘을 확장 — 이전엔 탭하면 곧장 앱으로 전환(유튜브가 백그라운드로
+밀려 "화면이 작아지는 것처럼" 보임)했는데, 이제 네이티브 알약 자체에 드롭다운 메뉴가 뜬다(앱 전환 없이
+유튜브 위에 그대로 표시). **중요 아키텍처 교훈**: 프로덕션에서 실제로 보이는 오버레이는 `overlay/
+index.tsx`(React Native, DEV SIMULATOR로 대부분 우회됨)가 아니라 `PaceOverlayService.kt`가 그리는
+순수 네이티브 View(WindowManager) 알약이다 — 처음에 이걸 착각해서 RN 쪽에 메뉴를 만들었다가 실기기
+확인 후 네이티브로 다시 만들었다. **iOS도 동일한 착시가 있을 수 있음** — Live Activity/오버레이가
+네이티브 위젯이라면 그쪽 UI 확장도 RN이 아니라 네이티브(Swift) 쪽이어야 함, 확인 요망.
+
+**구현**:
+- `saved_videos` SQLite 테이블 신설(kind='favorite'|'capture'로 같은 테이블 공유 — 데이터 모양 동일).
+  실제 스크린샷은 안 찍음(권한 불필요 결정, 사장님 확인) — 유튜브 공식 썸네일 URL(`https://i.ytimg.com/
+  vi/{videoId}/hqdefault.jpg`)만 videoId로 즉시 구성.
+- **영상 정보 캡처(가장 까다로운 부분)**: 유튜브 Shorts는 URL 주소창이 없는 몰입형 플레이어라 접근성
+  트리만으론 실제 videoId를 못 읽는다. 제목/채널은 접근성 트리 content-desc에서 읽고(실기기
+  `uiautomator dump`로 실제 패턴 확인 — 채널은 "채널로 이동" 접미사, 제목은 알려진 액션 라벨을 제외한
+  첫 긴 문자열 휴리스틱), videoId/url은 유튜브 "동영상 공유" 버튼을 접근성으로 눌러 시스템 공유시트를
+  띄운 뒤 그 목록에서 "Pace"를 찾아 클릭 — 새로 만든 `PaceShareCaptureActivity`(ACTION_SEND
+  text/plain 대상으로 매니페스트 등록)가 실제 공유 텍스트(영상 링크)를 받는다. 이게 유튜브 UI 내부
+  구조 변화에 안 깨지는 표준 Intent 계약 기반 방법 — content-desc 파싱보다 훨씬 견고함. 전체
+  타임아웃 6초 내장, 실패해도 항상 null 필드 포함된 객체로 resolve(reject 없음, "예외처리 다 적용"
+  지시 반영).
+- Saved/Favorite 메뉴 선택 시 `pace://quick-list?kind=...` 딥링크로 해당 목록 화면에 곧장 진입
+  (`quick-list.tsx`, 기존 `quick-control-sheet.tsx`와 동일한 transparentModal 패턴 — RN Modal의
+  edge-to-edge 내비바 투명도 버그 회피, expo/expo#39749).
+- Shorts HOT(백엔드 curated 카테고리 목록)은 별도의 큰 작업(Java/Spring 백엔드에 새 엔티티+스케줄러+
+  YouTube Data API 연동 필요, 프론트와 스코프가 다름)이라 이번 커밋엔 "곧 만나요" 토스트만 — 가짜
+  빈 목록을 보여주지 않는다는 기존 원칙 유지. **다음 세션에서 이어서 작업 필요**: `backend/`에
+  `ShortsHotVideo` 엔티티/리포지토리/서비스(카테고리별 `videos.list?chart=mostPopular&videoCategoryId=`
+  + `videoDuration` 필터로 일 1회 갱신) + 컨트롤러, 프론트는 `quick-list`에 `kind='hot'` 케이스 추가.
+- 인사이트 배너(usageInsight/insightContent.ts) 전 항목 이모지 제거(사용자 지적 "싸구려 아이콘 자꾸
+  넣지 말고 미니멀하게") — 애플 스타일 절제 원칙 적용.
+
+**미검증**: 실기기 빌드 진행 중(설치에 시간이 오래 걸림, gradle 데몬 12분+ 소요 확인됨) — 공유시트
+가로채기 흐름(가장 위험도 높은 부분, OEM/유튜브 버전별로 타이밍이 다를 수 있음)은 아직 실기기에서
+"현재 영상 추가" 버튼을 실제로 눌러 끝까지 검증 못 함. 다음 세션 우선 확인 사항.

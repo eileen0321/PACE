@@ -103,4 +103,23 @@ CREATE TABLE IF NOT EXISTS playlist_sessions (
   synced INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_playlist_sessions_started_at ON playlist_sessions(started_at);
+
+-- 2026-07-31 사장님 지시 — 오버레이 P 메뉴(Favorite/Capture/Shorts HOT)용. Favorite와 Capture는
+-- 데이터 모양이 동일(둘 다 "영상 하나를 나중에 다시 보려고 저장")해서 kind 컬럼 하나로 같은 테이블을
+-- 공유한다 — 의미만 다르다(Favorite=다시보기 목적, Capture=공유 목적, saved_videos.tsx 주석 참고).
+-- thumbnail_url은 실제 스크린샷이 아니라 유튜브 공식 썸네일 URL(https://i.ytimg.com/vi/{videoId}/
+-- hqdefault.jpg) — MediaProjection 권한 없이 video_id만으로 즉시 구성 가능(사장님 결정, 2026-07-31).
+CREATE TABLE IF NOT EXISTS saved_videos (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL, -- 'favorite' | 'capture'
+  video_id TEXT,
+  title TEXT,
+  channel TEXT,
+  url TEXT,
+  thumbnail_url TEXT,
+  platform_app TEXT,
+  added_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_videos_user_kind ON saved_videos(user_id, kind, added_at);
 `;

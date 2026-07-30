@@ -15,6 +15,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -46,6 +47,12 @@ class PaceOverlayService : Service() {
   private var overlayView: LinearLayout? = null
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
+  // 2026-07-31 사장님 지시(오버레이 P 메뉴) — "화면이 작아지는" 문제(P를 누르면 곧장 앱으로
+  // 전환돼 유튜브가 백그라운드로 밀림)를 해결하기 위해, P를 누르면 앱 전환 없이 이 작은 드롭다운
+  // 메뉴(별도 오버레이 창)가 먼저 뜬다. "앱으로"만 실제로 앱을 전경으로 가져오고, Saved/Favorite은
+  // pace://quick-list 딥링크로 그 화면에 곧장 진입(app/quick-list.tsx), Shorts HOT은 백엔드가
+  // 아직 없어(PACE_PROJECT_MANAGEMENT.md 2026-07-31) 토스트로 정직하게 "곧 만나요" 안내.
+  private var paceMenuView: LinearLayout? = null
   // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
   // 맞춘다: Focus Session이 켜져 있을 때만 보이는 작은 보라 링 글래스 원(⚡). iOS의 focusDot과 동일한
   // 역할(비클릭, 순수 상태표시) — applyAutoBadgeStyle()이 autoBadge와 함께 이 가시성도 갱신한다.
@@ -1343,11 +1350,7 @@ class PaceOverlayService : Service() {
       setTypeface(typeface, android.graphics.Typeface.BOLD)
       setTextColor(Color.parseColor("#F2FFFFFF")) // rgba(255,255,255,0.95)
       isClickable = true
-      setOnClickListener {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        launchIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        launchIntent?.let { startActivity(it) }
-      }
+      setOnClickListener { togglePaceMenu() }
       background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.parseColor("#730C0D12"))
@@ -1374,6 +1377,99 @@ class PaceOverlayService : Service() {
       y = 80 // 상태바 아래 여백 — 기기별 safe-area는 후속 보정 필요
     }
     windowManager?.addView(overlayView, params)
+  }
+
+  // 2026-07-31 사장님 지시 — P 버튼 드롭다운 메뉴(별도 오버레이 창, 알약 바로 아래). 열려있으면
+  // 닫고, 닫혀있으면 새로 만들어서 연다 — 매번 새로 만드는 이유는 이 창이 짧게 떴다 사라지는
+  // 용도라 뷰 재사용보다 단순함이 낫다고 판단.
+  private fun togglePaceMenu() {
+    if (paceMenuView != null) {
+      hidePaceMenu()
+    } else {
+      showPaceMenu()
+    }
+  }
+
+  private fun hidePaceMenu() {
+    paceMenuView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
+    paceMenuView = null
+  }
+
+  private fun openApp() {
+    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+    launchIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+    launchIntent?.let { startActivity(it) }
+  }
+
+  // Saved/Favorite — pace:// 딥링크로 quick-list 화면에 곧장 진입(app/quick-list.tsx, expo-router
+  // 표준 링킹 경로라 이 모듈이 MainActivity 클래스에 직접 의존할 필요 없음, openApp()과 동일 원칙).
+  private fun openQuickList(kind: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://quick-list?kind=$kind"))
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      startActivity(intent)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "openQuickList 실패, 앱만 연다", e)
+      openApp()
+    }
+  }
+
+  private fun showPaceMenu() {
+    val d = resources.displayMetrics.density
+    val menu = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 14f * d
+        setColor(Color.parseColor("#E60C0D12")) // rgba(12,13,18,0.9) — 드롭다운은 알약보다 덜 투명하게(가독성)
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#38FFFFFF"))
+      }
+      clipToOutline = true
+    }
+
+    val items = listOf<Pair<String, () -> Unit>>(
+      "Open App" to { openApp(); hidePaceMenu() },
+      "Shorts HOT" to { Toast.makeText(applicationContext, "Shorts HOT — coming soon", Toast.LENGTH_SHORT).show(); hidePaceMenu() },
+      "Saved" to { openQuickList("capture"); hidePaceMenu() },
+      "Favorite" to { openQuickList("favorite"); hidePaceMenu() },
+    )
+    items.forEachIndexed { index, (label, action) ->
+      val row = TextView(this).apply {
+        text = label
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        isClickable = true
+        setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        setOnClickListener { action() }
+      }
+      menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+        width = (150 * d).toInt()
+      })
+      if (index < items.size - 1) {
+        val divider = View(this).apply { setBackgroundColor(Color.parseColor("#1FFFFFFF")) }
+        menu.addView(divider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))
+      }
+    }
+
+    paceMenuView = menu
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * d).toInt()
+      y = 80 + (44 * d).toInt() // 알약(y=80) 바로 아래 — appBtn 높이(36dp)+여백만큼 내림
+    }
+    try {
+      windowManager?.addView(paceMenuView, params)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "showPaceMenu 실패", e)
+      paceMenuView = null
+    }
   }
 
   // 2026-07-19 사용자 제품 결정 반영 — 한도 도달 시 실제로 YouTube를 "막는" 전체화면 차단. 작은
@@ -1728,6 +1824,7 @@ class PaceOverlayService : Service() {
     remainingLabel = null
     autoBadge = null
     zapBadge = null
+    hidePaceMenu() // 세션 종료 시 P 메뉴가 열려있던 채로 알약만 사라지면 메뉴 창이 고아로 남는다.
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽

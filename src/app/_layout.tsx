@@ -379,6 +379,9 @@ export default function RootLayout() {
             {/* 2026-07-25 — RN Modal의 edge-to-edge 내비게이션 바 투명도 버그(expo/expo#39749) 회피용.
                 상세 이유는 quick-control-sheet.tsx 상단 주석 참고. */}
             <Stack.Screen name="quick-control-sheet" options={{ presentation: 'transparentModal', animation: 'slide_from_bottom' }} />
+            {/* 2026-07-31 — 오버레이 네이티브 P 메뉴의 Saved/Favorite 진입점. 같은 transparentModal
+                이유는 quick-control-sheet와 동일. */}
+            <Stack.Screen name="quick-list" options={{ presentation: 'transparentModal', animation: 'fade' }} />
             {/* iOS Pace Feed(자체 대체 피드 플레이어) — 2026-07-18 iOS 전략 확정. 풀스크린 재생. */}
             <Stack.Screen name="feed/index" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
             {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. 화면 자체는 __DEV__ 스텁이지만

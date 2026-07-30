@@ -7,6 +7,8 @@ import { Feather } from '@expo/vector-icons';
 import { OverlayBar } from '../../components/overlays/OverlayBar'; // Metro가 .android.tsx/.ios.tsx를 자동 선택
 import { OverlayExpandedCard } from '../../components/overlays/shared/OverlayExpandedCard';
 import { PlatformMimicOverlay } from '../../components/overlays/PlatformMimicOverlay';
+import { PaceMenu } from '../../components/overlays/PaceMenu';
+import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTimerStore } from '../../store/useTimerStore';
 import { useUserStore } from '../../store/useUserStore';
@@ -47,6 +49,12 @@ export default function OverlaySessionScreen() {
   const [expanded, setExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [videoIndex, setVideoIndex] = useState(0);
+  // 2026-07-31 사장님 지시 — 오버레이 "P" 아이콘을 누르면 곧장 앱으로 가는 대신, [앱으로/Shorts HOT/
+  // Saved/Favorite] 4개 메뉴가 뜬다. Shorts HOT은 백엔드 인프라가 별도 작업(PACE_PROJECT_MANAGEMENT.md
+  // 2026-07-31 참고)이라 이번 커밋에선 메뉴 항목만 자리를 잡아두고 토스트로 안내한다 — 가짜 빈 목록을
+  // 보여주는 것보다 정직하게 "아직 준비 중"이 낫다는 기존 원칙(가짜 데이터 금지)을 그대로 따른다.
+  const [showPaceMenu, setShowPaceMenu] = useState(false);
+  const [activeSavedList, setActiveSavedList] = useState<'capture' | 'favorite' | null>(null);
   // 2026-07-26 사용자 지적("화면 작아지고 나면 앱화면이 까만색으로 보임") — 아래 useFocusEffect가
   // Home으로 router.replace하기 전까지 이 화면의 DEV SIMULATOR 검은 배경이 한두 프레임 그대로
   // 커밋돼 보인다(리다이렉트는 화면전환 애니메이션 뒤에야 완료됨). 리다이렉트가 걸리는 순간
@@ -358,7 +366,7 @@ export default function OverlaySessionScreen() {
             화면 자체에 있어야 한다. 오른쪽 위 앱 아이콘 → 탭 네비게이션으로 이동(세션 자체는
             네이티브 오버레이/YouTube에서 계속 진행 중이므로 세션을 끊지 않음). */}
         <Pressable
-          onPress={() => router.push('/(tabs)/home')}
+          onPress={() => setShowPaceMenu((v) => !v)}
           hitSlop={10}
           style={[styles.appIconBtn, { top: insets.top + spacing.sm }]}
           accessibilityRole="button"
@@ -366,6 +374,26 @@ export default function OverlaySessionScreen() {
         >
           <Text style={styles.appIconBtnText}>P</Text>
         </Pressable>
+        {showPaceMenu && (
+          <PaceMenu
+            top={insets.top + spacing.sm + 40}
+            onClose={() => setShowPaceMenu(false)}
+            onSelect={(action) => {
+              setShowPaceMenu(false);
+              if (action === 'app') router.push('/(tabs)/home');
+              else if (action === 'capture') setActiveSavedList('capture');
+              else if (action === 'favorite') setActiveSavedList('favorite');
+              else if (action === 'hot') useToastStore.getState().show(t('overlay.hotComingSoon'));
+            }}
+          />
+        )}
+        {activeSavedList && user?.id && (
+          <SavedVideoListOverlay
+            userId={user.id}
+            kind={activeSavedList}
+            onClose={() => setActiveSavedList(null)}
+          />
+        )}
         <OverlayBar
           remainingMinutes={timer.remainingMinutes}
           autoNextEnabled={settings.autoNext}

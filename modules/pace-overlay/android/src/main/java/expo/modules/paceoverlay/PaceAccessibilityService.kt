@@ -258,6 +258,37 @@ class PaceAccessibilityService : AccessibilityService() {
       if (service.currentForegroundPackageAtMs == 0L || age > maxAgeMs) return null
       return service.currentForegroundPackage
     }
+
+    // 2026-07-31 사장님 지시(Favorite/Capture) — 유튜브 Shorts 몰입형 플레이어에서 현재 영상 정보를
+    // 읽어온다. 제목/채널은 접근성 트리 content-desc에서 즉시 읽고(실기기 확인, PACE_PROJECT_
+    // MANAGEMENT.md 2026-07-31 참고), videoId/url은 "동영상 공유" 버튼을 눌러 시스템 공유시트를
+    // 띄운 뒤 그 목록에서 우리 앱("Pace")을 찾아 클릭 — PaceShareCaptureActivity가 받는 진짜 공유
+    // 텍스트에서 파싱한다. 실패해도(공유 버튼을 못 찾음/공유시트에 Pace가 안 보임/타임아웃) 최소한
+    // 제목/채널은 넘겨준다 — videoId=null이면 호출부(JS)가 썸네일 없이 저장한다.
+    fun captureCurrentVideoInfo(callback: (title: String?, channel: String?, videoId: String?, url: String?) -> Unit) {
+      val service = instance
+      if (service == null) {
+        callback(null, null, null, null)
+        return
+      }
+      service.captureCurrentVideoInfoInternal(callback)
+    }
+
+    private const val CAPTURE_TIMEOUT_MS = 6000L
+    private val YOUTUBE_VIDEO_ID_PATTERN = Pattern.compile("(?:youtu\\.be/|shorts/|[?&]v=)([a-zA-Z0-9_-]{11})")
+    // 실기기 확인된 유튜브 Shorts 액션 레일 content-desc들 — 제목 텍스트를 이 목록과 혼동하지
+    // 않기 위한 제외 키워드(로케일이 다르면 이 휴리스틱이 안 먹혀 title=null로 폴백될 수 있음,
+    // 치명적이지 않음 — 그래도 channel/videoId/url은 별도 경로라 영향 없음).
+    private val KNOWN_ACTION_KEYWORDS = listOf(
+      "채널로 이동", "구독", "좋아요", "댓글", "공유", "리믹스", "사운드", "일시중지", "다음 동영상",
+      "검색", "더보기", "만들기", "드래그 핸들"
+    )
+
+    fun extractYouTubeVideoId(text: String?): String? {
+      if (text.isNullOrEmpty()) return null
+      val m = YOUTUBE_VIDEO_ID_PATTERN.matcher(text)
+      return if (m.find()) m.group(1) else null
+    }
   }
 
   override fun onServiceConnected() {
@@ -560,5 +591,111 @@ class PaceAccessibilityService : AccessibilityService() {
       }
     }, null)
     Log.i("PaceAccessibility", "dispatchGesture accepted=$dispatched")
+  }
+
+  // ── Favorite/Capture: 현재 영상 정보 캡처(2026-07-31) ──
+
+  private fun captureCurrentVideoInfoInternal(callback: (String?, String?, String?, String?) -> Unit) {
+    try {
+      val root = trackedAppRootNode()
+      val texts = mutableListOf<String>()
+      collectContentDescriptions(root, texts, depth = 0, budget = intArrayOf(400))
+
+      val channelRaw = texts.firstOrNull { it.endsWith("채널로 이동") }
+      val channel = channelRaw?.removeSuffix(" 채널로 이동")
+      val title = texts.firstOrNull { candidate ->
+        candidate.length > 8 &&
+          candidate != channelRaw &&
+          KNOWN_ACTION_KEYWORDS.none { candidate.contains(it) } &&
+          !candidate.contains("구독합니다") &&
+          extractYouTubeVideoId(candidate) == null // 시간 표시 등 숫자 위주 문자열 방어적 제외는 아래 별도 처리
+      }
+
+      val shareNode = findNodeByContentDesc(root, "공유")
+      if (shareNode == null) {
+        Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 버튼을 못 찾음")
+        callback(title, channel, null, null)
+        return
+      }
+
+      var completed = false
+      val timeoutRunnable = Runnable {
+        if (!completed) {
+          completed = true
+          PaceShareCaptureActivity.pendingCallback = null
+          Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 결과 대기 타임아웃")
+          callback(title, channel, null, null)
+        }
+      }
+      PaceShareCaptureActivity.pendingCallback = { sharedText ->
+        if (!completed) {
+          completed = true
+          handler.removeCallbacks(timeoutRunnable)
+          val videoId = extractYouTubeVideoId(sharedText)
+          callback(title, channel, videoId, sharedText)
+        }
+      }
+      handler.postDelayed(timeoutRunnable, CAPTURE_TIMEOUT_MS)
+
+      val clicked = shareNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+      if (!clicked) {
+        completed = true
+        handler.removeCallbacks(timeoutRunnable)
+        PaceShareCaptureActivity.pendingCallback = null
+        Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 버튼 클릭 실패")
+        callback(title, channel, null, null)
+        return
+      }
+      pollForShareTarget(attemptsLeft = 12)
+    } catch (e: Exception) {
+      // 방어적 전체 캐치 — 이 기능은 부가 기능이라 실패해도 앱이 죽으면 안 됨(사장님 지시:
+      // "예외처리도 다 적용해가면서").
+      Log.e("PaceAccessibility", "captureCurrentVideoInfo 예외", e)
+      callback(null, null, null, null)
+    }
+  }
+
+  // 공유시트가 뜨는 데 기기/OEM별로 지연이 있어 300ms 간격으로 최대 12회(=3.6초) 재시도.
+  // 못 찾으면 위 CAPTURE_TIMEOUT_MS(6초) 시점에 timeoutRunnable이 정리한다.
+  private fun pollForShareTarget(attemptsLeft: Int) {
+    if (attemptsLeft <= 0) return
+    val target = findNodeByExactText(rootInActiveWindow, "Pace")
+    if (target != null) {
+      val clickable = generateSequence(target) { it.parent }.firstOrNull { it.isClickable } ?: target
+      clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+      return
+    }
+    handler.postDelayed({ pollForShareTarget(attemptsLeft - 1) }, 300L)
+  }
+
+  private fun collectContentDescriptions(node: AccessibilityNodeInfo?, out: MutableList<String>, depth: Int, budget: IntArray) {
+    if (node == null || depth > 40 || budget[0] <= 0) return
+    budget[0]--
+    val desc = node.contentDescription?.toString()
+    if (!desc.isNullOrEmpty()) out.add(desc)
+    for (i in 0 until node.childCount) {
+      collectContentDescriptions(node.getChild(i), out, depth + 1, budget)
+    }
+  }
+
+  private fun findNodeByContentDesc(node: AccessibilityNodeInfo?, substring: String, depth: Int = 0, budget: IntArray = intArrayOf(400)): AccessibilityNodeInfo? {
+    if (node == null || depth > 40 || budget[0] <= 0) return null
+    budget[0]--
+    val desc = node.contentDescription?.toString()
+    if (!desc.isNullOrEmpty() && desc.contains(substring) && node.isClickable) return node
+    for (i in 0 until node.childCount) {
+      findNodeByContentDesc(node.getChild(i), substring, depth + 1, budget)?.let { return it }
+    }
+    return null
+  }
+
+  private fun findNodeByExactText(node: AccessibilityNodeInfo?, text: String, depth: Int = 0, budget: IntArray = intArrayOf(600)): AccessibilityNodeInfo? {
+    if (node == null || depth > 50 || budget[0] <= 0) return null
+    budget[0]--
+    if (node.text?.toString() == text) return node
+    for (i in 0 until node.childCount) {
+      findNodeByExactText(node.getChild(i), text, depth + 1, budget)?.let { return it }
+    }
+    return null
   }
 }

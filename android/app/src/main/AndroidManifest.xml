@@ -40,5 +40,24 @@
          기본 테마(라이트/화이트 시스템 바)를 쓴다. tools:replace로 우리 테마를 강제 지정해 광고
          화면에서도 상태바/내비바 색이 앱과 통일되게 한다. -->
     <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/AppTheme" tools:replace="android:theme" android:exported="false"/>
+    <!-- 2026-07-31 사장님 지시(오버레이 Favorite/Capture) — 유튜브 Shorts는 URL 주소창이 없는 몰입형
+         플레이어라 접근성 트리만으로는 실제 영상 링크(videoId)를 못 읽는다. 표준 해법: 우리 앱을
+         ACTION_SEND(text/plain) 대상으로 등록해두고, 접근성 서비스가 유튜브의 "동영상 공유" 버튼을
+         눌러 시스템 공유시트를 띄운 뒤 그 목록에서 "Pace"를 찾아 클릭하면, 안드로이드가 실제 공유
+         텍스트(영상 URL 포함)를 이 액티비티로 그대로 전달한다 — 유튜브 UI 내부 구조가 버전마다
+         바뀌어도 깨지지 않는 공식 Intent 계약에 기반한 방법(PaceShareCaptureActivity.kt 참고).
+         투명 테마 + noHistory로 화면 깜빡임 없이 즉시 처리 후 사라진다. -->
+    <activity
+      android:name="expo.modules.paceoverlay.PaceShareCaptureActivity"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar"
+      android:noHistory="true"
+      android:excludeFromRecents="true"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <data android:mimeType="text/plain"/>
+      </intent-filter>
+    </activity>
   </application>
 </manifest>

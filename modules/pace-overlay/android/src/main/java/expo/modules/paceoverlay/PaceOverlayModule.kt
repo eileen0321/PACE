@@ -411,6 +411,15 @@ class PaceOverlayModule : Module() {
       Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.CAMERA)
     }
 
+    // 2026-07-31 사장님 지시(오버레이 P 메뉴 Favorite/Capture "현재 추가") — 최대 ~6초 뒤 항상
+    // resolve됨(타임아웃 내장, PaceAccessibilityService.captureCurrentVideoInfo 참고) — reject 없이
+    // 실패 시에도 null 필드가 섞인 맵을 반환해 JS가 항상 단순하게 처리할 수 있게 한다.
+    AsyncFunction("captureCurrentVideoInfo") { promise: Promise ->
+      PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url ->
+        promise.resolve(mapOf("title" to title, "channel" to channel, "videoId" to videoId, "url" to url))
+      }
+    }
+
     // Focus Session이 켜져 있는 동안에만 호출된다 — 앱 시작부터 상시 청취가 아님(사용자 지시).
     // 스냅 감지 시 알약/Bluetooth와 동일한 triggerNext(swipeOnce + 카운터 + 토스트)를 그대로 재사용.
     Function("startSnapDetection") {

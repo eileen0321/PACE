@@ -64,28 +64,6 @@ export async function markSleepDetected(sessionId: string, startedAtIso: string,
   );
 }
 
-// 수면 감지(스펙 §1-B "새벽 1시 23분에 잠드셨습니다" 요약)용 — 가장 최근의 sleep_detected 세션 1건.
-// 홈 화면이 앱을 열 때마다 이 값을 조회해 아직 안 보여준 것(useSleepInsightStore가 id로 dedupe)이면
-// 인사이트 배너로 보여준다.
-export async function getLatestSleepDetectedSession(userId: string): Promise<ViewingSession | null> {
-  const db = await getDb();
-  const row = await db.getFirstAsync<any>(
-    `SELECT * FROM viewing_sessions WHERE user_id = ? AND status = 'sleep_detected' AND ended_at IS NOT NULL
-     ORDER BY ended_at DESC LIMIT 1`,
-    [userId]
-  );
-  if (!row) return null;
-  return {
-    id: row.id,
-    startedAt: row.started_at,
-    endedAt: row.ended_at,
-    durationSeconds: row.duration_seconds,
-    videosWatched: row.videos_watched,
-    platformApp: row.platform_app,
-    status: row.status,
-  };
-}
-
 // 2026-07-26 감사 발견(재부팅/강제종료/크래시 예외처리 감사) — overlay/index.tsx의 startSession()/
 // endSession() 짝은 React 컴포넌트의 마운트/언마운트 생명주기에 묶여 있어서, 프로세스가 재부팅·
 // 강제종료·크래시로 죽으면 unmount cleanup(끝맺음 DB write)이 아예 안 돈다. 그러면 이 세션 행은

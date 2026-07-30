@@ -29,6 +29,12 @@ type AttendanceState = {
   history: string[];
   bonusCredits: number;
   loaded: boolean;
+  // 2026-07-31 사용자 지적("출석 크레딧과 집중시간 다 됐다는 팝업이 동시에 나오면서 UI가 정리 안
+  // 되어 보임") — 출석 축하 팝업(_layout.tsx, 루트)과 한도도달/Focus Session 연장 팝업(home.tsx,
+  // 탭 트리)이 서로 다른 컴포넌트 트리라 조율이 전혀 없었다. 이 플래그를 공유 신호로 써서 출석
+  // 팝업이 떠 있는 동안은 다른 팝업들이 렌더를 미루게 한다(출석 팝업이 항상 우선).
+  celebrationVisible: boolean;
+  setCelebrationVisible: (visible: boolean) => void;
 
   load: () => Promise<void>;
   /** 앱 부팅 시 1회 호출 — 오늘 아직 출석 안 했으면 체크인 처리 + 크레딧 지급, 했으면 no-op.
@@ -48,6 +54,8 @@ export const useAttendanceStore = create<AttendanceState>((set, get) => ({
   history: [],
   bonusCredits: 0,
   loaded: false,
+  celebrationVisible: false,
+  setCelebrationVisible: (visible) => set({ celebrationVisible: visible }),
 
   load: async () => {
     try {

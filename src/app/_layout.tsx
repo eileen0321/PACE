@@ -97,7 +97,10 @@ export default function RootLayout() {
   const [checkInEarned, setCheckInEarned] = useState<number | null>(null);
   useEffect(() => {
     useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
-      if (checkedIn) setCheckInEarned(earned);
+      if (checkedIn) {
+        setCheckInEarned(earned);
+        useAttendanceStore.getState().setCelebrationVisible(true);
+      }
     }).catch(() => {});
   }, []);
 
@@ -386,7 +389,10 @@ export default function RootLayout() {
           <DailyCheckInModal
             visible={checkInEarned !== null}
             earned={checkInEarned ?? 0}
-            onDismiss={() => setCheckInEarned(null)}
+            onDismiss={() => {
+              setCheckInEarned(null);
+              useAttendanceStore.getState().setCelebrationVisible(false);
+            }}
           />
           {(updatePhase === 'downloading' || updatePhase === 'reloading') && (
             <View style={styles.updateOverlay} pointerEvents="auto">

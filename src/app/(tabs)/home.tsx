@@ -8,11 +8,13 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useSessionStore } from '../../store/useSessionStore';
+import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
-import { maybeShowUsageInsight, getRandomInsightMessage } from '../../services/usageInsight';
+import { maybeShowUsageInsight, getTodaysInsightMessage } from '../../services/usageInsight';
+import { useToastStore } from '../../store/useToastStore';
 import { backfillSleepFromHistory } from '../../services/sleepBackfill';
 import { notifyUsageInsight } from '../../services/notifications';
 import { useFlipStore } from '../../store/useFlipStore';
@@ -31,6 +33,7 @@ import { useTranslation } from '../../services/i18n';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
+import type { ShortFormApp } from '../../constants/apps';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
 
@@ -59,17 +62,26 @@ export default function HomeScreen() {
   const { todayUsageMinutes, refresh } = useStatsStore();
   const restSeconds = useFlipStore((s) => s.putDownSeconds); // 오늘 쉬는시간(내려놓은 시간) — 히어로 카드에 표시
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
+  // 2026-07-31 — 세션이 daily-limit로 끝나면 useSessionStore.finish()가 platformApp을 null로 지워서,
+  // LimitReachedOverlay의 "+5분 더" 연장 시 "어느 플랫폼으로 다시 들어갈지" 알 방법이 없었다.
+  // running인 동안 마지막 값을 계속 기억해뒀다가 연장 시 그 플랫폼으로 재진입시킨다.
+  const lastPlatformRef = useRef<ShortFormApp | null>(null);
+  useEffect(() => {
+    if (activeSessionPlatform) lastPlatformRef.current = activeSessionPlatform;
+  }, [activeSessionPlatform]);
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   const enableAutoModeForSession = useBluetoothStore((s) => s.enableAutoModeForSession);
   const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
-  const { hitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast } = useLimitHitStore();
-  // 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(엉터리 시각) 대신, 실제 세션 기록 기반의 랜덤
-  // 사용 인사이트를 홈 인앱 배너로 띄운다. 앱을 켤 때마다 그날 적용 가능한 템플릿 중 하나를 랜덤
-  // 노출(앱 세션당 1회 — 매번 다시 계산해 지저분하지 않게 ref로 가드).
-  const [insightBanner, setInsightBanner] = useState<string | null>(null);
-  const insightBannerShownRef = useRef(false);
+  const { hitCount, dismissedHitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast, dismiss: dismissLimitHit } = useLimitHitStore();
+  const celebrationVisible = useAttendanceStore((s) => s.celebrationVisible);
+  // 2026-07-29 사장님 지시 — "몇시에 잠들었어요" 고정 배너를 "매일 하나의 랜덤 인사이트(사용 습관/
+  // 신조어/힐링 문구/명언)" 선물상자로 확장. 뜨는 조건도 수면 감지와 무관하게 하루 1회로 바뀌었으므로
+  // useSleepInsightStore(수면 감지 전용)는 더 이상 이 배너에 쓰지 않는다. 노티(maybeShowUsageInsight)와
+  // 같은 "오늘의 뽑기"를 공유(usageInsight.ts의 날짜 캐시) — 세션당이 아니라 캘린더 날짜 기준이라
+  // 앱을 여러 번 재시작해도 같은 날엔 같은 문구, 노티와 배너가 서로 다른 문구를 보여주지 않는다.
+  const [todaysInsight, setTodaysInsight] = useState<string | null>(null);
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
@@ -79,7 +91,9 @@ export default function HomeScreen() {
   // 커지므로 자동으로 다시 보인다. Extend Time으로 한도가 올라가 isLimitReached가 false가 되면
   // hitCount 자체가 다음 로직에서 0으로 안 내려가지만(오늘 누적 기록이라 정직하게 유지), 어차피
   // isLimitReached가 false면 visible 조건 자체가 꺼진다.
-  const [dismissedHitCount, setDismissedHitCount] = useState(0);
+  // 2026-07-31 — dismissedHitCount는 이제 useLimitHitStore에서 날짜 스코프로 영속화된 값을 그대로
+  // 구독한다(위 destructure) — 로컬 useState였을 땐 앱을 완전히 재시작할 때마다 0으로 리셋돼서,
+  // 오늘 이미 닫은 한도도달 팝업이 세션을 시작하지도 않았는데 재실행마다 다시 떴다.
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
 
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
@@ -129,7 +143,9 @@ export default function HomeScreen() {
     if (currentHitThreshold > 0) ensureLimitHitAtLeast(currentHitThreshold);
   }, [currentHitThreshold, ensureLimitHitAtLeast]);
   const limitTier: 1 | 2 | 3 = hitCount <= 1 ? 1 : hitCount === 2 ? 2 : 3;
-  const showLimitReached = isLimitReached && hitCount > dismissedHitCount && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null;
+  // 2026-07-31 — celebrationVisible(출석 축하 팝업) 떠 있는 동안은 렌더 미룸(동시에 두 팝업이
+  // 겹쳐 보이던 문제, §6 로그 참고).
+  const showLimitReached = isLimitReached && hitCount > dismissedHitCount && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null && !celebrationVisible;
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -139,22 +155,15 @@ export default function HomeScreen() {
     useCallback(() => {
       if (user?.id) refresh(user.id);
       refreshBluetooth();
-      // 수면 감지 인사이트(스펙 §1-B) — 홈에 돌아올 때마다 아직 안 보여준 sleep_detected 세션이
-      // 있는지 확인. 대개 "밤새 켜둔 채 잠들었다가 아침에 앱을 여는" 시나리오라 focus effect가 자연스러움.
-      // 2026-07-28 사장님 지시("넣어") — 수면 보정(방법 B)을 먼저 돌린 뒤 인사이트/노티를 띄운다. 그래야
-      // 노티의 "어제 마지막 시청시각"과 인앱 수면 배너가 보정된 "실제 잠든 시각"을 쓴다(순서 보장).
+      // 2026-07-29 — 홈 배너를 매일 하나의 랜덤 인사이트 선물상자로. 수면 보정(방법 B)을 먼저
+      // 돌려야 "어제 마지막 시청시각" 계산이 보정된 실제 값을 쓴다(기존 순서 보장 그대로 유지).
       if (user?.id) {
         const uid = user.id;
         (async () => {
           await backfillSleepFromHistory(uid);
-          // 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(수면감지 시각이 부정확=엉터리) 배너 대신,
-          // 실제 세션 기록 기반의 랜덤 사용 인사이트를 배너로 띄운다. 앱 세션당 1회.
-          if (!insightBannerShownRef.current) {
-            insightBannerShownRef.current = true;
-            const msg = await getRandomInsightMessage(uid);
-            if (msg) setInsightBanner(msg);
-          }
-          // 앱을 닫아둔 사이에도 닿게 하는 푸시 노티(하루 1회) — 배너와 같은 후보 로직 공유.
+          getTodaysInsightMessage(uid).then(setTodaysInsight).catch(() => {});
+          // 재미있는 랜덤 사용 인사이트 노티(하루 1회) — 내부에서 오늘 노출 여부/데이터 유무 전부 판단.
+          // 배너와 같은 "오늘의 뽑기"를 공유하므로 노티/배너가 서로 다른 문구를 보여주지 않는다.
           maybeShowUsageInsight(uid, notifyUsageInsight).catch(() => {});
         })();
       }
@@ -179,6 +188,26 @@ export default function HomeScreen() {
     overlayService.requestBatteryOptimizationExemption();
     dismissBatteryPrompt();
   }, [dismissBatteryPrompt]);
+
+  // 2026-07-29 사장님 지시("가끔 연속으로 오면 크레딧도 선물박스 누르면 주고") — 인사이트 배너를
+  // 탭하면 가끔(30% 확률) 보너스 크레딧이 터지는 선물상자로. 하루 한 번만 보상 판정(파밍 방지) —
+  // 이미 오늘 시도했으면 그냥 닫기만 한다. 매번 확실히 주면 "선물"이 아니라 "기능"이 되어버려서
+  // 확률로 둔다(예상 못한 즐거움 원칙).
+  const onTapInsightGift = useCallback(async () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    try {
+      const claimed = await AsyncStorage.getItem(STORAGE_KEYS.insightGiftClaimedDate);
+      if (claimed !== todayStr && Math.random() < 0.3) {
+        const bonus = Math.random() < 0.5 ? 5 : 10;
+        await addBonusMinutes(bonus);
+        await AsyncStorage.setItem(STORAGE_KEYS.insightGiftClaimedDate, todayStr);
+        useToastStore.getState().show(t('home.insightGiftReward', { n: bonus }));
+      }
+    } catch {
+      // 조용히 무시 — 부가 기능
+    }
+    setTodaysInsight(null);
+  }, [addBonusMinutes, t]);
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
@@ -265,7 +294,7 @@ export default function HomeScreen() {
     // "여기까지"를 명시적으로 고르게)을 유지하고, tier 3+(그 이상)부터는 안내만 하고 새 세션 시작을
     // 허용한다.
     if (isLimitReached && limitTier < 3) {
-      setDismissedHitCount(0);
+      dismissLimitHit(0);
       return;
     }
     // 감사 HIGH2(2026-07-27, Mac→Windows 인계) — 세션이 이미 running인데 카드를 또 탭하면(keepAlive
@@ -283,7 +312,7 @@ export default function HomeScreen() {
         setPendingPlatform(platform);
       }
     }).catch(() => startSession(platform));
-  }, [startSession, isLimitReached, limitTier]);
+  }, [startSession, isLimitReached, limitTier, dismissLimitHit]);
 
   const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
     AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});
@@ -311,16 +340,17 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
 
-        {/* 2026-07-29 사장님 지시 — "몇시에 잠드셨습니다"(엉터리 시각) 대신 랜덤 사용 인사이트 배너.
-            브랜드 색 원형 배지 + P 모노그램은 그대로 재사용. */}
-        {insightBanner && (
-          <View style={styles.sleepInsightBanner}>
+        {todaysInsight && (
+          <Pressable style={styles.sleepInsightBanner} onPress={onTapInsightGift}>
+            {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
+                회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
+                2026-07-29 — 이 박스 자체가 이제 "선물상자"라 탭하면 가끔 보너스 크레딧이 나온다. */}
             <View style={styles.sleepInsightBadge}>
               <Text style={styles.sleepInsightBadgeText}>P</Text>
             </View>
-            <Text style={styles.sleepInsightText}>{insightBanner}</Text>
-            <Text style={styles.sleepInsightDismiss} onPress={() => setInsightBanner(null)}>✕</Text>
-          </View>
+            <Text style={styles.sleepInsightText}>{todaysInsight}</Text>
+            <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
+          </Pressable>
         )}
 
         {showBatteryPrompt && (
@@ -391,12 +421,21 @@ export default function HomeScreen() {
         hitCount={hitCount}
         limitMinutes={effectiveDailyLimitMinutes}
         todayUsageMinutes={todayUsageMinutes}
-        onExtend={() => { addBonusMinutes(5); setDismissedHitCount(hitCount); }}
-        onDismiss={() => setDismissedHitCount(hitCount)}
+        // 2026-07-31 사용자 지적("5분더는 쇼츠를 보겠다는건데 종료해버리는지 확인해") — 예전엔 보너스
+        // 분만 더해주고 팝업만 닫아서, "+5분 더 보기"를 눌러도 실제로는 Home에 그대로 남아 사용자가
+        // 플랫폼 카드를 다시 탭해야 했다(연장의 의도와 정반대 경험). 마지막으로 보던 플랫폼을
+        // lastPlatformRef로 기억해뒀다가, 연장 시 그 플랫폼으로 즉시 재진입시킨다.
+        onExtend={() => {
+          addBonusMinutes(5);
+          dismissLimitHit(hitCount);
+          const p = lastPlatformRef.current;
+          if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
+        }}
+        onDismiss={() => dismissLimitHit(hitCount)}
       />
 
       <FocusSessionExtendModal
-        visible={showFocusSessionExtend}
+        visible={showFocusSessionExtend && !celebrationVisible}
         onDismiss={() => setShowFocusSessionExtend(false)}
       />
     </SafeAreaView>

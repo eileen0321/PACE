@@ -36,18 +36,13 @@ export const translations = {
       // 네이티브 토스트가 없는 플랫폼이라 인앱에서 직접 표시)가 언어 설정과 무관하게 항상 영어였다.
       focusSessionEnabledToast: '🎧 Focus Session Enabled',
       focusSessionDisabledToast: '🎧 Focus Session Disabled',
-      // 2026-07-26 감사 발견 — formatSleepInsight()(useSleepInsightStore.ts)가 언어 설정과 무관하게
-      // 항상 한국어 문자열을 직접 조립해 반환했다. period/hour/minute는 ko 전용 파라미터.
-      sleepInsightMessage: 'You fell asleep at {{time}}',
       // 2026-07-28 사장님 지시 — "몇시에 잠들었습니다" 말고 다른 랜덤 사용 인사이트 알림도.
-      // usageInsight.ts가 데이터로 뭐가 "적용 가능"한지 판단해 이 중 하나를 랜덤으로 골라 노티로 띄운다.
+      // 2026-07-29 — 실제 문구 풀은 insightContent.ts로 이전(신조어/힐링/명언까지 포함하도록 확장,
+      // 번역 키 시스템 대신 {en,ko} 쌍을 직접 들고 있는 데이터 파일 — "몇백 개" 규모라 키 하나하나
+      // 등록하는 게 아니라 배열에 줄 추가하는 식으로 유지보수하기 위함). 이 title만 그대로 사용.
       usageInsightTitle: 'Pace Insight',
-      usageInsightYesterdayLastWatched1: 'You were still watching at {{time}} yesterday 🌙',
-      usageInsightYesterdayLastWatched2: 'Your last video yesterday was at {{time}} 👀 Remember that?',
-      usageInsightTodayMore1: "You're already {{diff}} min over your usual today 📈",
-      usageInsightTodayMore2: '{{diff}} min past your average! Time for an eye break? 😮‍💨',
-      usageInsightTodayLess1: "You're {{diff}} min under your average today — nice pace ✨",
-      usageInsightTodayLess2: 'Good pace today — {{diff}} min saved vs your average 💪',
+      // 2026-07-29 — 인사이트 배너(선물상자)를 탭했을 때 가끔 터지는 보너스 크레딧 토스트.
+      insightGiftReward: '🎁 Surprise! +{{n}} credits',
       // 2026-07-26 감사 발견 — OTA 강제 업데이트 블로킹 화면(_layout.tsx)이 useTranslation을 아예
       // 안 써서 언어 설정과 무관하게 항상 한국어로만 떴다.
       updateDownloading: 'Downloading update...',
@@ -498,14 +493,8 @@ export const translations = {
       focusSessionExtendedToast: 'Focus Session이 {{extend}}분 더 이어져요',
       focusSessionEnabledToast: '🎧 Focus Session 켜짐',
       focusSessionDisabledToast: '🎧 Focus Session 꺼짐',
-      sleepInsightMessage: '{{period}} {{hour}}시 {{minute}}분에 잠드셨습니다',
       usageInsightTitle: 'Pace 인사이트',
-      usageInsightYesterdayLastWatched1: '어제는 {{time}}까지 보고 계셨네요 🌙',
-      usageInsightYesterdayLastWatched2: '어제 마지막 영상, {{time}}이었어요 👀 기억나세요?',
-      usageInsightTodayMore1: '오늘 벌써 평소보다 {{diff}}분 더 보고 있어요 📈',
-      usageInsightTodayMore2: '평균보다 {{diff}}분 초과! 슬슬 눈 좀 쉬어줄까요? 😮‍💨',
-      usageInsightTodayLess1: '오늘은 평균보다 {{diff}}분 덜 봤어요 — 좋은 흐름이에요 ✨',
-      usageInsightTodayLess2: '오늘 페이스 괜찮은데요? 평균보다 {{diff}}분 절약 중 💪',
+      insightGiftReward: '🎁 깜짝 선물! +{{n}} 크레딧',
       updateDownloading: '새 업데이트를 받는 중...',
       updateApplying: '적용하는 중...',
     },

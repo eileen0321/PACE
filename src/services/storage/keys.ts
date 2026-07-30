@@ -13,10 +13,6 @@ export const STORAGE_KEYS = {
   // 2026-07-21 런치 플로우: 온보딩 1회 완료 플래그. index.tsx가 이 값으로 "첫 실행=온보딩 /
   // 이후=바로 세션"을 분기. (Android 커밋 3c2cafb가 참조하면서 키 정의를 빠뜨려 tsc가 깨져 있던 것 보강.)
   onboardingCompleted: 'pace_onboarding_completed',
-  // 수면 감지(스펙 §1-B) — 마지막으로 사용자에게 보여준 sleep_detected 세션 id. 홈 화면이 매번
-  // getLatestSleepDetectedSession()을 조회하는데, 이 값과 다를 때만 "새벽 X시 Y분에 잠드셨어요"
-  // 배너를 새로 띄운다(같은 세션을 앱 재실행마다 반복해서 보여주지 않기 위한 dedupe).
-  lastSeenSleepInsightSessionId: 'pace_last_seen_sleep_insight_session_id',
   // 2026-07-23 버그 수정 — BluetoothOnboardingSheet에서 사용자가 고른 Enable/Not Now를 여기 저장한다.
   // 예전엔 이 선택이 "1회성 세션"에만 적용되고 이후 세션부터는 다시 켤 경로가 없어(Focus 탭 토글
   // 버튼이 7/22 UI 단순화로 삭제됨) 핑거스냅/블루투스 핸즈프리가 온보딩 직후 10분 지나면 영구히
@@ -37,6 +33,15 @@ export const STORAGE_KEYS = {
   // 2026-07-28 사장님 지시 — 재미있는 랜덤 사용 인사이트 노티(어제 몇시까지 봤는지/오늘 평균 대비
   // 얼마나 더·덜 봤는지)를 하루 1회만 띄우기 위한 "오늘 이미 보여줬는지" 날짜 문자열(YYYY-MM-DD).
   lastUsageInsightShownDate: 'pace_last_usage_insight_shown_date',
+  // 2026-07-29 사장님 지시 — 홈 배너를 "수면 감지 후 고정 문구"에서 "매일 하나의 랜덤 인사이트(사용
+  // 습관/신조어/힐링 문구/명언)"로 확장. 노티와 배너가 같은 날 서로 다른 걸 보여주면 혼란스러우니,
+  // "오늘 뽑은 항목"(카테고리+인덱스, 렌더링된 텍스트가 아니라 원본 선택값)을 캐시해 노티/배너 둘 다
+  // 이 값을 공유한다 — 언어를 하루 중에 바꿔도 텍스트가 그 시점 언어로 다시 렌더링되도록 완성된
+  // 문자열이 아니라 "무엇을 뽑았는지"만 저장한다.
+  todaysInsightPick: 'pace_todays_insight_pick',
+  // 2026-07-29 — 인사이트 배너를 탭했을 때 "가끔" 보너스 크레딧을 주는 선물상자 연출. 하루에 한 번만
+  // 보상 시도(연속으로 계속 눌러서 파밍하는 것 방지) — 오늘 이미 시도했는지 날짜로 기록.
+  insightGiftClaimedDate: 'pace_insight_gift_claimed_date',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

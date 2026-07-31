@@ -30,6 +30,11 @@ pace:
   revenuecat:
     webhook-auth-header: ${REVENUECAT_WEBHOOK_AUTH_HEADER:}
     api-key: ${REVENUECAT_API_KEY:}
+  # 오버레이 P 메뉴 "Shorts HOT" 갱신 전용 — 클라이언트 EXPO_PUBLIC_YOUTUBE_API_KEY와는 별개 키다.
+  # 서버 환경변수에만 존재해야 하며 절대 앱 번들에 노출하지 않는다(src/services/api/youtube.ts
+  # 상단 주석의 2026-07-19 보안 교훈과 동일 원칙).
+  youtube:
+    api-key: ${YOUTUBE_API_KEY:}
   cors:
     allowed-origins: ${CORS_ORIGINS:*}
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -21,6 +21,7 @@ import { GestureFlickIllustration } from '../../components/home/GestureFlickIllu
 import { RemoteClickIllustration } from '../../components/home/RemoteClickIllustration';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
+import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 
 // getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
 // Date.getDay()와 동일)를 실제 번역 키로 매핑 — settings.tsx에서 그대로 가져옴(2026-07-27, Weekly
@@ -143,6 +144,32 @@ export default function FocusScreen() {
   // swipeOnce), 손짓/블루투스 둘 다 접근성이 꺼져 있으면 무력화된다 — 손짓은 카메라 권한도 추가로 필요.
   const gestureBlocked = !isIOS && (!hasAccessibility || !hasCameraPerm);
   const bluetoothBlocked = !isIOS && !hasAccessibility;
+
+  // 2026-07-31 사장님 지시 — 오버레이 P 메뉴의 Saved/Favorite은 앱을 벗어나지 않는 네이티브
+  // 창이라 앱 안에서는 그 결과를 확인할 방법이 없었다("앱안에 메뉴와 리스트를 만들라고 했는데
+  // 왜 아무 메뉴가 없어"). 같은 saved_videos 테이블을 여기서도 그대로 읽어 보여준다 — 이 화면은
+  // 일반 RN 컨텍스트(브릿지 항상 살아있음)라 오버레이처럼 네이티브 SQLite 직접 접근이 필요 없고
+  // 기존 savedVideosRepository를 그대로 쓴다. 탭에 포커스될 때마다 다시 불러와 오버레이에서
+  // 방금 추가한 항목도 바로 반영되게 한다.
+  const [savedKind, setSavedKind] = useState<SavedVideoKind>('capture');
+  const [savedItems, setSavedItems] = useState<SavedVideo[]>([]);
+  const reloadSavedItems = useCallback(() => {
+    if (!user?.id) return;
+    getSavedVideos(user.id, savedKind).then(setSavedItems).catch(() => setSavedItems([]));
+  }, [user?.id, savedKind]);
+  useFocusEffect(useCallback(() => { reloadSavedItems(); }, [reloadSavedItems]));
+  const onRemoveSaved = useCallback((id: string) => {
+    setSavedItems((prev) => prev.filter((v) => v.id !== id));
+    removeSavedVideo(id).catch(() => {});
+  }, []);
+  const onShareSaved = useCallback((item: SavedVideo) => {
+    if (!item.url) return;
+    Share.share({ message: item.url, url: item.url }).catch(() => {});
+  }, []);
+  const onOpenSaved = useCallback((item: SavedVideo) => {
+    if (!item.url) return;
+    Linking.openURL(item.url).catch(() => {});
+  }, []);
   const explainAndOpenSettings = async (reason: 'camera' | 'accessibility') => {
     if (reason === 'accessibility') {
       useToastStore.getState().show(t('focus.accessibilityNeededToast'));
@@ -388,6 +415,56 @@ export default function FocusScreen() {
 
         {/* 2026-07-27 사용자 지시로 Pace Feed 진입 섹션 제거 — 홈의 YouTube 카드 탭이 이미 /feed로
             들어가므로(home.tsx, iOS) 집중화면의 진입 버튼은 중복이었다. dev Shorts POC 버튼도 함께 제거. */}
+
+        <View>
+          <Text style={styles.sectionLabel}>{t('focus.savedVideosSection')}</Text>
+          <GlassSurface style={styles.card}>
+            <View style={styles.savedKindTabs}>
+              {(['capture', 'favorite'] as SavedVideoKind[]).map((kind) => (
+                <Pressable
+                  key={kind}
+                  onPress={() => setSavedKind(kind)}
+                  style={[styles.savedKindTab, savedKind === kind && styles.savedKindTabActive]}
+                >
+                  <Text style={[styles.savedKindTabText, savedKind === kind && styles.savedKindTabTextActive]}>
+                    {kind === 'capture' ? t('overlay.captureListTitle') : t('overlay.favoriteListTitle')}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {savedItems.length === 0 ? (
+              <Text style={styles.savedEmptyText}>
+                {savedKind === 'capture' ? t('overlay.captureListEmpty') : t('overlay.favoriteListEmpty')}
+              </Text>
+            ) : (
+              savedItems.map((item) => (
+                <Pressable
+                  key={item.id}
+                  style={styles.savedRow}
+                  onPress={() => (savedKind === 'favorite' ? onOpenSaved(item) : undefined)}
+                >
+                  {item.thumbnailUrl ? (
+                    <Image source={{ uri: item.thumbnailUrl }} style={styles.savedThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.savedThumb, styles.savedThumbFallback]}>
+                      <Feather name="film" size={16} color={colors.textSecondary} />
+                    </View>
+                  )}
+                  <View style={styles.savedRowText}>
+                    <Text style={styles.savedRowTitle} numberOfLines={2}>{item.title ?? '—'}</Text>
+                    {!!item.channel && <Text style={styles.savedRowChannel} numberOfLines={1}>{item.channel}</Text>}
+                  </View>
+                  <Pressable onPress={() => onShareSaved(item)} hitSlop={8} style={styles.savedRowAction}>
+                    <Feather name="share-2" size={16} color={colors.textSecondary} />
+                  </Pressable>
+                  <Pressable onPress={() => onRemoveSaved(item.id)} hitSlop={8} style={styles.savedRowAction}>
+                    <Feather name="x" size={16} color={colors.textSecondary} />
+                  </Pressable>
+                </Pressable>
+              ))
+            )}
+          </GlassSurface>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -420,6 +497,20 @@ const styles = StyleSheet.create({
 
   sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
+
+  savedKindTabs: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xs },
+  savedKindTab: { flex: 1, borderRadius: radius.pill, paddingVertical: 8, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)' },
+  savedKindTabActive: { backgroundColor: colors.primary },
+  savedKindTabText: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
+  savedKindTabTextActive: { color: '#FFFFFF' },
+  savedEmptyText: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.lg },
+  savedRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 8 },
+  savedThumb: { width: 48, height: 48, borderRadius: radius.card, backgroundColor: 'rgba(255,255,255,0.06)' },
+  savedThumbFallback: { alignItems: 'center', justifyContent: 'center' },
+  savedRowText: { flex: 1, gap: 2 },
+  savedRowTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilySemibold, color: colors.textPrimary, lineHeight: 17 },
+  savedRowChannel: { fontSize: 11, color: colors.textSecondary },
+  savedRowAction: { padding: 6 },
 
   // 2026-07-27 Settings에서 이동 — 요일 7칸, 출석한 날은 채운 원+체크, 오늘은 테두리로 강조.
   // 하단에 누적 보너스 크레딧(useAttendanceStore.bonusCredits) 표시.

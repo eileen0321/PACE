@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import android.Manifest
 import expo.modules.interfaces.permissions.Permissions
 import expo.modules.kotlin.modules.Module
@@ -250,6 +251,14 @@ class PaceOverlayModule : Module() {
     // "ENABLE 탭 한 번"으로 완전히 끝내는 건 안드로이드 자체가 막아놓은 영역이라(앱이 자기
     // 접근성 권한을 스스로 켜지 못하게 하는 보안장치) 여기서 더 줄일 수 없음 — 마지막 토글은
     // 항상 사용자의 실제 탭이 있어야 한다.
+    // 2026-07-31 실기기 발견(사용자 지적: "다이렉트 설정화면으로 가라고 했더니 왜케 여러개야
+    // 가이드도 없이") — 아래 directIntent(ACCESSIBILITY_DETAILS_SETTINGS)는 실기기에서 항상
+    // `SecurityException: ... requires android.permission.OPEN_ACCESSIBILITY_DETAILS_SETTINGS`로
+    // 실패한다(adb shell로 직접 재현·확인) — 이 권한은 시스템/사전탑재 앱에만 부여되는
+    // signature|privileged 권한이라 서드파티 앱은 이 인�텐트를 원천적으로 쓸 수 없다("가끔
+    // 실패"가 아니라 "항상 실패", 제조사와 무관). 즉 폴백(일반 접근성 목록)이 사실상 100%
+    // 발동하는데 안내 문구가 없어 사용자가 "어디서 뭘 켜야 할지" 알 수 없었다 — 폴백 화면으로
+    // 갈 때 안내 토스트를 띄운다.
     Function("requestAccessibilityPermission") {
       appContext.reactContext?.let { context ->
         val serviceComponent = ComponentName(context, PaceAccessibilityService::class.java)
@@ -266,6 +275,12 @@ class PaceOverlayModule : Module() {
               flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(fallbackIntent)
+            val guidance = if (java.util.Locale.getDefault().language == "ko") {
+              "설치된 앱(또는 다운로드된 앱) 목록에서 'Pace'를 찾아 켜주세요"
+            } else {
+              "Find \"Pace\" under Installed apps (or Downloaded apps) and turn it on"
+            }
+            Toast.makeText(context, guidance, Toast.LENGTH_LONG).show()
           } catch (fallbackError: RuntimeException) {
             Log.e("PaceOverlay", "requestAccessibilityPermission: both direct and fallback intents failed", fallbackError)
           }

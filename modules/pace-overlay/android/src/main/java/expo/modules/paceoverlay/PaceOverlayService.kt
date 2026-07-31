@@ -1418,16 +1418,28 @@ class PaceOverlayService : Service() {
     paceMenuView = null
   }
 
+  // 2026-07-31 실기기 발견("쇼츠 보다 P에서 Open App하면 앱 갔다가 바로 쇼츠 시작") —
+  // getLaunchIntentForPackage()+REORDER_TO_FRONT는 Pace 태스크를 "마지막 상태 그대로" 복원한다.
+  // MainActivity가 singleTask라 세션 시작 당시 마지막으로 떠 있던 화면(예: 플랫폼 재진입 로직이
+  //있는 화면)이 그대로 되살아나면 그 화면 자체의 로직이 재발동해 유튜브로 즉시 되돌아갈 수 있다.
+  // 대신 pace://home 딥링크로 명시적으로 Home을 지정한다 — Expo Router의 기본 링킹 리스너가
+  // 이미 떠 있는 액티비티(singleTask → onNewIntent)에도 이 URL을 항상 홈 라우트로 매칭해준다.
   private fun openApp() {
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-    // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
-    // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은 떠있는
-    // 창)에 들어가버린다. 이 플래그는 액티비티 전환이 사용자의 직접 터치가 아님을 시스템에 알려
-    // onUserLeaveHint 호출 자체를 막는다 — 유튜브 PIP 자동진입의 정확한 트리거를 끊는다.
-    launchIntent?.addFlags(
-      Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_USER_ACTION
-    )
-    launchIntent?.let { startActivity(it) }
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
+      // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
+      // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은
+      // 떠있는 창)에 들어가버린다. 이 플래그는 액티비티 전환이 사용자의 직접 터치가 아님을 시스템에
+      // 알려 onUserLeaveHint 호출 자체를 막는다 — 유튜브 PIP 자동진입의 정확한 트리거를 끊는다.
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+    }
+    try {
+      startActivity(intent)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "openApp 딥링크 실패, 기본 런치인텐트로 폴백", e)
+      val fallback = packageManager.getLaunchIntentForPackage(packageName)
+      fallback?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+      fallback?.let { startActivity(it) }
+    }
   }
 
   private fun hideSavedFavoriteList() {

@@ -119,6 +119,8 @@ export const translations = {
       handsFreeMode: 'Hands-Free Mode',
       handsFreeMethodsAndroid: 'Hand-wave at the camera, or a Bluetooth remote’s volume button',
       handsFreeMethodsIos: 'A Bluetooth remote’s volume button, or hand-wave in Pace Feed',
+      // 2026-07-31 사장님 지시 — 오버레이 P 메뉴의 Saved/Favorite을 앱 안에서도 확인할 수 있게.
+      savedVideosSection: 'Saved Videos',
       cameraDeniedHint: 'Camera access needed — tap to open Settings',
       shieldsSection: 'System Sync Shields',
       shieldYoutubeTitle: 'YouTube Shorts Block',
@@ -587,6 +589,7 @@ export const translations = {
       handsFreeMode: '핸즈프리 모드',
       handsFreeMethodsAndroid: '카메라에 손짓하거나, 블루투스 리모컨의 볼륨 버튼으로 넘길 수 있어요',
       handsFreeMethodsIos: '블루투스 리모컨의 볼륨 버튼이나, Pace Feed에서 손짓으로 넘길 수 있어요',
+      savedVideosSection: '저장한 영상',
       cameraDeniedHint: '카메라 권한이 필요해요 — 탭하여 설정 열기',
       shieldsSection: 'System Sync Shields',
       shieldYoutubeTitle: 'YouTube Shorts 차단',

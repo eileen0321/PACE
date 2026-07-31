@@ -2283,3 +2283,17 @@ index.tsx`(React Native, DEV SIMULATOR로 대부분 우회됨)가 아니라 `Pac
 **미검증**: 실기기 빌드 진행 중(설치에 시간이 오래 걸림, gradle 데몬 12분+ 소요 확인됨) — 공유시트
 가로채기 흐름(가장 위험도 높은 부분, OEM/유튜브 버전별로 타이밍이 다를 수 있음)은 아직 실기기에서
 "현재 영상 추가" 버튼을 실제로 눌러 끝까지 검증 못 함. 다음 세션 우선 확인 사항.
+
+### 2026-07-31 — Mac 세션 (co-session P메뉴/저장기능 pull 검증 + iOS 오버레이 아키텍처 회신)
+
+co-session의 P메뉴/영상저장(73b5045)·홈팝업수정(9a7f2fb) pull 후 iOS 정합 검증:
+- **빌드/typecheck 통과** ✅. `useSleepInsightStore.ts` 삭제분 잔존 참조는 주석뿐(무해).
+- **신규 공용 파일 iOS-safe**: `savedVideos.ts:9` `Platform.OS !== 'android'` 가드 → iOS no-op. `savedVideosRepository`/`quick-list.tsx`(딥링크 목록화면)는 공용이나 iOS 진입점 없음.
+- **인사이트 배너 통합 확인**: 내 `getRandomInsightMessage`가 co-session 확장으로 `getTodaysInsightMessage`(insightContent.ts의 STAT/SLANG/HEALING/QUOTE)로 리네임·흡수됨. home.tsx도 갱신됨 — 정합 OK, iOS 배너 정상.
+
+**co-session "iOS도 네이티브 위젯이면 Swift로 확장해야 하나?" 회신**: **iOS엔 확장할 시스템 오버레이가 없음.**
+- iOS는 다른 앱 위에 그리는 오버레이 금지 → Android처럼 "실제 유튜브 위 알약"이 원천적으로 불가.
+- iOS 피드 = 인앱 RN+WebView(`YouTubeShortsPlayer.ios.tsx`). Live Activity(`PaceLiveActivityModule.swift`)는 네이티브지만 세션상태 표시용이지 인터랙티브 P메뉴 아님.
+- → **P메뉴는 Android 전용이 맞음.** iOS 저장/즐겨찾기 parity가 필요하면 **피드 내 RN 버튼**으로 구현(현재 영상 videoId를 WebView에서 직접 취득 — Android 공유시트 인터셉트보다 단순). 현재 iOS는 기능 갭(진입점 미구현)이나 크래시 없음. 우선순위 낮음(출시 후).
+
+**진행중(자동 사이클)**: 1시간마다 git 폴링+검증. 남은 배터리 감사 SAFE-JS 수정(백그라운드 PAUSE/블랙아웃 시 WebView 언마운트)은 실기기 회귀검증 후 v1.0.2에 반영 예정. iOS 심사(앱1.0+구독) 결과 대기중.

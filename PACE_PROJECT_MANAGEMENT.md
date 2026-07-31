@@ -2164,6 +2164,67 @@ expo.dev/artifacts/eas/4HmpJU0-aDiRKX-SJE7grwkYcbRGfEszNqVnallj_n8.aab` — **�
 `useUserStore`/앱 흐름에 실제로 배선돼 호출됨). 이 문구 그대로 제출하면 사실과 다른 개인정보 주장 —
 Play 정책 리스크. 문구 수정 필요("로그인 시 계정 동기화를 위해 서버에 안전하게 저장, 제3자 미공유" 등).
 
+### 2026-07-31 — Windows 세션 (구글/애플 심사 전수 감사 + 실제 App Store 반려 대응 + 계정 삭제 기능 신설)
+
+**전수 감사(에이전트 3종, 읽기전용)** — Android 권한/접근성 API 정책, iOS Info.plist/Sign in with
+Apple/2.5.9, 스토어 문구-실제 동작 정합성 조사. 발견분:
+- ✅ Sign in with Apple 공식 버튼 이미 적용 확인(C2 재확인 완료), ATT 미요청+비개인화 광고 정합성
+  확인, 페이월 4대 필수 문구(가격/자동갱신/약관/개인정보) 구조 존재 확인 — 전부 문제없음.
+- 🔴 **[수정 완료] 마이크 권한 dead code** — `capabilities.supportsFingerSnap=false`(핑거스냅 양
+  플랫폼 비활성화)인데도 `app.json`의 `NSMicrophoneUsageDescription`이 핑거스냅을 설명하고 있었고,
+  `useBluetoothStore.ts`가 핸즈프리 토글/세션 시작마다 여전히 마이크 권한을 요청하고 있었음(iOS
+  `feed/index.tsx`는 `'wave'` 모드만 실행, `'snap'`/`'both'`는 코드 전체에서 호출 0건이라 완전히
+  죽은 경로). 둘 다 삭제 — 안 쓰는 권한 요구는 Apple 5.1.1 리스크. `tsc` 클린.
+- 🔴 **[수정 완료] 이용약관(Terms) URL이 Android에도 Apple EULA로 노출** — `legal.ts`의
+  `TERMS_OF_USE_URL`이 공용 코드에서 재사용돼 Android 사용자도 "iTunes Store 약관" 페이지를 보고
+  있었음. 사장님이 자체 이용약관 페이지(Notion) 제공 → 양 플랫폼 공용으로 교체.
+- 🔴 **[수정 완료] "게스트=온디바이스만" 문서 오류** — `APP_STORE_LISTING.md` Data Safety 표 정정.
+  실제로는 게스트도 `loginAsGuest()`가 백그라운드 서버 계정을 발급받아 세션이 동기화됨(앱 내
+  UI 문구엔 이 오류 없음, 이 마크다운 한 곳만 문제였음).
+- 개인정보처리방침 URL도 사장님이 준 새 Notion 링크로 교체(`legal.ts`).
+- 🟡 미해결로 남은 것(콘솔/제출 프로세스 필요, 코드 아님): AdMob Data Safety 항목 미확정, 리뷰어
+  이메일이 App Store Connect Review Notes에 등록됐는지 미확인(Play는 등록 확인됨), Play Console
+  SYSTEM_ALERT_WINDOW/FOREGROUND_SERVICE_SPECIAL_USE 권한 선언 양식, 블루투스 리모컨(AirPods 탭)
+  스토어 설명이 실기기 미검증 상태로 이미 나가있음(2.1 리스크).
+
+**🔴 실제 App Store 반려 접수 (2026-07-31, Guideline 5.1.1(v)) — 계정 삭제 기능 부재.** 부수로
+구독 3개(PACE premium 그룹/Monthly/Yearly)도 "앱 반려"의 여파로 Rejected 상태. 조사 결과 **백엔드는
+이미 준비돼 있었음** — `backend/.../AuthController.java`에 `DELETE /auth/account`가 이미 있었고
+`AuthService.deleteAccount()`가 `userAccountRepository.deleteById()`(FK ON DELETE CASCADE로 세션/
+설정까지 실제 완전삭제, 단순 비활성화 아님 — Apple 요구사항과 정확히 일치)로 구현돼 있었음. **문제는
+클라이언트가 이 엔드포인트를 호출하는 코드가 전혀 없었다는 것**(Settings에 로그아웃만 있고 삭제
+옵션 자체가 없었음).
+
+**구현**: `src/services/api/client.ts`(`authApi.deleteAccount`) → `src/store/useUserStore.ts`
+(`deleteAccount()` 액션 — 서버 삭제 후 로컬 토큰/설정/SQLite 이력까지 정리하고 게스트로 복귀, 네트워크
+실패 시 throw해서 "삭제된 척" 안 함, 로컬 전용 폴백 게스트는 토큰이 없어 서버 호출 자체를 스킵) →
+`src/app/(tabs)/settings.tsx`(로그아웃 행 아래 "계정 삭제" 신규, Apple이 명시적으로 허용하는 확인
+모달 1단계, 삭제 중 로딩/실패 알림) → `translations.ts`(en/ko). `tsc --noEmit` 클린.
+
+**↳ 수정(사장님 지적, 같은 날)**: 처음엔 "계정 삭제" 행을 게스트 상태에서도 항상 노출했었는데,
+사장님이 "로그오프 상태에서 계정삭제가 보이고 동작하는게 맞아?"로 지적 — 맞지 않았음. 게스트는
+실제로 만든 계정이 아니라 자동 발급된 익명 상태고, 게스트가 데이터를 지우고 싶으면 이미 있는
+"설정 초기화"가 그 역할을 하는데 "계정 삭제"라는 이름으로 중복 노출하면 혼동만 줌. 로그아웃 행과
+동일하게 `!user?.isGuest`(구글/애플로 실제 로그인한 사용자에게만)로 게이팅하도록 수정.
+
+**↳ 추가 UI 개선(사장님 지적, 같은 날, "로그아웃/계정삭제 두 줄 다 빨간색이 트렌드야?" +
+"jlpt-master처럼 하단에 메뉴로 추가하는게 낫지 않아?")**: jlpt-master(`src/screens/ProfileScreen.tsx`)
+패턴 확인 후 두 가지 반영 — (1) 로그아웃은 되돌릴 수 있는 안전한 동작이라 danger색을 빼고
+`colors.textSecondary`(중립)로, "계정 삭제"만 danger색 유지해 심각도 차이를 시각적으로 구분(둘 다
+빨간색이면 구분이 안 됨). (2) 계정 삭제를 Account 섹션의 작은 텍스트 링크에서 빼서, 이미 있던
+"8. Advanced" 섹션(Reset Settings와 같은 카드)의 두 번째 메뉴 행으로 이전 — title+description+원형
+아이콘버튼 패턴(기존 `resetTitle`/`resetIconBtn` 그대로 재사용, 색만 `dangerLight`→`danger`로 한 단계
+올려 Reset Settings보다 더 심각한 동작임을 구분). `deleteAccountTitle`/`deleteAccountIconBtn` 스타일,
+`settings.deleteAccountDesc` i18n 키(en/ko) 신규. `tsc --noEmit` 클린.
+
+**남은 것(사장님)**:
+1. 실기기에서 화면 녹화 — 로그인→계정 삭제 진입→확인→완료 전체 플로우. App Store Connect
+   "App Review Information → Notes"에 첨부해 회신.
+2. Railway 백엔드가 `DELETE /auth/account`를 포함한 버전으로 배포돼 있는지 확인(최초 백엔드 커밋부터
+   있던 기능이라 가능성 높음, 실호출로 재확인 권장).
+3. 새 빌드로 재제출.
+4. 구독 3개가 앱 승인 후에도 Rejected로 남아있으면 App Store Connect에서 개별 재제출.
+
 ### 2026-07-29 (밤) — Mac 세션 (iOS 출시 제출 완료 + 랜덤 인사이트 배너 + 무입력 idle 하드상한 + 슬립 전수 감사)
 
 **A. iOS App Store 제출 완료 🎉** — 앱 1.0 (build 2, iPhone 전용) 심사 제출됨. 진행 경과:

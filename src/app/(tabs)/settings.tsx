@@ -74,6 +74,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const user = useUserStore((s) => s.user);
   const logout = useUserStore((s) => s.logout);
+  const deleteAccount = useUserStore((s) => s.deleteAccount);
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isReviewer = useSubscriptionStore((s) => s.isReviewer);
   const adBannerHeight = useAdBannerStore((s) => s.height);
@@ -81,6 +82,8 @@ export default function SettingsScreen() {
   const { settings, update } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const bluetooth = useBluetoothStore();
   // 2026-07-20 실기기 감사 중 발견: "Platform Configuration" 카드의 READY 배지가 실제 오버레이
   // 권한 상태와 무관하게 항상 켜져 있었다(Dev Client 안 붙었거나 사용자가 권한을 거부해도 계속
@@ -169,6 +172,23 @@ export default function SettingsScreen() {
     }
   };
 
+  // Apple 5.1.1(v) — 계정 생성을 지원하면 앱 안에서 완전 삭제도 지원해야 함(단순 비활성화 불가).
+  // deleteAccount()가 서버 계정(세션/설정 FK CASCADE 포함) + 로컬 인증/기록을 전부 지우고 게스트로
+  // 되돌린다 — 실패 시(네트워크 등) 모달을 열어둔 채 에러만 보여주고 로컬 상태는 건드리지 않는다.
+  const confirmDeleteAccount = async () => {
+    setIsDeletingAccount(true);
+    try {
+      await deleteAccount();
+      setShowDeleteConfirm(false);
+      router.replace('/(tabs)/home');
+    } catch (e) {
+      console.warn('[settings] delete account failed', e);
+      Alert.alert(t('settings.deleteAccountErrorTitle'), t('settings.deleteAccountErrorMessage'));
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   const handleRateApp = async () => {
     try {
       const StoreReview = require('expo-store-review'); // lazy: 미링크 빌드에서 화면 죽지 않게
@@ -217,11 +237,14 @@ export default function SettingsScreen() {
           {/* 2026-07-20 실기기 감사 중 발견: logout()을 호출하는 UI가 이 화면 어디에도 없었다 —
               이전엔 "설정 초기화" 버튼 하나가 로그아웃까지 겸하고 있었는데(문구와 안 맞는 부작용),
               그걸 정직한 데이터 초기화로 고치면서 로그아웃할 방법 자체가 사라질 뻔했다. 게스트는
-              로그아웃할 실제 계정이 없으므로 로그인된 사용자에게만 노출. */}
+              로그아웃할 실제 계정이 없으므로 로그인된 사용자에게만 노출. 2026-07-31 사용자 지적
+              ("두 줄 다 빨간색이 트렌드야?") — 로그아웃은 되돌릴 수 있는 안전한 동작이라 danger색을
+              빼고 중립색으로 변경(진짜 위험한 동작인 "계정 삭제"만 danger색으로 구분되게). 계정 삭제
+              자체는 jlpt-master 패턴을 따라 아래 "8. Advanced" 섹션의 메뉴 행으로 이전(사용자 지시). */}
           {!user?.isGuest && (
             <Pressable style={styles.logoutRow} onPress={logout}>
-              <Feather name="log-out" size={14} color={colors.danger} />
-              <Text style={styles.logoutRowText}>{t('settings.logout')}</Text>
+              <Feather name="log-out" size={14} color={colors.textSecondary} />
+              <Text style={[styles.logoutRowText, { color: colors.textSecondary }]}>{t('settings.logout')}</Text>
             </Pressable>
           )}
         </View>
@@ -425,17 +448,34 @@ export default function SettingsScreen() {
           </GlassSurface>
         </View>
 
-        {/* 8. Advanced — Reset */}
+        {/* 8. Advanced — Reset + Delete Account */}
         <View>
           <Text style={styles.sectionLabel}>{t('settings.advanced')}</Text>
-          <GlassSurface style={[styles.card, styles.advancedCard]}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.resetTitle}>{t('settings.resetSettings')}</Text>
-              <Text style={styles.rowSubtitle}>{t('settings.resetSettingsDesc')}</Text>
+          <GlassSurface style={styles.card}>
+            <View style={styles.advancedCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.resetTitle}>{t('settings.resetSettings')}</Text>
+                <Text style={styles.rowSubtitle}>{t('settings.resetSettingsDesc')}</Text>
+              </View>
+              <Pressable style={styles.resetIconBtn} onPress={() => setShowResetConfirm(true)}>
+                <Feather name="refresh-cw" size={16} color={colors.dangerLight} />
+              </Pressable>
             </View>
-            <Pressable style={styles.resetIconBtn} onPress={() => setShowResetConfirm(true)}>
-              <Feather name="refresh-cw" size={16} color={colors.dangerLight} />
-            </Pressable>
+            {/* 2026-07-31 App Store 심사 반려(Guideline 5.1.1(v)) 대응, 사용자 지시로 jlpt-master
+                패턴 그대로 이식 — 계정 관리(로그인/로그아웃)와 분리해 "고급" 섹션의 메뉴 행으로 배치.
+                게스트는 실제로 만든 계정이 없어 게이팅(로그아웃과 동일 기준). Reset Settings보다
+                되돌릴 수 없는 더 심각한 동작이라 dangerLight 대신 진한 danger색으로 구분. */}
+            {!user?.isGuest && (
+              <View style={[styles.advancedCard, styles.rowBordered]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deleteAccountTitle}>{t('settings.deleteAccount')}</Text>
+                  <Text style={styles.rowSubtitle}>{t('settings.deleteAccountDesc')}</Text>
+                </View>
+                <Pressable style={styles.deleteAccountIconBtn} onPress={() => setShowDeleteConfirm(true)}>
+                  <Feather name="trash-2" size={16} color={colors.danger} />
+                </Pressable>
+              </View>
+            )}
           </GlassSurface>
         </View>
 
@@ -532,6 +572,25 @@ export default function SettingsScreen() {
               </Pressable>
               <Pressable onPress={confirmReset} style={styles.modalDangerBtn}>
                 <Text style={styles.modalPrimaryBtnText}>{t('settings.resetNow')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 2026-07-31 App Store 심사 반려(5.1.1(v)) 대응 — 계정 삭제 확인 모달. Apple이 명시적으로
+          허용하는 "실수 방지용 확인 단계"라 바로 지우지 않고 한 번 더 확인시킨다. */}
+      <Modal visible={showDeleteConfirm} transparent animationType="fade" onRequestClose={() => !isDeletingAccount && setShowDeleteConfirm(false)} statusBarTranslucent navigationBarTranslucent>
+        <View style={[styles.modalBackdrop, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{t('settings.deleteAccountConfirmTitle')}</Text>
+            <Text style={styles.modalBody}>{t('settings.deleteAccountConfirmMessage')}</Text>
+            <View style={styles.modalButtonRow}>
+              <Pressable onPress={() => setShowDeleteConfirm(false)} style={styles.modalSecondaryBtn} disabled={isDeletingAccount}>
+                <Text style={styles.modalSecondaryBtnText}>{t('settings.cancel')}</Text>
+              </Pressable>
+              <Pressable onPress={confirmDeleteAccount} style={styles.modalDangerBtn} disabled={isDeletingAccount}>
+                <Text style={styles.modalPrimaryBtnText}>{isDeletingAccount ? t('settings.deleteAccountInProgress') : t('settings.deleteAccountNow')}</Text>
               </Pressable>
             </View>
           </View>
@@ -680,6 +739,9 @@ const styles = StyleSheet.create({
   advancedCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
   resetTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.dangerLight },
   resetIconBtn: { width: 36, height: 36, borderRadius: radius.chip, backgroundColor: colors.dangerBg, alignItems: 'center', justifyContent: 'center' },
+  // Reset Settings보다 심각도가 높은 동작이라 dangerLight 대신 진한 danger 톤으로 구분.
+  deleteAccountTitle: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.danger },
+  deleteAccountIconBtn: { width: 36, height: 36, borderRadius: radius.chip, backgroundColor: colors.dangerBg, alignItems: 'center', justifyContent: 'center' },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   modalCard: { width: '100%', maxWidth: 320, backgroundColor: colors.card, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 28, padding: 24, alignItems: 'center', gap: spacing.md },

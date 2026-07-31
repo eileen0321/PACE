@@ -78,6 +78,9 @@ export const authApi = {
   loginAsGuest: (deviceId: string) =>
     request<AuthResult>('/auth/guest', { method: 'POST', body: { deviceId }, auth: false }),
   refresh: () => request<{ token: string }>('/auth/refresh', { method: 'POST' }),
+  // Apple 5.1.1(v) — 계정을 만들 수 있으면 앱 안에서 삭제도 가능해야 함. 백엔드는 FK ON DELETE
+  // CASCADE로 세션/설정까지 함께 지운다(AuthController.deleteAccount 참고, 단순 비활성화 아님).
+  deleteAccount: () => request<void>('/auth/account', { method: 'DELETE' }),
 };
 
 export type SessionSyncItem = {

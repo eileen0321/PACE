@@ -69,18 +69,13 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
 
   toggleAutoMode: async () => {
     const next = !get().autoModeEnabled;
-    // 2026-07-21 밤 감사 발견 — 이 토글이 켜지면 네이티브에서 핑거스냅(PaceSnapDetector, RECORD_AUDIO
-    // 필요)도 함께 시작되는데, 그 권한을 요청하는 JS 코드가 어디에도 없어 대부분의 실기기에서
-    // 조용히 아무 반응도 없었다(네이티브가 권한 없으면 안전하게 no-op하도록만 방어돼 있었을 뿐).
-    // 이 인앱 버튼이 "핸즈프리를 켜는" 유일한 JS 도달 경로라 여기서 먼저 물어본다 — 실제 스와이프
-    // (알약 탭/블루투스 리모컨)는 100% 네이티브라 JS가 가로챌 수 없지만, 한 번이라도 이 경로로
-    // 권한을 받아두면 이후 알약/리모컨 경로에서도 계속 동작한다.
+    // 2026-07-24 손 밀어내기(shoo) 제스처 — 이 인앱 버튼이 "핸즈프리를 켜는" 유일한 JS 도달 경로라
+    // 여기서 먼저 카메라 권한을 물어본다(실제 스와이프는 100% 네이티브라 JS가 가로챌 수 없지만,
+    // 한 번이라도 이 경로로 권한을 받아두면 이후 알약/리모컨 경로에서도 계속 동작한다).
+    // 2026-07-31 — 핑거스냅(마이크 필요)은 애플 통보로 양 플랫폼 다 비활성화된 죽은 기능이라
+    // (capabilities.supportsFingerSnap===false) 마이크 권한 요청 제거 — 쓰지도 않는 권한을 요구하면
+    // App Store 5.1.1 심사 리스크(불필요한 권한 요구)만 키운다.
     if (next) {
-      const hasMic = await bluetoothService.hasRecordAudioPermission();
-      if (!hasMic) await bluetoothService.requestRecordAudioPermission().catch(() => false);
-      // 2026-07-24 손 밀어내기(shoo) 제스처 — 핑거스냅과 같은 진입점에서 같이 켜지므로 카메라
-      // 권한도 여기서 같이 물어봐야 한다(안 그러면 핑거스냅과 똑같이 "권한 요청 코드가 어디에도
-      // 없어서 조용히 죽어있는" 문제가 반복된다).
       const hasCamera = await bluetoothService.hasCameraPermission();
       if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
     }
@@ -107,8 +102,7 @@ export const useBluetoothStore = create<BluetoothStoreState>((set, get) => ({
     // JS만 "이미 켜져 있다"고 믿고 네이티브를 아예 안 불러서, 실제로는 아무 감지기도 안 도는 상태로
     // 조용히 멈춰 있었다. 네이티브 쪽(PaceOverlayService.setAutoMode → 각 감지기의 자체 running
     // 가드)이 이미 멱등이므로, 여기서는 매번 그냥 부른다 — 중복 호출은 네이티브가 안전하게 no-op.
-    const hasMic = await bluetoothService.hasRecordAudioPermission();
-    if (!hasMic) await bluetoothService.requestRecordAudioPermission().catch(() => false);
+    // 2026-07-31 — 마이크 권한 요청 제거(핑거스냅 죽은 기능, 위 toggleAutoMode와 동일 사유).
     const hasCamera = await bluetoothService.hasCameraPermission();
     if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
     await bluetoothService.toggleAutoMode(true);

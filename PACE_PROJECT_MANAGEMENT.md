@@ -2463,3 +2463,32 @@ Apple 공식(TN3194): SIWA 쓰는 앱은 계정삭제 시 `/auth/revoke` REST로
 ※ 차선(자격 준비 전): Apple 문서상 "토큰이 없으면 삭제는 이행하되 사용자에게 수동 폐기(설정→Apple ID→Sign in with Apple) 안내" 허용 — 단 리뷰어가 실폐기를 확인하므로 반려 위험 잔존. 정식 폐기 권장.
 
 **🔴 부가 — 현재 심사중 build 2엔 계정삭제 자체가 없음**(2026-07-29 빌드 < 계정삭제 커밋 2026-08-01). 2.1(b) 재심사가 통과해도 **5.1.1(v)로 반려될 수 있음** → v1.0.2(계정삭제+Apple폐기 포함) 필요 가능성 높음. v1.0.2 묶음: 계정삭제+Apple폐기 / 페이월 월연구분(e814df0) / 무입력 idle상한 / 배터리 감사 SAFE수정 / (손짓 튜닝 기기검증).
+
+### 2026-08-01 — Windows 세션: Shorts HOT 백엔드 신규 구현 + 오버레이 재사라짐 버그 핸드오프
+
+**Shorts HOT 백엔드 완성** (`fffce29`) — 오버레이 P 메뉴 "Shorts HOT"이 지금까지 "coming soon"
+토스트만 띄우던 걸 실제 구현. `backend/`에 `shorts_hot_video` 테이블(카테고리별 전역 캐시,
+user_account 참조 없음) + `ShortsHotService`(YouTube Data API `videos.list(chart=mostPopular,
+regionCode=KR)`를 카테고리 6종 — all/music/gaming/comedy/entertainment/pets — 별로 호출,
+`contentDetails.duration`을 `java.time.Duration`으로 파싱해 60초 이하만 Shorts로 인정, 상위
+15개 교체 저장, `@Scheduled` 매일 새벽 4시 자동 갱신, 카테고리 1개 실패해도 나머지는 계속
+진행) + `ShortsHotController`(`GET /shorts-hot?category=X`, `GET /shorts-hot/categories`,
+기존 JWT 인증 그대로 — SecurityConfig의 최소 permitAll 원칙 유지). 클라이언트는 YouTube API
+키를 절대 안 씀(`src/services/api/youtube.ts` 2026-07-19 보안 교훈과 동일 원칙) — 서버 전용
+`YOUTUBE_API_KEY` 환경변수 필요(Railway에 아직 미설정, 설정 전까진 갱신 스킵+경고 로그만).
+`mvn compile`/`test-compile` 클린. **미착수**: 오버레이(Kotlin) P 메뉴 "Shorts HOT" 탭이
+아직 이 API를 호출 안 함(지금은 여전히 toast만) — 네이티브 Kotlin에서 JWT 인증 HTTP 호출을
+새로 짜야 해서 별도 작업으로 남김, 다음 세션 우선순위.
+
+**🔴 핸드오프 — "오버레이가 또 사라짐"(사장님 실기기 반복 재현, 원인 미확정)**: 세션이 Active
+상태였다가(예: 55m→7/60min까지 정상 표시·정상 카운트다운 확인) 몇 분 뒤 확인하면
+`PaceOverlayService`가 통째로 안 돌고 있음(`dumpsys activity services`에 아예 안 잡힘,
+`pidof`로는 앱 프로세스 자체는 살아있음 확인 — 프로세스 킬이 아니라 서비스만 조용히
+멈춤/종료됨). accessibility는 바인딩 정상, PaceOverlay 태그 로그도 남아있는 게 없어서(버퍼
+로테이션 추정) 정확한 종료 사유(SESSION END reason=?, onDestroy 호출 경로)를 못 잡았다.
+재현 조건 후보(전부 미확인): (1) 앱 스위칭/PIP 반복 중 어느 지점, (2) 접근성이 짧게
+회수됐다 복구되는 순간과 겹침, (3) 그냥 시간 경과(5~10분 이상). **사장님 지시로 이 항목은
+다른 세션/AI가 이어서 조사** — Windows 세션은 백엔드로 넘어감. 다음에 이어받는 쪽은
+`PaceOverlayService.onDestroy()`/`stopSelf` 호출 지점 전부에 로그를 추가하고, `adb logcat`을
+넓은 버퍼(`-G 8M`, 이미 이번 세션에 한 번 적용해봄)로 실시간 스트리밍하며 재현을 기다리는
+방식을 권장 — 사후 덤프로는 이미 두 번 놓쳤다.

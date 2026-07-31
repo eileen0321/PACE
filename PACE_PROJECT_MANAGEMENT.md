@@ -2442,3 +2442,24 @@ co-session의 P메뉴/영상저장(73b5045)·홈팝업수정(9a7f2fb) pull 후 i
 - "Shorts HOT"은 여전히 "coming soon" 토스트만 — 카테고리 선정 기준/백엔드 갱신 주기/
   YouTube Data API 연동은 전혀 착수 안 됨(별도 대형 작업으로 남겨둠, 사장님께도 그렇게
   안내함).
+
+### 2026-08-01 — Mac 세션 (co-session 계정삭제/네이티브저장 pull 검증 + 🔴 5.1.1(v) Apple 토큰 폐기 갭 발견)
+
+co-session의 계정삭제(6e0d3d6)·Saved/Favorite 네이티브 재구현(db10046) pull 후 iOS 검증:
+- **빌드/typecheck 통과** ✅.
+- **마이크 권한(NSMicrophoneUsageDescription) app.json에서 제거 → iOS 안전 확인**: iOS 피드는 `useFeedRemoteControl.ios`가 `start('wave')`(카메라)만 시작, 스냅(마이크/AVAudioEngine record)은 안 켬. 볼륨키는 `.playback`(녹음 아님). → `requestRecordPermission` 호출 경로 없음 → 권한 문자열 없어도 크래시 안 남. (스냅을 iOS에서 다시 켜면 그땐 권한 문자열 복구 필수 — 회귀 주의.)
+- **Saved/Favorite 네이티브 재구현 정합**: RN `quick-list.tsx`/`savedVideos.ts` 삭제됨(내 iOS 아키텍처 회신대로 Android 네이티브로 이관). iOS는 기능 갭(진입점 없음)이나 크래시 없음.
+- **계정삭제(5.1.1v) UI/클라이언트 = 양호**: settings "계정 삭제" 행 + 커스텀 확인 모달(결과 명시/되돌릴 수 없음/Cancel·Delete danger·로딩상태) — 트렌드/HIG 정합, iOS 동작. `useUserStore.deleteAccount`는 서버 실삭제(실패 시 throw로 가짜삭제 방지) 후 로컬 정리→게스트. 잘 됨.
+
+**🔴🔴 발견 — Sign in with Apple 토큰 폐기 미구현 (5.1.1(v) 반려 위험, 웹리서치로 확인)**:
+Apple 공식(TN3194): SIWA 쓰는 앱은 계정삭제 시 `/auth/revoke` REST로 토큰을 폐기해야 하고, **Apple이 심사 때 확인 → 토큰이 살아있으면 반려(흔한 사유)**. 현재:
+- iOS Apple 로그인이 **identityToken만** 백엔드로 보냄(`AppleLoginRequest`) — authorization_code/refresh_token 미수신·미저장 → **폐기할 토큰이 없음**.
+- 백엔드 `AuthService.deleteAccount`는 `deleteById`(DB CASCADE)만 — **Apple revoke 호출 없음**.
+**필요 작업(v1.0.2, 백엔드+클라 협업 + 사장님 Apple 자격 필요)**:
+1. 클라: 네이티브 Apple 로그인 credential에서 `authorizationCode` 취득 → 로그인 시 백엔드로 함께 전송(`AppleLoginRequest`에 필드 추가).
+2. 백엔드: authCode→refresh_token 교환(`POST appleid.apple.com/auth/token`, client_secret=ES256 JWT[Sign in with Apple .p8 키+KeyID+TeamID+client_id]) → refresh_token 저장(DB 컬럼).
+3. 백엔드 `deleteAccount`: 저장된 refresh_token으로 `POST appleid.apple.com/auth/revoke` 호출 후 DB 삭제.
+4. **사장님 필요**: App Store Connect → Keys에서 **Sign in with Apple용 .p8 키**(구독용 IAP 키와 별개) + Key ID + Service/Bundle ID.
+※ 차선(자격 준비 전): Apple 문서상 "토큰이 없으면 삭제는 이행하되 사용자에게 수동 폐기(설정→Apple ID→Sign in with Apple) 안내" 허용 — 단 리뷰어가 실폐기를 확인하므로 반려 위험 잔존. 정식 폐기 권장.
+
+**🔴 부가 — 현재 심사중 build 2엔 계정삭제 자체가 없음**(2026-07-29 빌드 < 계정삭제 커밋 2026-08-01). 2.1(b) 재심사가 통과해도 **5.1.1(v)로 반려될 수 있음** → v1.0.2(계정삭제+Apple폐기 포함) 필요 가능성 높음. v1.0.2 묶음: 계정삭제+Apple폐기 / 페이월 월연구분(e814df0) / 무입력 idle상한 / 배터리 감사 SAFE수정 / (손짓 튜닝 기기검증).

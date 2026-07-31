@@ -28,7 +28,6 @@ let PaceOverlay: {
   requestRecordAudioPermission(): Promise<{ status: string; granted: boolean }>;
   hasCameraPermission(): boolean;
   requestCameraPermission(): Promise<{ status: string; granted: boolean }>;
-  captureCurrentVideoInfo(): Promise<{ title: string | null; channel: string | null; videoId: string | null; url: string | null }>;
 } | null = null;
 
 try {
@@ -196,16 +195,6 @@ export const bluetoothService: BluetoothService = {
     } catch (e) {
       console.warn('[bluetoothService.android] requestCameraPermission failed', e);
       return false;
-    }
-  },
-
-  async captureCurrentVideoInfo() {
-    try {
-      const result = await PaceOverlay?.captureCurrentVideoInfo();
-      return result ?? { title: null, channel: null, videoId: null, url: null };
-    } catch (e) {
-      console.warn('[bluetoothService.android] captureCurrentVideoInfo failed', e);
-      return { title: null, channel: null, videoId: null, url: null };
     }
   },
 };

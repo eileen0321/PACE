@@ -186,13 +186,6 @@ export interface BluetoothService {
    */
   hasCameraPermission(): Promise<boolean>;
   requestCameraPermission(): Promise<boolean>;
-  /**
-   * 2026-07-31 오버레이 P 메뉴(Favorite/Capture "현재 추가") — 지금 유튜브 Shorts 화면에 떠 있는
-   * 영상의 제목/채널/videoId/url을 최대한 읽어온다. Android=접근성 트리 읽기 + 공유시트 가로채기
-   * (PaceAccessibilityService.captureCurrentVideoInfo 참고), iOS=Pace Feed 안에서만 의미 있음(no-op
-   * 스텁, 항상 전부 null). 실패해도 절대 reject 안 함 — 항상 (일부 필드가 null일 수 있는) 객체로 resolve.
-   */
-  captureCurrentVideoInfo(): Promise<{ title: string | null; channel: string | null; videoId: string | null; url: string | null }>;
 }
 
 // 2026-07-26 사용자 지시로 iOS Screen Time(FamilyControls) 차단 기능 전면 삭제 — Apple의

@@ -37,8 +37,4 @@ export const bluetoothService: BluetoothService = {
   async requestRecordAudioPermission() { return true; },
   async hasCameraPermission() { return true; },
   async requestCameraPermission() { return true; },
-  // 2026-07-31 — iOS는 이 오버레이 P 메뉴 자체가 Android 시스템 오버레이 전용 UI라 no-op(Pace Feed
-  // 안에서는 별도 자체 UI로 붙일 여지가 있지만 이번 스코프는 Android 전용, PACE_PROJECT_MANAGEMENT.md
-  // 2026-07-31 참고).
-  async captureCurrentVideoInfo() { return { title: null, channel: null, videoId: null, url: null }; },
 };

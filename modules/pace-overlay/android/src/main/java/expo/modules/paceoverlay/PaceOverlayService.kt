@@ -3,6 +3,9 @@ package expo.modules.paceoverlay
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
@@ -25,10 +28,15 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import java.io.File
+import java.net.URL
 import kotlin.math.sqrt
 
 // Android=떠 있는 알약(pill) 오버레이(PACE_ARCHITECTURE.md "Android=floating pill / iOS=frame 차분"과
@@ -53,6 +61,10 @@ class PaceOverlayService : Service() {
   // pace://quick-list 딥링크로 그 화면에 곧장 진입(app/quick-list.tsx), Shorts HOT은 백엔드가
   // 아직 없어(PACE_PROJECT_MANAGEMENT.md 2026-07-31) 토스트로 정직하게 "곧 만나요" 안내.
   private var paceMenuView: LinearLayout? = null
+  // 2026-07-31 사장님 지시 — Saved/Favorite 리스트도 quick-list.tsx(별도 액티비티) 대신 이 창처럼
+  // 네이티브 오버레이로 그 자리에서 뜬다(유튜브를 벗어나면 자동 PIP가 걸리는 문제 자체를 원천 차단,
+  // showSavedFavoriteList 참고).
+  private var savedListView: FrameLayout? = null
   // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
   // 맞춘다: Focus Session이 켜져 있을 때만 보이는 작은 보라 링 글래스 원(⚡). iOS의 focusDot과 동일한
   // 역할(비클릭, 순수 상태표시) — applyAutoBadgeStyle()이 autoBadge와 함께 이 가시성도 갱신한다.
@@ -295,8 +307,12 @@ class PaceOverlayService : Service() {
     if (mediaSession != null) return
     val session = MediaSession(this, "PaceSession")
     session.setCallback(object : MediaSession.Callback() {
-      override fun onSkipToNext() { triggerNext(applicationContext) }
-      override fun onSkipToPrevious() { triggerPrevious(applicationContext) }
+      // 2026-07-31 실기기 발견 — 이 콜백이 bluetoothVolumeKeySkipEnabled를 전혀 확인하지 않아서, Focus
+      // 탭에서 "블루투스 리모컨" 토글을 꺼도 실제 블루투스 기기가 미디어 next/previous 신호를 보내면
+      // (의도치 않은 터치/노이즈 포함) 항상 스와이프+"Next Short" 토스트가 떴다(사용자 지적: "블루투스
+      // 손짓 다 꺼져있었는데"). 다른 진입 경로(볼륨키)와 동일하게 이 플래그로 게이팅한다.
+      override fun onSkipToNext() { if (bluetoothVolumeKeySkipEnabled) triggerNext(applicationContext) }
+      override fun onSkipToPrevious() { if (bluetoothVolumeKeySkipEnabled) triggerPrevious(applicationContext) }
       override fun onPlay() { setAutoMode(applicationContext, true) }
       override fun onPause() { setAutoMode(applicationContext, false) }
     })
@@ -599,6 +615,9 @@ class PaceOverlayService : Service() {
     const val PREFS_NAME = "pace_overlay"
     const val PREF_EXPIRED = "expired"
     const val PREF_EXPIRE_REASON = "expire_reason"
+    // 2026-07-31 — Saved/Favorite 네이티브 오버레이가 saved_videos에 쓸 때 필요한 user_id 캐시(위
+    // PaceOverlayModule.cacheUserId 참고).
+    const val PREF_CACHED_USER_ID = "cached_user_id"
     // 2026-07-26 사용자 지적 — "1시 3분에 잠들었는데 실제로는 10분 전(무진동 시작 시점)이 진짜
     // 잠든 시각에 더 가깝지 않냐" — markExpired() 호출 시각(=무진동 임계값을 넘긴 시각)은 실제
     // 마지막 움직임(lastMotionAtMs)보다 stillnessThresholdMs만큼 항상 늦다. sleep_detected일 때만
@@ -827,6 +846,10 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         .putBoolean(PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, enabled).apply()
       PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = enabled
+      // 2026-07-31 — MediaSession.onSkipToNext/Previous(실제 블루투스 리모컨 next/prev 버튼 신호)도
+      // 이 인스턴스 필드로 게이팅하게 됐다(위 volumeKeySkipEnabled와 별개 필드였어서 세션 도중 토글이
+      // 이 경로엔 전혀 안 먹혔던 버그, 사용자 지적 "블루투스 다 꺼져있었는데" 참고).
+      instance?.bluetoothVolumeKeySkipEnabled = enabled
     }
 
     // 2026-07-28 사장님 결정("리셋형: 그냥 지금부터 30분 다시 카운트, 경과시간 무시") — 취침 타이머를
@@ -1397,21 +1420,260 @@ class PaceOverlayService : Service() {
 
   private fun openApp() {
     val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-    launchIntent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+    // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
+    // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은 떠있는
+    // 창)에 들어가버린다. 이 플래그는 액티비티 전환이 사용자의 직접 터치가 아님을 시스템에 알려
+    // onUserLeaveHint 호출 자체를 막는다 — 유튜브 PIP 자동진입의 정확한 트리거를 끊는다.
+    launchIntent?.addFlags(
+      Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_USER_ACTION
+    )
     launchIntent?.let { startActivity(it) }
   }
 
-  // Saved/Favorite — pace:// 딥링크로 quick-list 화면에 곧장 진입(app/quick-list.tsx, expo-router
-  // 표준 링킹 경로라 이 모듈이 MainActivity 클래스에 직접 의존할 필요 없음, openApp()과 동일 원칙).
-  private fun openQuickList(kind: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://quick-list?kind=$kind"))
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    try {
-      startActivity(intent)
-    } catch (e: Exception) {
-      Log.w("PaceOverlayService", "openQuickList 실패, 앱만 연다", e)
-      openApp()
+  private fun hideSavedFavoriteList() {
+    savedListView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
+    savedListView = null
+  }
+
+  // 2026-07-31 사장님 지시 + 실기기 재발견 — 원래 quick-list.tsx(별도 액티비티)로 이동하던 걸 전부
+  // 네이티브 오버레이로 교체한다: 액티비티 전환 자체가 유튜브를 백그라운드로 보내 자동 PIP를
+  // 유발했고(FLAG_ACTIVITY_NO_USER_ACTION로도 못 막음, 유튜브의 setAutoEnterEnabled는 우리 쪽
+  // 인텐트 플래그로 못 끔 — Android 공식 문서/삼성 개발자 포럼 확인), 사장님 원 지시("투명의 리스트
+  // 오버레이가 나와서... 앱으로 안 나가고 그 자리에서")와도 이 방식이 맞다. 상단에 "현재 영상 추가"
+  // 버튼 + 기존 리스트를 같은 창에서 보여주고, 추가를 누른 시점에만 캡처(아직 유튜브가 전경)한다.
+  private fun showSavedFavoriteList(kind: String) {
+    hideSavedFavoriteList()
+    val d = resources.displayMetrics.density
+    val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
+
+    // 2026-07-31 사장님 지적("저게 투명이야?") — P메뉴(showPaceMenu)의 90% 불투명 스타일을 그대로
+    // 복붙했었는데, 이 리스트는 원래부터 "글래스모피즘 투명 박스"로 명시적으로 지시받은 화면이다
+    // (RN GlassSurface와 동일한 톤: 옅은 틴트 + 실제 블러). 배경 자체를 훨씬 옅게(약 35% 불투명)
+    // 낮추고, API 31+ 기기에서는 WindowManager.LayoutParams.FLAG_BLUR_BEHIND로 뒤(유튜브 영상)를
+    // 실제로 블러 처리해 진짜 글래스 느낌을 낸다(구버전은 옅은 틴트만으로 폴백).
+    val panel = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 16f * d
+        setColor(Color.parseColor("#591A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+      clipToOutline = true
+      setPadding((14 * d).toInt(), (14 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
     }
+
+    val header = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    header.addView(TextView(this).apply {
+      text = if (kind == "capture") "Saved" else "Favorite"
+      textSize = 15f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    header.addView(TextView(this).apply {
+      text = "✕"
+      textSize = 15f
+      setTextColor(Color.parseColor("#B3FFFFFF"))
+      setPadding((10 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
+      isClickable = true
+      setOnClickListener { hideSavedFavoriteList() }
+    })
+    panel.addView(header)
+
+    val listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    val scroll = ScrollView(this).apply { addView(listContainer) }
+
+    // 현재 영상 추가 버튼 — 리스트 최상단, 항상 보임(둘 다: 사장님 지시 "favorit도 Add와 기존
+    // list가 보이고 Add를 누르면 리스트에 추가").
+    val addRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 10f * d
+        setColor(Color.parseColor("#33FFFFFF"))
+      }
+      setPadding((10 * d).toInt(), (9 * d).toInt(), (10 * d).toInt(), (9 * d).toInt())
+      isClickable = true
+    }
+    addRow.addView(TextView(this).apply {
+      text = "+  Add current video"
+      textSize = 13f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    })
+    panel.addView(addRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = (10 * d).toInt()
+      bottomMargin = (10 * d).toInt()
+    })
+
+    fun renderList() {
+      listContainer.removeAllViews()
+      val items = SavedVideosStore.list(applicationContext, kind)
+      if (items.isEmpty()) {
+        listContainer.addView(TextView(this@PaceOverlayService).apply {
+          text = if (kind == "capture") "Nothing saved yet" else "No favorites yet"
+          textSize = 12f
+          setTextColor(Color.parseColor("#80FFFFFF"))
+          gravity = Gravity.CENTER
+          setPadding(0, (18 * d).toInt(), 0, (18 * d).toInt())
+        })
+      }
+      items.forEachIndexed { index, item ->
+        val itemRow = LinearLayout(this@PaceOverlayService).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = Gravity.CENTER_VERTICAL
+          setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+        }
+        val thumb = ImageView(this@PaceOverlayService).apply {
+          scaleType = ImageView.ScaleType.CENTER_CROP
+          background = GradientDrawable().apply {
+            cornerRadius = 8f * d
+            setColor(Color.parseColor("#14FFFFFF"))
+          }
+        }
+        val thumbSize = (44 * d).toInt()
+        itemRow.addView(thumb, LinearLayout.LayoutParams(thumbSize, thumbSize))
+        if (!item.thumbnailUrl.isNullOrEmpty()) loadThumbnailInto(thumb, item.thumbnailUrl)
+
+        val textCol = LinearLayout(this@PaceOverlayService).apply { orientation = LinearLayout.VERTICAL }
+        textCol.addView(TextView(this@PaceOverlayService).apply {
+          text = item.title ?: "—"
+          textSize = 12f
+          maxLines = 2
+          setTextColor(Color.WHITE)
+        })
+        if (!item.channel.isNullOrEmpty()) {
+          textCol.addView(TextView(this@PaceOverlayService).apply {
+            text = item.channel
+            textSize = 10f
+            setTextColor(Color.parseColor("#8CFFFFFF"))
+          })
+        }
+        itemRow.addView(textCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+          marginStart = (10 * d).toInt()
+          marginEnd = (6 * d).toInt()
+        })
+
+        // 2026-07-31 — Saved/Favorite 둘 다 공유 아이콘 표시(사장님 지시 "favorit도... 공유가
+        // 보이게"). Favorite은 행 자체를 탭하면 재생(원본 유튜브 링크로 이동).
+        itemRow.addView(TextView(this@PaceOverlayService).apply {
+          text = "⇪"
+          textSize = 16f
+          setTextColor(Color.parseColor("#CCFFFFFF"))
+          setPadding((8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), (4 * d).toInt())
+          isClickable = true
+          setOnClickListener {
+            val url = item.url ?: return@setOnClickListener
+            try {
+              val share = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, url)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              startActivity(Intent.createChooser(share, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+              Log.w("PaceOverlayService", "share 실패", e)
+            }
+          }
+        })
+        itemRow.addView(TextView(this@PaceOverlayService).apply {
+          text = "✕"
+          textSize = 13f
+          setTextColor(Color.parseColor("#80FFFFFF"))
+          setPadding((8 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
+          isClickable = true
+          setOnClickListener {
+            SavedVideosStore.remove(applicationContext, item.id)
+            renderList()
+          }
+        })
+
+        if (kind == "favorite") {
+          itemRow.isClickable = true
+          itemRow.setOnClickListener {
+            val url = item.url ?: return@setOnClickListener
+            try {
+              startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+              Log.w("PaceOverlayService", "재생 실패", e)
+            }
+          }
+        }
+
+        listContainer.addView(itemRow)
+        if (index < items.size - 1) {
+          listContainer.addView(View(this@PaceOverlayService).apply { setBackgroundColor(Color.parseColor("#14FFFFFF")) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))
+        }
+      }
+      // 항목 수에 맞춰 늘어나되(사장님 지시 초안 스타일과 동일), 화면의 45%를 넘으면 스크롤.
+      val estimatedRowHeightPx = (60 * d).toInt()
+      val estimatedHeight = (items.size.coerceAtLeast(1) * estimatedRowHeightPx)
+      val maxHeight = (resources.displayMetrics.heightPixels * 0.45f).toInt()
+      scroll.layoutParams = (scroll.layoutParams ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0)).apply {
+        height = estimatedHeight.coerceAtMost(maxHeight)
+      }
+    }
+
+    addRow.setOnClickListener {
+      Toast.makeText(applicationContext, "Reading video info…", Toast.LENGTH_SHORT).show()
+      PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url ->
+        foregroundPollHandler.post {
+          val hasCapture = !title.isNullOrEmpty() || !videoId.isNullOrEmpty()
+          if (hasCapture && SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url)) {
+            Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
+            renderList()
+          } else {
+            Toast.makeText(applicationContext, "Couldn't read this video — try again", Toast.LENGTH_SHORT).show()
+          }
+        }
+      }
+    }
+
+    panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    renderList()
+
+    val root = FrameLayout(this).apply { addView(panel, FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)) }
+    savedListView = root
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * d).toInt()
+      y = 80 + (44 * d).toInt()
+      // API 31+ 진짜 배경 블러(뒤에 재생 중인 유튜브 영상이 실제로 흐려짐) — 구버전은 위 옅은 틴트
+      // 배경색만으로 폴백(완전 투명은 아니지만 90% 불투명 박스보다는 훨씬 "유리" 느낌에 가깝다).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        blurBehindRadius = (28 * d).toInt()
+      }
+    }
+    try {
+      windowManager?.addView(savedListView, params)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "showSavedFavoriteList 실패", e)
+      savedListView = null
+    }
+  }
+
+  private fun loadThumbnailInto(imageView: ImageView, url: String) {
+    Thread {
+      try {
+        val bitmap: Bitmap = BitmapFactory.decodeStream(URL(url).openStream())
+        foregroundPollHandler.post {
+          if (imageView.isAttachedToWindow) imageView.setImageBitmap(bitmap)
+        }
+      } catch (e: Exception) {
+        // 썸네일 실패는 조용히 무시 — 플레이스홀더 배경이 이미 그려져 있음.
+      }
+    }.start()
   }
 
   private fun showPaceMenu() {
@@ -1429,8 +1691,8 @@ class PaceOverlayService : Service() {
     val items = listOf<Pair<String, () -> Unit>>(
       "Open App" to { openApp(); hidePaceMenu() },
       "Shorts HOT" to { Toast.makeText(applicationContext, "Shorts HOT — coming soon", Toast.LENGTH_SHORT).show(); hidePaceMenu() },
-      "Saved" to { openQuickList("capture"); hidePaceMenu() },
-      "Favorite" to { openQuickList("favorite"); hidePaceMenu() },
+      "Saved" to { hidePaceMenu(); showSavedFavoriteList("capture") },
+      "Favorite" to { hidePaceMenu(); showSavedFavoriteList("favorite") },
     )
     items.forEachIndexed { index, (label, action) ->
       val row = TextView(this).apply {
@@ -1825,6 +2087,7 @@ class PaceOverlayService : Service() {
     autoBadge = null
     zapBadge = null
     hidePaceMenu() // 세션 종료 시 P 메뉴가 열려있던 채로 알약만 사라지면 메뉴 창이 고아로 남는다.
+    hideSavedFavoriteList() // 위와 동일한 이유로 Saved/Favorite 리스트 창도 같이 정리.
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽
@@ -1863,5 +2126,105 @@ class PaceOverlayService : Service() {
     infraReady = false
     if (instance === this) instance = null
     super.onDestroy()
+  }
+}
+
+// 2026-07-31 사장님 지시(Saved/Favorite 오버레이 재구현) — 리스트가 유튜브를 벗어나지 않는 네이티브
+// 오버레이 창(PaceOverlayService.showSavedFavoriteList)에서 직접 떠야 하므로, RN/JS 브릿지가
+// 살아있단 보장 없이도 동작해야 한다. src/database/schema.ts의 saved_videos 테이블을 그대로
+// 공유(expo-sqlite가 만든 파일을 경로로 직접 열기 — expo-sqlite/android/.../SQLiteModule.kt가
+// "<filesDir>/SQLite/<db>"에 만드는 걸 확인). 컬럼/스키마가 바뀌면 이 object도 같이 갱신해야 한다.
+private object SavedVideosStore {
+  data class SavedVideoRow(
+    val id: String,
+    val videoId: String?,
+    val title: String?,
+    val channel: String?,
+    val url: String?,
+    val thumbnailUrl: String?
+  )
+
+  private fun dbFile(context: Context): File = File(context.filesDir, "SQLite/pace.db")
+
+  private fun openDb(context: Context): SQLiteDatabase? {
+    val file = dbFile(context)
+    if (!file.exists()) return null
+    return try {
+      SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.openDb failed", e)
+      null
+    }
+  }
+
+  fun getUserId(context: Context): String? =
+    context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      .getString(PaceOverlayService.PREF_CACHED_USER_ID, null)
+
+  fun youtubeThumbnailUrl(videoId: String): String = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+  fun list(context: Context, kind: String): List<SavedVideoRow> {
+    val userId = getUserId(context) ?: return emptyList()
+    val db = openDb(context) ?: return emptyList()
+    val out = mutableListOf<SavedVideoRow>()
+    try {
+      db.rawQuery(
+        "SELECT id, video_id, title, channel, url, thumbnail_url FROM saved_videos WHERE user_id=? AND kind=? ORDER BY added_at DESC",
+        arrayOf(userId, kind)
+      ).use { c ->
+        while (c.moveToNext()) {
+          out.add(
+            SavedVideoRow(
+              id = c.getString(0),
+              videoId = c.getString(1),
+              title = c.getString(2),
+              channel = c.getString(3),
+              url = c.getString(4),
+              thumbnailUrl = c.getString(5)
+            )
+          )
+        }
+      }
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.list failed", e)
+    } finally {
+      db.close()
+    }
+    return out
+  }
+
+  fun insert(context: Context, kind: String, videoId: String?, title: String?, channel: String?, url: String?): Boolean {
+    val userId = getUserId(context) ?: return false
+    val db = openDb(context) ?: return false
+    return try {
+      val id = "sv-${System.currentTimeMillis()}-${(1000..9999).random()}"
+      val thumbnailUrl = videoId?.let { youtubeThumbnailUrl(it) }
+      val addedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        .format(java.util.Date())
+      db.execSQL(
+        "INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        arrayOf(id, userId, kind, videoId, title, channel, url, thumbnailUrl, "youtube", addedAt)
+      )
+      true
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.insert failed", e)
+      false
+    } finally {
+      db.close()
+    }
+  }
+
+  fun remove(context: Context, id: String): Boolean {
+    val db = openDb(context) ?: return false
+    return try {
+      db.execSQL("DELETE FROM saved_videos WHERE id=?", arrayOf(id))
+      true
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.remove failed", e)
+      false
+    } finally {
+      db.close()
+    }
   }
 }

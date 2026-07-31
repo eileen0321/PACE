@@ -1,10 +1,12 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authApi, clearToken, setToken, setUnauthorizedHandler } from '../services/api/client';
+import { authApi, clearToken, getToken, setToken, setUnauthorizedHandler } from '../services/api/client';
 import { getOrCreateDeviceId } from '../services/auth/deviceId';
 import { googleAuth } from '../services/auth/google';
 import { appleAuth } from '../services/auth/apple';
 import { STORAGE_KEYS, USER_SCOPED_KEYS } from '../services/storage/keys';
+import { clearUserHistory } from '../database/repositories/sessionsRepository';
 import { useSubscriptionStore } from './useSubscriptionStore';
 import type { User } from '../types/models';
 
@@ -24,6 +26,8 @@ type UserState = {
   signInWithApple: () => Promise<{ cancelled?: true }>;
   loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
+  /** Apple 5.1.1(v) 계정 삭제 요건 — 서버 계정(세션/설정 포함) 완전 삭제 후 게스트로 복귀 */
+  deleteAccount: () => Promise<void>;
 };
 
 function toUser(result: { userId: string; email: string | null; name: string | null }, isGuest: boolean, provider: User['provider'] = 'google'): User {
@@ -44,6 +48,19 @@ function toUser(result: { userId: string; email: string | null; name: string | n
 function identifyRcUser(email: string | null) {
   if (!email) return;
   useSubscriptionStore.getState().identify(email).catch(() => {});
+}
+
+// 2026-07-31 사장님 지시(Saved/Favorite 오버레이 재구현) — 오버레이 P메뉴는 유튜브를 벗어나지 않는
+// 네이티브 WindowManager 창이라 RN 브릿지/AsyncStorage 접근이 보장되지 않는다. saved_videos에
+// user_id로 저장/조회하려면 네이티브(Kotlin) 쪽이 즉시 읽을 수 있는 SharedPreferences에 현재 유저
+// id를 미리 캐시해둬야 한다 — 로그인/게스트 진입 등 user가 바뀌는 모든 지점에서 호출.
+function cacheUserIdNative(userId: string) {
+  if (Platform.OS !== 'android') return;
+  try {
+    require('../../modules/pace-overlay').PaceOverlay?.cacheUserId(userId);
+  } catch {
+    // 네이티브 미링크(Dev Client 빌드 전) — 조용히 무시.
+  }
 }
 
 export const useUserStore = create<UserState>((set, get) => ({
@@ -75,6 +92,7 @@ export const useUserStore = create<UserState>((set, get) => ({
       if (restoredUser) {
         set({ user: restoredUser, isLoggedIn: true, isGuest: restoredUser.isGuest });
         identifyRcUser(restoredUser.email);
+        cacheUserIdNative(restoredUser.id);
       } else {
         await get().loginAsGuest();
       }
@@ -90,6 +108,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
     set({ user, isLoggedIn: true, isGuest: false });
     identifyRcUser(user.email);
+    cacheUserIdNative(user.id);
   },
 
   loginWithApple: async (identityToken, name, authorizationCode) => {
@@ -99,6 +118,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
     set({ user, isLoggedIn: true, isGuest: false });
     identifyRcUser(user.email);
+    cacheUserIdNative(user.id);
   },
 
   signInWithGoogle: async () => {
@@ -133,12 +153,14 @@ export const useUserStore = create<UserState>((set, get) => ({
       createdAt: new Date().toISOString(),
     };
     set({ user: localUser, isLoggedIn: true, isGuest: true });
+    cacheUserIdNative(localUser.id);
     try {
       const result = await authApi.loginAsGuest(deviceId);
       await setToken(result.token);
       const user = toUser(result, true);
       await AsyncStorage.setItem(STORAGE_KEYS.authUser, JSON.stringify(user));
       set({ user, isLoggedIn: true, isGuest: true });
+      cacheUserIdNative(user.id);
     } catch {
       // ⚠️ 실기기 테스트로 발견한 버그: 백엔드가 아직 없어서(API_BASE_URL 자리표시자) 이 catch가
       // 항상 실행되는데, 예전엔 여기서 그냥 포기해 user가 영원히 null로 남았다 — 그 결과 SQLite
@@ -155,5 +177,24 @@ export const useUserStore = create<UserState>((set, get) => ({
     await AsyncStorage.multiRemove(USER_SCOPED_KEYS);
     useSubscriptionStore.getState().reset().catch(() => {}); // RC 익명 ID로 리셋
     await get().loginAsGuest(); // 아래 loginAsGuest가 즉시 로컬 게스트를 set하므로 user:null 노출 구간 없음
+  },
+
+  deleteAccount: async () => {
+    const { user } = get();
+    const token = await getToken();
+    // 서버에 한 번도 닿은 적 없는 로컬 전용 폴백 게스트(id: `local-...`)는 지울 서버 행 자체가 없다.
+    // 토큰이 있으면 실제로 서버 계정(세션/설정 FK CASCADE 포함)을 지우고, 실패 시(네트워크 등)
+    // 그대로 throw해 아래 로컬 초기화로 넘어가지 않게 한다 — "삭제됐다고 보여줬는데 서버엔 남아있는"
+    // 상황을 피하기 위함(Apple 5.1.1(v)은 실제 삭제를 요구).
+    if (token) {
+      await authApi.deleteAccount();
+    }
+    await googleAuth.signOut().catch(() => {});
+    await clearToken();
+    await AsyncStorage.multiRemove(USER_SCOPED_KEYS);
+    await AsyncStorage.removeItem(STORAGE_KEYS.authUser);
+    if (user?.id) await clearUserHistory(user.id).catch(() => {});
+    useSubscriptionStore.getState().reset().catch(() => {});
+    await get().loginAsGuest();
   },
 }));

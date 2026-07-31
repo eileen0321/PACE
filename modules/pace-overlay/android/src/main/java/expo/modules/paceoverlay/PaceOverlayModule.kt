@@ -411,12 +411,16 @@ class PaceOverlayModule : Module() {
       Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.CAMERA)
     }
 
-    // 2026-07-31 사장님 지시(오버레이 P 메뉴 Favorite/Capture "현재 추가") — 최대 ~6초 뒤 항상
-    // resolve됨(타임아웃 내장, PaceAccessibilityService.captureCurrentVideoInfo 참고) — reject 없이
-    // 실패 시에도 null 필드가 섞인 맵을 반환해 JS가 항상 단순하게 처리할 수 있게 한다.
-    AsyncFunction("captureCurrentVideoInfo") { promise: Promise ->
-      PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url ->
-        promise.resolve(mapOf("title" to title, "channel" to channel, "videoId" to videoId, "url" to url))
+    // 2026-07-31 사장님 지시(Saved/Favorite 오버레이 재구현) — P메뉴의 Saved/Favorite 리스트는 이제
+    // JS 화면으로 이동하지 않고 네이티브 WindowManager 오버레이로 그 자리에서 뜬다(유튜브 이탈 자체가
+    // PIP를 유발하는 걸 막기 위함, PACE_PROJECT_MANAGEMENT.md 참고). 이 오버레이는 RN 브릿지가 살아있단
+    // 보장이 없는 시점(포그라운드 서비스에서 직접)에 떠야 하므로 SQLite(saved_videos)를 직접 열어
+    // 읽고 쓴다 — user_id만은 SQLite에 없고 AsyncStorage(RN 쪽)에 있어 시점 보장을 위해 로그인/게스트
+    // 진입마다 이 함수로 SharedPreferences에 미리 캐시해둔다.
+    Function("cacheUserId") { userId: String ->
+      appContext.reactContext?.let { context ->
+        context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+          .edit().putString(PaceOverlayService.PREF_CACHED_USER_ID, userId).apply()
       }
     }
 

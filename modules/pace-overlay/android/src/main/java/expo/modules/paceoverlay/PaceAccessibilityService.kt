@@ -201,6 +201,21 @@ class PaceAccessibilityService : AccessibilityService() {
     // 재생 여부(maxStaleMs 이내에 재생 위치가 실제로 늘어난 적이 있는지).
     fun isLikelyPlaying(maxStaleMs: Long = 5_000L): Boolean? {
       val service = instance ?: return null
+      // 2026-07-31 실기기 발견(사용자 지적: "쇼츠 안 틀고 있는데 왜 휴식 알림 떠", "P로 앱 가면 시간
+      // 멈춰야지") — 아래 isTrackingPlayback 체크는 Auto Next(핸즈프리 자동넘김) 기능을 켰을 때만
+      // true가 된다. 이 기능을 안 켠(플레인 Focus Session만 쓰는) 사용자는 항상 null을 받았고,
+      // performTick()의 "신호 없으면 안전하게 차감" 폴백 때문에 유튜브를 완전히 떠나 Pace 자체 화면을
+      // 보고 있어도 남은시간/휴식카운트다운이 계속 깎였다. 포그라운드 앱이 추적 대상(유튜브 등)이
+      // 아님이 확인되면 Auto Next 상태와 무관하게 "재생 중 아님"을 먼저 확정한다.
+      //
+      // 2026-07-31 실기기 재발견 — 위 수정에 처음엔 getCurrentForegroundPackage()(3초 신선도 게이트)를
+      // 썼는데 실기기에서 여전히 안 먹혔다: TYPE_WINDOW_STATE_CHANGED는 "전환이 일어날 때"만 오므로,
+      // Pace 홈 화면에 가만히 머물러 있으면(추가 전환 없음) 3초 뒤 이벤트가 stale 판정돼 null로
+      // 폴백하고, 다시 "신호 없음=항상 차감"으로 돌아가 버렸다(실제로 33→27분 등 계속 깎이는 걸
+      // 로그로 확인). "마지막으로 확인된 포그라운드 앱"은 다음 전환이 오기 전까지는 계속 유효한
+      // 사실이므로, 신선도 게이트 없이 원본 필드를 그대로 읽는다.
+      val fgPackage = service.currentForegroundPackage
+      if (fgPackage != null && !SupportedApps.PACKAGES.contains(fgPackage)) return false
       if (!service.isTrackingPlayback) return null
       if (service.lastPlaybackAdvanceAtMs == 0L) return null
       return SystemClock.elapsedRealtime() - service.lastPlaybackAdvanceAtMs <= maxStaleMs
@@ -274,7 +289,7 @@ class PaceAccessibilityService : AccessibilityService() {
       service.captureCurrentVideoInfoInternal(callback)
     }
 
-    private const val CAPTURE_TIMEOUT_MS = 6000L
+    private const val CAPTURE_TIMEOUT_MS = 8000L
     private val YOUTUBE_VIDEO_ID_PATTERN = Pattern.compile("(?:youtu\\.be/|shorts/|[?&]v=)([a-zA-Z0-9_-]{11})")
     // 실기기 확인된 유튜브 Shorts 액션 레일 content-desc들 — 제목 텍스트를 이 목록과 혼동하지
     // 않기 위한 제외 키워드(로케일이 다르면 이 휴리스틱이 안 먹혀 title=null로 폴백될 수 있음,
@@ -655,17 +670,50 @@ class PaceAccessibilityService : AccessibilityService() {
     }
   }
 
-  // 공유시트가 뜨는 데 기기/OEM별로 지연이 있어 300ms 간격으로 최대 12회(=3.6초) 재시도.
-  // 못 찾으면 위 CAPTURE_TIMEOUT_MS(6초) 시점에 timeoutRunnable이 정리한다.
-  private fun pollForShareTarget(attemptsLeft: Int) {
+  // 공유시트가 뜨는 데 기기/OEM별로 지연이 있어 300ms 간격으로 재시도.
+  // 못 찾으면 위 CAPTURE_TIMEOUT_MS 시점에 timeoutRunnable이 정리한다.
+  //
+  // 2026-07-31 실기기 발견 — Pace는 "최근 사용한 공유 대상"이 아니라서 삼성 공유시트의 앱 아이콘
+  // 줄(고정 5개, 마지막이 "더보기") 첫 화면에 안 뜬다. 이 줄 자체는 스크롤 가능한 목록이 아니라
+  // "더보기"를 눌러야 전체 앱 목록(별도 그리드/리스트)이 펼쳐지고 거기서 Pace를 찾을 수 있다
+  // (uiautomator dump가 이 기기에서 계속 실패해 실제 위젯 구조 대신 스크린샷으로 확인함).
+  // "더보기"를 한 번 클릭한 뒤에는 펼쳐진 목록이 RecyclerView일 수 있어 스크롤 폴백도 유지한다.
+  private fun pollForShareTarget(attemptsLeft: Int, totalAttempts: Int = 20, expanded: Boolean = false) {
     if (attemptsLeft <= 0) return
-    val target = findNodeByExactText(rootInActiveWindow, "Pace")
+    val root = rootInActiveWindow
+    val target = findNodeByExactText(root, "Pace")
     if (target != null) {
       val clickable = generateSequence(target) { it.parent }.firstOrNull { it.isClickable } ?: target
       clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
       return
     }
-    handler.postDelayed({ pollForShareTarget(attemptsLeft - 1) }, 300L)
+    if (!expanded) {
+      val more = findNodeByExactText(root, "더보기") ?: findNodeByExactText(root, "More")
+      if (more != null) {
+        val clickableMore = generateSequence(more) { it.parent }.firstOrNull { it.isClickable } ?: more
+        clickableMore.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        handler.postDelayed({ pollForShareTarget(attemptsLeft - 1, totalAttempts, expanded = true) }, 400L)
+        return
+      }
+    } else if (attemptsLeft <= totalAttempts / 2) {
+      findScrollableNode(root)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+    }
+    handler.postDelayed({ pollForShareTarget(attemptsLeft - 1, totalAttempts, expanded) }, 300L)
+  }
+
+  // 시트 안에서 자식이 가장 많은 스크롤 가능 노드를 고른다 — 앱 아이콘 목록(RecyclerView)이 대개
+  // 드래그 핸들/배경 같은 다른 스크롤 가능 컨테이너보다 자식이 훨씬 많다.
+  private fun findScrollableNode(node: AccessibilityNodeInfo?, depth: Int = 0, budget: IntArray = intArrayOf(400)): AccessibilityNodeInfo? {
+    if (node == null || depth > 40 || budget[0] <= 0) return null
+    budget[0]--
+    var best: AccessibilityNodeInfo? = if (node.isScrollable) node else null
+    for (i in 0 until node.childCount) {
+      val candidate = findScrollableNode(node.getChild(i), depth + 1, budget)
+      if (candidate != null && (best == null || candidate.childCount > best!!.childCount)) {
+        best = candidate
+      }
+    }
+    return best
   }
 
   private fun collectContentDescriptions(node: AccessibilityNodeInfo?, out: MutableList<String>, depth: Int, budget: IntArray) {

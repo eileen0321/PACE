@@ -2297,3 +2297,87 @@ co-session의 P메뉴/영상저장(73b5045)·홈팝업수정(9a7f2fb) pull 후 i
 - → **P메뉴는 Android 전용이 맞음.** iOS 저장/즐겨찾기 parity가 필요하면 **피드 내 RN 버튼**으로 구현(현재 영상 videoId를 WebView에서 직접 취득 — Android 공유시트 인터셉트보다 단순). 현재 iOS는 기능 갭(진입점 미구현)이나 크래시 없음. 우선순위 낮음(출시 후).
 
 **진행중(자동 사이클)**: 1시간마다 git 폴링+검증. 남은 배터리 감사 SAFE-JS 수정(백그라운드 PAUSE/블랙아웃 시 WebView 언마운트)은 실기기 회귀검증 후 v1.0.2에 반영 예정. iOS 심사(앱1.0+구독) 결과 대기중.
+
+### 2026-07-31 (밤~새벽) — Windows 세션: Saved/Favorite 네이티브 오버레이 재구현 + 재생감지/블루투스 버그 2건
+
+**아키텍처 교정(사장님 지시)**: 73b5045의 quick-list.tsx(별도 액티비티) 방식은 유튜브를
+백그라운드로 보내 유튜브 자체의 자동 PIP(picture-in-picture)를 유발했다 — 실기기로 직접
+재현·확인. `FLAG_ACTIVITY_NO_USER_ACTION` 등 인텐트 플래그로 막아보려 했으나 실패: 최신
+유튜브는 `setAutoEnterEnabled()`(API 31+) 기반 자동 PIP를 쓰는데, 이건 유튜브 자신만 끌 수
+있고 **외부 앱은 어떤 인텐트로도 못 막는다**(Android 공식문서/삼성 개발자포럼으로 확인).
+근본 해결책은 애초에 유튜브를 벗어나지 않는 것 — P 메뉴 자체와 동일하게 Saved/Favorite
+리스트도 네이티브 WindowManager 오버레이로 재구현했다(quick-list.tsx/savedVideos.ts 삭제).
+
+- **`showSavedFavoriteList(kind)`(PaceOverlayService.kt, 신규)**: 상단에 "+ Add current
+  video" 버튼 + 기존 리스트를 한 창에서 보여줌. 리스트는 항목 수에 맞춰 늘어나되 화면의
+  45% 넘으면 스크롤. Saved/Favorite 둘 다 공유 아이콘(⇪, `ACTION_SEND` 표준 공유시트) +
+  삭제(✕) 지원(사장님 재확인: "favorit도 Add와 공유가 보이게"). Favorite 행 탭 시 원본
+  링크 재생. API 31+에서 `FLAG_BLUR_BEHIND`로 뒤(재생 중인 영상)를 실제로 블러 처리,
+  구버전은 옅은 틴트(35%)로 폴백 — 첫 버전이 90% 불투명이라 "투명이 아니다"는 지적을
+  받고 수정.
+- **`SavedVideosStore`(PaceOverlayService.kt, 신규 object)**: `saved_videos` 테이블을
+  expo-sqlite와 동일 파일(`<filesDir>/SQLite/pace.db`)로 직접 read/write. 네이티브
+  오버레이는 RN/JS 브릿지 생존을 보장 못 하므로 SQLite를 직접 연다. `user_id`는
+  `PaceOverlayModule.cacheUserId`(신규)로 로그인/게스트 진입 시 SharedPreferences에
+  미리 캐시(`useUserStore.ts`의 모든 `set({user...})` 지점에서 호출).
+- **실기기 검증 완료**: Saved/Favorite 둘 다 P 메뉴 → 리스트 오픈(유튜브 이탈 없음, PIP
+  없음) → Add current video → 목록에 즉시 반영 → 공유 아이콘/삭제 버튼 동작 확인. 제목/
+  채널 캡처는 안정적, videoId/공유링크(썸네일용)는 여전히 삼성 공유시트에서 Pace를 못
+  찾아 타임아웃되는 경우가 잦음(아래 별도 항목) — 이 경우 썸네일 없이 제목/채널만 저장됨
+  (기능은 정상 동작, 시각적 완성도만 낮음).
+- **미완료**: 공유시트에 "더보기" 버튼이 있을 때만 클릭 폴백을 넣었는데, 애초에 "더보기"
+  자체가 안 뜨는(앱 아이콘 5개로 꽉 차는) 경우도 실기기에서 확인됨 — 이 경우 근본적으로
+  Pace를 찾을 방법이 없다(안드로이드/삼성 예측 랭킹이 매번 다름). 스크롤 폴백도 넣어봤지만
+  이 상태에선 효과 없음. **다음 세션 우선순위**: 이 캡처 방식 자체가 OEM 의존도가 너무
+  높다 — 대안(예: 클립보드 폴링, 별도 accessibility 이벤트 기반 URL 추출) 검토 필요.
+- **사장님 추가 요청(미착수)**: Saved/Favorite을 오버레이뿐 아니라 **앱 내부(Focus 또는
+  Settings 탭)에도 메뉴+리스트로 노출**해달라는 요청 — 이번 세션엔 손 못 댐, 다음 최우선
+  작업.
+
+**부가 버그 수정(실기기 테스트 중 발견, 전부 이 세션의 핵심 작업과 무관하게 사용자가
+직접 재현·보고)**:
+1. **블루투스 리모컨 토글 무시 버그**: `MediaSession.onSkipToNext/onSkipToPrevious`가
+   `bluetoothVolumeKeySkipEnabled`를 전혀 확인하지 않아서, Focus 탭에서 "블루투스 리모컨"
+   토글을 꺼도 실제 기기의 스트레이 next/prev 신호에 계속 반응(스와이프+"Next Short" 토스트)
+   했다(사용자 지적: "블루투스 손짓 다 꺼져있었는데 먼 개소리야"). 두 콜백 모두 이 플래그로
+   게이팅하도록 수정 + `setBluetoothVolumeKeySkipEnabled()`가 세션 도중 토글 시 이 인스턴스
+   필드에도 즉시 반영하도록 수정(기존엔 `PaceAccessibilityService`의 static 필드만 갱신,
+   `PaceOverlayService` 인스턴스 필드는 세션 시작 시점 값에 고정돼 있었음).
+2. **재생 안 하는데 시간/휴식알림 계속 카운트다운되는 버그**: `isLikelyPlaying()`이 Auto
+   Next(핸즈프리 자동넘김)를 안 켠 사용자에겐 항상 `null`을 반환했고, `performTick()`의
+   "신호 없음=안전하게 항상 차감" 폴백 때문에 유튜브를 완전히 떠나 Pace 자체 화면만 보고
+   있어도 남은시간/휴식카운트다운이 계속 흘러갔다(사용자 지적: "쇼츠 안 틀고 있는데 노티
+   뜨는게 정상이냐", "P에서 앱으로 가면 시간 멈춰야지"). 포그라운드 앱이 추적 대상(유튜브
+   등)이 아님이 확인되면 Auto Next 상태와 무관하게 "재생 중 아님"을 먼저 확정하도록 수정.
+   **주의**: 첫 수정은 `getCurrentForegroundPackage()`(3초 신선도 게이트)를 썼는데 실기기
+   에서 여전히 안 먹혔다 — `TYPE_WINDOW_STATE_CHANGED`는 화면 "전환이 일어날 때"만 오므로
+   Pace 홈에 가만히 머물러 있으면(추가 전환 없음) 3초 뒤 이벤트가 stale 판정돼 다시
+   null로 폴백했다. 최종적으로 신선도 게이트 없이 원본 필드(`currentForegroundPackage`)를
+   직접 읽도록 재수정 — 같은 버그를 두 번 반쪽 고치고 세 번째에 실제로 고침, 다음에 비슷한
+   "포그라운드 앱 확인" 로직을 짤 때 이 함정을 기억할 것.
+3. **디버그 빌드 스플래시/블랙스크린 무한 정지**: Metro dev 서버가 죽어있으면(재부팅/장시간
+   세션 등) 앱이 스플래시 또는 완전 블랙스크린에서 멈춘다 — 이미 2026-07-31 앞선 항목에서
+   "코드 버그 아님"으로 문서화된 것과 동일 원인, 이번에도 몇 차례 재발해 재확인. `npx expo
+   start`로 Metro를 다시 띄우면 즉시 복구됨(프로덕션 빌드엔 영향 없음, JS 번들이 내장되므로).
+4. **`quick-list.tsx`의 `router.back()` 크래시**: 딥링크로 콜드 진입하면 네비게이션 히스토리가
+   비어있어 "GO_BACK 처리 안 됨" 개발자 경고가 뜨며 화면이 안 닫혔다(`overlay/index.tsx`에
+   이미 있던 동일 패턴 버그) — `router.canGoBack() ? back() : replace('/(tabs)/home')`로
+   수정했으나 quick-list.tsx 자체가 이번 세션에 삭제됨(네이티브 오버레이로 대체).
+5. **재설치 후 접근성 서비스 비활성화**: 이미 알려진 이슈([[project_gesture_visual_guide]]류
+   메모리와 동일 패턴)지만 이번엔 **`am force-stop`만 해도** (재설치 없이) 접근성이 꺼지는
+   경우를 처음 확인 — 반복 테스트 중 자주 걸림, 매번 `adb shell settings put secure
+   enabled_accessibility_services ...`로 재활성화 필요했음. 다음 세션도 실기기 테스트 전
+   이 점 인지할 것.
+
+**미검증(다음 세션 확인 필요)**:
+- P 메뉴 "Open App" 탭 시 가끔 유튜브 Shorts로 즉시 되돌아가는 현상 보고됨(사장님: "앱갔다
+  다시 바로 쇼츠 시작") — 원인 미확정. 유력 가설: `openApp()`의 `FLAG_ACTIVITY_REORDER_
+  TO_FRONT`가 Pace 태스크의 마지막 화면(세션 시작 시 진입했던 화면)을 그대로 복원하는데,
+  그 화면 자체에 세션 시작/플랫폼 재진입 로직이 있다면 재발동할 수 있음 — 확인 못 함.
+- 블루투스 리모컨 설정 토글이 삼성 기기에서 `ACCESSIBILITY_DETAILS_SETTINGS` 딥링크 대신
+  일반 다중 카테고리 접근성 목록으로 떨어지는 것으로 보이는 사용자 보고(사장님: "왜케
+  여러개야 가이드도 없이") — 코드는 이미 direct-intent를 시도하고 있음(구현 확인함), 왜
+  삼성에서 실패하는지·정말 실패하는지는 실기기로 직접 재현 못 함.
+- "Shorts HOT"은 여전히 "coming soon" 토스트만 — 카테고리 선정 기준/백엔드 갱신 주기/
+  YouTube Data API 연동은 전혀 착수 안 됨(별도 대형 작업으로 남겨둠, 사장님께도 그렇게
+  안내함).

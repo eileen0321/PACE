@@ -32,6 +32,8 @@ type Props = {
   onProgress?: (fraction: number) => void;
   /** 스와이프 모드에서 실제 재생 중인 videoId 변화 통보(현재 영상 즐겨찾기 추가용). */
   onVideoChange?: (videoId: string) => void;
+  /** iOS 유저 손가락 스와이프(1=위로/다음, -1=아래로/이전) — WebView JS가 감지해 통보(2026-08-01). */
+  onUserSwipe?: (dir: number) => void;
   /** 진단(임시): WebView 오디오 상태 — 무음 원인(소리 자동재생 차단 여부) 파악용. */
   onAudioDiag?: (text: string) => void;
   /** 프리로드 모드 — 다음 영상 페이지를 미리 로드만(재생·소리 없음). 활성화(false 전환) 시 처음부터 재생. */
@@ -222,6 +224,24 @@ const INJECTED_JS_SWIPE = `
     function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
+    // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전). WebView는
+    // scrollEnabled=false라 손가락 스와이프가 YouTube를 직접 안 움직인다. 여기서 수직 스와이프를 감지해
+    // RN에 알리면(userswipe), RN이 goNext/goPrev→player.advance()(=doSwipe)로 실제 이동을 수행한다
+    // (이중 이동 없음). 임계(dy≥60·수직 우세)로 탭은 무시돼 재생/음소거 탭이 그대로 보존된다.
+    var swST = 0, swSY = 0, swSX = 0, swLast = 0;
+    document.addEventListener('touchstart', function (e) {
+      var tt = e.changedTouches && e.changedTouches[0]; if (!tt) return;
+      swST = Date.now(); swSY = tt.clientY; swSX = tt.clientX;
+    }, { capture: true, passive: true });
+    document.addEventListener('touchend', function (e) {
+      var tt = e.changedTouches && e.changedTouches[0]; if (!tt || !swST) return;
+      var dy = tt.clientY - swSY, dx = tt.clientX - swSX, dt = Date.now() - swST; swST = 0;
+      if (dt > 800) return;                            // 너무 느린 드래그는 스와이프로 안 봄
+      if (Math.abs(dy) < 60) return;                   // 탭/미세 이동 무시(재생·음소거 탭 보존)
+      if (Math.abs(dy) < Math.abs(dx) * 1.3) return;   // 수평 우세면 무시(수직만)
+      var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지
+      send({ type: 'userswipe', dir: dy < 0 ? 1 : -1 });                   // 위로(dy<0)=다음, 아래로=이전
+    }, { capture: true, passive: true });
     // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. 스와이프 모드에선 부모의 current.videoId가 첫 영상에
     // 고정돼 있어(리로드 안 함) 실제 재생 중인 영상 id를 부모가 모른다. URL(/shorts/ID)에서 현재 id를
     // 뽑아 부모로 보고한다(초기 1회 + URL 변할 때마다).
@@ -309,7 +329,7 @@ function isAllowedNavigation(url: string): boolean {
 export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
-  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, preload }: Props,
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, preload }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -404,6 +424,11 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
           if (msg.type === 'video') {
             const vid = (msg as any).videoId;
             if (typeof vid === 'string' && vid) onVideoChange?.(vid);
+            return;
+          }
+          if (msg.type === 'userswipe') {
+            const d = (msg as any).dir;
+            if (d === 1 || d === -1) onUserSwipe?.(d);
             return;
           }
           if (msg.type === 'ready') {

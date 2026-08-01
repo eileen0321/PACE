@@ -483,6 +483,13 @@ export default function PaceFeedScreen() {
           playing={playing}
           onProgress={handleProgress}
           onVideoChange={(id) => { currentVideoIdRef.current = id; }}
+          onUserSwipe={(dir) => {
+            // iOS 유저 손가락 스와이프(위=다음/아래=이전) — 핸즈프리/볼륨키와 동일 경로(goNext/goPrev)로
+            // idle 리셋·토스트·전환정지까지 재사용. 실제 이동은 goNext→player.advance()가 수행.
+            markUserInput();
+            if (dir === 1) { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); }
+            else if (goPrev()) { useToastStore.getState().show(t('feed.previousShortToast')); }
+          }}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거

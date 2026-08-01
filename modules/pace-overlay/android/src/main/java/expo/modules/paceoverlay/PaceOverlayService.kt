@@ -95,9 +95,17 @@ class PaceOverlayService : Service() {
     val now = SystemClock.elapsedRealtime()
     if (now - lastOverlayRefreshAtMs < REFRESH_INTERVAL_MS) return
     lastOverlayRefreshAtMs = now
-    overlayView?.let { try { windowManager?.removeView(it) } catch (e: Exception) {} }
+    // 2026-08-02 실기기 발견("영상 넘어갈 때 화면 위쪽이 까맣게 됨, 3개 이상 연속") — 이 4초 강제
+    // 재생성이 원인으로 의심된다. 예전엔 removeView(구창) → showOverlay(새창) 순서라 그 사이에
+    // Pace 오버레이 창이 WindowManager에서 완전히 사라지는 짧은 순간이 항상 있었는데, 이 시점이
+    // 유튜브의 영상 SurfaceView 전환(다음 Shorts로 넘어가는 순간)과 겹치면 화면 합성이 꼬여
+    // 영상 서피스가 그 프레임에서 검게 나오는 것으로 추정(WindowManager가 오버레이 레이어 유무가
+    // 바뀔 때마다 전체 컴포지션을 다시 계산하는 비용 때문). 순서를 뒤집어 새 창을 먼저 추가하고
+    // 그 다음에 구 창을 지운다 — "Pace 오버레이 창이 0개인 순간" 자체를 없애 이 창구를 닫는다.
+    val oldView = overlayView
     overlayView = null
     showOverlay(remainingMinutesForRecreate)
+    oldView?.let { try { windowManager?.removeView(it) } catch (e: Exception) {} }
   }
 
   // 포그라운드 앱 감지 폴링 — SupportedApps.PACKAGES(YouTube/Instagram)에 있을 때만 오버레이를
@@ -748,7 +756,15 @@ class PaceOverlayService : Service() {
     // 신뢰할 수 있는 신호(isSupportedAppWindowVisible, getWindows() 기반)로 실제로 감시 대상 앱을
     // 보고 있을 때만 동작하도록 게이팅한다.
     fun triggerNext(context: Context) {
-      if (!PaceAccessibilityService.isSupportedAppWindowVisible()) return
+      // 2026-08-02 진단 로그 — 사용자 실기기 보고("핸즈프리 다 켜져있는데 손짓이 아예 안 됨").
+      // PaceHandWaveDetector 쪽은 WAVE detected 로그가 실제로 찍히는 걸 확인했는데, 그 다음
+      // triggerNext()가 조용히 return하는지(swipeOnce까지 못 가는지) 로그가 전혀 없어 구분이
+      // 안 됐다 — 어느 쪽에서 끊기는지 확정하려고 추가.
+      if (!PaceAccessibilityService.isSupportedAppWindowVisible()) {
+        Log.w("PaceOverlayService", "triggerNext() aborted — isSupportedAppWindowVisible()=false")
+        return
+      }
+      Log.i("PaceOverlayService", "triggerNext() -> swipeOnce(up=true)")
       PaceAccessibilityService.swipeOnce(up = true)
       bumpBluetoothCounter(context, "bt_next_count")
       showToast(context, "⏭ Next Short")
@@ -816,8 +832,19 @@ class PaceOverlayService : Service() {
       val remainingMs = deadlineAtMs - System.currentTimeMillis()
       if (deadlineAtMs <= 0L || remainingMs <= 0L) {
         focusSessionAutoStop.run()
-      } else {
-        focusSessionHandler.postDelayed(focusSessionAutoStop, remainingMs)
+        return
+      }
+      focusSessionHandler.postDelayed(focusSessionAutoStop, remainingMs)
+      // 2026-08-02 실기기 발견("핸즈프리 다 온인데 손짓이 아예 안 됨") — 타이머와 똑같은 병이었다:
+      // 손짓/핑거스냅 감지기는 setAutoMode(true)의 enable 분기에서만 시작되는데, 그 분기는 프로세스
+      // 복구 경로(ensureInfraReady)에선 절대 안 불린다. 즉 bt_auto_mode=true가 SharedPreferences에
+      // 남아있어 배지는 계속 "FOCUS ON"으로 보이는데, 프로세스가 재시작되는 순간(재설치·OOM kill
+      // 등) 카메라 기반 감지기 자체는 다시는 안 켜져 있었다 — PaceHandWaveDetector.start()가 아예
+      // 호출된 적이 없어서 카메라를 잡지도 않는 상태(사용자가 손짓해도 아무 반응 없음, 로그도 전혀
+      // 안 남음). setAutoMode(true)의 감지기 시작 부분과 동일하게 여기서도 다시 켠다.
+      PaceAccessibilityService.startWatching(45_000L)
+      if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, false)) {
+        PaceHandWaveDetector.start(context) { triggerNext(context) }
       }
     }
 

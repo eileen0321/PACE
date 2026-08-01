@@ -527,6 +527,11 @@ class PaceOverlayModule : Module() {
     // "런처 아이콘을 다시 탭한 것"과 동일하게 기존 태스크를 그 상태 그대로 앞으로 가져온다 — 이건
     // openApp()의 기존 폴백 경로와 같은 패턴(그쪽은 Pace 자신, 이건 YouTube 등 제3자 앱 대상).
     Function("resumeThirdPartyApp") { packageName: String ->
+      // 2026-08-02 진단 로그 — 사용자가 "Open App 누르면 다시 쇼츠로 튕긴다"고 보고했는데, 실기기
+      // 로그로 튕기는 시점의 시그니처(REORDER_TO_FRONT, 새 START 없음)가 이 함수와 정확히 일치하는
+      // 걸 확인했다. 이 함수는 JS onSelectPlatform(세션 running 중 카드 재탭)에서만 불리는데 사용자는
+      // 카드를 안 눌렀다고 함 — 재현 시 이 로그로 정확히 언제/몇 번 불렸는지 확정한다.
+      Log.i("PaceOverlayModule", "resumeThirdPartyApp($packageName) called")
       appContext.reactContext?.let { context ->
         try {
           val intent = context.packageManager.getLaunchIntentForPackage(packageName)

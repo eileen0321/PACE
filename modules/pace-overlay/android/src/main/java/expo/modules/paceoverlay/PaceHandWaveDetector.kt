@@ -56,13 +56,19 @@ object PaceHandWaveDetector {
   private const val REFRACTORY_MS = 1200L
   // 손 크기(손목~중지 뿌리 거리, 정규화 좌표계 0~1)가 이 윈도우 안에서 이 배수 이상 커지면
   // "다가오는 움직임"으로 판단. 초기 추정치 — 실기기 튜닝 전(V1, PaceSnapDetector와 동일 원칙).
-  private const val GROWTH_WINDOW_MS = 700L
+  // 2026-08-02 실기기 발견 — MediaPipe 추론 지연(기기 부하 시 700ms 훌쩍 넘김)이 겹치면 이 창
+  // 안에 프레임이 1개만 남아 growthRatio가 항상 자기 자신과 비교돼(=1.0) 버렸다. 추론이 느려도
+  // 비교할 "과거" 샘플이 남아있도록 넉넉히 늘림.
+  private const val GROWTH_WINDOW_MS = 2500L
   // 2026-07-26 사용자 지적 — "폰을 거치대에 세워두고 얼굴 앞에서 화면 쪽으로 손을 미는" 실제 사용
   // 거리에서는 손이 카메라에 아주 가까이 붙지 않는다(그렇게 하려면 거치대에서 손을 뻗어 렌즈 코앞까지
   // 가져가야 하는데 비현실적). V1의 1.5배 임계값은 5번 중 5번 다 실패할 만큼 너무 빡빡했다 —
   // 낮추고, 그래도 안 잡히면 다음 로그(아래 onResult의 근접 실패 로그)로 실측 growthRatio를 보고
   // 재조정한다.
-  private const val GROWTH_RATIO_THRESHOLD = 1.2
+  // 2026-08-02 실기기 재조정 — 사용자가 10번 넘게 시도했는데 실측 growthRatio가 계속 1.08~1.10
+  // 근처(near-miss 로그, threshold=1.2)에 머물러 단 한 번도 안 넘어갔다. 1.2는 여전히 실사용
+  // 거리/속도 기준 너무 빡빡한 것으로 확인돼 낮춘다.
+  private const val GROWTH_RATIO_THRESHOLD = 1.1
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
@@ -380,6 +386,16 @@ object PaceHandWaveDetector {
       sizeHistory.removeFirst()
     }
     val oldestInWindow = sizeHistory.firstOrNull() ?: return
+    // 2026-08-02 실기기 발견("손짓 100번 넘게 해도 단 한 번도 안 됨") — 로그에서 growthRatio가
+    // 매번 정확히 1.0으로 찍혔다. sizeHistory에 방금 추가한 현재 프레임 하나만 남아있으면
+    // oldestInWindow가 곧 그 현재 프레임 자신이라 handSize/handSize=1.0(자기 자신과 비교)이 되는데,
+    // 실제로 매번 이 상태였다는 뜻 — detectAsync가 REFRACTORY_MS 최적화(2026-08-01 추가)와 카메라/
+    // 추론 지연이 겹쳐 GROWTH_WINDOW_MS(700ms)보다 훨씬 뜸하게 불려서, 새 프레임이 들어올 때마다
+    // 이전 기록이 이미 700ms를 넘겨 다 지워진 뒤였다(=비교할 "과거"가 항상 없었음). oldestInWindow가
+    // 방금 넣은 그 항목 자체(같은 타임스탬프)면 아직 비교할 과거 기록이 없는 것이므로, 의미없는
+    // growthRatio=1.0을 계산하지 말고 이번 프레임은 조용히 건너뛴다(다음 프레임에서 최소 2개 이상
+    // 쌓이면 그때부터 의미있는 비교가 시작됨).
+    if (oldestInWindow.first == now) return
     val growthRatio = handSize / oldestInWindow.second
     val pastRefractory = now - lastTriggerAtMs > REFRACTORY_MS
 

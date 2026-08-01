@@ -480,10 +480,15 @@ class PaceAccessibilityService : AccessibilityService() {
       if (nearEnd || loopedBack) {
         videoAdvanceCount++
         Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s count=$videoAdvanceCount isWatching=$isWatching")
-        // 자동넘김(isWatching)이 꺼져 있으면(순수 사용시간 추적 전용 세션) 영상 전환 카운트는 계속
-        // 세되 스와이프는 절대 하지 않는다 — Focus Session을 안 켠 사용자에게 원치 않는 자동넘김이
-        // 발생하면 안 되므로.
-        if (isWatching) {
+        // 2026-08-02 실기기 발견("3초 정도에 넘어갔다고 다 끝나기 전에") — loopedBack은 "영상이 이미
+        // 바뀌었다"(자동넘김이 스와이프했든, 사용자가 직접 손으로 넘겼든)는 뒤늦은 확인 신호일 뿐이지,
+        // "지금 스와이프해야 한다"는 신호가 아니다. 그런데도 예전엔 nearEnd와 똑같이 performSwipeUp()을
+        // 또 호출해서 — 사용자가 직접 스와이프해 새 영상(재생 위치 0~수 초)에 막 도착한 순간 그 위치
+        // 하락을 "루프백"으로 오인해 곧바로 한 번 더 스와이프, 방금 도착한 영상을 보기도 전에
+        // 넘겨버렸다(2026-07-24 손짓 재무장 강화로 고친 "두 번씩 넘어감"과 겉증상은 같지만 원인은
+        // 손짓이 아니라 이 폴링 로직 자체였음). nearEnd일 때만(Pace가 스스로 "곧 끝난다"고 판단해
+        // 능동적으로 넘겨야 하는 유일한 경우) 실제로 스와이프한다 — loopedBack은 카운트/상태 갱신만.
+        if (nearEnd && isWatching) {
           performSwipeUp()
           lastSwipeAtMs = now
         }

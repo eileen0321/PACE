@@ -380,6 +380,10 @@ class PaceAccessibilityService : AccessibilityService() {
   // — 그래야 세션 중에도 사용자가 폰 본체 볼륨 버튼으로 실제 음량을 조절할 수 있다. 오직 외부
   // (블루투스 리모컨/이어폰) 장치에서 온 볼륨 이벤트만 다음넘김 대리 신호로 소비한다.
   override fun onKeyEvent(event: KeyEvent): Boolean {
+    // 2026-08-02 진단 — "블루투스 눌러도 볼륨만 조절됨"이 재현되는데 아래 어떤 로그도 안 찍혀서,
+    // 이 콜백 자체가 호출되는지부터 확정해야 한다(호출은 되는데 게이트에서 걸리는 것인지 vs
+    // OS가 애초에 이 콜백으로 볼륨키를 안 주는 것인지 — 대응이 완전히 달라짐).
+    Log.i("PaceAccessibility", "onKeyEvent ENTRY keyCode=${event.keyCode} action=${event.action} deviceId=${event.deviceId} fg=$currentForegroundPackage winVisible=${supportedAppWindowVisible()} btSkip=$bluetoothVolumeKeySkipEnabled")
     if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
       return false
     }
@@ -387,7 +391,15 @@ class PaceAccessibilityService : AccessibilityService() {
     // 독립 토글이다(에어팟/블루투스 스피커를 순수 감상용으로만 쓰는 사용자를 위해 따로 끌 수 있어야
     // 함). isWatching 대신 bluetoothVolumeKeySkipEnabled로 게이팅 — 손짓/핑거스냅은 꺼둔 채 이것만
     // 켜두거나, 반대로 이것만 꺼둘 수 있다.
-    if (!bluetoothVolumeKeySkipEnabled || !SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+    // 2026-08-02 실기기 발견("블루투스 눌러도 볼륨만 조절됨") — 로그에 아래 device check 한 줄도 안
+    // 찍혔다 = 여기서 매번 걸러지고 있었다. currentForegroundPackage는 TYPE_WINDOW_STATE_CHANGED
+    // (화면 전환 이벤트)로만 갱신되는데, YouTube Shorts는 영상이 바뀌어도 같은 Activity 안에서
+    // 콘텐츠만 바뀌지 화면 전환 자체가 없어서 이 값이 오래 갱신 안 되거나 null로 남는다 — 오버레이가
+    // 사라지던 것과 완전히 같은 원인(PaceOverlayService.foregroundPollRunnable 주석 참고).
+    // 그쪽은 이미 isSupportedAppWindowVisible()(getWindows() 기반, 이벤트가 아니라 "지금 이 순간"을
+    // 직접 조회)로 보강했는데 이 볼륨키 경로만 낡은 신호를 그대로 쓰고 있었다. 동일하게 보강한다.
+    if (!bluetoothVolumeKeySkipEnabled) return false
+    if (!SupportedApps.PACKAGES.contains(currentForegroundPackage) && !supportedAppWindowVisible()) {
       return false
     }
     // 2026-07-23 사용자 지적 — "사용자가 실제 볼륨을 올리거나 내리고 싶을 땐?" 폰 자체 물리

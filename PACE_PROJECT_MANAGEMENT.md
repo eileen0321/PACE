@@ -3259,3 +3259,13 @@ co-session의 두 Android 커밋을 pull해서 iOS 영향 검토 — **둘 다 i
 - Focus Session(①)은 원래부터 무료 없이 바로 광고/크레딧(`feed/index.tsx:412`)이라 변경 없음 — 이번에 ②를 ①에 맞춘 것. tsc 통과.
 
 **⚠️ Android(Windows 세션) 해야 할 일**: Android 쪽 하루 한도 게이트에도 동일한 "첫 1회 무료 5분" 무료 경로가 있으면(예: `LimitReachedOverlay` 대응 네이티브/`addBonusMinutes` 첫 도달 무료 분기, 최근 `7682273`/`8468a82` 계열에서 만든 tier1 무료 경로) **제거하고 항상 광고/크레딧으로 통일**. Focus Session도 무료 없이 광고만. 규칙: **10분 경과(하루한도 도달 or Focus Session 타임아웃) → 무료 연장 일절 없음 → 광고 시청(또는 크레딧) 시에만 +5분.** 관련 i18n에 "무료" 문구 있으면 같이 제거.
+
+### 2026-08-01 (Mac 세션) — 🟢 비-쇼츠 watch 리다이렉트 클라이언트 가드 추가 + 시뮬 실검증 완료 (커밋 `e0dd69f`)
+**사장님 지적**: "시뮬에 뜬 쇼츠 리스트(HOT) 눌러서 일반 유튜브(watch)로 뜬 거 아냐? 이때는 자동재생/손짓 안 되잖아." → 맞음. 백엔드 P0D 필터(`e7db712`)는 근본 수정이지만 **배포 대기 중**이라 시뮬(프로덕션 백엔드 직결)엔 아직 로블록스 라이브가 HOT에 남아 있었고, 탭하면 `youtube.com/shorts/{id}`가 `m.youtube.com/watch?v=...`로 리다이렉트돼 가로 watch 페이지로 떴다. 그 화면에선 스와이프/자동넘김/손짓이 전부 Shorts 릴 DOM(`ytd-reel-video-renderer` 등)에 의존해 **동작 불가**.
+
+**iOS 클라이언트 방어(백엔드에만 의존 안 함)**:
+- `YouTubeShortsPlayer.ios.tsx` — 스와이프 플레이어 `attach()`가 `<video>`는 찾았는데 `location.href`에 `/shorts/`가 없으면(=watch로 리다이렉트된 비-쇼츠) `notshorts` 신호를 보내고 watch `<video>`엔 핸들러를 안 붙인다. 리다이렉트는 내비게이션(서버 303) 시점에 끝나 이 시점 href는 최종값 → 오탐 없음(정상 쇼츠는 항상 `/shorts/` 유지). 새 prop `onNotShorts`.
+- `feed/index.tsx` — `onNotShorts`: 스와이프 스킵으론 릴 DOM이 없어 복구 불가라, `forcedVideoId` 해제(HOT/Favorite 강제오픈) 또는 `advance()`로 **key를 바꿔 큐의 정상 쇼츠에 리마운트** + 토스트(`feed.notShortsSkippedToast`, ko/en 추가). onError(-2, 스와이프 스킵)와 구분.
+- **시뮬 실검증(프로덕션 실 데이터로)**: HOT에서 로블록스(비-쇼츠) 탭 → Metro 로그 `[WV] notshorts → remount {"href":"https://m.youtube.com/watch?v=pbPsGT3Tfyo"}` 확인 → 화면이 watch에 안 갇히고 **정상 세로 Shorts("8 Satisfying 3D Prints" @Freaky3D, 1/8 릴 UI)로 리마운트**됨을 스크린샷으로 확인. tsc 통과, TEMP(`__DEV__` 강제표시) 원복 완료, git clean.
+
+**⚠️ Android(Windows 세션) 참고**: Android HOT은 네이티브라 오픈 경로가 다르지만(WebView 아님), 만약 HOT/Favorite 항목을 `youtube.com/shorts/{id}`로 열고 그게 watch로 리다이렉트될 수 있는 경로가 있으면 동일하게 "비-쇼츠면 건너뛰기" 방어 필요. 근본 수정은 공용 백엔드 P0D 필터(`e7db712`, 배포+`/shorts-hot/refresh` 또는 6h 크론)라 배포되면 HOT엔 진짜 쇼츠만 남음.

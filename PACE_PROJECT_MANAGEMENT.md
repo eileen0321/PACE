@@ -3121,3 +3121,20 @@ extendFocusSession)`. iOS feed에서 쓸 땐 `onExtend={(min) => { /* setIsAutoM
 위 두 "1회 무료→광고/크레딧" 규칙(Focus Session 타이머 + 하루 한도)과 4개 권한 리다이렉트 수정이
 Android/iOS 양쪽에서 실제로 동작하는지, 그리고 서로 다른 화면에서 부르는 값들(크레딧 단위, 5분
 단위, 문구)이 플랫폼 간 안 어긋나는지 중점 확인.
+
+### 2026-08-01 (이어서, 자율세션) — Mac(iOS): 보상광고 matching 통합 완료 + 하루한도 parity 확인
+
+- **보상광고(Focus Session 타이머 타임아웃)**: co-session이 `FocusSessionExtendModal`을 `onExtend`
+  prop으로 이미 일반화(`7682273`)해둬서 그대로 사용. feed에 `sessionTimedOutRef`(타이머 발화 시 true) +
+  `toggleAutoMode` 재개 시 `timedOut && !isPremium`이면 in-feed 모달, `onExtend`로 세션 재활성화.
+  커밋 `dc19620`(rebase로 co-session 모달 버전 채택 후 feed를 onExtend에 맞춤). 타입체크 통과.
+- **하루 한도 규칙(1회 무료+5분 → 광고/크레딧)**: 공유 `home.tsx`(showDailyLimitExtend + hitCount
+  게이트, LimitReachedOverlay)에 co-session이 구현 → **iOS 자동 반영, 별도 작업 불필요(확인 완료).**
+- **⚠️ 설계 차이(사장님 확정 필요)**: Focus Session 타이머 타임아웃 처리가 **Android=홈 자동복귀 후
+  Shorts 재탭→광고 / iOS=피드에 머물며 Focus 토글 재탭→in-feed 광고 모달**. iOS는 타임아웃 시 홈으로
+  안 가고 피드에 머무는 구조라(setIsAutoMode(false)만) in-feed가 자연스러움. 사장님 질문("focus off
+  다시 웹뷰에서 누르면 광고")과도 일치. 완전 동일 UX 원하면 iOS도 홈복귀로 바꿀 수 있음(리뷰).
+- **가이드→홈 버벅임**: 프리페치 InteractionManager 지연(`ab0f9e0`) — 부분 완화. 홈 무거운 렌더 지연은
+  회귀 위험으로 실기기 검증 후 결정.
+- ⚠️ 전 항목 **실기기 검증 필요**(보상광고 실 로드/보상, 타임아웃 10분 대기). Metro watchman 미설치로
+  임베드 JS stale 위험 — 캐시 클리어 빌드 권장.

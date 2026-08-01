@@ -445,6 +445,7 @@ export const translations = {
       nextShortToast: '⏭ Next Short',
       previousShortToast: '⏮ Previous Short',
       notShortsSkippedToast: 'Not a Short — skipped to the next one',
+      listEndYoutubeToast: 'End of list — continuing with YouTube',
       // 2026-07-26 사장님 지시("session on은 focus on으로") — Android 네이티브 알약(PaceOverlayService)
       // 라벨과 동기화(대칭 ON/OFF 쌍으로 통일 — 예전엔 "SESSION ON"/"START SESSION"으로 비대칭이었음).
       focusSessionOnBadge: 'FOCUS ON',
@@ -897,6 +898,7 @@ export const translations = {
       nextShortToast: '⏭ Next Short',
       previousShortToast: '⏮ Previous Short',
       notShortsSkippedToast: '쇼츠가 아니라 다음 영상으로 건너뛰었어요',
+      listEndYoutubeToast: '목록 끝 — 유튜브 추천으로 이어집니다',
       // 2026-07-26 사용자 지적("한글 설정이라고 다 한글로 바꾸지 말고, SESSION ON도 유지하라고") —
       // 이 파일 맨 위 원칙(짧은 기능명/상태 배지는 한국어 UI에서도 영문 유지) 그대로, 이 pill
       // 배지는 영문 배지 그대로 둔다(자연어 번역 대상 아님).

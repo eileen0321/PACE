@@ -97,7 +97,26 @@ export default function PaceFeedScreen() {
   // 스와이프로 이어진다(Safari로 안 튕김). 스와이프 모드는 firstVideoIdRef에 첫 영상을 핀하므로 key 교체로
   // 리마운트해야 새 영상이 로드된다.
   const [forcedVideoId, setForcedVideoId] = useState<string | null>(null);
-  const playInFeed = (videoId: string) => { markUserInput(); setForcedVideoId(videoId); setStatus('PLAYING'); };
+  // 2026-08-01 사장님 지시("쇼츠 리스트에서 유머 카테고리를 골랐다는 건 그 카테고리만 보고 싶다는 거 —
+  // 우리 리스트를 이어서 보여주고, 보여줄 게 없으면 그때 유튜브 앱 순서로") — HOT/Favorite에서 항목을
+  // 탭하면 그 리스트(카테고리) 순서대로 이어서 재생한다. forcedListRef가 있으면 goNext/goPrev가 유튜브
+  // 네이티브 스와이프 대신 이 리스트의 다음/이전 videoId로 리마운트하고, 리스트를 다 소진하면 그때
+  // forcedListRef를 비워 마지막 영상에서 유튜브 네이티브 피드로 이어간다. (리스트 재생은 항목마다
+  // 리로드=리마운트라 전환에 로딩 커버가 잠깐 뜨지만, "카테고리만 보고 싶다"는 의도가 매끈함보다 우선.)
+  const forcedListRef = useRef<string[] | null>(null);
+  const forcedIndexRef = useRef(0);
+  const playInFeed = (videoId: string, playlist?: string[]) => {
+    markUserInput();
+    if (playlist && playlist.length > 0) {
+      forcedListRef.current = playlist;
+      forcedIndexRef.current = Math.max(0, playlist.indexOf(videoId));
+    } else {
+      forcedListRef.current = null;
+      forcedIndexRef.current = 0;
+    }
+    setForcedVideoId(videoId);
+    setStatus('PLAYING');
+  };
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
@@ -363,13 +382,38 @@ export default function PaceFeedScreen() {
   const goNext = () => {
     pauseWaveRef.current?.();
     setStatus('PLAYING');
+    // 우리 리스트(HOT/Favorite) 순서 재생 중이면 유튜브 스와이프 대신 리스트의 다음 항목으로 리마운트한다.
+    const list = forcedListRef.current;
+    if (list) {
+      const ni = forcedIndexRef.current + 1;
+      if (ni < list.length) {
+        forcedIndexRef.current = ni;
+        setForcedVideoId(list[ni]);
+        return;
+      }
+      // 리스트 소진 → 유튜브 자동으로 전환. forcedListRef만 비우고(다음부턴 스와이프 경로), 마지막 영상
+      // 페이지에서 그대로 스와이프를 주입해 유튜브 네이티브 피드로 이어간다(forcedVideoId는 유지 = 리마운트 없음).
+      forcedListRef.current = null;
+      useToastStore.getState().show(t('feed.listEndYoutubeToast'));
+      // 아래 스와이프 경로로 진행.
+    }
     // 스와이프 모드(YouTube 네이티브): 리로드 없이 플레이어에 다음 스와이프 주입(큐 advance 안 함 → 플레이어가
     // 첫 영상에 마운트된 채 유지, YouTube가 다음 쇼츠를 이어줌). reload 모드: 기존대로 큐 advance(videoId 변경).
     if (SWIPE_NAV) { playerRef.current?.advance(); }
     else { advance(); } // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
   };
-  // 이전 — 스와이프 모드면 위로 스와이프 주입, 아니면 큐 goToPrevious. moved 반환(토스트 표시 판단용).
+  // 이전 — 리스트 재생 중이면 리스트 이전 항목, 아니면 스와이프 모드=위로 스와이프 주입/reload=큐 goToPrevious.
+  // moved 반환(토스트 표시 판단용).
   const goPrev = (): boolean => {
+    const list = forcedListRef.current;
+    if (list) {
+      const pi = forcedIndexRef.current - 1;
+      if (pi < 0) return false; // 리스트 첫 항목 — 더 이전 없음
+      forcedIndexRef.current = pi;
+      setForcedVideoId(list[pi]);
+      setStatus('PLAYING');
+      return true;
+    }
     if (SWIPE_NAV) { playerRef.current?.previous(); setStatus('PLAYING'); return true; }
     const moved = goToPrevious();
     if (moved) setStatus('PLAYING');
@@ -503,9 +547,15 @@ export default function PaceFeedScreen() {
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onNotShorts={() => {
             // 2026-08-01 사장님 지적 — HOT/Favorite에서 연 항목이 비-쇼츠(라이브/롱폼)라 watch로 리다이렉트되면
-            // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔
-            // 리마운트한다: forcedVideoId(강제 오픈) 해제 → 큐의 정상 쇼츠로 복귀, 없으면 다음 큐로 advance.
+            // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔 리마운트한다.
             useToastStore.getState().show(t('feed.notShortsSkippedToast'));
+            // 리스트 재생 중이면 리스트의 다음 항목으로 건너뛴다(카테고리 안에서 계속). 리스트 끝이면 큐로 복귀.
+            const list = forcedListRef.current;
+            if (list) {
+              const ni = forcedIndexRef.current + 1;
+              if (ni < list.length) { forcedIndexRef.current = ni; setForcedVideoId(list[ni]); return; }
+              forcedListRef.current = null; setForcedVideoId(null); return;
+            }
             if (forcedVideoId) setForcedVideoId(null);
             else advance();
           }}

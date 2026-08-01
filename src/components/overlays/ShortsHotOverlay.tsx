@@ -21,7 +21,9 @@ const CATEGORY_LABEL_KEY: Record<string, TranslationKey> = {
 
 // onOpenVideo(optional) — 제공되면 항목 탭 시 외부 브라우저(Safari) 대신 앱 내 피드에서 그 videoId를
 // 재생한다(2026-08-01 사장님 지적 "우리 앱에서 열려야지 사파리로 열지 마"). 미제공이면 기존 Linking 폴백.
-export function ShortsHotOverlay({ onClose, onOpenVideo }: { onClose: () => void; onOpenVideo?: (videoId: string) => void }) {
+// playlist(2026-08-01 사장님 지시) — 지금 보고 있는 카테고리의 videoId 목록을 순서대로 함께 넘겨,
+// 피드가 이 리스트를 이어서 재생하게 한다(카테고리 선택 = 그 카테고리만 보겠다는 의도). 소진되면 유튜브 자동.
+export function ShortsHotOverlay({ onClose, onOpenVideo }: { onClose: () => void; onOpenVideo?: (videoId: string, playlist?: string[]) => void }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState<string>('all');
   // 프리페치 스토어에서 캐시를 먼저 읽어 즉시 표시(stale-while-revalidate) — 앱 시작 시 'all'은 이미
@@ -43,7 +45,8 @@ export function ShortsHotOverlay({ onClose, onOpenVideo }: { onClose: () => void
 
   const onOpen = (item: ShortsHotVideo) => {
     useShortsHotStore.getState().markOpened(item.videoId);
-    if (onOpenVideo) { onOpenVideo(item.videoId); onClose(); }
+    // 현재 카테고리 리스트(표시 순서)를 통째로 넘겨 피드가 이어서 재생하게 한다.
+    if (onOpenVideo) { onOpenVideo(item.videoId, items.map((i) => i.videoId)); onClose(); }
     else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 

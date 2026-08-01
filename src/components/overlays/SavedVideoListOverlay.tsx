@@ -28,8 +28,9 @@ export function SavedVideoListOverlay({
   // 넘겨준다. 주어졌을 때만 favorite 리스트 상단에 추가 버튼을 렌더한다. 추가 후 리스트 새로고침.
   onAddCurrent?: () => Promise<void> | void;
   // onOpenVideo(optional) — 제공되면 항목 탭 시 외부 브라우저(Safari) 대신 앱 내 피드에서 재생
-  // (2026-08-01 사장님 지적). 미제공이면 기존 Linking(url) 폴백.
-  onOpenVideo?: (videoId: string) => void;
+  // (2026-08-01 사장님 지적). 미제공이면 기존 Linking(url) 폴백. playlist(2026-08-01 사장님 지시) —
+  // Favorite 목록(표시 순서)의 videoId들을 함께 넘겨 피드가 이 리스트를 이어서 재생하게 한다(소진되면 유튜브 자동).
+  onOpenVideo?: (videoId: string, playlist?: string[]) => void;
 }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<SavedVideo[]>([]);
@@ -54,10 +55,15 @@ export function SavedVideoListOverlay({
   }, []);
 
   const onOpen = useCallback((item: SavedVideo) => {
-    if (onOpenVideo && item.videoId) { onOpenVideo(item.videoId); onClose(); return; }
+    if (onOpenVideo && item.videoId) {
+      // Favorite 목록(표시 순서)에서 videoId 있는 것만 순서대로 넘겨 피드가 이어서 재생하게 한다.
+      onOpenVideo(item.videoId, items.map((v) => v.videoId).filter((id): id is string => !!id));
+      onClose();
+      return;
+    }
     if (!item.url) return;
     Linking.openURL(item.url).catch(() => {});
-  }, [onOpenVideo, onClose]);
+  }, [onOpenVideo, onClose, items]);
 
   const onShare = useCallback((item: SavedVideo) => {
     if (!item.url) return;

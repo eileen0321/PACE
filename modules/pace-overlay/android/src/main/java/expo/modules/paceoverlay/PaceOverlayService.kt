@@ -2045,15 +2045,18 @@ class PaceOverlayService : Service() {
     }
 
     // 2026-08-01 사장님 지시("애플처럼 팝업 아이콘 예쁘게") — iOS 컨텍스트 메뉴 관례(라벨 왼쪽,
-    // SF Symbol류 아이콘 오른쪽 끝 정렬)를 그대로 따른다. 새 drawable 리소스 없이 이 파일 전체가
-    // 이미 쓰는 패턴(⇪/✕ 등 유니코드 글리프를 아이콘처럼 사용)을 그대로 재사용.
-    data class MenuItem(val label: String, val icon: String, val action: () -> Unit)
+    // 아이콘 오른쪽 끝 정렬)를 따르되, 컬러 이모지(🔥/⭐)는 쓰지 않는다 — 기기 이모지 폰트에 따라
+    // 모양이 깨지거나 이상하게 렌더링된다고 실기기에서 확인(사장님 지적: "저게 트렌드 아이콘 모양이냐").
+    // 이 파일 전체가 이미 쓰는 방식(⇪/✕ — 색 없는 순수 유니코드 기호, 라벨과 같은 색으로 렌더링)만
+    // 그대로 따른다. "HOT"은 아이콘 모양이 아예 없어(불꽃을 대체할 깔끔한 단색 기호가 마땅치 않음)
+    // 작은 배지(pill) 텍스트로 대신한다 — 이것도 iOS에서 흔한 관례(설정 앱의 "NEW" 배지류).
+    data class MenuItem(val label: String, val action: () -> Unit, val icon: String? = null, val badge: String? = null)
     val items = listOf(
-      MenuItem("Open App", "↗", { openApp(); hidePaceMenu() }),
-      MenuItem("Shorts HOT", "🔥", { hidePaceMenu(); showShortsHotList("all") }),
+      MenuItem("Open App", { openApp(); hidePaceMenu() }, icon = "↗"),
+      MenuItem("Shorts HOT", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
-      MenuItem("Favorite", "⭐", { hidePaceMenu(); showSavedFavoriteList("favorite") }),
+      MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
     )
     items.forEachIndexed { index, item ->
       val row = LinearLayout(this).apply {
@@ -2069,11 +2072,28 @@ class PaceOverlayService : Service() {
         setTextColor(Color.WHITE)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
       }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-      row.addView(TextView(this).apply {
-        text = item.icon
-        textSize = 15f
-        setPadding((10 * d).toInt(), 0, 0, 0)
-      })
+      if (item.icon != null) {
+        row.addView(TextView(this).apply {
+          text = item.icon
+          textSize = 15f
+          setTextColor(Color.parseColor("#CCFFFFFF"))
+          setPadding((10 * d).toInt(), 0, 0, 0)
+        })
+      } else if (item.badge != null) {
+        row.addView(TextView(this).apply {
+          text = item.badge
+          textSize = 9f
+          setTextColor(Color.WHITE)
+          setTypeface(typeface, android.graphics.Typeface.BOLD)
+          background = GradientDrawable().apply {
+            cornerRadius = 999f
+            setColor(Color.parseColor("#E5484D"))
+          }
+          setPadding((7 * d).toInt(), (2 * d).toInt(), (7 * d).toInt(), (2 * d).toInt())
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+          marginStart = (10 * d).toInt()
+        })
+      }
       menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
         width = (170 * d).toInt()
       })

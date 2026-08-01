@@ -2790,3 +2790,41 @@ gitignore 대상이라 커밋 불필요, 로컬에만 적용). **⚠️ 맥 세�
    남아있으면 개별 재제출 필요.
 4. 🟡 iOS 진단 로그(`VEV`/`domlog`/`PACEWAVE`) 제출 전 제거 여부 — Windows 세션은 iOS 파일
    접근이 없어 확인 불가, 맥 세션 확인 필요.
+
+### 2026-08-01 (이어서) — Mac(iOS) 세션: iOS 스와이프 구현·검증 + P메뉴 "안떠" 근본원인 규명
+
+사장님 지시("공통 제스처 = 스와이프, os별로 나눠서")로 iOS 스와이프 2종 구현·시뮬 실측 검증 완료.
+둘 다 **iOS 전용 코드로 분리**(사장님 원칙), Android는 기존 동작 그대로 유지:
+
+1. **피드 Short 위/아래 스와이프**(`1531725`) — iOS는 WebView `scrollEnabled=false`라 손가락
+   스와이프가 YouTube를 직접 안 움직였음. `YouTubeShortsPlayer.ios.tsx`의 주입 JS
+   (installGlobalsOnce)에서 수직 터치 스와이프 감지(dy≥60·수직우세·800ms) → RN `onUserSwipe`
+   → 기존 `goNext/goPrev`(→player.advance/previous) 재사용. 실제 이동은 doSwipe가 하므로 이중
+   이동 없음. 탭(작은 dy)은 무시돼 재생/음소거 탭 보존. **검증**: 위로 스와이프 시 'MECHANISM
+   2/8' → '10 Dominoes' 넘어감 확인.
+2. **탭 좌우 스와이프**(홈↔집중↔분석↔설정, `ca20b0c`) — 하단탭(@react-navigation/bottom-tabs)은
+   스와이프 미지원이라, `TabSwipeArea.ios.tsx`(좌우 Fling→인접탭 router.navigate) 신설. Android/웹은
+   `TabSwipeArea.tsx` 패스스루. 공유 `(tabs)/_layout.tsx`는 루트 View만 TabSwipeArea로 교체.
+   **검증**: 홈에서 왼쪽 플릭 → 집중 탭 전환 확인.
+
+**🟢 P메뉴 "오버레이 안떠" 근본원인 규명(코드 버그 아님)**: 사장님이 P메뉴/오버레이가 안 뜬다고
+계속 지적한 진짜 원인은 **Metro가 stale 캐시 번들을 서빙**한 것. 이 맥엔 **watchman이 미설치**라
+Metro가 파일 편집을 실시간 감지 못 하고, `-c` 없이는 캐시된 구 번들을 계속 줌 → 커밋한 P메뉴 배선/
+Shorts HOT/스와이프가 실행 중 앱에 반영 안 됨. `expo start -c`로 캐시 비운 뒤 fresh 빌드에서
+**P메뉴("앱으로/Shorts HOT/Favorite") 정상 렌더 확인**. 무조건-표시 빨강 마커로 Metro 서빙 여부까지
+교차검증함. **⚠️ 권장: `brew install watchman`** — 안 하면 앞으로도 편집이 자동 반영 안 돼 매번
+`-c` 재시작 필요(사장님 시뮬/기기 테스트에도 동일 영향).
+
+**검증만 하고 코드 변경 없던 항목(이번 사이클 회귀 점검)**: 배터리 SAFE-JS (a)AppState 'background'
+→`setStatus('PAUSED')`(feed L279) (b)블랙아웃 시 WebView 언마운트 게이트(L479) 둘 다 반영 확인 /
+페이월 월·연 구분(e814df0, packageType 라벨) 현재 파일에 정상 존재 / 로컬 `.env`엔 `USE_REAL_ADS`
+항목 자체가 없어 맥은 실광고 위험 없음.
+
+**🟡 진단로그(item 4 회신)**: `YouTubeShortsPlayer.ios.tsx`의 `domlog`(VEV/SWIPE/MUTEBLOCKS 등)는
+onMessage(L415)에서 `PaceGestureLog.nativeLog`로 **`__DEV__` 게이팅 없이 프로덕션에서도 NSLog로
+나감**(UI 노출·심사 리스크는 없으나 브릿지/로그 오버헤드 존재). 원칙("진단로그는 사장님 검증 후
+제거")대로 **이번엔 제거 안 하고 플래그만** — v1.0.2 빌드 전 사장님 결정 필요(내 스와이프 커밋은
+신규 진단로그 없음, `userswipe`만 추가).
+
+**다음 단계**: v1.0.2 프로덕션 빌드(buildNumber 3) + 계정삭제 화면녹화 + 재제출(5.1.1v) — 프로덕션
+빌드는 사장님 확인 후 시작 예정(출근 중이라 대기). idle cap Android parity는 Windows 세션 회신 대기.

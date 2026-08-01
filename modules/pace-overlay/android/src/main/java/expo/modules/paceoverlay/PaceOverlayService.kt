@@ -2042,6 +2042,9 @@ class PaceOverlayService : Service() {
         setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
       }
       clipToOutline = true
+      // 각 행을 MATCH_PARENT로 채우므로(아래) 짧은 라벨(Favorite)만 있을 때도 메뉴가 너무 좁아
+      // 보이지 않게 최소 너비만 지정 — 가장 넓은 행(Shorts HOT+배지)이 필요하면 이보다 더 커진다.
+      minimumWidth = (170 * d).toInt()
     }
 
     // 2026-08-01 사장님 지시("애플처럼 팝업 아이콘 예쁘게") — iOS 컨텍스트 메뉴 관례(라벨 왼쪽,
@@ -2094,9 +2097,12 @@ class PaceOverlayService : Service() {
           marginStart = (10 * d).toInt()
         })
       }
-      menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-        width = (170 * d).toInt()
-      })
+      // 2026-08-01 사장님 지적("아이콘이 글자 뒤에 가 있어") — 행 너비를 170dp로 고정해뒀던 게
+      // 원인이었다: "Shorts HOT" 라벨 + HOT 배지를 합치면 170dp보다 넓어서, weight=1 라벨이 남은
+      // 공간만 억지로 배분받다 배지와 겹쳐 그려졌다. 행 너비를 강제하지 않고 메뉴 컨테이너 쪽에
+      // 최소 너비만 주고(menu.minimumWidth, 아래) 각 행은 그 너비를 그대로 채우게(MATCH_PARENT) —
+      // 가장 넓은 행(Shorts HOT)이 실제로 필요한 만큼 메뉴 전체 너비를 자연스럽게 넓힌다.
+      menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
       if (index < items.size - 1) {
         val divider = View(this).apply { setBackgroundColor(Color.parseColor("#1FFFFFFF")) }
         menu.addView(divider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))

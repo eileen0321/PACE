@@ -18,11 +18,19 @@
      추가해야 PaceAccessibilityService.onKeyEvent()가 시스템 전역 볼륨 키 이벤트를 받을 수 있다
      (packageNames 필터는 AccessibilityEvent에만 적용되고 onKeyEvent는 이 필터와 무관하게 항상
      전역으로 옴 — Kotlin 쪽에서 현재 포그라운드 앱을 직접 확인해 대상 앱일 때만 소비한다). -->
+<!-- 2026-08-02 실기기 근본원인 확정 — 위 flagRequestFilterKeyEvents만 넣고 android:canRequestFilterKeyEvents
+     속성을 빼먹어서, 그동안 onKeyEvent()가 단 한 번도 호출된 적이 없었다(블루투스 리모컨을 눌러도
+     볼륨만 조절되던 증상의 진짜 원인). 결정적 증거: dumpsys accessibility의 capabilities=33
+     (=CAN_RETRIEVE_WINDOW_CONTENT(1)+CAN_PERFORM_GESTURES(32))로, CAN_REQUEST_FILTER_KEY_EVENTS(8)가
+     빠져 있었다. 플래그는 "이 기능을 쓰겠다"는 요청일 뿐이고, 실제 권한(capability)은 이 속성이
+     있어야 시스템이 부여한다 — 둘을 반드시 함께 선언해야 한다(Android 공식 문서 기준).
+     ⚠️ 이 속성 추가로 접근성 권한을 새로 다시 켜야 capability가 반영된다(기존 바인딩엔 소급 안 됨). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagRequestFilterKeyEvents"
     android:canPerformGestures="true"
+    android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"
     android:packageNames="com.google.android.youtube,com.instagram.android,com.zhiliaoapp.musically,com.ss.android.ugc.trill"

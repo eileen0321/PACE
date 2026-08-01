@@ -564,6 +564,10 @@ class PaceOverlayService : Service() {
     // PaceAccessibilityService(별도 OS 바인딩 서비스)의 isTrackingPlayback 상태가 이미 살아있으면
     // 아무 것도 안 하지만(내부에서 idempotent), 혹시 그쪽도 같이 재시작됐다면 여기서 다시 켜준다.
     PaceAccessibilityService.startPlaybackTracking()
+    // 2026-08-01 실기기 감사 발견 — Focus Session(bt_auto_mode) 10분 타이머도 같은 클래스의 버그였다
+    // (위 restoreFocusSessionTimerIfNeeded 선언부 참고): 인메모리 Handler 예약이라 프로세스 복구
+    // 시점에 같이 다시 걸어주지 않으면 영영 안 꺼진다.
+    restoreFocusSessionTimerIfNeeded(this)
     infraReady = true
   }
 
@@ -676,6 +680,14 @@ class PaceOverlayService : Service() {
     // 아니라 "마지막으로 움직인 시각"으로 정확히 기록하게 한다(consumeExpired 참고).
     const val PREF_SLEEP_ONSET_AT_MS = "sleep_onset_at_ms"
     const val PREF_AUTO_MODE = "bt_auto_mode"
+    // 2026-08-01 실기기 감사 발견 — focusSessionAutoStop 타이머는 setAutoMode(true)가 호출될 때만
+    // focusSessionHandler(인메모리, 프로세스 종료 시 소실)에 예약된다. 그런데 PREF_AUTO_MODE는
+    // SharedPreferences라 프로세스가 강제종료/OOM kill로 죽었다 살아나도 true로 남아있어서, 알약은
+    // "FOCUS ON"으로 계속 보이는데 10분 자동종료 타이머는 다시는 안 걸리는 버그가 있었다(무료
+    // 사용자가 광고 게이트를 영영 안 만나고 무제한 자동넘김을 쓸 수 있었음). 벽시계 기준 마감 시각을
+    // 같이 저장해뒀다가 restoreFocusSessionTimerIfNeeded()가 프로세스 복구 시 남은 시간만큼 다시
+    // 예약(이미 지났으면 즉시 타임아웃 처리)한다.
+    private const val PREF_FOCUS_SESSION_DEADLINE_AT_MS = "focus_session_deadline_at_ms"
     // 2026-07-27 사용자 지시("왜 손짓을 빼니" — 마스터와 독립적으로 손짓만 따로 끄고 켤 수 있어야 함) —
     // 기존엔 setAutoMode(enable)의 enable 하나가 손짓 감지 시작/중지까지 같이 묶어버렸다. 블루투스
     // 볼륨키 스킵과 동일한 원칙으로, 손짓도 마스터(Focus Session)와 별개인 자체 on/off를 갖는다.
@@ -759,14 +771,13 @@ class PaceOverlayService : Service() {
       focusSessionTimedOutPending = true
       instance?.let {
         setAutoMode(it.applicationContext, false)
-        // 2026-08-01 사용자 지시("맥은 Focus Session이 끝나면 홈으로 복귀한다는데, 그래서 앱에서
-        // 다시 쇼츠를 누르면 보상광고를 보고 이어준대") — iOS와 동일한 흐름으로 맞춘다: 무료
-        // 사용자는 세션이 끝나는 그 순간 자동으로 앱(Home)으로 돌아온다(사용자가 "FOCUS OFF"
-        // 배지를 알아채고 직접 눌러야만 광고가 뜨던 예전 방식은 배지를 못 보면 그대로 무한정
-        // 유튜브에 남아 광고 기회 자체가 없었다). Home으로 돌아오면 JS checkTimedOut()이
-        // AppState 'active' 전환에서 그대로 소비해 보상형 광고 모달을 띄운다 — 여기서 추가
-        // 플러밍 불필요. 프리미엄은 광고 자체가 필요 없으니 방해하지 않고 그대로 둔다.
-        if (!isPremium(it.applicationContext)) it.openApp()
+        // 2026-08-01 (번복) 사용자 지시 — "무료여도 시간 만료 시 쇼츠를 막지 않는다, 그냥 추적만
+        // 되는 거다. 홈으로 강제로 보내지 말고 쇼츠에 그대로 머물게 하고, 사용자가 FOCUS ON 배지를
+        // 직접 눌렀을 때만 광고를 보여준다." — 바로 위 주석에 있던 "타임아웃되면 자동으로 홈 복귀"
+        // 결정을 다시 뒤집는다. Free/Premium 둘 다 이제 이 시점엔 openApp()을 호출하지 않고 쇼츠에
+        // 그대로 머문다(Premium은 원래도 그랬음) — "FOCUS OFF" 배지만 갱신되고, 사용자가 그 배지를
+        // 직접 탭할 때(아래 autoBadge의 setOnClickListener, hasPendingFocusSessionTimeout() 참고)만
+        // free 사용자는 openApp()→광고/크레딧 모달 게이트를 타고, premium은 게이트 없이 즉시 재활성화.
       }
     }
 
@@ -782,6 +793,24 @@ class PaceOverlayService : Service() {
     // (실제 소비는 JS의 checkTimedOut()이 앱 포그라운드 시 그대로 담당 — 여기서 먼저 소비해버리면
     // 앱을 열어도 JS가 이미 늦어 광고 모달을 못 띄운다).
     fun hasPendingFocusSessionTimeout(): Boolean = focusSessionTimedOutPending
+
+    // 2026-08-01 실기기 감사 발견(위 PREF_FOCUS_SESSION_DEADLINE_AT_MS 선언부 참고) — 서비스
+    // 프로세스가 죽었다 살아날 때(ensureInfraReady, ACTION_TICK/START_STICKY 복구 경로) 호출한다.
+    // bt_auto_mode가 꺼져 있으면 할 일 없음. 켜져 있는데 저장된 마감 시각이 이미 지났으면(그 사이
+    // 프로세스가 죽어있던 동안 시간이 다 됨) 그 자리에서 바로 타임아웃 처리, 아직 안 지났으면 남은
+    // 시간만큼만 다시 예약 — "지금부터 다시 10분"으로 리셋되지 않는다.
+    fun restoreFocusSessionTimerIfNeeded(context: Context) {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      if (!prefs.getBoolean(PREF_AUTO_MODE, false)) return
+      focusSessionHandler.removeCallbacks(focusSessionAutoStop)
+      val deadlineAtMs = prefs.getLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, 0L)
+      val remainingMs = deadlineAtMs - System.currentTimeMillis()
+      if (deadlineAtMs <= 0L || remainingMs <= 0L) {
+        focusSessionAutoStop.run()
+      } else {
+        focusSessionHandler.postDelayed(focusSessionAutoStop, remainingMs)
+      }
+    }
 
     // JS(useSubscriptionStore)가 구독 상태 바뀔 때마다 밀어주는 값 — 네이티브는 자체적으로
     // 구독 상태를 모른다.
@@ -801,7 +830,10 @@ class PaceOverlayService : Service() {
         setAutoMode(context, true) // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어씀.
       }
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
-      focusSessionHandler.postDelayed(focusSessionAutoStop, extraMinutes.coerceAtLeast(1) * 60 * 1000L)
+      val extraMs = extraMinutes.coerceAtLeast(1) * 60 * 1000L
+      focusSessionHandler.postDelayed(focusSessionAutoStop, extraMs)
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, System.currentTimeMillis() + extraMs).apply()
       showToast(context, "🎯 Focus Session +${extraMinutes}m")
       returnToLastTrackedApp(context)
     }
@@ -923,10 +955,15 @@ class PaceOverlayService : Service() {
         }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
         focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
+        // 벽시계 마감 시각 저장(프로세스 복구용, 위 PREF_FOCUS_SESSION_DEADLINE_AT_MS 선언부 참고).
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .putLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, System.currentTimeMillis() + durationMs).apply()
       } else {
         PaceAccessibilityService.stopWatching()
         PaceSnapDetector.stop()
         PaceHandWaveDetector.stop()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .remove(PREF_FOCUS_SESSION_DEADLINE_AT_MS).apply()
       }
       bumpBluetoothCounter(context, "bt_auto_toggle_count")
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUTO_MODE, enable).apply()

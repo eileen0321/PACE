@@ -3200,3 +3200,40 @@ return`으로 게이팅 + `showAccessibilityPrompt` 배너도 그 state에만 �
 - **🔴 배포 필요(공통, Android도 같은 백엔드 공유)**: Railway 재배포 후 `POST /shorts-hot/refresh`로 즉시 재curate하거나 최대 6h 스케줄(0/6/12/18시) 대기. 배포 전까진 기존 DB의 로블록스 등 잘못된 row가 남아 있음(다음 refresh가 `deleteByCategory`+`saveAll`로 교체).
 - feed/index.tsx의 검증용 TEMP(`showShortsHot=useState(__DEV__)`)는 `useState(false)`로 원복 완료(커밋 안 됐던 워킹트리 변경, git status clean).
 - **배포 상태**: 커밋 `e7db712` push 완료 → Railway 자동 재배포 트리거됨. `POST /shorts-hot/refresh`/GET 둘 다 **인증 필요**(curl로 토큰 없이 확인 불가, `UNAUTHORIZED` 반환)라 여기서 강제 refresh/데이터 확인은 못 함. **단, `@Scheduled(0 0 0,6,12,18)` 6시간 크론이 자동 재curate**하므로 Railway 배포 완료 후 다음 정각(0/6/12/18시)에 잘못된 row가 자동 교체됨 — 수동 조치 불필요. 급하면 사장님이 앱 로그인 세션으로 refresh 트리거 가능. tsc 통과, 워킹트리 clean.
+
+## Focus Session 무료 타임아웃 — "홈 강제복귀" 정책 번복 + 10분 타이머 프로세스 복구 버그 (2026-08-01)
+
+**정책 번복(사장님 결정)**: 오늘 밤 앞서 "무료는 타임아웃되면 자동으로 홈으로 복귀시킨다"(iOS와
+맞추려던 결정, `8468a82`)로 바꿨었는데, 다시 뒤집었다 — **"무료도 쇼츠 자체를 막는 게 아니라 그냥
+자동넘김(Focus Session)만 꺼지는 거다. 홈으로 보내지 말고 오버레이 배지만 FOCUS OFF로 바뀌면 되고,
+사용자가 그 배지를 다시 누르면 그때 보상광고를 보여주면 된다."** 정책 근거: 무료/유료 차이는 어디까지나
+"자동으로 넘겨주는 편의 기능"이지 "쇼츠 시청 자체의 차단"이 아니라는 것 — 시청 시간 추적 자체는
+무료에서도 항상 되고 있으므로, 화면을 강제로 뺏을 이유가 없다는 판단.
+
+구현(`PaceOverlayService.kt`의 `focusSessionAutoStop` Runnable): `setAutoMode(context, false)`만
+호출하고 `openApp()` 호출을 제거 — free/premium 둘 다 이제 타임아웃 시 쇼츠 화면에 그대로 머물고
+배지만 "FOCUS OFF"로 바뀐다. 무료 사용자용 게이트는 기존에 이미 있던 배지 탭 핸들러
+(`autoBadge.setOnClickListener` — `!autoNextEnabled && hasPendingFocusSessionTimeout() &&
+!isPremium(...)`)가 그대로 담당: 사용자가 능동적으로 배지를 눌러야만 `openApp()`→광고/크레딧 모달
+게이트를 탄다. **⚠️ iOS는 이미 "피드에 머물며 배지 재탭→in-feed 광고 모달"로 동작 중(`dc19620`,
+PM 문서 위쪽 "설계 차이" 항목 참고)이므로, 이번 결정으로 Android가 iOS 쪽에 맞춰진 셈 — 그
+"설계 차이" 항목은 이제 해소된 것으로 보고, 확인만 부탁.**
+
+**🔴 별개로 발견해서 같이 고친 버그 — Focus Session 10분 타이머가 프로세스 재시작에서 살아남지
+못함**: `focusSessionAutoStop`은 `setAutoMode(true)`가 호출될 때만 `focusSessionHandler`(companion
+object의 인메모리 `Handler`)에 예약된다. 이 서비스 프로세스가 죽었다 살아나면(OOM kill, OEM
+배터리 관리 등 — 흔한 일) 그 예약은 통째로 사라지는데, `bt_auto_mode`는 SharedPreferences라 계속
+`true`로 남아있다. 결과: 알약은 "FOCUS ON"으로 계속 표시되는데 10분 자동종료 타이머는 다시는 안
+걸려서, **무료 사용자가 광고 게이트를 한 번도 안 만나고 무제한으로 자동넘김을 쓸 수 있는 상태**가
+됐다(실기기에서 `bt_auto_mode=true`, `is_premium=false`인데 타이머 없음을 직접 확인).
+
+수정: 벽시계 기준 마감 시각(`PREF_FOCUS_SESSION_DEADLINE_AT_MS`, 재부팅에도 안전)을 `setAutoMode(true)`
+/ `extendFocusSession()`에서 같이 저장해두고, `restoreFocusSessionTimerIfNeeded()`를
+`ensureInfraReady()`(ACTION_TICK/START_STICKY 프로세스 복구 공통 경로)에서 호출 — `bt_auto_mode`가
+켜져 있는데 마감 시각이 이미 지났으면 그 자리에서 즉시 타임아웃 처리, 안 지났으면 남은 시간만큼만
+다시 예약한다("지금부터 다시 10분"으로 리셋되지 않음).
+
+빌드 확인: `:pace-overlay:compileDebugKotlin` + `:app:assembleDebug` 성공, 실기기에 재설치+접근성
+재활성화까지 완료. **⚠️ iOS 쪽도 동일 클래스 버그 가능성 점검 필요** — iOS는 WebView 기반 Pace
+Feed라 아키텍처가 달라 그대로 적용은 안 되지만, "타이머를 인메모리에만 예약해두고 프로세스/뷰
+재생성 시 다시 안 거는" 패턴이 iOS 쪽 Focus Session 구현에도 있는지 확인 요청.

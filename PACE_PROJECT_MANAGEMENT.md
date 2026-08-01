@@ -2492,3 +2492,15 @@ regionCode=KR)`를 카테고리 6종 — all/music/gaming/comedy/entertainment/p
 `PaceOverlayService.onDestroy()`/`stopSelf` 호출 지점 전부에 로그를 추가하고, `adb logcat`을
 넓은 버퍼(`-G 8M`, 이미 이번 세션에 한 번 적용해봄)로 실시간 스트리밍하며 재현을 기다리는
 방식을 권장 — 사후 덤프로는 이미 두 번 놓쳤다.
+
+**Shorts HOT UI 완성** (`c0d73d8`) — 위 백엔드에 이어 실제 오버레이 UI까지 구현. P 메뉴
+"Shorts HOT"이 이제 Saved/Favorite과 동일한 네이티브 글래스모피즘 패널로 뜬다(유튜브 이탈
+없음). `ShortsHotStore`(신규)가 `java.net.HttpURLConnection`+`org.json`으로 백엔드를 직접
+호출(RN 브릿지 의존 없음, Saved/Favorite의 SQLite 직접 접근과 동일 패턴) — baseUrl/JWT는
+`client.ts`가 로그인/토큰갱신/콜드스타트 복원마다 `PaceOverlayModule.cacheApiBaseUrl`/
+`cacheAuthToken`으로 미리 캐시해둔 값을 읽는다. 카테고리 6종(전체/음악/게임/코미디/엔터/
+반려동물) 가로 스크롤 탭, 탭마다 재조회(로딩 중 다른 탭 이동 시 결과 버림 가드), 항목 탭하면
+원본 유튜브로 이동. **실기기 검증 완료**: 오버레이 오픈/카테고리 전환/블러 배경/빈 상태
+렌더링 전부 확인, 백엔드가 Railway 프로덕션에 실제 배포된 것도 curl로 확인(401=존재+인증
+필요). `YOUTUBE_API_KEY` 미설정이라 아직 실제 데이터는 없음(빈 배열) — 키만 설정하면
+그대로 채워지는 구조.

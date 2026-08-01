@@ -26,6 +26,8 @@ import { overlayService } from '../../services/platform';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
+import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -86,6 +88,10 @@ export default function PaceFeedScreen() {
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
   const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
+  // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 세션이 "타임아웃으로" 꺼졌는지(수동 off 아님)
+  // 추적. 타임아웃 후 재활성화 시도 시 비프리미엄이면 무료 재개 대신 보상광고 연장 모달로 보낸다.
+  const sessionTimedOutRef = useRef(false);
+  const [showExtendModal, setShowExtendModal] = useState(false);
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
@@ -322,6 +328,7 @@ export default function PaceFeedScreen() {
       bluetoothVolumeKeySkipEnabled: false, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
     }).catch(() => {});
     const timer = setTimeout(() => {
+      sessionTimedOutRef.current = true; // "타임아웃으로 꺼짐" 표시(수동 off와 구분) — 재개 시 광고 유도
       setIsAutoMode(false);
       useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
     }, focusSessionDurationMinutes * 60 * 1000);
@@ -393,6 +400,14 @@ export default function PaceFeedScreen() {
     // 이벤트 핸들러 본문(렌더 밖)에서 현재 값을 뒤집어 계산하고, 상태 변경과 토스트를 분리 호출한다.
     markUserInput();
     const next = !isAutoMode;
+    // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 사용자가 "타임아웃으로" 꺼진 세션을 다시
+    // 켜려 하면 무료 재개 대신 보상광고/크레딧 연장 모달로 보낸다(무한 무료 재활성화 구멍 차단).
+    // 프리미엄이거나 타임아웃 아닌(수동 off 후) 재개는 그대로 무료로 켠다.
+    if (next && sessionTimedOutRef.current && !useSubscriptionStore.getState().isPremium) {
+      setShowExtendModal(true);
+      return; // 아직 재활성화 안 함 — 광고 보상/크레딧 확정 시 onExtended가 켠다
+    }
+    sessionTimedOutRef.current = false; // 수동 재개/종료 시 타임아웃 상태 해제
     setIsAutoMode(next);
     // 2026-08-01 — 손짓이 opt-in(기본 OFF)으로 바뀌면서, 세션을 켰는데 손짓이 꺼져있는 유저에게
     // Focus 탭에서 켤 수 있다고 짧게 안내(별도 푸시 알림 대신 기존 세션-시작 토스트에 얹는다).
@@ -552,6 +567,15 @@ export default function PaceFeedScreen() {
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} />}
+
+        {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
+            feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상
+            시 재활성화 안 함(무료 손해 방지). */}
+        <FocusSessionExtendModal
+          visible={showExtendModal}
+          onExtend={() => { sessionTimedOutRef.current = false; setIsAutoMode(true); }}
+          onDismiss={() => setShowExtendModal(false)}
+        />
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

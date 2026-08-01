@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   Easing,
@@ -13,7 +13,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
 
-const ICON = require('../../../assets/splash-icon.png');
+// 2026-08-01 사장님 지적("빛바래 보이잖아") — splash-icon.png가 앱 아이콘보다 어두운(칙칙한) 렌더라
+// iOS 스플래시가 빛바래 보였다. iOS만 vibrant 글로우 버전(ios-splash-icon.png = 앱 아이콘과 동일 밝기)으로
+// 교체. Android는 공용 컴포넌트 회귀 방지 위해 기존(splash-icon.png) 그대로 유지(Android 도메인 불변).
+const ICON = Platform.OS === 'ios'
+  ? require('../../../assets/ios-splash-icon.png')
+  : require('../../../assets/splash-icon.png');
 // 2026-08-01 사장님 지시 — 로고 위 "빛 지나가는(shine sweep)" 효과가 600ms + 12% 흰색이라 실질적으로
 // 안 보였다. 스플래시를 950ms로 살짝 늘려 스윕 1회가 온전히 보이게 하고, 빛 바를 그라데이션+밝기 상향.
 const DURATION_MS = 950;

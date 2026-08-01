@@ -2685,3 +2685,88 @@ P0 목록은 이 수정을 반영 못 하고 있어 stale — 갱신 권장.
   screencap -p //sdcard/x.png` + `adb pull //sdcard/x.png`(더블 슬래시로 Git Bash 경로 변환 방지)
   방식이 더 안정적이었지만 이것도 가끔 재시도 필요.
 - Gradle CMake 빌드가 가끔 "다른 프로세스가 파일 사용 중" 에러로 실패 — 재시도하면 대부분 성공.
+
+### 2026-08-01 — Windows 세션 (오버레이 소실 진짜 원인 확정 + 세션 재소환 버그 + 앱 아이콘 패딩)
+
+사장님이 실기기로 "유튜브가 작은 화면으로 바뀌는데 오버레이가 사라지고 시간 측정도 안 되는 것
+같다"고 지적 → 처음엔 PIP만 의심해 고쳤으나(1차 커밋), 실기기 재현으로 **훨씬 더 흔한 진짜
+원인**을 찾음: YouTube Shorts는 영상이 바뀌어도 같은 Activity 안에서 콘텐츠만 바뀌지 새 화면
+전환 자체가 없어서, 한 화면에 `ForegroundAppWatcher.STALENESS_MS`(5분) 넘게 머물면 접근성
+이벤트(TYPE_WINDOW_STATE_CHANGED)와 UsageStatsManager 둘 다 "새 전환 없음"에 빠져 오버레이가
+사라진다 — `dumpsys usagestats`로 YouTube의 `lastTimeUsed`가 7분 넘게 안 갱신되는데도 실제로는
+계속 포그라운드였음을 직접 확인. **다행히 시간 차감 자체는 별도 메커니즘(재생시간 텍스트
+폴링, checkPlaybackAndMaybeSwipe)이라 이 버그와 무관하게 항상 정확했음** — 사라지는 건 알약
+표시뿐이었음.
+
+**수정 4건, 전부 실기기로 직접 재현·검증 완료**(커밋 `cc12443`):
+1. `PaceAccessibilityService.supportedAppWindowVisible()` 신설 — `getWindows()`는 이벤트가
+   아니라 그 순간을 직접 묻는 쿼리라 위 문제 자체가 없다(PIP 창도 이 목록에 잡혀 자동 포함).
+   `isLikelyPlaying()`과 `PaceOverlayService`의 `shouldShow` 판정 양쪽에 최후 순위 신호로 추가.
+2. **P메뉴 "앱으로" 직후 세션이 끊기는 레이스** — `pace://home` 딥링크로 Pace가 다시
+   포그라운드로 올 때 "화면만 전환·세션은 유지" JS 가드(`keepSessionAliveOnUnmountRef`)가
+   세워지기 전에 세션 종료가 먼저 실행되는 경합이 실기기로 재현됨(로그: 딥링크 발사 170ms 뒤
+   `ACTION_STOP` 수신). JS 쪽 정확한 경합 지점 대신 네이티브에 최후 방어선 추가 — `openApp()`
+   직후 3초 안에 들어오는 STOP은 무시(`lastOpenAppAtMs`/`OPEN_APP_STOP_GRACE_MS`).
+3. **"Next Short" 토스트가 시청 중이 아닐 때도 뜸** — `triggerNext`/`triggerPrevious`(블루투스
+   미디어버튼 경유)가 포그라운드 확인 없이 무조건 스와이프+토스트를 냈다. 위
+   `supportedAppWindowVisible()`로 게이팅(손짓/핑거스냅 등 같은 함수를 거치는 모든 경로에 공통
+   적용됨).
+4. **세션 재소환이 새 세션처럼 보임** — 이미 running인 세션에서 플랫폼 카드를 다시 탭하면
+   `launchPlatformApp()`(딥링크 URL)을 재사용했는데, 어떤 URL을 쓰든 딥링크는 "특정 화면으로
+   이동"이지 "그냥 태스크를 앞으로 가져오기"가 아니라서 PIP로 줄어있던 기존 화면을 복원 못
+   하고 매번 새 Shorts 진입 또는 YouTube 기본 홈 탭이 열렸다(둘 다 실기기로 확인하며 순서대로
+   시도해봤으나 둘 다 이 문제 자체를 못 피함). `PaceOverlayModule.resumeThirdPartyApp()`
+   (`getLaunchIntentForPackage`+`REORDER_TO_FRONT`, 런처 아이콘을 다시 탭한 것과 동일)로 교체 —
+   같은 영상(좋아요/댓글 수까지 동일)이 그대로 복원되는 것 실기기 스크린샷으로 확인.
+
+**앱 아이콘 패딩**(사장님 지적 — "아이콘이 너무 꽉 차 보인다, 애플처럼 패딩 넣어") —
+iOS(`ios-icon.png`)/Android(`android-icon-foreground.png`/`android-icon-monochrome.png`)
+아트워크가 캔버스 가장자리까지 꽉 차 있어 로고를 축소(iOS ~78%, Android ~80%)하고 기존
+배경색/투명도를 유지한 채 여백 확보. `android/`가 이미 커밋돼 있어 사전 생성된 mipmap
+리소스(5개 밀도: mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi)도 새 소스로 직접 재생성해서 반영 —
+`expo prebuild`는 07-29에 겪은 것과 같은 이유로(styles.xml 등 raw 수동 native 수정이
+config plugin화 안 돼 있어 prebuild가 덮어쓸 위험) 의도적으로 안 돌림.
+
+**검증**: `npx tsc --noEmit`/`gradlew compileDebugKotlin` 매 단계 클린, 실기기(Note20) 재설치 후
+접근성 서비스 매번 재확인(재설치 시 꺼지는 기존 패턴 계속 발생), 4건 전부 adb+스크린샷으로
+직접 재현해 수정 전/후 비교 확인. 커밋 `cc12443`, push 완료.
+
+**다음 세션 참고**: 재설치 3~4회마다 한 번꼴로 USB가 잠깐 `offline`이 됐다가 몇 초~수십 초
+후 스스로 복구되는 패턴 반복 관찰 — 위 "실기기 검증 중 발견한 인프라 이슈" 항목과 동일 계열,
+근본 원인 여전히 불명.
+
+### 2026-08-01 (이어서) — Windows 세션: 손짓 배터리 감사 회신 — Android 기본값 불일치 발견/수정
+
+**맥 세션의 "손짓(hand-wave) 배터리 검토 → 기본 OFF·opt-in 전환" 요청(위 §6 "2026-08-01 (이어서)
+— Mac 세션" 항목, "Android 세션이 확인/반영해야 할 것" 3개 항목) 회신**:
+
+1. **`PaceOverlayService.setAutoMode(true)`가 `PREF_HANDSFREE_GESTURE_ENABLED`를 무시하고
+   무조건 켜는 건 아닌지 감사 요망** → ✅ 이미 게이팅돼 있었음(2026-07-27에 이미 추가된 코드,
+   `setAutoMode`:883줄 `if (prefs.getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, ...))`). 이 자체는
+   문제 없었음.
+2. **다만 그 게이팅의 fallback 기본값이 `true`로 하드코딩돼 있었음** — JS
+   `useSettingsStore.ts`의 `handsFreeGesture` 기본값은 오늘 맥 세션이 이미 `false`로 바꿔뒀는데,
+   이 JS 기본값을 네이티브로 밀어주는 호출(`setHandsFreeGestureEnabled`)은 **사용자가 Focus 탭
+   토글을 직접 건드릴 때만** 발생한다(`focus.tsx`가 유일한 호출부, 부팅 시 동기화 없음). 즉
+   토글을 한 번도 안 만진 새 사용자는 `PREF_HANDSFREE_GESTURE_ENABLED` 키 자체가 없어서
+   `setAutoMode`의 fallback(true)이 그대로 적용 — **JS 기본값(OFF)과 정반대로 안드로이드만
+   손짓이 켜진 채로 시작되고 있었다.** fallback을 `false`로 정정(`cc12443` 다음 커밋). 이미
+   명시적으로 값을 저장해둔 기존 사용자(토글을 한 번이라도 건드린 적 있는 사용자)는 실제 키가
+   있으므로 이 변경 영향 없음 — 맥의 "마이그레이션 안 함" 원칙과 동일하게 처리됨.
+3. **세션 시작 시 "손짓 꺼져있음" 안내 토스트(Android 네이티브 Toast 관례)** → 미착수. 다음
+   세션에서 `setAutoMode(true)` 안에서 `PREF_HANDSFREE_GESTURE_ENABLED`가 false일 때
+   `showToast(context, "...")`로 iOS의 `focusSessionStartedNoGestureToast`와 대응되는 안내를
+   붙이는 작업 필요(현재는 `"🎯 Focus Session Started (Nm)"` 토스트만 뜸, 손짓 안내 없음).
+
+**⚠️ 플랫폼 간 기본값 표(다음에 이런 감사할 때 서로 참고할 것)** — 지금 시점 기준:
+
+| 설정 | iOS 기본값 | Android 기본값 | 비고 |
+|---|---|---|---|
+| `handsFreeGesture`(손짓) | OFF (오늘 전환) | OFF (오늘 수정, 위 참고) | JS 공유 파일(`useSettingsStore.ts`)이 소스오브트루스, 네이티브는 각자 이 값을 미러링 |
+| 볼륨키 리모컨 | OFF (`volumeKeyRemote` 기본 false) | ON (`bluetoothVolumeKeySkipEnabled` 기본 true) | `useSettingsStore.ts`에 원래부터 플랫폼별로 다른 기본값으로 정의돼 있던 기존 설계(오늘 감사로 새로 생긴 차이 아님) — 안드는 카메라 없이 볼륨키 이벤트만 훅킹이라 배터리 비용이 없어 기본 ON 유지가 맞다고 판단됨. 그대로 둠 |
+| 핑거스냅 | OFF(완전 비활성화, `supportsFingerSnap=false`) | OFF(동일) | 07-26 애플 통보로 양 플랫폼 통일, 재활성화 계획 없음 |
+| 핸즈프리 마스터(Focus Session Auto Next) | 세션 시작 시 사용자가 명시적으로 킴 | 동일(`autoModeOptIn` AsyncStorage로 다음 세션도 기억) | 손짓/블루투스 하위 토글과 별개 스위치 |
+
+**검증**: `gradlew :pace-overlay:compileDebugKotlin` 클린. 실기기 재설치 후 재검증(새 게스트/
+초기화 계정으로 토글 한 번도 안 건드린 채 Focus Session 시작 → 카메라가 안 켜지는지)은 다음
+세션 권장 — 이번엔 코드 리뷰+컴파일로만 확인.

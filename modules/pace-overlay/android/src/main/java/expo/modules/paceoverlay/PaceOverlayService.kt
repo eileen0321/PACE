@@ -880,7 +880,14 @@ class PaceOverlayService : Service() {
         // (PaceSnapDetector의 RECORD_AUDIO 방어와 동일한 원칙).
         // 2026-07-27 — 마스터가 켜져도 손짓 자체를 개별로 꺼뒀으면(PREF_HANDSFREE_GESTURE_ENABLED)
         // 시작하지 않는다 — 블루투스 볼륨키 스킵과 대칭되는 독립 토글.
-        if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, true)) {
+        // 2026-08-01 맥 세션 배터리 감사 발견(useSettingsStore.ts 감사 요청 항목) — 이 fallback
+        // 기본값이 true였는데, JS 쪽 handsFreeGesture 기본값은 이미 07-27 이전 결정과 별개로
+        // 오늘 false로 바뀌었다(iOS도 동일하게 전환). 한 번도 토글을 안 건드린 새 사용자는
+        // setHandsFreeGestureEnabled()가 아직 호출된 적 없어 이 SharedPreferences 키 자체가
+        // 없는데, fallback이 true라 JS 기본값(false)과 정반대로 안드로이드에서만 손짓이 켜진
+        // 채로 시작되고 있었다 — false로 정정해 플랫폼 간 기본값을 통일한다. 이미 명시적으로
+        // true를 저장해둔 기존 사용자는(실제 키가 존재하므로) 이 변경의 영향을 받지 않는다.
+        if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, false)) {
           PaceHandWaveDetector.start(context) { triggerNext(context) }
         }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L

@@ -2504,3 +2504,64 @@ regionCode=KR)`를 카테고리 6종 — all/music/gaming/comedy/entertainment/p
 렌더링 전부 확인, 백엔드가 Railway 프로덕션에 실제 배포된 것도 curl로 확인(401=존재+인증
 필요). `YOUTUBE_API_KEY` 미설정이라 아직 실제 데이터는 없음(빈 배열) — 키만 설정하면
 그대로 채워지는 구조.
+
+### 2026-08-01 (이어서) — Mac 세션: 손짓(hand-wave) 배터리 검토 → 기본 OFF·opt-in 전환 (⚠️ Android 반영 필요)
+
+**배경**: 사장님이 손짓(전면카메라 hand-wave) 배터리 소모를 문의. 확인 결과 iOS Focus Session
+Duration은 최대 60분이지만, 60분 자동종료 후 토스트만 보고 바로 재시작 가능해서 **Daily
+Limit을 120분으로 잡은 프리미엄 유저는 하루 한 자리에서 사실상 ~120분 가까이 전면카메라가
+거의 끊김없이 도는 시나리오가 실제 가능**(설계상 이를 막는 장치 없음, `feed/index.tsx`).
+VGA/CPU-delegate/150ms 스로틀 등 기존 절제 장치는 있으나 실기기 정량 측정(Instruments Energy
+Log)은 아직 없음.
+
+**결정 & iOS 조치(완료)**: 손짓을 `volumeKeyRemote`와 동일한 패턴 — **기본 OFF, Focus 탭에서
+사용자가 직접 켜야만 작동**으로 전환.
+- `useSettingsStore.ts`: `handsFreeGesture` 기본값 `true→false`. **기존에 이미 로컬에 저장된
+  사용자는 영향 없음**(마이그레이션 안 함 — 의도적, 조용히 갑자기 꺼지는 회귀보다 낫다고 판단).
+- `feed/index.tsx`: `handsFreeDetectActive = isAutoMode`(무조건 ON)를
+  `isAutoMode && handsFreeGesture`로 변경 — Focus Session 중이어도 이 설정이 꺼져 있으면 카메라
+  자체가 안 켜짐. ⚠️ **주의**: 2026-07-27에 "마스터(`handsFreeEnabled`)+손짓 하위토글"에 같이
+  묶었다가 마스터를 끄면 손짓이 통째로 안 켜지는 회귀가 있었던 적이 있다 — 이번엔 **마스터는
+  건드리지 않고 손짓 하위토글(`handsFreeGesture`)에만** 물려서 그 패턴을 피함.
+- 세션을 켰는데 손짓이 꺼져 있으면, 별도 푸시 알림 대신 기존 "Focus Session 시작" 토스트에
+  "손짓은 Focus 탭에서 켤 수 있어요" 안내를 얹음(`feed.focusSessionStartedNoGestureToast`,
+  EN/KO 둘 다 추가, `translations.ts`). typecheck 통과 확인.
+
+**Android 세션이 확인/반영해야 할 것**:
+1. Android는 `PaceOverlayService.setAutoMode(true)`가 스냅/손짓 감지기를 **직접** 켜는 구조로
+   보임(`feed/index.tsx` 옛 주석: "안드로이드는 Session ON일 때 감지기를 한꺼번에 켠다") —
+   `handsFreeGesture` 설정 변경(JS `useSettingsStore.ts` 기본값 `false`)이 실제로
+   `PaceHandWaveDetector` 시작을 막는지 Kotlin 쪽(`PaceOverlayService`/`PaceHandWaveDetector`)
+   확인 필요. `setHandsFreeGestureEnabled(enable)` 네이티브 호출은 이미 있는데(focus.tsx가
+   토글 시 호출), `setAutoMode(true)` 경로가 이 플래그를 무시하고 무조건 켜는 건 아닌지 감사 요망.
+2. Android도 손짓 기본 OFF·opt-in으로 통일하는 게 이번 결정의 취지(플랫폼 정책 불일치 방지,
+   D9 사례처럼). 이미 Daily Limit 120분 옵션이 공유(`DAILY_LIMIT_OPTIONS`)라 동일한 배터리
+   리스크가 Android에도 있음.
+3. 세션 시작 시 "손짓 꺼져있음" 안내 토스트/UX는 Android 자체 네이티브 Toast 관례에 맞춰
+   대응 커밋 부탁(iOS는 JS `useToastStore` 사용, Android는 Kotlin `Toast.makeText`가 보통 담당
+   — `useToastStore.ts` 상단 주석 참고).
+
+### 2026-08-01 (이어서) — Mac 세션: Sign in with Apple 토큰 폐기 이식 (5.1.1v/TN3194)
+
+계정삭제 시 Apple 토큰 revoke 미구현 = 심사 반려 위험(Apple이 확인). jlpt-master의 실심사통과
+구현을 PACE로 이식(백엔드만 — 클라는 이미 `client.ts:77`/`useUserStore.ts:134`에서 authorizationCode 전송 중):
+- `AppleOAuthService`(신규, Nimbus JOSE ES256 client_secret): authorizationCode→refresh_token 교환 + `/auth/revoke` 폐기.
+- `UserAccount.appleRefreshToken` 필드 + `V3__apple_refresh_token.sql`.
+- `AuthService.loginWithApple`: 교환·저장 / `deleteAccount`: findById→revoke→delete.
+- `application.yml`: `pace.apple.team-id/key-id/private-key`(Railway env). 미설정이면 폐기 skip(삭제는 정상).
+⚠️ **이 Mac엔 JDK 없어 백엔드 컴파일 미검증** — Railway 배포/co-session(Windows, JDK 있음)이 확인 필요.
+⚠️ **사장님 조치**: App Store Connect → Keys에서 "Sign in with Apple"용 .p8 키(IAP 키와 별개) 발급 →
+Railway에 `APPLE_TEAM_ID`/`APPLE_SIGNIN_KEY_ID`/`APPLE_SIGNIN_PRIVATE_KEY` 설정.
+
+### 2026-08-01 (이어서) — Mac 세션: 크래시·성능 감사(웹리서치) SAFE 건 반영
+
+**성능 감사 결과**: 과거 리렌더 폭풍(setProgress 500ms/setDiag 3×s) 프로덕션 해결 확인, 새 SessionRemaining 격리도 정상. 반영(SAFE-JS):
+- feed: 죽은 `diag` 상태 + `setDiag`/onDiag/onAudioDiag 리렌더 소스 제거(dev 손짓테스트 흐림 방지), 죽은 `sessionRemainingMin` 제거.
+- home: whole-store 구독 3종(stats/dailyBonus/limitHit) → 필드별 좁은 셀렉터(session 종료/stats refresh마다 Home+카드 리렌더 감소).
+- 시뮬레이터로 홈/피드 무회귀 확인.
+**미반영(NEEDS-DEVICE-TEST)**: 플레이어 React.memo+useCallback(재생 스모크 필요), WebView 500ms progress 폴링 정지시 skip(end-detection JS라 위험), settings/기타 whole-store(저위험).
+
+**크래시 감사 결과**: 코드베이스 매우 견고(옵셔널 네이티브 로드/JSON.parse/RC/AdMob/SQLite 전부 가드, ErrorBoundary 존재). HIGH 없음. 반영(SAFE-JS):
+- `_layout.tsx:315` 알림리스너 `autoNextService.requestPermission()` sync-throw/async-reject 방어(New Arch 미처리 reject 하드크래시 방지).
+- `focus.tsx:88` `cameraPermissionStatus()` try/catch(:78과 동일, 바이너리 불일치 throw 방어).
+**미반영**: 전역 ErrorUtils 핸들러(좀비상태 마스킹 위험이라 보류), `react-native-track-player` 미사용 네이티브 제거(재빌드 필요 NEEDS-DEVICE-TEST), Text.defaultProps(React19, 비크래시).

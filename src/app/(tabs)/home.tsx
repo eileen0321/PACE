@@ -59,7 +59,10 @@ export default function HomeScreen() {
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const settings = useSettingsStore((s) => s.settings);
-  const { todayUsageMinutes, refresh } = useStatsStore();
+  // 2026-08-01 성능 감사 — whole-store 구독은 스토어의 어떤 필드가 바뀌어도 Home(및 하위 카드들)을
+  // 리렌더한다(예: stats.refresh가 isLoading/weeklyStats를 매 포커스마다 갱신). 필요한 필드만 좁게 구독.
+  const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes);
+  const refresh = useStatsStore((s) => s.refresh);
   const restSeconds = useFlipStore((s) => s.putDownSeconds); // 오늘 쉬는시간(내려놓은 시간) — 히어로 카드에 표시
   const activeSessionPlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
   // 2026-07-31 — 세션이 daily-limit로 끝나면 useSessionStore.finish()가 platformApp을 null로 지워서,
@@ -73,8 +76,13 @@ export default function HomeScreen() {
   const refreshBluetooth = useBluetoothStore((s) => s.refresh);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   const enableAutoModeForSession = useBluetoothStore((s) => s.enableAutoModeForSession);
-  const { extraMinutes: bonusMinutes, addMinutes: addBonusMinutes } = useDailyBonusStore();
-  const { hitCount, dismissedHitCount, load: loadLimitHits, ensureAtLeast: ensureLimitHitAtLeast, dismiss: dismissLimitHit } = useLimitHitStore();
+  const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes);
+  const addBonusMinutes = useDailyBonusStore((s) => s.addMinutes);
+  const hitCount = useLimitHitStore((s) => s.hitCount);
+  const dismissedHitCount = useLimitHitStore((s) => s.dismissedHitCount);
+  const loadLimitHits = useLimitHitStore((s) => s.load);
+  const ensureLimitHitAtLeast = useLimitHitStore((s) => s.ensureAtLeast);
+  const dismissLimitHit = useLimitHitStore((s) => s.dismiss);
   const celebrationVisible = useAttendanceStore((s) => s.celebrationVisible);
   // 2026-07-29 사장님 지시 — "몇시에 잠들었어요" 고정 배너를 "매일 하나의 랜덤 인사이트(사용 습관/
   // 신조어/힐링 문구/명언)" 선물상자로 확장. 뜨는 조건도 수면 감지와 무관하게 하루 1회로 바뀌었으므로

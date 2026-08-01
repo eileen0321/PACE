@@ -26,6 +26,11 @@ public class UserAccount {
     @Column(nullable = false, length = 32)
     private String provider;
 
+    // Sign in with Apple refresh_token — 계정삭제 시 Apple 토큰 revoke(5.1.1v/TN3194)용. Apple 로그인
+    // 최초 authorizationCode 교환으로 획득. 미설정 자격증명이면 null(폐기 skip, 삭제는 정상 진행).
+    @Column(name = "apple_refresh_token", length = 512)
+    private String appleRefreshToken;
+
     @Column(name = "device_id", unique = true)
     private String deviceId;
 

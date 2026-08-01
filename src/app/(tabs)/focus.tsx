@@ -85,7 +85,10 @@ export default function FocusScreen() {
   const setGesture = (v: boolean) => {
     if (isIOS) {
       if (v && gestureMod) {
-        const st = gestureMod.cameraPermissionStatus();
+        // 2026-08-01 크래시 감사 F3 — :78과 달리 여기 sync 네이티브 호출이 try/catch 없이 탭 핸들러
+        // 안에서 돌아, 바이너리 불일치 등으로 throw하면 크래시. 위와 동일하게 방어(실패 시 미결정 취급).
+        let st: string;
+        try { st = gestureMod.cameraPermissionStatus(); } catch { st = 'notDetermined'; }
         if (st === 'denied' || st === 'restricted') { setCamStatus(st); Linking.openSettings().catch(() => {}); return; } // 설정으로
         if (st === 'notDetermined') {
           gestureMod.requestCameraPermission().then((granted) => {

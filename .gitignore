@@ -62,3 +62,4 @@ modules/**/android/.cxx/
 
 # tool-local state, not project source
 .claude/
+6.5inch

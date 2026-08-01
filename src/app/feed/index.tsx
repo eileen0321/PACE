@@ -70,11 +70,14 @@ export default function PaceFeedScreen() {
   const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
   const breakIntervalMinutes = useSettingsStore((s) => s.settings.breakIntervalMinutes); // 브레이크 리마인더(안드 parity)
   const volumeKeyRemote = useSettingsStore((s) => s.settings.volumeKeyRemote); // BT 볼륨키 토글(opt-in, 기본 OFF)
+  const handsFreeGesture = useSettingsStore((s) => s.settings.handsFreeGesture); // 손짓 토글(opt-in, 기본 OFF, 2026-08-01)
   const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes); // 세션 시작 전 오늘 사용시간(일일한도 계산)
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
-  const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
+  // 2026-08-01 성능 감사 — diag 상태는 렌더에서 전혀 안 쓰였는데(오버레이 미표시) onDiag/onAudioDiag가
+  // dev에서 초당 ~3회 setDiag로 피드(WebView 서브트리 포함)를 리렌더시켜 dev 손짓 테스트를 흐렸다.
+  // 죽은 상태라 제거 — 온디바이스 진단은 PaceGestureLog.nativeLog(리렌더 무관)가 담당.
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
@@ -212,11 +215,17 @@ export default function PaceFeedScreen() {
   // (고개짓 head-nod는 2026-07-23 "비현실적" 판단으로 계속 제외 — 'snap' 모드만 start.)
   //
   // 2026-07-26 사장님 결정 번복 — D9 프리미엄 게이팅을 다시 무료로 개방. Focus Session(isAutoMode)
-  // 중에는 무료/유료 동일하게 손짓 감지가 켜진다.
-  // 손짓 감지 ON 조건 = Focus Session(isAutoMode)만 켜지면 무조건 작동. ⚠️ 2026-07-27: 핸즈프리 마스터/손짓
-  // 하위토글에 묶었더니 마스터를 끄면(사용자가 UI 테스트로 자주 끔) 손짓이 통째로 안 켜져 "한번도 안 됨"이
-  // 됐다 — 손짓 동작을 확실히 하려고 설정 토글과 완전히 분리하고 Focus Session에만 묶는다(분리 전 상태 복구).
-  const handsFreeDetectActive = isAutoMode;
+  // 중에는 무료/유료 동일하게 손짓 감지가 켜진다(프리미엄 여부와 무관, 켜는 조건 자체는 아래로 대체됨).
+  // ⚠️ 2026-07-27: 한때 핸즈프리 "마스터"(handsFreeEnabled)와 손짓 하위토글에 같이 묶었더니 마스터를
+  // 끄면(사용자가 UI 테스트로 자주 끔) 손짓이 통째로 안 켜져 "한번도 안 됨"이 됐던 적이 있다 — 그래서
+  // 한동안 설정 토글과 완전히 분리하고 Focus Session에만 묶여 있었다(무조건 ON).
+  // 2026-08-01 사용자 지시 — 그 사이 배터리 검토에서, 손짓이 Focus Session 내내(프리미엄은 최대
+  // ~120분/일까지 이어짐) 전면카메라를 계속 구동해 배터리 비용이 실재한다고 판단. volumeKeyRemote와
+  // 같은 opt-in 패턴으로 전환: 이번엔 마스터(handsFreeEnabled)가 아니라 손짓 "하위" 토글
+  // (handsFreeGesture, 기본값 false — useSettingsStore.ts)에만 물려서 위 회귀를 재현하지 않는다
+  // (마스터는 여전히 UI 표시용일 뿐 이 게이팅과 무관). 세션 시작 시 꺼져 있으면 toggleAutoMode가
+  // 토스트로 "Focus 탭에서 켤 수 있다" 안내(알림 대신 인앱 토스트 — 매 세션 알림은 과함).
+  const handsFreeDetectActive = isAutoMode && handsFreeGesture;
 
   useEffect(() => {
     loadInitial();
@@ -250,6 +259,11 @@ export default function PaceFeedScreen() {
       if (state === 'background') {
         flushWatchTime('completed');     // 앱을 벗어나면 그때까지의 시청 시간을 기록(세그먼트 닫힘)
         setIsAutoMode((prev) => (prev ? false : prev));
+        // 2026-08-01 배터리 감사 — 백그라운드에선 status를 PAUSED로 내려 playing=false로 만든다.
+        // iOS는 백그라운드오디오 권한이 없어 WebView 영상을 자동 일시정지하지만 status는 그대로라
+        // 복귀 시 keepAwake가 "정지된 영상" 위에서 계속 화면을 켜둬 최대 30분(idle 상한) 배터리를
+        // 태웠다. PAUSED로 내리면 keepAwake/타이머/센서가 즉시 해제되고, 복귀 후 탭으로 재개한다.
+        setStatus('PAUSED');
       } else if (state === 'active') {
         // background로 세그먼트가 닫혔을(null) 때만 새로 시작 — 'inactive'(권한 팝업 등)에서 돌아온
         // 경우엔 세그먼트가 살아 있으므로 건드리지 않아 그 사이 시청 시간을 잃지 않는다.
@@ -303,7 +317,6 @@ export default function PaceFeedScreen() {
   }, [isAutoMode, focusSessionDurationMinutes]);
 
   // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
-  const sessionRemainingMin = sessionEndsAt != null ? Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000)) : null;
 
   // 전환 동안 손짓 추론 정지(iOS) → 페이지 로드에 CPU 양보. 손짓/볼륨/자연종료/수동 등 모든 넘김이
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
@@ -369,7 +382,17 @@ export default function PaceFeedScreen() {
     markUserInput();
     const next = !isAutoMode;
     setIsAutoMode(next);
-    useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
+    // 2026-08-01 — 손짓이 opt-in(기본 OFF)으로 바뀌면서, 세션을 켰는데 손짓이 꺼져있는 유저에게
+    // Focus 탭에서 켤 수 있다고 짧게 안내(별도 푸시 알림 대신 기존 세션-시작 토스트에 얹는다).
+    if (next) {
+      useToastStore.getState().show(
+        handsFreeGesture
+          ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes })
+          : t('feed.focusSessionStartedNoGestureToast', { n: focusSessionDurationMinutes })
+      );
+    } else {
+      useToastStore.getState().show(t('feed.focusSessionEndedToast'));
+    }
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
@@ -382,7 +405,7 @@ export default function PaceFeedScreen() {
     // diag state를 매번 새 객체로 갱신 → PaceFeedScreen(웹뷰 서브트리 포함) 전체가 초당 수회 리렌더 →
     // 예전에 setProgress 제거로 고쳤던 영상 "씹힘/히치"·손짓 카메라 불안정이 그대로 재발하는 회귀 벡터.
     // 릴리즈에선 완전히 끄고(__DEV__ false), dev에서만 진단 유지. 손짓 발화는 onHandWave라 이와 무관.
-    onDiag: (kind, text) => { if (__DEV__) setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })); },
+    onDiag: () => {}, // diag 상태 제거(성능) — 진단은 네이티브 로그가 담당
   });
   // 전환 정지 함수를 goNext가 쓰는 ref에 연결(iOS=실제 정지, Android=no-op).
   pauseWaveRef.current = feedRemote?.pauseWaveForTransition ?? null;
@@ -438,7 +461,10 @@ export default function PaceFeedScreen() {
       {/* ⚠️ 프리로드(다음영상 미리로드)는 기기에서 YouTube WebView 2개가 디코더/대역폭 경합 → 재생 중
           버퍼링 멈춤(stalled) + 손짓 카메라 불안정을 유발했다(실기기 로그 확정). 전환 간극보다 mid-play
           멈춤이 더 나쁘므로 단일 플레이어로 유지한다. (next는 큐 프리페치/캐시로만 미리 확보.) */}
-      {current && !feedBlocked && (
+      {/* 2026-08-01 배터리 감사 — sleepBlackout(취침/슬립타이머/idle 상한 발동)이면 WebView를 통째로
+          언마운트한다. 예전엔 검은 Pressable로 가리기만 해서 유튜브 페이지가 메모리에 남고 내부
+          500ms 폴링이 계속 브릿지로 메시지를 쏘았다(재생은 정지됐어도 CPU/wakeup 낭비). */}
+      {current && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
           ref={playerRef}
           videoId={current.videoId}
@@ -446,7 +472,7 @@ export default function PaceFeedScreen() {
           onProgress={handleProgress}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
-          onAudioDiag={(text) => { if (__DEV__) setDiag((d) => ({ ...d, audio: text })); }} // C1: 릴리즈 리렌더 폭풍 차단
+          onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
         />
       )}
 
@@ -562,8 +588,6 @@ const styles = StyleSheet.create({
   // 상단 세션 토글 필(항상 표시) — OFF는 "▶ START SESSION"(중립 테두리), ON은 "● SESSION ON"(초록 테두리).
   sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   sessionPillOn: { borderColor: colors.success },
-  diagBox: { alignSelf: 'center', marginTop: 8, backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
-  diagText: { color: '#00E5A0', fontSize: 15, fontFamily: typography.monoFontFamilyBold, textAlign: 'center' },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   sessionDivider: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },

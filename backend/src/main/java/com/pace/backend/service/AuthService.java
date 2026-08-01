@@ -21,6 +21,7 @@ public class AuthService {
     private final UserAccountRepository userAccountRepository;
     private final GoogleTokenVerifier googleTokenVerifier;
     private final AppleTokenVerifier appleTokenVerifier;
+    private final AppleOAuthService appleOAuthService;
     private final JwtProvider jwtProvider;
     private final RevenueCatService revenueCatService;
 
@@ -36,7 +37,15 @@ public class AuthService {
         ExternalIdentity identity = appleTokenVerifier.verify(request.identityToken());
         // name은 Apple이 최초 로그인 1회에만 클라이언트에 내려주는 값 — 이후 로그인엔 null이라 덮어쓰지 않는다.
         UserAccount user = upsertByEmail(identity.email(), request.name(), "apple");
-        return issueAuthResult(user);
+        // 5.1.1(v)/TN3194 — authorizationCode를 refresh_token으로 교환해 저장(계정삭제 시 revoke용).
+        // 최초 로그인 1회에만 authorizationCode가 오고, 자격증명 미설정이면 null 반환(교환 skip). 기존 값은 덮어쓰지 않음.
+        if (request.authorizationCode() != null && !request.authorizationCode().isBlank()) {
+            String refreshToken = appleOAuthService.exchangeAuthorizationCode(request.authorizationCode());
+            if (refreshToken != null) {
+                user.setAppleRefreshToken(refreshToken);
+            }
+        }
+        return issueAuthResult(user); // user(appleRefreshToken 포함)를 save한다
     }
 
     @Transactional
@@ -65,10 +74,14 @@ public class AuthService {
 
     @Transactional
     public void deleteAccount(Long userId) {
-        if (!userAccountRepository.existsById(userId)) {
-            throw ApiException.notFound("USER_NOT_FOUND", "존재하지 않는 사용자입니다");
+        UserAccount account = userAccountRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound("USER_NOT_FOUND", "존재하지 않는 사용자입니다"));
+        // 5.1.1(v)/TN3194 — Apple 로그인 계정은 삭제 전 서버에서 Apple 토큰 revoke(Apple이 심사 때 확인).
+        // revoke 실패/자격증명 미설정은 삭제를 막지 않는다(서비스 내부에서 예외 삼킴).
+        if ("apple".equals(account.getProvider()) && account.getAppleRefreshToken() != null) {
+            appleOAuthService.revokeToken(account.getAppleRefreshToken());
         }
-        userAccountRepository.deleteById(userId); // FK ON DELETE CASCADE로 하위 데이터 전부 함께 삭제
+        userAccountRepository.delete(account); // FK ON DELETE CASCADE로 하위 데이터 전부 함께 삭제
     }
 
     private UserAccount upsertByEmail(String email, String name, String provider) {

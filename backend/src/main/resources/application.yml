@@ -27,6 +27,12 @@ pace:
     client-id: ${GOOGLE_CLIENT_ID:}
   apple:
     bundle-id: ${APPLE_BUNDLE_ID:com.strides7.pace}
+    # Sign in with Apple 토큰 폐기(계정삭제 5.1.1v/TN3194)용. IAP 키와 별개인 "Sign in with Apple" .p8 키.
+    # 미설정이면 폐기 skip(계정삭제 자체는 정상). Railway env로 주입: APPLE_TEAM_ID / APPLE_SIGNIN_KEY_ID /
+    # APPLE_SIGNIN_PRIVATE_KEY(.p8 PEM 전체, 줄바꿈 포함).
+    team-id: ${APPLE_TEAM_ID:}
+    key-id: ${APPLE_SIGNIN_KEY_ID:}
+    private-key: ${APPLE_SIGNIN_PRIVATE_KEY:}
   revenuecat:
     webhook-auth-header: ${REVENUECAT_WEBHOOK_AUTH_HEADER:}
     api-key: ${REVENUECAT_API_KEY:}

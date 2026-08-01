@@ -106,6 +106,12 @@
 
 ## 3. Android 할 일 리스트 (우선순위순, Windows 세션)
 
+0. [ ] **🔴🔴 최우선(2026-08-01, 공용 백엔드 — Mac이 Java 미설치라 컴파일/배포 검증 못 함) — `backend/ShortsHotService.java` 빌드+배포 확인**
+   Mac 세션이 `backend/src/main/java/com/pace/backend/service/ShortsHotService.java`를 두 번 수정했는데(둘 다 push 완료), **Mac엔 Java 런타임이 없어 로컬 컴파일을 못 했다**. Windows 세션이 대신:
+   - **① `isPlayableShort()` 추가(커밋 `e7db712`)**: Shorts HOT에서 라이브/프리미어(`contentDetails.duration=="P0D"` → 0초라 기존 ≤60초 필터를 통과하던 버그) 제외 + `parseDurationSeconds`가 미상/실패를 `Long.MAX_VALUE`→`0` 반환으로 변경. (실기기: 로블록스 라이브가 HOT에 떠서 앱 내 피드가 watch로 리다이렉트되던 문제의 근본 수정.)
+   - **② 카테고리당 개수 30→50(커밋 `0d84867`)**: `KEEP_COUNT` 30→50, `MAX_PAGES` 4→6, `SEARCH_FALLBACK_RESULTS` 45→50. 필터(≤60초·비라이브)는 그대로. 사장님 지시 "60초내 50개로, 공통으로".
+   - **해야 할 일**: (a) `cd backend && ./mvnw -q compile`(또는 assemble)로 **컴파일 통과 확인**(Mac이 못 한 유일한 검증), (b) Railway가 push로 **자동 재배포됐는지 확인**(railway.json 기반), (c) 배포 후 `POST /shorts-hot/refresh`로 즉시 재curate(또는 6h 크론 0/6/12/18시 대기). GET/refresh는 인증 필요 — 앱 세션/서버 콘솔에서.
+   - **공용 반영**: 백엔드가 공용 엔드포인트라 배포되면 **iOS·Android 둘 다** P0D 제외 + 50개가 자동 적용된다(클라이언트 코드 변경 불필요). Android 네이티브 `ShortsHotStore`도 같은 `/shorts-hot`를 읽으므로 배포만 되면 끝.
 1. [x] **B1** 블루투스 핸즈프리 UI 정리 — 완료(아래 §6 로그). focus.tsx/SessionHeroCard/ToastHost는
    조사 결과 이미 참조 없음(과거 정리에서 삭제됨, 코멘트만 남음) — 실제 수정은 capabilities.ts,
    home.tsx, BluetoothOnboardingSheet.tsx, AccessibilityOnboardingSheet.tsx, settings.tsx,
@@ -138,6 +144,10 @@
 검증 + 수면감지 정확도 개선까지 완료(아래 §6 "2026-07-26 — Windows 세션 (Focus Session 라이브
 실기기 검증 완료 + 수면감지 정확도 개선)" 로그 필독). **자동넘김 30편 한도 시스템은 완전히
 제거됨**. 다음 세션 우선순위:
+-2. **[🔴🔴 최우선, 공용 백엔드] `backend/ShortsHotService.java` 컴파일+배포 확인** — Mac이 Java
+   미설치라 못 한 검증. §3의 0번 항목 참고(P0D 라이브 제외 `e7db712` + 카테고리당 30→50 `0d84867`,
+   둘 다 push됨). `cd backend && ./mvnw compile` 통과 확인 → Railway 자동배포 확인 → `POST
+   /shorts-hot/refresh`(또는 6h 크론). 배포되면 iOS·Android 둘 다 자동 반영.
 -1. **[🔴 최우선, dev 워크플로우] 재설치 후 접근성 항상 재확인** — 오늘 밤 "오버레이 소실+자동재생
    안됨+손짓 안먹음" 세 신고가 전부 `PaceAccessibilityService`가 재설치로 꺼진 단일 원인이었음
    (§6 "2026-07-26 밤, 이어서2" 로그 필독). 다음 세션 시작 시 실기기로 뭔가 테스트하기 전에

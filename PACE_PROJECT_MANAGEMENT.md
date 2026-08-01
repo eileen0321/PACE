@@ -2975,3 +2975,32 @@ API가 있음. 하지만 Pace(Expo SDK 57, expo-navigation-bar v57.0.2)의 실�
 `backend/.../Insight*`), `TabSwipeArea.*`, `PaceHandWaveDetector.kt`, `BluetoothOnboardingSheet.tsx`,
 `storage/keys.ts`의 작업중 변경분은 이번 커밋에서 **의도적으로 제외**(내가 만들지도, 검증하지도
 않은 별도 진행중 작업 — 로컬에 uncommitted 상태로 그대로 남겨둠, 기존 stash 3개도 안 건드림).
+
+### 2026-08-01 (이어서) — Windows 세션: 위 제외됐던 작업분 커밋/푸시 완료 + 폰 목업 이미지 퍼플로 교체
+
+위 항목에서 "제외"됐다고 기록된 Insight 백엔드 이전, `TabSwipeArea.*`(Android 탭 스와이프),
+`PaceHandWaveDetector.kt`(손짓 재무장 게이트), `BluetoothOnboardingSheet.tsx`(블루투스/손짓 힌트),
+`storage/keys.ts` — 전부 이 Windows 세션이 만든 작업이었음(그 시점엔 아직 로컬 uncommitted라
+"내가 만들지 않은 별도 작업"으로 오인된 것). 검증 완료 후 `57d0c29`로 커밋·푸시함:
+
+- `PaceHandWaveDetector`: 트리거 후 손이 실제로 물러나야(트리거 시점 크기의 75% 이하) 재무장 —
+  손을 안 치우고 있으면 잔류 흔들림만으로 화면이 연달아 넘어가던 버그 수정
+- `TabSwipeArea`: 탭 좌우 스와이프(홈↔집중↔분석↔설정)를 Android에도 적용 — 원래 iOS 전용으로
+  분리됐던 이유(피드 손가락 스와이프)와 달리 이건 `react-native-gesture-handler`+`expo-router`뿐이라
+  플랫폼 제약이 없었음
+- 홈 배너 인사이트 문구를 `insightContent.ts` 하드코딩 배열에서 백엔드(`insight_item` 테이블 +
+  `GET /insights`)로 이전 — 문구 추가/수정에 앱 재배포 불필요해짐. 신조어 카테고리는 폐기(유행어라
+  금방 낡아 보인다는 사용자 지적), 힐링/명언/기능가이드 위주로 확장(총 167개), 하루 1회 캐시하던
+  것도 제거해 홈 탭 열 때마다 매번 랜덤 재추첨되게 함
+- `BluetoothOnboardingSheet`: 블루투스 리모컨 힌트 문구 신규 추가("볼륨 버튼 있는 블루투스
+  리모컨이면 뭐든 페어링만 하면 바로 돼요"), 손짓 힌트는 길이 조정(40cm/15cm 수치 제거, 정확도
+  caveat은 사용자 요청으로 유지)
+- 배터리 최적화 배너: 🔋 이모지 대신 인사이트 배너와 통일된 원형 배지로 교체, 인사이트 배너와
+  동시에 뜨지 않도록 순서 조정(인사이트 배너 닫힌 뒤에만 표시)
+
+**⚠️ 폰 목업 이미지 교체 — Mac도 반영 필요**: `FlipPhoneHero.tsx`(온보딩 "휴식 측정" 페이지)가
+쓰던 `assets/phone05.png`(브라운/마룬 색상, 4000×4000·6.4MB — 런타임 디코드 지연으로 "폰이 늦게
+뜬다"는 원인이기도 했음)를 `assets/phone10.png`(퍼플, 1024×1024, 브랜드 컬러 #5856D6 계열)로
+교체. `phone05.png`는 900×900으로 리사이즈만 해두고 그대로 남아있음(더 이상 참조 안 됨, 필요시
+삭제 가능). iOS 쪽에 동일 컴포넌트나 별도 폰 목업을 쓰는 화면이 있다면 같이 `phone10.png`로
+맞출 것.

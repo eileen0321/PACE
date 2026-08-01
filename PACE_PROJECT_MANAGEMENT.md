@@ -2828,3 +2828,29 @@ onMessage(L415)에서 `PaceGestureLog.nativeLog`로 **`__DEV__` 게이팅 없이
 
 **다음 단계**: v1.0.2 프로덕션 빌드(buildNumber 3) + 계정삭제 화면녹화 + 재제출(5.1.1v) — 프로덕션
 빌드는 사장님 확인 후 시작 예정(출근 중이라 대기). idle cap Android parity는 Windows 세션 회신 대기.
+
+### 2026-08-01 (이어서) — Mac(iOS) 세션: 계정삭제 녹화(5.1.1v) + 재제출 리스크 전수 점검
+
+**재심사 반려 전수 점검 결론(사장님 요청)** — 코드/바이너리 쪽은 깨끗, 남은 위험은 전부 ASC/제출물:
+- ✅ 코드 OK: 페이월 3.1.2(복원·자동갱신고지·약관/개인정보), 계정삭제(설정→고급, 확인다이얼로그,
+  서버삭제+Apple토큰폐기, 게스트엔 숨김), Apple로그인(HIG 4.8), 프로덕션 광고=실유닛(`--profile
+  production`), 진단로그 __DEV__ 게이팅, 프로덕션 API=Railway(백엔드 401=정상 살아있음), 게스트 최소기능.
+- 🔴 **반려 원인 확정**: 이번 반려(build 2, 7/31)는 **오직 5.1.1(v) 계정삭제 하나**. 구독 3개 "Rejected"는
+  독립 문제가 아니라 **앱 반려에 딸린 상태**(메시지 명시: "returned because the associated app was
+  rejected ... until it is resubmitted"). 즉 구독은 따로 손댈 것 없고 **앱 재제출 시 자동 재심사**.
+- 계정삭제는 이미 코드에 있음(build 2는 그 전 빌드라 반려). v1.0.2/build3에 포함.
+
+**계정삭제 화면녹화(5.1.1v 제출물)** — 실기기 Release 빌드(iPhone 14 Pro, `expo run:ios --device
+--configuration Release`)로 설치 후 사장님이 기기 아닌 **시뮬**에서 녹화 진행(사장님 선택). Google
+데모계정 **s7.reviewer@gmail.com** 으로 로그인→설정→고급→계정삭제→확인→GUEST 흐름 녹화 완료
+(`~/Desktop/PACE_account_deletion_FINAL.mov`). ⚠️ ASC App Review Information Notes에 이 영상 + 데모
+Google 계정(s7.reviewer@gmail.com) 자격증명 기입 권장. (시뮬 녹화라 Apple "physical device" 요구엔
+어긋날 수 있어 반려 시 기기로 재녹화 — 기기 빌드 이미 준비됨.)
+
+**부수 정리**: 계정삭제 후 홈에 시청시간 남는 건 삭제된 계정 데이터가 아니라 **게스트 자신의 로컬
+데이터**(stats가 user_id 스코프 — clearUserHistory로 삭제계정 기록은 지워짐). 리뷰어는 깨끗한 기기라
+0m로 뜸 → 문제 없음. "설정 초기화"(앱 설정/카운터 리셋)와 "계정 삭제"(계정+데이터 영구삭제)는 별개
+기능이고 라벨 명확 → 심사 무관. LogBox 소음억제 커밋(dev 전용, 프로덕션 무관).
+
+**다음**: v1.0.2 프로덕션 빌드(EAS, buildNumber 3) → 제출 시 구독 첨부 + 위 녹화/데모계정 Notes 기입.
+프로덕션 빌드는 사장님 확인 후 시작(대기 중). idle cap Android parity는 Windows 세션 회신 대기.

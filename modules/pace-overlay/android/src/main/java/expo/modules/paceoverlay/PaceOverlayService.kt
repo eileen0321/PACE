@@ -2065,19 +2065,21 @@ class PaceOverlayService : Service() {
       MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
     )
     items.forEachIndexed { index, item ->
+      // 2026-08-01 사장님 지적("박스 크기 줄이라고") — 행 패딩/글자 크기를 iOS 컨텍스트 메뉴에
+      // 가깝게 더 촘촘히 줄임(특히 상하 패딩 12dp→7dp가 3줄 누적되면 세로로 가장 크게 체감됨).
       val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
-        setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        setPadding((14 * d).toInt(), (7 * d).toInt(), (14 * d).toInt(), (7 * d).toInt())
         setOnClickListener { item.action() }
       }
       if (item.icon != null) {
         row.addView(TextView(this).apply {
           text = item.icon
-          textSize = 15f
+          textSize = 13f
           setTextColor(Color.parseColor("#CCFFFFFF"))
-          setPadding(0, 0, (10 * d).toInt(), 0)
+          setPadding(0, 0, (6 * d).toInt(), 0)
         })
       } else if (item.badge != null) {
         row.addView(TextView(this).apply {
@@ -2089,14 +2091,14 @@ class PaceOverlayService : Service() {
             cornerRadius = 999f
             setColor(Color.parseColor("#E5484D"))
           }
-          setPadding((7 * d).toInt(), (2 * d).toInt(), (7 * d).toInt(), (2 * d).toInt())
+          setPadding((6 * d).toInt(), (1 * d).toInt(), (6 * d).toInt(), (1 * d).toInt())
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-          marginEnd = (10 * d).toInt()
+          marginEnd = (6 * d).toInt()
         })
       }
       row.addView(TextView(this).apply {
         text = item.label
-        textSize = 13f
+        textSize = 12f
         setTextColor(Color.WHITE)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
       })

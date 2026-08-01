@@ -143,6 +143,23 @@ export default function FocusScreen() {
       bluetoothService.hasCameraPermission().then(setHasCameraPerm).catch(() => {});
     }, [])
   );
+  // 2026-08-01 사용자 지적("BT토글 누르면 접근성 화면 계속 온다고, 이미 사용중인데") — 위
+  // useFocusEffect는 React Navigation의 화면 포커스에만 반응한다. 블루투스 토글을 눌러 시스템
+  // 접근성 설정 화면(다른 Activity)으로 나갔다가 뒤로가기로 돌아오면, RN 내비게이터 입장에서는
+  // Focus 탭이 애초에 블러된 적이 없어(같은 화면 스택 안에서 벗어난 적 없음, OS 레벨로만
+  // pause/resume) useFocusEffect가 재실행되지 않는다 — hasAccessibility가 계속 예전(false)
+  // 값에 멈춰 있어 이미 켰는데도 계속 "권한 필요"로 보이고 탭할 때마다 설정 화면이 다시 열렸다.
+  // iOS의 카메라 권한 재확인(위 :80, "설정에서 돌아오면 재확인")과 동일한 패턴 — 앱이 다시
+  // active로 돌아올 때도 재확인한다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const check = () => {
+      autoNextService.hasPermission().then(setHasAccessibility).catch(() => {});
+      bluetoothService.hasCameraPermission().then(setHasCameraPerm).catch(() => {});
+    };
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
+    return () => sub.remove();
+  }, []);
   // 실제 스와이프(dispatchGesture)는 결국 접근성 서비스를 거쳐야 하므로(PaceAccessibilityService.
   // swipeOnce), 손짓/블루투스 둘 다 접근성이 꺼져 있으면 무력화된다 — 손짓은 카메라 권한도 추가로 필요.
   const gestureBlocked = !isIOS && (!hasAccessibility || !hasCameraPerm);

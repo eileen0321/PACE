@@ -94,6 +94,12 @@ export default function HomeScreen() {
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
+  // 2026-08-01 실기기 사고 대응 — 접근성 서비스가 재빌드/재설치 등으로 꺼지면 세션 추적/오버레이가
+  // 통째로 멈추는데, SharedPrefs의 session_active는 그대로 true라 앱 UI만 봐선 정상처럼 보이고
+  // 에러도 없어 사용자가 스스로 알아챌 방법이 없었다(PACE_PROJECT_MANAGEMENT.md 참고). 배터리
+  // 배너와 달리 "평생 1회만" 안내하면 안 된다 — 이건 기능이 통째로 죽는 하드 블로커라 꺼져 있는 한
+  // 계속 다시 보여야 한다(AsyncStorage seen-flag 없이 매 확인마다 실제 상태를 그대로 반영).
+  const [showAccessibilityPrompt, setShowAccessibilityPrompt] = useState(false);
   // 2026-07-22 — 예전엔 "한 번 닫으면 오늘 하루 끝"인 단일 boolean이었는데, 3단계 시스템에선 3차
   // 토스트가 5분마다 계속 다시 떠야 한다(그래야 "완화된 반복 알림"이 됨). dismissedHitCount로
   // "이 hitCount는 이미 보여준 적 있다"만 기록 — hitCount가 다음 5분 임계값으로 올라가면 그 값보다
@@ -156,6 +162,24 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, []);
 
+  // 2026-08-01 실기기 사고 대응 — 접근성 꺼짐은 시스템 설정에서 언제든 조용히 일어날 수 있으므로
+  // (재설치/재빌드뿐 아니라 OEM 배터리 관리·OS 업데이트로도 회수될 수 있음) Home 탭 포커스마다는
+  // 물론(useFocusEffect, 아래) 앱이 다시 foreground로 돌아올 때도 재확인한다 — 설정 화면 다녀온
+  // 뒤 뒤로가기로 복귀하는 경우 포함(focus.tsx의 동일 패턴 참고).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const checkAccessibility = () => {
+      overlayService.hasAccessibilityPermission().then((granted) => {
+        setShowAccessibilityPrompt(!granted);
+      }).catch(() => {});
+    };
+    checkAccessibility();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkAccessibility();
+    });
+    return () => sub.remove();
+  }, []);
+
   // 2026-08-01 사용자 지적("앱 나갔다 다시 들어왔는데 무한 스크롤 같은 문구야") — useFocusEffect는
   // react-navigation의 화면 포커스(탭 전환)에만 반응한다. 홈 탭에 계속 머문 채로 홈 버튼 등으로
   // 앱만 백그라운드로 보냈다가 다시 열면 화면 포커스 자체는 안 바뀌므로 재추첨이 안 됐다. 앱이
@@ -210,6 +234,9 @@ export default function HomeScreen() {
           const seen = await AsyncStorage.getItem(STORAGE_KEYS.batteryOptimizationPromptSeen);
           if (!seen) setShowBatteryPrompt(true);
         })();
+        overlayService.hasAccessibilityPermission().then((granted) => {
+          setShowAccessibilityPrompt(!granted);
+        }).catch(() => {});
       }
     }, [user?.id, refresh, refreshBluetooth])
   );
@@ -222,6 +249,17 @@ export default function HomeScreen() {
     overlayService.requestBatteryOptimizationExemption();
     dismissBatteryPrompt();
   }, [dismissBatteryPrompt]);
+
+  // 2026-08-01 — 배터리 배너와 달리 "본 적 있음" 영속 기록을 안 남긴다: 접근성이 꺼진 채면 세션
+  // 추적/오버레이 자체가 죽으므로, 지금 눈에 안 보이게 닫아도 다음 포커스/foreground 재확인에서
+  // 여전히 꺼져 있으면 그대로 다시 뜬다(위 useEffect/useFocusEffect 참고).
+  const dismissAccessibilityPrompt = useCallback(() => {
+    setShowAccessibilityPrompt(false);
+  }, []);
+  const acceptAccessibilityPrompt = useCallback(() => {
+    overlayService.requestAccessibilityPermission();
+    setShowAccessibilityPrompt(false);
+  }, []);
 
   // 2026-07-29 사장님 지시("가끔 연속으로 오면 크레딧도 선물박스 누르면 주고") — 인사이트 배너를
   // 탭하면 가끔(30% 확률) 보너스 크레딧이 터지는 선물상자로. 하루 한 번만 보상 판정(파밍 방지) —
@@ -388,7 +426,20 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         <AppHeader userEmail={user?.email ?? 'guest@pace.app'} />
 
-        {todaysInsight && (
+        {/* 2026-08-01 실기기 사고 — 접근성이 꺼지면 세션 추적/오버레이가 통째로 멈추는 하드 블로커라
+            다른 배너보다 항상 우선(아래 두 배너는 이게 떠 있는 동안 미룸). 배터리 배너와 달리
+            "본 적 있음" 무기한 억제를 안 한다 — 꺼져 있는 한 계속 다시 뜬다. */}
+        {showAccessibilityPrompt && (
+          <Pressable style={[styles.sleepInsightBanner, styles.accessibilityBanner]} onPress={acceptAccessibilityPrompt}>
+            <View style={[styles.sleepInsightBadge, styles.accessibilityBadge]}>
+              <Feather name="alert-triangle" size={14} color="#FFFFFF" />
+            </View>
+            <Text style={styles.sleepInsightText}>{t('focus.accessibilityPromptBanner')}</Text>
+            <Text style={styles.sleepInsightDismiss} onPress={dismissAccessibilityPrompt}>✕</Text>
+          </Pressable>
+        )}
+
+        {todaysInsight && !showAccessibilityPrompt && (
           <Pressable style={styles.sleepInsightBanner} onPress={onTapInsightGift}>
             {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
                 회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
@@ -406,7 +457,7 @@ export default function HomeScreen() {
             둘 다 조건이 맞으면 동시에 쌓여 보였다. 이모지를 인사이트 배너와 동일한 원형 배지로
             통일하고, "노티가 다음에 나오게"라는 요청대로 인사이트 배너가 떠 있는 동안은 배터리
             배너를 미룬다 — 인사이트 배너를 닫아야(todaysInsight → null) 그다음에 나타난다. */}
-        {showBatteryPrompt && !todaysInsight && (
+        {showBatteryPrompt && !todaysInsight && !showAccessibilityPrompt && (
           <Pressable style={styles.sleepInsightBanner} onPress={acceptBatteryPrompt}>
             <View style={styles.sleepInsightBadge}>
               <Feather name="battery-charging" size={14} color="#FFFFFF" />
@@ -536,6 +587,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(129,140,248,0.25)',
   },
   sleepInsightBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  // 2026-08-01 — 접근성 꺼짐은 세션 추적 전체가 죽는 하드 블로커라 인사이트/배터리 배너의 보라색
+  // 톤과 구분되게 경고색(amber)으로 눈에 띄게 한다.
+  accessibilityBanner: { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.3)' },
+  accessibilityBadge: { backgroundColor: colors.warning },
   sleepInsightBadgeText: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF' },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
   sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },

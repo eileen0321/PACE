@@ -61,4 +61,10 @@ export const overlayService: OverlayService = {
   async consumeAccessibilityRevoked() {
     return false; // iOS는 접근성 서비스 개념 자체가 다름(Vision 프레임워크 기반) — no-op
   },
+  async hasAccessibilityPermission() {
+    return true; // iOS는 이 개념 자체가 없음(Android 전용 AccessibilityService) — no-op
+  },
+  async requestAccessibilityPermission() {
+    // no-op
+  },
 };

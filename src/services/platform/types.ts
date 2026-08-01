@@ -95,6 +95,18 @@ export interface OverlayService {
    * 띄운다. Android만 실제 신호, iOS는 항상 false.
    */
   consumeAccessibilityRevoked(): Promise<boolean>;
+  /**
+   * 2026-08-01 실기기 사고 — 사용자가 YouTube Shorts 안에 있는데 오버레이가 아예 안 뜬 원인을 추적한
+   * 결과 접근성 서비스 자체가 꺼져 있었다(재빌드/재설치 때마다 OS가 자동으로 끔, 매번 수동으로 다시
+   * 켜줘야 했는데 마지막 빌드 뒤 빠뜨림). session_active 프리퍼런스는 그대로 true라 앱 UI만 봐선
+   * 멀쩡해 보이고 에러도 안 나서 사용자가 스스로 알아챌 방법이 전혀 없었다(PACE_PROJECT_MANAGEMENT.md
+   * "오버레이가 YouTube Shorts에서 아예 안 뜨던 건" 참고). consumeAccessibilityRevoked()는 세션 도중
+   * "꺼짐으로 전환"만 1회성으로 잡아내므로, 애초에 세션 시작 전부터 꺼져 있던 이번 케이스는 못 잡는다
+   * — Home 진입 시 항상 재확인 가능한 상시 상태 조회가 필요해 추가. Android만 실제 동작, iOS는 항상
+   * true/no-op(접근성 서비스 개념 자체가 다름).
+   */
+  hasAccessibilityPermission(): Promise<boolean>;
+  requestAccessibilityPermission(): Promise<void>;
 }
 
 export type BluetoothState = {

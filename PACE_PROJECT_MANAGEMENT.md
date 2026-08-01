@@ -3138,3 +3138,51 @@ Android/iOS 양쪽에서 실제로 동작하는지, 그리고 서로 다른 화�
   회귀 위험으로 실기기 검증 후 결정.
 - ⚠️ 전 항목 **실기기 검증 필요**(보상광고 실 로드/보상, 타임아웃 10분 대기). Metro watchman 미설치로
   임베드 JS stale 위험 — 캐시 클리어 빌드 권장.
+
+## 오버레이가 YouTube Shorts에서 아예 안 뜨던 건 — 원인: 접근성 서비스가 꺼져 있었음 (2026-08-01)
+
+사용자가 외출 중 실기기에서 YouTube Shorts를 보고 있는데 Pace 오버레이(P 필/세션바)가 전혀 안
+보인다고 긴급 보고. 진단 순서:
+1. `dumpsys activity services expo.modules.paceoverlay` — `PaceOverlayService`가 아예 목록에 없음
+   (죽어있었음). `PaceAccessibilityService` 커넥션은 여러 개 있었지만 대부분 `DEAD`.
+2. SharedPrefs(`pace_overlay.xml`)엔 `session_active=true`인데 실제 서비스는 안 돎 — 상태 불일치.
+   `a11y_was_enabled=false`도 찍혀 있었음.
+3. **결정적 증거**: `adb shell settings get secure enabled_accessibility_services` → 빈 값,
+   `accessibility_enabled` → `0`. **접근성 서비스가 완전히 꺼져 있었다.** 오늘 세션 내내 반복된
+   재설치/재빌드로 접근성이 매번 꺼지는 걸(기존에 알려진 이슈, 메모리에도 기록됨) 마지막 빌드 이후
+   다시 켜주는 걸 빠뜨림 — 사용자가 자리를 비운 동안 그 상태로 방치됨.
+4. 추가로 `dumpsys deviceidle whitelist`에도 `com.strides7.pace`가 없었음(배터리 최적화 예외 미적용,
+   기기가 삼성 SM-N986N이라 백그라운드 kill이 특히 공격적).
+
+**왜 무서운 버그인가**: 접근성이 꺼지면 `onAccessibilityEvent`가 `currentForegroundPackage`를 갱신을
+안 하므로, 감시 중인 앱(YouTube 등)으로 전환해도 Pace가 이를 감지 못해 오버레이/세션 추적이 통째로
+멈춘다 — 그런데 앱을 열어보면 Home 화면은 멀쩡히 뜨고 에러도 안 나서(SharedPrefs엔 `session_active
+=true`로 남아있어서 마치 정상인 것처럼 보임) **사용자가 스스로 알아챌 방법이 전혀 없다.** 이번엔
+재설치 직후였지만, 실사용자도 OS 업데이트·설정 앱의 "권한 자동 해제"·OEM 배터리 관리 등으로 언제든
+똑같이 접근성이 꺼질 수 있고, 그 순간부터 이 앱의 핵심 기능(사용시간 추적/오버레이)이 조용히 완전히
+죽는다.
+
+**임시 조치(이번 건 해결)**: adb로 `settings put secure enabled_accessibility_services ...` +
+`accessibility_enabled 1` + `dumpsys deviceidle whitelist +com.strides7.pace`로 즉시 복구, 앱에서
+"Shorts with PACE" 눌러 새 세션 시작 → 오버레이(`4m left / FOCUS ON`) 정상 표시 확인함(스크린샷 검증
+완료).
+
+**✅ 코드로 고침(같은 세션 후속, 커밋 예정)** — Home 화면에 접근성 꺼짐 감지 배너를 새로 추가:
+- `overlayService`(`types.ts`/`overlayService.android.ts`/`overlayService.ios.ts`)에
+  `hasAccessibilityPermission()`/`requestAccessibilityPermission()` 신규 추가. 네이티브
+  `PaceOverlay.hasAccessibilityPermission()`은 기존에도 있었지만 `autoNextService.hasPermission()`이
+  `EXPO_PUBLIC_ENABLE_AUTO_NEXT` 빌드 플래그로 게이팅돼 있어(꺼짐 빌드에선 무조건 false 반환) 그걸
+  그대로 재사용하면 안 됨 — 새로 얇은 래퍼를 만들어 빌드 플래그와 무관하게 실제 OS 상태를 읽는다.
+- `home.tsx`: `showAccessibilityPrompt` state, Home 포커스마다(+`AppState` 'active' 복귀마다) 재확인,
+  꺼져 있으면 배터리/인사이트 배너보다 우선하는 amber 경고 배너 노출. **배터리 배너와 달리 "평생 1회"
+  억제를 안 함** — 세션 추적 자체가 죽는 하드 블로커라 꺼져 있는 한 계속 다시 뜬다. 탭하면
+  `requestAccessibilityPermission()`(접근성 설정 화면, 이전 세션에서 이미 currentActivity로 고쳐둬서
+  뒤로가기 시 Pace로 정상 복귀)로 이동.
+- **실기기 검증 중 결정적으로 새로 발견한 사실**: 접근성은 재설치뿐 아니라 **`adb shell am force-stop`
+  (=앱을 강제 종료)으로도 매번 자동으로 꺼진다.** 이번 검증 과정에서 배너를 테스트하려고 앱을
+  force-stop→재실행했더니 의도치 않게 실제로 꺼진 상태가 재현됐고, 새 배너가 정확히 잡아냈다(스크린샷
+  확인: "지금 사용시간 추적이 꺼져 있어요" amber 배너 → 탭 → 접근성 설정 화면 + 안내 토스트 정상 진입).
+  실사용자 기기에서도 OS/OEM이 백그라운드 앱을 강제 종료하는 상황(메모리 부족, "절전을 위해 앱 종료"
+  등)이 흔하므로 **이 버그는 일회성 사고가 아니라 상시 재발 가능한 클래스**였다는 뜻 — 이번 배너
+  추가로 최소한 사용자가 조용히 방치되진 않게 됐다. iOS는 accessibility service 개념이 달라
+  해당 없음(no-op).

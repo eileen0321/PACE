@@ -156,6 +156,7 @@ export const translations = {
       batteryStatus: 'Battery Optimization',
       batteryStatusDesc: 'Prevents the OS from silently disabling Pace',
       batteryPromptBanner: 'Tap to stop the OS from silently turning Pace off',
+      accessibilityPromptBanner: 'Tracking is off right now — tap to turn Accessibility back on',
       connected: 'Connected',
       notConnected: 'Not Connected',
       // 2026-07-21 감사 발견 — AccessibilityOnboardingSheet.tsx가 useTranslation을 아예 안 써서
@@ -638,6 +639,7 @@ export const translations = {
       batteryStatus: '배터리 최적화',
       batteryStatusDesc: 'OS가 Pace를 조용히 꺼버리는 걸 방지',
       batteryPromptBanner: '탭하면 OS가 Pace를 조용히 꺼버리는 걸 막을 수 있어요',
+      accessibilityPromptBanner: '지금 사용시간 추적이 꺼져 있어요 — 탭해서 접근성을 다시 켜주세요',
       connected: '연결됨',
       notConnected: '미연결',
       a11ySheetTitle: '핸즈프리 Shorts',

@@ -30,6 +30,8 @@ let PaceOverlay: {
   hasBatteryOptimizationExemption(): boolean;
   requestBatteryOptimizationExemption(): void;
   consumeAccessibilityRevoked(): boolean;
+  hasAccessibilityPermission(): boolean;
+  requestAccessibilityPermission(): void;
 } | null = null;
 
 try {
@@ -138,6 +140,14 @@ export const overlayService: OverlayService = {
 
   async requestBatteryOptimizationExemption() {
     PaceOverlay?.requestBatteryOptimizationExemption();
+  },
+
+  async hasAccessibilityPermission() {
+    return PaceOverlay?.hasAccessibilityPermission() ?? false;
+  },
+
+  async requestAccessibilityPermission() {
+    PaceOverlay?.requestAccessibilityPermission();
   },
 
   async consumeAccessibilityRevoked() {

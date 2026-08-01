@@ -13,10 +13,9 @@ import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
-import { maybeShowUsageInsight, getTodaysInsightMessage } from '../../services/usageInsight';
+import { getTodaysInsightMessage } from '../../services/usageInsight';
 import { useToastStore } from '../../store/useToastStore';
 import { backfillSleepFromHistory } from '../../services/sleepBackfill';
-import { notifyUsageInsight } from '../../services/notifications';
 import { useFlipStore } from '../../store/useFlipStore';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
@@ -169,10 +168,9 @@ export default function HomeScreen() {
         const uid = user.id;
         (async () => {
           await backfillSleepFromHistory(uid);
+          // 2026-08-01 사장님 지시 — "오늘의 신조어"가 앱 배너 + 푸시 노티로 중복 노출됐다. 앱 배너만
+          // 남기고 푸시 노티는 제거(maybeShowUsageInsight 호출 삭제). 인사이트는 인앱에서만 본다.
           getTodaysInsightMessage(uid).then(setTodaysInsight).catch(() => {});
-          // 재미있는 랜덤 사용 인사이트 노티(하루 1회) — 내부에서 오늘 노출 여부/데이터 유무 전부 판단.
-          // 배너와 같은 "오늘의 뽑기"를 공유하므로 노티/배너가 서로 다른 문구를 보여주지 않는다.
-          maybeShowUsageInsight(uid, notifyUsageInsight).catch(() => {});
         })();
       }
       // 2026-07-28 밤 감사 — 배터리 최적화 제외 배너, 1회만. Settings 안에 이미 있는 행(guardRow)과

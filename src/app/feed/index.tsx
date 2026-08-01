@@ -23,6 +23,9 @@ import { startSession, endSession } from '../../database/repositories/sessionsRe
 import { notifyLowTime, notifyLimitReached, notifyBreakReminder } from '../../services/notifications';
 import type { SessionEndStatus } from '../../types/models';
 import { overlayService } from '../../services/platform';
+import { PaceMenu } from '../../components/overlays/PaceMenu';
+import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
+import type { SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -85,6 +88,10 @@ export default function PaceFeedScreen() {
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
+  // 2026-08-01 사장님 지적 — 피드(웹뷰) P 버튼이 홈 이동만 하고 P 메뉴를 안 띄웠다. overlay/index.tsx와
+  // 동일하게 공용 PaceMenu(앱으로/Shorts HOT/Saved/Favorite) + SavedVideoListOverlay를 그대로 재사용.
+  const [showPaceMenu, setShowPaceMenu] = useState(false);
+  const [activeSavedList, setActiveSavedList] = useState<SavedVideoKind | null>(null);
   // 현재 "활성 시청 세그먼트" 시작 시각. null이면 카운트 안 함(백그라운드/flush 직후). 사용시간 측정용.
   const watchSegmentStartRef = useRef<number | null>(Date.now());
   // 감사 MED3 — 일일한도 tick의 누적 분/브레이크 카운트다운. 예전엔 effect 지역 let이라 playing/설정 변경으로
@@ -500,11 +507,33 @@ export default function PaceFeedScreen() {
               </>
             )}
           </Pressable>
-          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
+          <Pressable onPress={() => setShowPaceMenu((v) => !v)} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
           </Pressable>
         </View>
+
+        {/* 공용 P 메뉴(overlay/index.tsx와 동일 배선) — 앱으로/Shorts HOT/Saved/Favorite */}
+        {showPaceMenu && (
+          <PaceMenu
+            top={Math.max(insets.top, 47) + 44}
+            onClose={() => setShowPaceMenu(false)}
+            onSelect={(action) => {
+              setShowPaceMenu(false);
+              if (action === 'app') { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home'); }
+              else if (action === 'capture') setActiveSavedList('capture');
+              else if (action === 'favorite') setActiveSavedList('favorite');
+              else if (action === 'hot') useToastStore.getState().show(t('overlay.hotComingSoon'));
+            }}
+          />
+        )}
+        {activeSavedList && userId && (
+          <SavedVideoListOverlay
+            userId={userId}
+            kind={activeSavedList}
+            onClose={() => setActiveSavedList(null)}
+          />
+        )}
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

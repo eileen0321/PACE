@@ -1812,6 +1812,7 @@ class PaceOverlayService : Service() {
                 try {
                   val url = "https://www.youtube.com/shorts/${item.videoId}"
                   startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  ShortsHotStore.markWatched(applicationContext, category, item.videoId)
                 } catch (e: Exception) {
                   Log.w("PaceOverlayService", "Shorts HOT 재생 실패", e)
                 }
@@ -2478,6 +2479,23 @@ private object ShortsHotStore {
     return if (token.isNullOrEmpty()) null else token
   }
 
+  // 리스트는 카테고리당 전체 사용자 공통(백엔드가 매일 새벽 갱신하는 전역 캐시)이라 "본 영상"은
+  // 기기 로컬(SharedPreferences)에 카테고리별로 저장 — 재방문 시 본 영상은 뒤로 밀어서
+  // 매번 같은 상위 항목부터 보게 되는 것을 방지한다.
+  private fun watchedKey(category: String) = "shorts_hot_watched_$category"
+
+  fun markWatched(context: Context, category: String, videoId: String) {
+    val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+    val key = watchedKey(category)
+    val current = prefs.getStringSet(key, emptySet()) ?: emptySet()
+    prefs.edit().putStringSet(key, current + videoId).apply()
+  }
+
+  private fun watchedIds(context: Context, category: String): Set<String> {
+    return context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      .getStringSet(watchedKey(category), emptySet()) ?: emptySet()
+  }
+
   // 동기 호출 — 호출부(showShortsHotList)가 이미 백그라운드 스레드에서 부른다.
   fun fetch(context: Context, category: String): List<HotVideo> {
     val base = baseUrl(context) ?: return emptyList()
@@ -2509,7 +2527,8 @@ private object ShortsHotStore {
           )
         )
       }
-      out
+      val watched = watchedIds(context, category)
+      out.sortedBy { if (it.videoId in watched) 1 else 0 } // 안 본 영상 먼저, 상대 순서는 유지(stable sort)
     } catch (e: Exception) {
       Log.e("PaceOverlay", "ShortsHotStore.fetch failed", e)
       emptyList()

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, InteractionManager, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -117,10 +117,15 @@ export default function HomeScreen() {
   // 피드의 중복 호출과 안전하게 공존. iOS 전용 기능이라 iOS에서만.
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    useShortsQueueStore.getState().loadInitial().catch(() => {});
-    // 2026-08-01 사장님 지시 — P 메뉴 Shorts HOT도 앱 시작 시 미리 받아둔다(Android 네이티브 프리페치
-    // 대응). 열면 로딩 없이 즉시 뜬다. 'all' 카테고리만 선(先)프리페치, 나머지는 탭 선택 시 캐시.
-    useShortsHotStore.getState().prefetch();
+    // 2026-08-01 사장님 지적("가이드→홈 전환 버벅임") — 프리페치(네트워크+state 갱신)를 홈 마운트 즉시
+    // 실행하면 온보딩→홈 fade 트랜지션과 겹쳐 버벅인다. InteractionManager로 트랜지션/애니메이션이 끝난
+    // 뒤로 미룬다(프리페치는 "나중에 피드/Shorts HOT 열 때"용이라 몇백ms 지연돼도 무방). loadInitial은
+    // 큐 있으면 no-op이라 피드 중복호출과 안전 공존. 'all'만 선프리페치, 나머지는 탭 선택 시 캐시.
+    const task = InteractionManager.runAfterInteractions(() => {
+      useShortsQueueStore.getState().loadInitial().catch(() => {});
+      useShortsHotStore.getState().prefetch();
+    });
+    return () => task.cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -7,6 +7,7 @@ import { useUserStore } from '../../store/useUserStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
+import { useShortsHotStore } from '../../store/useShortsHotStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
@@ -116,6 +117,9 @@ export default function HomeScreen() {
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     useShortsQueueStore.getState().loadInitial().catch(() => {});
+    // 2026-08-01 사장님 지시 — P 메뉴 Shorts HOT도 앱 시작 시 미리 받아둔다(Android 네이티브 프리페치
+    // 대응). 열면 로딩 없이 즉시 뜬다. 'all' 카테고리만 선(先)프리페치, 나머지는 탭 선택 시 캐시.
+    useShortsHotStore.getState().prefetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -4,7 +4,8 @@ import { Feather } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { radius, spacing, typography } from '../../constants/theme';
-import { shortsHotApi, SHORTS_HOT_CATEGORIES, type ShortsHotVideo } from '../../services/api/client';
+import { SHORTS_HOT_CATEGORIES, type ShortsHotVideo } from '../../services/api/client';
+import { useShortsHotStore } from '../../store/useShortsHotStore';
 
 // 2026-08-01 사장님 지시 — 오버레이 P 메뉴 "Shorts HOT"의 iOS(인앱 RN) 구현. Android는 네이티브
 // (PaceOverlayService.kt의 showShortsHotList)로 같은 백엔드를 그리고, iOS는 여기서 SavedVideoListOverlay와
@@ -21,17 +22,13 @@ const CATEGORY_LABEL_KEY: Record<string, TranslationKey> = {
 export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState<string>('all');
-  const [items, setItems] = useState<ShortsHotVideo[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 프리페치 스토어에서 캐시를 먼저 읽어 즉시 표시(stale-while-revalidate) — 앱 시작 시 'all'은 이미
+  // 프리페치돼 있어 로딩 없이 뜬다. 탭 변경/재방문 시 백그라운드로 최신화.
+  const items = useShortsHotStore((s) => s.cache[category] ?? []);
+  const loading = useShortsHotStore((s) => s.loading[category] ?? false);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    shortsHotApi.list(category)
-      .then((rows) => { if (!cancelled) setItems(rows); })
-      .catch(() => { if (!cancelled) setItems([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    useShortsHotStore.getState().fetch(category);
   }, [category]);
 
   const onOpen = (item: ShortsHotVideo) => {
@@ -64,7 +61,7 @@ export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
           </ScrollView>
 
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-            {loading ? (
+            {loading && items.length === 0 ? (
               <ActivityIndicator color="rgba(255,255,255,0.6)" style={{ paddingVertical: spacing.lg }} />
             ) : items.length === 0 ? (
               <Text style={styles.emptyText}>{t('overlay.hotEmpty')}</Text>

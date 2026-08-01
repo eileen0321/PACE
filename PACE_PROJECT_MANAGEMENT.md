@@ -3192,3 +3192,10 @@ Android/iOS 양쪽에서 실제로 동작하는지, 그리고 서로 다른 화�
 overlayService.ios의 `hasAccessibilityPermission`은 항상 true/`requestAccessibilityPermission` no-op
 (iOS엔 AccessibilityService 개념 없음). home.tsx의 감지 effect/프롬프트 전부 `Platform.OS !== 'android'
 return`으로 게이팅 + `showAccessibilityPrompt` 배너도 그 state에만 의존 → iOS엔 절대 안 뜸. 타입체크 통과.
+
+### 2026-08-01 (자율세션, Mac) — Shorts HOT "쇼츠타입으로 열어야지" (백엔드 필터 버그, 🔴 배포 필요)
+- **증상(실기기 sim)**: P 메뉴 → Shorts HOT → 항목 탭 시 앱 내 피드에서 열리긴 하는데(사파리 X, 지난 커밋 `2561655`로 인앱 재생은 해결됨), 로블록스 "역대급 게임플레이"(2일 전 **스트리밍**, 가로 영상)가 일반 watch 페이지(가로+댓글)로 떠서 "쇼츠타입"이 아니었음.
+- **근본원인**: 앱은 `youtube.com/shorts/{videoId}`로 여는데, 그 영상이 진짜 Shorts가 아니면 유튜브가 watch 페이지로 리다이렉트한다. HOT 목록은 백엔드(`ShortsHotService`)가 `contentDetails.duration ≤ 60초`로 걸러 curate하는데, **라이브 방송/프리미어는 duration을 `"P0D"`로 반환하고 `Duration.parse("P0D") == 0초`라 60초 이하 필터를 통과**해 목록에 섞여 들어왔다. (로블록스 라이브 스트림이 HOT에 뜬 이유.)
+- **수정**(`backend/.../ShortsHotService.java`): `isPlayableShort(item)` 헬퍼 신설 — ①`snippet.liveBroadcastContent != "none"`(라이브/예정) 제외 ②`0 < seconds ≤ 60`만 인정. `parseDurationSeconds`는 미상/파싱실패를 `Long.MAX_VALUE` 대신 `0` 반환(=Shorts 아님)으로 변경. chart 경로·searchFallback 경로 둘 다 이 헬퍼로 통일. **Java 미설치라 로컬 컴파일 불가 — 코드 리뷰로만 검증(참조 일관성 OK).**
+- **🔴 배포 필요(공통, Android도 같은 백엔드 공유)**: Railway 재배포 후 `POST /shorts-hot/refresh`로 즉시 재curate하거나 최대 6h 스케줄(0/6/12/18시) 대기. 배포 전까진 기존 DB의 로블록스 등 잘못된 row가 남아 있음(다음 refresh가 `deleteByCategory`+`saveAll`로 교체).
+- feed/index.tsx의 검증용 TEMP(`showShortsHot=useState(__DEV__)`)는 `useState(false)`로 원복 완료(커밋 안 됐던 워킹트리 변경, git status clean).

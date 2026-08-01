@@ -184,8 +184,7 @@ public class ShortsHotService {
             JsonNode body = objectMapper.readTree(response.body());
             JsonNode items = body.path("items");
             for (JsonNode item : items) {
-                String duration = item.path("contentDetails").path("duration").asText("");
-                if (parseDurationSeconds(duration) > MAX_SHORT_SECONDS) continue;
+                if (!isPlayableShort(item)) continue;
 
                 String videoId = item.path("id").asText(null);
                 JsonNode snippet = item.path("snippet");
@@ -262,8 +261,7 @@ public class ShortsHotService {
 
         for (JsonNode item : objectMapper.readTree(detailsResponse.body()).path("items")) {
             if (rows.size() >= KEEP_COUNT) break;
-            String duration = item.path("contentDetails").path("duration").asText("");
-            if (parseDurationSeconds(duration) > MAX_SHORT_SECONDS) continue;
+            if (!isPlayableShort(item)) continue;
 
             String videoId = item.path("id").asText(null);
             JsonNode snippet = item.path("snippet");
@@ -276,14 +274,28 @@ public class ShortsHotService {
         }
     }
 
+    // 2026-08-01 사장님 지적("쇼츠타입으로 열어야지") — HOT 항목을 탭하면 앱 내 피드가 youtube.com/shorts/{id}
+    // 로 여는데, 그 영상이 진짜 Shorts가 아니면 유튜브가 일반 watch 페이지로 리다이렉트해(가로 영상+댓글)
+    // "쇼츠타입"이 아니게 보인다. 원인은 라이브 방송/프리미어가 contentDetails.duration을 "P0D"로 반환하는데
+    // Duration.parse("P0D")==0초라 60초 이하 필터를 통과해 목록에 섞여 들어온 것(실기기: 로블록스 2일 전
+    // 스트리밍이 HOT에 떴다). 진짜 재생 가능한 Shorts만 남기려면 ①라이브/예정(liveBroadcastContent!=none)을
+    // 빼고 ②0<길이<=60초만 인정한다(0초=P0D는 Shorts 아님).
+    private boolean isPlayableShort(JsonNode item) {
+        String live = item.path("snippet").path("liveBroadcastContent").asText("none");
+        if (!"none".equals(live)) return false; // 라이브/예정 방송 제외
+        long seconds = parseDurationSeconds(item.path("contentDetails").path("duration").asText(""));
+        return seconds > 0 && seconds <= MAX_SHORT_SECONDS;
+    }
+
     // ISO-8601 duration(PT#M#S 등)을 초로 변환 — java.time.Duration.parse가 표준을 정확히 처리하므로
     // 정규식 대신 그대로 위임(youtube.ts의 클라이언트 측 정규식 파싱보다 견고함).
+    // 반환 0 = 길이 미상/P0D(라이브·프리미어) → 호출부(isPlayableShort)가 Shorts 아님으로 제외.
     private long parseDurationSeconds(String iso) {
-        if (iso.isEmpty()) return Long.MAX_VALUE;
+        if (iso.isEmpty()) return 0; // 길이 미상 → Shorts 아님(isPlayableShort가 seconds>0 요구)
         try {
             return Duration.parse(iso).getSeconds();
         } catch (Exception e) {
-            return Long.MAX_VALUE; // 파싱 실패 시 안전하게 "Shorts 아님"으로 제외
+            return 0; // 파싱 실패 시 안전하게 "Shorts 아님"으로 제외
         }
     }
 }

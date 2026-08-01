@@ -1,5 +1,12 @@
 import { useEffect, useCallback, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, LogBox, Platform, StyleSheet, Text, View } from 'react-native';
+
+// 개발(LogBox) 전용 소음 억제 — RevenueCat SDK가 시뮬레이터(StoreKit 없음)에서 "issue with your
+// configuration" 경고를 반복 출력해 개발 화면을 덮는다(계정삭제 녹화 등에 방해). LogBox는 프로덕션
+// 빌드엔 아예 없으므로 이 설정은 실제 앱 동작·심사와 완전히 무관하다(개발 화면만 깔끔해짐).
+if (__DEV__) {
+  LogBox.ignoreLogs(['[RevenueCat]', 'There is an issue with your configuration', 'Purchases']);
+}
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';

@@ -202,6 +202,16 @@ class PaceOverlayService : Service() {
   // 이 프로세스 인스턴스에서 인프라(오버레이 창/폴링/미디어세션/포그라운드 알림)를 이미 세팅했는지 —
   // ACTION_TICK이 "정상 진행 중 틱"인지 "프로세스가 죽었다 알람으로 되살아난 첫 틱"인지 구분하는 용도.
   private var infraReady = false
+  // 2026-08-01 실기기 재현(사용자: "P에서 앱으로 눌렀는데 세션이 왜 꺼짐") — openApp()의 pace://home
+  // 딥링크로 Pace가 다시 포그라운드로 오면, JS의 "화면만 전환, 세션은 유지" 가드(overlay/index.tsx의
+  // keepSessionAliveOnUnmountRef)가 AppState 'active' 리스너로 세워지는데, 이게 Expo Router의 자체
+  // 딥링크 URL 처리(별도 이벤트 스트림)보다 늦게 도착하는 경합이 실기기에서 실제로 재현됨(로그로
+  // 확인: openApp() 딥링크 발사 170ms 뒤 ACTION_STOP 수신) — 가드가 세워지기 전에 화면이 언마운트돼
+  // "진짜 종료"로 오판했다. JS 쪽 정확한 경합 지점을 특정해 고치는 대신, 더 확실한 네이티브 쪽
+  // 최후 방어선을 둔다: openApp() 직후 짧은 유예시간 안에 들어오는 STOP은 "방금 내가 유발한 화면
+  // 전환의 부작용"으로 간주해 무시한다(진짜로 세션을 끝내고 싶으면 이 유예시간 이후 다시 시도하면
+  // 되고, 앱으로 이동 직후 3초 안에 실제로 세션 종료 버튼까지 누르는 경우는 실사용상 사실상 없다).
+  private var lastOpenAppAtMs = 0L
 
   // 수면 감지 강제 종료 파이프라인(스펙 §1-B/§4-B, 2026-07-23) — "누운 자세로 보다가 잠듦"을
   // "무진동 N분 지속"으로 근사. 실제 수면감지 앱(Sleep as Android 등) 공개 자료 기준 순수 무진동
@@ -578,6 +588,8 @@ class PaceOverlayService : Service() {
     private const val ACTION_START = "expo.modules.paceoverlay.START"
     private const val ACTION_UPDATE = "expo.modules.paceoverlay.UPDATE"
     private const val ACTION_STOP = "expo.modules.paceoverlay.STOP"
+    // openApp() 직후 이 시간 안에 들어오는 STOP은 무시 — 위 lastOpenAppAtMs 필드 주석 참고.
+    private const val OPEN_APP_STOP_GRACE_MS = 3_000L
     const val ACTION_TICK = "expo.modules.paceoverlay.TICK"
     private const val EXTRA_REMAINING = "remainingMinutes"
     private const val EXTRA_AUTO_NEXT = "autoNextEnabled"
@@ -700,13 +712,22 @@ class PaceOverlayService : Service() {
       instance?.lastMotionAtMs = SystemClock.elapsedRealtime()
     }
 
+    // 2026-08-01 사용자 실기기 지적("숏츠 보는 중도 아닌데 왜 Next Short 토스트가 뜨냐") — 원래
+    // "블루투스/미디어 next 신호 자체가 이미 숏폼을 보고 있다는 강한 증거"라는 가정으로 포그라운드
+    // 확인 없이 무조건 스와이프+토스트를 냈다(onSkipToNext 주석 참고). 그 가정이 깨지는 경우(연결된
+    // 기기의 의도치 않은 신호, 세션은 켜져 있지만 사용자가 Pace 홈 등 다른 화면을 보는 중 등)엔 실제로
+    // 아무것도 넘길 게 없는데 토스트만 떠서 혼란을 준다 — 오늘 오버레이 표시 여부 수정에 쓴 것과 같은
+    // 신뢰할 수 있는 신호(isSupportedAppWindowVisible, getWindows() 기반)로 실제로 감시 대상 앱을
+    // 보고 있을 때만 동작하도록 게이팅한다.
     fun triggerNext(context: Context) {
+      if (!PaceAccessibilityService.isSupportedAppWindowVisible()) return
       PaceAccessibilityService.swipeOnce(up = true)
       bumpBluetoothCounter(context, "bt_next_count")
       showToast(context, "⏭ Next Short")
     }
 
     fun triggerPrevious(context: Context) {
+      if (!PaceAccessibilityService.isSupportedAppWindowVisible()) return
       PaceAccessibilityService.swipeOnce(up = false)
       bumpBluetoothCounter(context, "bt_previous_count")
       showToast(context, "⏮ Previous Short")
@@ -1134,6 +1155,14 @@ class PaceOverlayService : Service() {
         if (infraReady) persistState()
       }
       ACTION_STOP -> {
+        // 2026-08-01 실기기 재현 — openApp()("P메뉴 → 앱으로") 직후 짧은 유예시간(OPEN_APP_STOP_GRACE_MS)
+        // 안에 들어오는 STOP은 그 화면 전환이 유발한 JS 레이스의 부작용으로 간주해 무시한다. 위
+        // lastOpenAppAtMs 필드 선언부 주석 참고 — 실제로 세션 종료 버튼을 그 안에 또 누르는 경우는
+        // 실사용상 없다고 봐도 되는 극히 좁은 창.
+        if (lastOpenAppAtMs != 0L && SystemClock.elapsedRealtime() - lastOpenAppAtMs < OPEN_APP_STOP_GRACE_MS) {
+          Log.w("PaceOverlay", "ACTION_STOP ignored — arrived within ${OPEN_APP_STOP_GRACE_MS}ms of openApp() (likely JS unmount race, not a real end)")
+          return START_STICKY
+        }
         clearSessionActive()
         cancelScheduledTick(this)
         stopForegroundAppPolling()
@@ -1488,6 +1517,7 @@ class PaceOverlayService : Service() {
   // 대신 pace://home 딥링크로 명시적으로 Home을 지정한다 — Expo Router의 기본 링킹 리스너가
   // 이미 떠 있는 액티비티(singleTask → onNewIntent)에도 이 URL을 항상 홈 라우트로 매칭해준다.
   private fun openApp() {
+    lastOpenAppAtMs = SystemClock.elapsedRealtime()
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
       // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
       // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은

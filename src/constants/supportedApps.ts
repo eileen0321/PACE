@@ -63,3 +63,27 @@ export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
     await Linking.openURL(second).catch(() => {});
   }
 }
+
+// 2026-08-01 사용자 실기기 지적("작아진 화면을 다시 키워야지 왜 전체화면에 새 쇼츠/유튜브 홈이
+// 보여") — 세션이 이미 running인데 플랫폼 카드를 다시 탭하면(home.tsx) 세션을 새로 시작하지 않고
+// 앱만 다시 앞으로 가져오면 되는데, 이 목적에도 launchPlatformApp()을 그대로 썼다. 근데 그 함수의
+// webFallback(예: YouTube `www.youtube.com/shorts`)은 매번 "새 Shorts 진입" URL을 쏴 PIP로 줄어있던
+// 기존 화면 대신 새 피드를 열었다. **1차 시도**로 androidScheme(순수 스킴, 예: `vnd.youtube://`)로
+// 바꿔봤으나 실기기 재현 결과 이것도 틀렸다 — YouTube가 이 스킴을 "기본 진입점(홈 탭)"으로 매핑해
+// 놔서 Shorts도 기존 PIP 화면도 아닌 YouTube 홈이 열렸다(딥링크는 결국 URL의 intent-filter가 매핑된
+// 특정 화면으로 내비게이션하는 것이지 "그냥 태스크를 앞으로 가져오기"가 아니다 — 어떤 URL을 골라도
+// 이 문제 자체는 못 피함). **최종 수정**: 딥링크를 아예 안 쓰고 네이티브
+// getLaunchIntentForPackage+REORDER_TO_FRONT(PaceOverlayModule.resumeThirdPartyApp, 런처 아이콘을
+// 다시 탭한 것과 완전히 동일한 방식)로 기존 태스크를 그 상태 그대로 앞으로 가져온다.
+export async function resumePlatformApp(platform: AppShieldTarget | undefined) {
+  if (Platform.OS !== 'android' || !platform) return;
+  const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
+  if (!app) return;
+  try {
+    const { PaceOverlay } = require('../../modules/pace-overlay');
+    PaceOverlay?.resumeThirdPartyApp(app.packageNames[0]);
+  } catch {
+    // 네이티브 미링크(Dev Client 빌드 전) — 조용히 무시, 최후 폴백으로 기존 방식 시도.
+    await Linking.openURL(app.androidScheme).catch(() => {});
+  }
+}

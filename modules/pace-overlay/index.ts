@@ -68,6 +68,12 @@ type PaceOverlayNativeModule = {
   // (둘 다 네이티브에서 직접 setAutoMode를 부름)을 못 막았다. 앱 부팅 시 1회 호출해 네이티브 쪽
   // 게이트를 실제 값으로 맞춘다(PaceOverlayService.setBuildAutoNextEnabled 참고).
   setBuildAutoNextEnabled(enabled: boolean): void;
+  // 2026-08-01 — 이미 실행 중인 세션에서 플랫폼 카드를 다시 탭했을 때 쓰는 재소환 전용 경로.
+  // Linking.openURL(딥링크)는 항상 특정 intent-filter 화면으로 새로 내비게이션시켜 PIP 등으로
+  // 줄어있던 기존 화면을 복원 못 한다 — getLaunchIntentForPackage+REORDER_TO_FRONT로 런처 아이콘을
+  // 다시 탭한 것과 동일하게 기존 태스크를 그 상태 그대로 앞으로 가져온다(constants/supportedApps.ts
+  // resumePlatformApp 참고).
+  resumeThirdPartyApp(packageName: string): void;
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

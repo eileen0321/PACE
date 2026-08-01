@@ -448,6 +448,25 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 2026-08-01 사용자 실기기 지적("작아진 화면 다시 키워야지 왜 새 쇼츠/홈이 보여") — 이미 실행
+    // 중인 세션을 재소환할 때 Linking.openURL(딥링크/URL)로는 항상 그 URL의 intent-filter가 매핑된
+    // 특정 화면(Shorts 새 진입, 또는 YouTube 기본 홈 탭)으로 새로 내비게이션돼버려서, PIP로 줄어있던
+    // 기존 화면을 그대로 복원하지 못했다(웹 URL판/순수 스킴판 둘 다 실기기로 확인, supportedApps.ts
+    // resumePlatformApp 주석 참고). 딥링크가 아니라 getLaunchIntentForPackage+REORDER_TO_FRONT로
+    // "런처 아이콘을 다시 탭한 것"과 동일하게 기존 태스크를 그 상태 그대로 앞으로 가져온다 — 이건
+    // openApp()의 기존 폴백 경로와 같은 패턴(그쪽은 Pace 자신, 이건 YouTube 등 제3자 앱 대상).
+    Function("resumeThirdPartyApp") { packageName: String ->
+      appContext.reactContext?.let { context ->
+        try {
+          val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+          intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+          intent?.let { context.startActivity(it) }
+        } catch (e: Exception) {
+          Log.w("PaceOverlayModule", "resumeThirdPartyApp($packageName) failed", e)
+        }
+      }
+    }
+
     Function("cacheAuthToken") { token: String ->
       appContext.reactContext?.let { context ->
         context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)

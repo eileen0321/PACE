@@ -29,7 +29,7 @@ import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, capabilities, overlayService } from '../../services/platform';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useTranslation } from '../../services/i18n';
-import { launchPlatformApp } from '../../constants/supportedApps';
+import { launchPlatformApp, resumePlatformApp } from '../../constants/supportedApps';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import type { AppShieldTarget } from '../../types/models';
 import type { ShortFormApp } from '../../constants/apps';
@@ -307,8 +307,12 @@ export default function HomeScreen() {
     // 리다이렉트로 Home에 돌아온 뒤 재탭 등) startSession이 새 viewing_sessions 행을 또 만들어, 나중에
     // 둘 다 같은 종료시각으로 닫히며 겹치는 구간이 이중집계됐다. 이미 running이면 새 세션/네이티브
     // 서비스를 다시 시작하지 않고 해당 앱만 전면으로 다시 띄운다(세션·오버레이는 그대로 유지).
+    // 2026-08-01 사용자 지적("작아진 화면 다시 키워야지 왜 새 쇼츠가 보여") — 여기서도
+    // launchPlatformApp을 썼었는데, 그 함수는 매번 "새 Shorts 진입" URL을 열어서 PIP로 줄어있던
+    // 기존 화면 대신 새 피드가 열렸다. 재소환 전용 resumePlatformApp(순수 스킴, 특정 화면 강제 없음)
+    // 으로 교체 — supportedApps.ts 주석 참고.
     if (useSessionStore.getState().status === 'running') {
-      launchPlatformApp(platform).catch(() => {});
+      resumePlatformApp(platform).catch(() => {});
       return;
     }
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {

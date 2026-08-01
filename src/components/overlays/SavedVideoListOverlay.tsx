@@ -18,19 +18,30 @@ export function SavedVideoListOverlay({
   userId,
   kind,
   onClose,
+  onAddCurrent,
 }: {
   userId: string;
   kind: SavedVideoKind;
   onClose: () => void;
+  // iOS 전용 — 피드가 현재 영상 정보를 직접 알아서(Android처럼 공유시트 캡처가 불필요) "현재 영상 추가"를
+  // 넘겨준다. 주어졌을 때만 favorite 리스트 상단에 추가 버튼을 렌더한다. 추가 후 리스트 새로고침.
+  onAddCurrent?: () => Promise<void> | void;
 }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<SavedVideo[]>([]);
+  const [adding, setAdding] = useState(false);
 
   const reload = useCallback(() => {
     getSavedVideos(userId, kind).then(setItems).catch(() => setItems([]));
   }, [userId, kind]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  const handleAddCurrent = useCallback(async () => {
+    if (!onAddCurrent || adding) return;
+    setAdding(true);
+    try { await onAddCurrent(); reload(); } finally { setAdding(false); }
+  }, [onAddCurrent, adding, reload]);
 
   const onRemove = useCallback(async (id: string) => {
     // 낙관적 갱신 — 삭제는 실패해도 사용자 경험상 되돌릴 이유가 적다(다시 추가하면 그만).
@@ -61,6 +72,13 @@ export function SavedVideoListOverlay({
               <Feather name="x" size={18} color="rgba(255,255,255,0.7)" />
             </Pressable>
           </View>
+
+          {onAddCurrent && kind === 'favorite' && (
+            <Pressable onPress={handleAddCurrent} disabled={adding} style={[styles.addCurrentBtn, adding && styles.addCurrentBtnDisabled]} accessibilityRole="button" accessibilityLabel={t('overlay.addCurrentToFavorite')}>
+              <Feather name="plus" size={16} color="#111111" />
+              <Text style={styles.addCurrentText}>{t('overlay.addCurrentToFavorite')}</Text>
+            </Pressable>
+          )}
 
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
             {items.length === 0 && <Text style={styles.emptyText}>{emptyText}</Text>}
@@ -112,6 +130,9 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  addCurrentBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: radius.pill, paddingVertical: 10, marginBottom: spacing.sm },
+  addCurrentBtnDisabled: { opacity: 0.5 },
+  addCurrentText: { color: '#111111', fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold },
   headerTitle: { color: '#FFFFFF', fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold },
   list: { flexGrow: 0 },
   emptyText: { color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', paddingVertical: spacing.lg, paddingHorizontal: spacing.md },

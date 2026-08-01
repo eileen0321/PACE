@@ -26,7 +26,7 @@ import { overlayService } from '../../services/platform';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
-import type { SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -94,6 +94,9 @@ export default function PaceFeedScreen() {
   const [showPaceMenu, setShowPaceMenu] = useState(false);
   const [activeSavedList, setActiveSavedList] = useState<SavedVideoKind | null>(null);
   const [showShortsHot, setShowShortsHot] = useState(false);
+  // 스와이프 모드에서 플레이어가 보고하는 실제 재생 중 videoId(현재 영상 즐겨찾기 추가용). current.videoId는
+  // 스와이프 모드에선 첫 영상에 고정이라 실제 영상과 다를 수 있어, 플레이어 onVideoChange 보고값을 우선한다.
+  const currentVideoIdRef = useRef<string | null>(null);
   // 현재 "활성 시청 세그먼트" 시작 시각. null이면 카운트 안 함(백그라운드/flush 직후). 사용시간 측정용.
   const watchSegmentStartRef = useRef<number | null>(Date.now());
   // 감사 MED3 — 일일한도 tick의 누적 분/브레이크 카운트다운. 예전엔 effect 지역 let이라 playing/설정 변경으로
@@ -479,6 +482,7 @@ export default function PaceFeedScreen() {
           videoId={current.videoId}
           playing={playing}
           onProgress={handleProgress}
+          onVideoChange={(id) => { currentVideoIdRef.current = id; }}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
@@ -534,6 +538,23 @@ export default function PaceFeedScreen() {
             userId={userId}
             kind={activeSavedList}
             onClose={() => setActiveSavedList(null)}
+            onAddCurrent={async () => {
+              if (!userId) return;
+              const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
+              if (!vid) return;
+              // 스와이프 모드에선 title/channel을 정확히 못 읽어 videoId+url만 저장(썸네일은 videoId로 구성).
+              const matchesQueue = current?.videoId === vid;
+              await addSavedVideo({
+                userId,
+                kind: 'favorite',
+                videoId: vid,
+                title: matchesQueue ? (current?.title ?? null) : null,
+                channel: matchesQueue ? (current?.channelTitle ?? null) : null,
+                url: `https://www.youtube.com/shorts/${vid}`,
+                platformApp: 'youtube',
+              }).catch(() => {});
+              useToastStore.getState().show(t('overlay.addCurrentSuccess'));
+            }}
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} />}

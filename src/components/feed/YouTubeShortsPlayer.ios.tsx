@@ -30,6 +30,8 @@ type Props = {
   onError?: (code: number) => void;
   /** 재생 진행률(0~1) — 피드의 고개짓 카메라 배터리 게이팅용. */
   onProgress?: (fraction: number) => void;
+  /** 스와이프 모드에서 실제 재생 중인 videoId 변화 통보(현재 영상 즐겨찾기 추가용). */
+  onVideoChange?: (videoId: string) => void;
   /** 진단(임시): WebView 오디오 상태 — 무음 원인(소리 자동재생 차단 여부) 파악용. */
   onAudioDiag?: (text: string) => void;
   /** 프리로드 모드 — 다음 영상 페이지를 미리 로드만(재생·소리 없음). 활성화(false 전환) 시 처음부터 재생. */
@@ -220,12 +222,24 @@ const INJECTED_JS_SWIPE = `
     function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
+    // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. 스와이프 모드에선 부모의 current.videoId가 첫 영상에
+    // 고정돼 있어(리로드 안 함) 실제 재생 중인 영상 id를 부모가 모른다. URL(/shorts/ID)에서 현재 id를
+    // 뽑아 부모로 보고한다(초기 1회 + URL 변할 때마다).
+    function reportVideo() {
+      var h = '' + location.href;
+      var i = h.indexOf('/shorts/');
+      if (i < 0) return;
+      var id = h.slice(i + 8).split('?')[0].split('/')[0].split('#')[0];
+      if (id && id.length >= 6) send({ type: 'video', videoId: id });
+    }
+    reportVideo();
     setInterval(function () {
       // 스와이프로 새 쇼츠 로드(URL 변화, 리로드 없음) → 새 video에 재부착.
       if (('' + location.href) !== curHref) {
         curHref = '' + location.href;
         reportedReady = false; reportedEnded = false; lastT = -1;
         send({ type: 'domlog', text: 'URLCHG reattach ' + curHref.slice(-16) });
+        reportVideo();
         attach(40); return;
       }
       var v = curV; if (!v) return;
@@ -295,7 +309,7 @@ function isAllowedNavigation(url: string): boolean {
 export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
-  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, preload }: Props,
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, preload }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -385,6 +399,11 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
             const m = msg as any;
             try { PaceGestureLog?.nativeLog?.(`AUDIO ${m.tag} muted=${m.muted}`); } catch {}
             onAudioDiag?.(`${m.tag} muted=${m.muted} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
+            return;
+          }
+          if (msg.type === 'video') {
+            const vid = (msg as any).videoId;
+            if (typeof vid === 'string' && vid) onVideoChange?.(vid);
             return;
           }
           if (msg.type === 'ready') {

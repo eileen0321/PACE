@@ -3373,3 +3373,15 @@ tsc 통과, 원본 자산 무변경. TEMP 없음.
 3. **3초 이중넘김(loopedBack에도 performSwipeUp)**: Android 네이티브는 loopedBack(영상이 이미 바뀜)에 직접 스와이프를 또 쳐서 이중넘김. **iOS는 구조적으로 다르고 가드가 있음** — `YouTubeShortsPlayer.ios.tsx` 폴링루프가 loopedBack/nearEnd에 `ended`를 **1회만**(`reportedEnded` 가드) 보내고, onEnded→goNext는 **auto 모드에서만**. `reportedEnded`는 URL 변경(reattach) 시에만 리셋(L263)이라 한 영상당 ended 1회 보장 → 이중넘김 없음. (수동 스와이프 전환 중 ~500ms 폴링창의 이론적 레이스는 URL이 대개 그 전에 바뀌어 reattach 리셋됨. 확정은 실기기 검증 항목이나, 블라인드 수정 대상 아님.)
 4. **영상 전환 시 화면 상단 검게(removeView→addView 순서)**: Android WindowManager 오버레이 창 합성 이슈. **iOS엔 네이티브 오버레이 창 개념 자체가 없음**(iOS 피드는 RN 풀스크린 + 로딩 커버로 전환 프레임 가림) → 무관.
 결론: iOS 코드변경 없음. tsc 통과(Kotlin 전용이라 TS 무영향).
+
+### 2026-08-02 (자율세션, Mac) — 출시 전 전수 기능 시뮬 QA 스윕 (사장님 "밤새 테스트")
+Metro `-c` 재시작(watchman 미설치라 최신 코드 반영) + 콜드런치 후 시뮬(iPhone 17, iOS 26.4)에서 핵심 플로우 전수 검증. **전 구간 크래시/red-box 0건.**
+- **콜드런치→스플래시→홈**: 정상(크래시 없음). 유일한 ERROR는 RevenueCat offerings 실패 7건 — dev 시뮬엔 RC 설정 없음(LogBox 억제, Release에서 스트립되는 기존 non-issue).
+- **홈 탭**: 세션 상태(0/60min), 명언 배너, 플랫폼 카드(Shorts with PACE·GUARDED), 빠른설정(Focus 10m/일일 60m/휴식 20m) 정상.
+- **집중 탭**: 포커스 세션 카드(YouTube·실시간 추적 중·0m/60m), 주간 출석(2일 연속·토·일 체크), 보너스 크레딧 10개, 휴식 알림 토글 정상.
+- **분석 탭**: 이번주 1h1m, 집중도 0/100, 일일평균 9분, 최장연속 0m, 요일별 안전한도(토 61분 ⚠️ 60분 초과 표시) — 데이터 일관성 정상.
+- **설정 탭**: 계정(GUEST·구독관리·로그인), 세션 길이(Focus 10m "무료 10분 고정/프리미엄 자유설정" 문구·일일 60m), 휴식&수면(20m·취침 OFF), 언어(시스템/EN/KO), 고객지원(가이드·**개인정보처리방침**·평가·**버전 1.0**=app.json 일치), 고급설정(설정 초기화 + **계정 삭제**). 계정 삭제는 `!user?.isGuest` 게이팅(게스트는 삭제할 계정 없음, 로그인 시 노출) — App Store 5.1.1(v) 대응 정상, 확인 모달 존재(settings.tsx:582).
+- **피드**: 진입 시 정상 세로 Shorts 재생(풀 릴 UI: 좋아요/댓글/공유/구독, FOCUS OFF 배지+P 버튼). 사파리/watch 안 뜸, `[WV]` 에러 없음. **최근 goNext/forcedListRef(리스트 이어보기) 변경이 일반 피드 회귀 없음 확인**(forcedListRef null → 기존 SWIPE_NAV 경로로 폴백).
+- **Metro 로그 전체 스캔**: non-RevenueCat ERROR 0, "Maximum update depth"/re-render 루프/컴포넌트 예외 0.
+
+**시뮬로 검증 못 함(실기기 필요, 회귀 아님)**: Focus Session 10분 타임아웃→연장 모달(광고, 시간의존—모달 렌더는 dc19620에서 확인됨), 리스트 이어보기 스와이프 넘김(제스처), BT 리모컨/손짓(카메라), Live Activity/취침 블랙아웃. 광고는 dev에서 test-ad만.

@@ -3393,3 +3393,7 @@ QA 스윕 커밋 시 pull로 co-session 신규 3건 유입. 검토:
 - **`41e8c6b`+`f467b12`(BT 리모컨 — a11y config `canRequestFilterKeyEvents` 누락 + stale foreground 신호)**: Kotlin/xml 전용(Android 접근성 설정). iOS BT 리모컨은 별개(`useFeedRemoteControl.ios`, 기존 세션에서 동작 확인됨) → parity 불필요.
 
 **출시 전 전수 QA 결과(위 스윕 로그 참고)**: 홈/집중/분석/설정/피드 전 구간 크래시·red-box 0건. 실기기 필요 항목(Focus 연장 광고/리스트 스와이프/BT/손짓/Live Activity)은 문서화됨. iOS 코드 기준 출시 준비 양호.
+
+### 2026-08-02 (자율세션, Mac) — 최신 코드(364f7a4 포함) 콜드런치 재검증 + 마이너 경고 1건
+Metro `-c` 재시작으로 최신 코드(하루한도 팝업 제거 364f7a4 포함) 반영 후 콜드런치 재검증: **홈 정상 렌더(세션 1/60min, 인사이트 배너, 플랫폼 카드, 빠른설정), 크래시 0.** 하루한도 팝업 제거된 home.tsx 실행 이상 없음.
+- **마이너(비블로커)**: Metro 로그에 `WARN InteractionManager has been deprecated and will be removed in a future release` 1건. home.tsx의 가이드→홈 버벅임 최적화(`ab0f9e0`, `InteractionManager.runAfterInteractions`)에서 나옴. RN 0.86에선 정상 동작(경고일 뿐 크래시 아님), 향후 RN 업그레이드 시 `requestIdleCallback`로 교체 권장. 출시 블로커 아님 — 실기기 검증 항목(가이드→홈 전환)과 함께 처리. 나머지 ERROR는 dev RevenueCat뿐(Release 스트립).

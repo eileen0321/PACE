@@ -3053,3 +3053,71 @@ API가 있음. 하지만 Pace(Expo SDK 57, expo-navigation-bar v57.0.2)의 실�
 - 광고 실패/미보상 시 재활성화 안 함(무료 손해 방지) + 재시도 가능하게 모달 유지/닫기.
 - ⚠️ **실기기 검증 필수**(보상광고 실제 로드/보상 + 연장 재활성화 — 시뮬레이터로 광고 검증 불가).
   Metro watchman 미설치로 임베드 JS stale 위험도 있어 캐시 클리어 빌드로 확인.
+
+### 2026-08-01 (이어서) — Windows 세션: 위 계획에 맞춰 `FocusSessionExtendModal` 이미 일반화함 + 하루 한도 "무제한 무료 연장" 구멍도 같은 방식으로 막음 (⚠️ Mac은 새 prop 만들지 말고 이거 그대로 쓸 것)
+
+**중요 — 위 iOS 구현 계획의 "모달에 optional `onExtended` 콜백 추가"는 이미 Android 쪽에서 구현
+완료함(`7682273`, `e3a8aaf`). prop 이름은 `onExtended`가 아니라 `onExtend`— iOS 작업 시 새 prop
+추가하지 말고 이 시그니처 그대로 맞춰 쓸 것:**
+
+```ts
+// src/components/home/FocusSessionExtendModal.tsx
+{ visible, onDismiss, onExtend, titleKey = 'home.focusSessionTimedOutTitle', messageKey = 'home.focusSessionTimedOutMessage' }: {
+  visible: boolean;
+  onDismiss: () => void;
+  onExtend?: (minutes: number) => void;   // 안 넘기면 기존 bluetoothService.extendFocusSession() 폴백
+  titleKey?: TranslationKey;
+  messageKey?: TranslationKey;
+}
+```
+`onWatchAd`/`onUseCredits` 둘 다 내부적으로 `grant(minutes)`을 호출하고, `grant = onExtend ?? (기본
+extendFocusSession)`. iOS feed에서 쓸 땐 `onExtend={(min) => { /* setIsAutoMode(true) + 타이머 리셋 */ }}`
+를 넘기면 됨 — home.tsx가 하루 한도 연장에 이미 이 패턴으로 쓰고 있음(아래).
+
+**하루 한도(daily limit) "5분 추가"/"계속 보기"도 같은 구멍이 있었음** — 사용자가 실기기에서 직접
+발견("계속 보기 누르면 계속 focus on이 유지되는데" — 매 5분마다 팝업 뜨면 매번 공짜로 무제한 연장
+가능했음, Focus Session 타이머 쪽 문제와 별개의 같은 클래스 버그). 사용자 지시로 새 규칙 확정:
+
+> **"룰을 다시 정해: focus on 다 보면 5분 1회만 focus on 더 주기, 보상형 광고 보면 5분 더 주기,
+> 크레딧 쓰면 5개당 5분 더 주기. 나머지는 막아."**
+
+구현(`home.tsx`): `LimitReachedOverlay`의 `onExtend`가 `hitCount===1`(오늘 첫 도달)이면 기존처럼
+무료로 즉시 `addBonusMinutes(5)`, `hitCount>=2`부터는 `addBonusMinutes` 직접 호출 대신
+`FocusSessionExtendModal`(광고 또는 크레딧 5개=5분)을 새로 띄운다 — `titleKey`/`messageKey`를
+`home.dailyLimitExtendTitle`/`home.dailyLimitExtendMessage`로 바꿔 문구만 "오늘 한도"로 교체,
+`onExtend={(minutes) => { addBonusMinutes(minutes); /* 마지막 플랫폼 재진입 */ }}`.
+
+**⚠️ iOS도 동일 규칙으로 맞춰야 함** — iOS의 하루 한도 연장 흐름(LimitReachedOverlay 동급 컴포넌트가
+있다면 그쪽)이 지금 무제한 무료 연장을 허용하고 있다면 위와 같은 "1회 무료 → 그다음 광고/크레딧"
+게이트를 넣을 것. 이번 세션에 정의된 화폐 단위: **크레딧 1개 = 1분**, 연장 단위는 항상 **5분**
+(광고 1회 = 5분, 크레딧 5개 = 5분).
+
+**같이 처리한 것들(전부 커밋·푸시 완료, `7682273`/`e3a8aaf`/`909c5f5`/`89484a2`/`8468a82`)**:
+- **권한 설정 화면이 별개 태스크로 떠서 뒤로가기로 앱 복귀 불가** — 접근성/오버레이/사용정보접근/
+  배터리 최적화 4개 권한 요청 전부 `FLAG_ACTIVITY_NEW_TASK` 대신 `appContext.currentActivity`에서
+  `startActivity`하도록 변경(있으면). 설정 화면이 Pace와 같은 태스크 백스택에 얹혀 뒤로가기 한 번에
+  정확히 Pace로 복귀함(전엔 별개 태스크라 뒤로가기가 설정 자체를 돌다 홈 런처로 빠졌음). **iOS도 같은
+  패턴(별도 Settings 앱으로 나가는 권한 딥링크)이 있다면 확인 필요** — iOS는 앱 간 전환이 시스템
+  제스처/멀티태스킹 UI 기반이라 이 문제 자체가 없을 가능성 높음(참고만).
+- 사용정보 접근 권한(`hasUsageAccessPermission`) 요청이 세션 시작마다(!) 설명 없이 시스템 설정을
+  띄우던 것을 배터리 최적화 배너와 동일하게 평생 1회만 안내(+상단 토스트 2회 노출)하도록 수정.
+  `data=package:` URI로 앱 상세 토글 화면 직행 시도(실패 시 일반 목록 폴백) — 접근성과 달리
+  signature 권한 없이도 가능한 것으로 확인.
+- `hasAccessibility`/`hasCameraPerm`이 `useFocusEffect`로만 재확인돼 시스템 설정(별도 Activity)
+  다녀온 뒤 뒤로가기로 복귀해도 안 갱신되던 버그 — RN 내비게이터 입장에선 Focus 탭이 블러된 적이
+  없어서(OS 레벨 pause/resume) 재확인 자체가 스킵됐음. iOS 카메라 권한과 동일한 `AppState` 'active'
+  재확인 추가.
+- `PaceHandWaveDetector` 재무장(rearm) 임계값 75%→45% — 자연스러운 "훠이" 동작 중간의 손 크기
+  요동만으로 재무장→같은 동작의 남은 전진이 또 트리거되던 "두 번씩 넘어감" 재발 건 대응.
+- `onSelectPlatform`(home.tsx)이 훅 클로저로 캡처한 stale `bonusMinutes`/`todayUsageMinutes`를 써서,
+  "+5분 추가" 직후 재진입 시 방금 추가한 보너스가 반영 안 된 값으로 잔여시간 계산 → 오버레이에
+  "1분"처럼 실제보다 훨씬 적게 표시되던 버그. 각 스토어 `getState()`로 그 순간의 실제 값을 읽게 수정.
+- Focus Session이 무료 사용자 기준 시간 다 돼서 자동으로 꺼지면, "FOCUS OFF" 배지를 사용자가 알아채고
+  직접 눌러야만 광고 유도가 뜨던 방식 대신, 그 순간 자동으로 앱(Home)으로 돌아오게 함(iOS가 이미 하는
+  방식과 동일 — 사용자가 Mac 쪽에서 확인한 내용으로 알려줌: "홈으로 복귀 → Shorts 다시 누르면 보상
+  광고 보고 이어줌").
+
+**⚠️ 사용자 외출 중 — 출시 준비로 Windows/Mac 두 세션이 git+이 문서로 전수 기능 확인할 것.**
+위 두 "1회 무료→광고/크레딧" 규칙(Focus Session 타이머 + 하루 한도)과 4개 권한 리다이렉트 수정이
+Android/iOS 양쪽에서 실제로 동작하는지, 그리고 서로 다른 화면에서 부르는 값들(크레딧 단위, 5분
+단위, 문구)이 플랫폼 간 안 어긋나는지 중점 확인.

@@ -2623,3 +2623,36 @@ adb 연결이 불안정하면 — 이 세션에서 USB가 몇 번 offline으로 
 - 주의: 재설치/force-stop 후에는 접근성 서비스가 매번 꺼지므로(기존에 알려진 이슈) 매번
   `adb shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService`
   재실행 필요 — 오늘도 이걸 깜빡해서 "Add current video"가 한 번 실패("Couldn't read this video")했었음.
+
+### 2026-08-01 (이어서) — QA 검사관(AutoTest 세션): 구글/애플 출시 이슈 재검증
+
+`qa/apps/pace` 검사관 관례대로 read-only 검증. 코드+실제 인프라(Railway CLI 직접 접속)까지
+대조해 추측 없이 확인한 것만 기록.
+
+**✅ 확인 완료 — Apple SIWA 토큰 폐기(5.1.1v/TN3194), 코드·배포·설정 3박자 전부 완료**:
+- `railway variables --service pace-backend`로 직접 확인 — `APPLE_TEAM_ID`/`APPLE_SIGNIN_KEY_ID`/
+  `APPLE_SIGNIN_PRIVATE_KEY`/`APPLE_BUNDLE_ID` 4개 전부 프로덕션에 설정돼 있음.
+- `railway logs --build`로 최신 커밋(`1c29e18` 이후) 기준 `BUILD SUCCESS` 확인(2026-08-01
+  01:13:38Z) — 커밋 메시지의 "JDK 미검증" 우려는 해소됨(Railway 빌드는 통과).
+- `railway logs` 런타임 로그에 `Migrating schema railway to version "3 - apple refresh token"`
+  확인 — `V3__apple_refresh_token.sql` 마이그레이션이 실제 프로덕션 DB에 적용됨.
+- **남은 리스크**: 지금 App Store에서 심사 중인 build 2는 2026-07-29 빌드로, 계정삭제/토큰폐기
+  커밋(2026-08-01)보다 이전이라 **이 build 2엔 해당 기능이 아예 없음**. 이번 재심사가
+  2.1(b)는 통과해도 5.1.1(v)로 재반려될 가능성 높음 → 이 수정들을 포함한 새 빌드(v1.0.2)로
+  재제출해야 확실.
+
+**✅ 확인 완료 — Android 일일한도 매 세션 리셋 버그(LAUNCH_CHECKLIST.md BLOCKER #1), 해결됨**:
+`overlay/index.tsx`의 `keepSessionAliveOnUnmountRef` 가드는 여전히 존재해 세션 종료 시 매번
+`endSessionRow`를 건너뛰지만(원래 지적한 코드 경로 자체는 그대로), `statsRepository.ts`의
+`getTodayUsageMinutes()`/`getWeeklyStats()`가 `ended_at IS NULL`인 열린 세션을
+`julianday('now') - julianday(started_at)`로 실시간 경과시간 계산해 합산하도록 이미 고쳐져
+있어 실질적으로 우회 안 됨(원래 제안한 "수정방향" 3번째 옵션과 동일한 접근). `LAUNCH_CHECKLIST.md`
+P0 목록은 이 수정을 반영 못 하고 있어 stale — 갱신 권장.
+
+**🟡 미해결로 재확인된 것(사장님 결정 필요)**:
+- **구독 가격 플랫폼 불일치**: Android(사장님 지시, 월₩1,100/연₩9,900) vs iOS(App Store Connect
+  기등록, 월₩2,200/연₩22,000) — 정확히 2배 차이. 의도된 것인지 확인 필요, Android 상품 생성
+  전에 정해야 함.
+- **오버레이 서비스 조용히 사라짐 버그** — 위 핸드오프 항목 그대로 미해결(별도 세션이 이어받기로 함).
+- Android/iOS 구독 상품 자체는 아직 각 스토어에 생성/등록 안 된 상태(Merchant Account는 풀린 것으로
+  보이나 Play Console "정기 결제"에서 상품 생성 전 단계, App Store Connect는 미착수).

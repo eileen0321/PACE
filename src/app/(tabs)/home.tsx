@@ -110,11 +110,9 @@ export default function HomeScreen() {
   // 구독한다(위 destructure) — 로컬 useState였을 땐 앱을 완전히 재시작할 때마다 0으로 리셋돼서,
   // 오늘 이미 닫은 한도도달 팝업이 세션을 시작하지도 않았는데 재실행마다 다시 떴다.
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
-  // 2026-08-01 사용자 지시("룰을 다시 정해 — focus on 다 보면 5분 1회만 더 주기, 그다음부턴 광고나
-  // 크레딧 쓰기") — 하루 한도 "5분 추가"/"계속 보기"가 예전엔 무제한으로 공짜 +5분을 계속 줬다.
-  // 이제 hitCount===1(오늘 처음 한도 도달)일 때만 무료로 즉시 +5분, 그 이후(hitCount>=2)부턴 이
-  // 모달(광고 또는 크레딧 5개=5분)로 넘긴다.
-  const [showDailyLimitExtend, setShowDailyLimitExtend] = useState(false);
+  // 2026-08-02 사장님 지시("한도 차면 뜨는 팝업만 지워") — 하루 한도 도달 팝업(LimitReachedOverlay)
+  // 과 그에 딸린 광고/크레딧 연장 모달은 제거됐다. 하루 한도는 이제 차단/팝업 없이 추적·표시만 하고,
+  // 유일한 연장 게이트는 Focus Session 타임아웃(showFocusSessionExtend, 광고 5분)뿐이다.
 
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
@@ -201,10 +199,6 @@ export default function HomeScreen() {
   useEffect(() => {
     if (currentHitThreshold > 0) ensureLimitHitAtLeast(currentHitThreshold);
   }, [currentHitThreshold, ensureLimitHitAtLeast]);
-  const limitTier: 1 | 2 | 3 = hitCount <= 1 ? 1 : hitCount === 2 ? 2 : 3;
-  // 2026-07-31 — celebrationVisible(출석 축하 팝업) 떠 있는 동안은 렌더 미룸(동시에 두 팝업이
-  // 겹쳐 보이던 문제, §6 로그 참고).
-  const showLimitReached = isLimitReached && hitCount > dismissedHitCount && activeSessionPlatform === null && pendingPlatform === null && connectingPlatform === null && !celebrationVisible;
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -369,16 +363,11 @@ export default function HomeScreen() {
 
 
   const onSelectPlatform = useCallback((platform: AppShieldTarget) => {
-    // 2026-07-27 사용자 지적("이게 쇼츠를 막으란거였어?") — LimitReachedOverlay 설계 의도(tier 3+는
-    // "차단 아님, 그냥 알려주기만")와 이 게이트가 모순돼 있었다: tier와 무관하게 isLimitReached이기만
-    // 하면 무조건 새 세션 시작 자체를 막아버려서, 3차 이상 도달한 뒤엔 안내 토스트만 뜨고 실제로는
-    // 계속 볼 방법이 없었다. 사용자 확인 — tier 1/2(정확히 도달~+5분)는 그대로 마찰(다이얼로그로
-    // "여기까지"를 명시적으로 고르게)을 유지하고, tier 3+(그 이상)부터는 안내만 하고 새 세션 시작을
-    // 허용한다.
-    if (isLimitReached && limitTier < 3) {
-      dismissLimitHit(0);
-      return;
-    }
+    // 2026-08-02 사장님 지시("60분에 대한 팝업 없애라고, 그냥 focus 일때 광고 5분만 남겨") —
+    // 하루 한도 도달 시 새 세션 시작을 막던 게이트를 제거했다. 팝업만 없애고 이 게이트를 남기면
+    // 한도를 넘긴 뒤로는 카드를 눌러도 아무 반응 없이 조용히 막혀(설명도 없이) 훨씬 나쁜 UX가 된다.
+    // 하루 한도는 이제 차단이 아니라 추적/표시 전용이고, 유일한 연장 게이트는 Focus Session 쪽
+    // 광고 5분뿐이다.
     // 감사 HIGH2(2026-07-27, Mac→Windows 인계) — 세션이 이미 running인데 카드를 또 탭하면(keepAlive
     // 리다이렉트로 Home에 돌아온 뒤 재탭 등) startSession이 새 viewing_sessions 행을 또 만들어, 나중에
     // 둘 다 같은 종료시각으로 닫히며 겹치는 구간이 이중집계됐다. 이미 running이면 새 세션/네이티브
@@ -398,7 +387,7 @@ export default function HomeScreen() {
         setPendingPlatform(platform);
       }
     }).catch(() => startSession(platform));
-  }, [startSession, isLimitReached, limitTier, dismissLimitHit]);
+  }, [startSession]);
 
   const dismissOnboarding = useCallback((enableAutoMode: boolean) => {
     AsyncStorage.setItem(STORAGE_KEYS.bluetoothOnboardingSeen, 'true').catch(() => {});
@@ -521,41 +510,14 @@ export default function HomeScreen() {
         onComplete={handleConnectingComplete}
       />
 
-      <LimitReachedOverlay
-        visible={showLimitReached}
-        tier={limitTier}
-        hitCount={hitCount}
-        limitMinutes={effectiveDailyLimitMinutes}
-        todayUsageMinutes={todayUsageMinutes}
-        // 2026-08-01 사용자 지시 최종("무료 5분 빼자 — 1,2번(하루한도/Focus Session) 둘 다 무료 없이
-        // 10분 지나면 광고 보고 5분 더 동일하게") — 예전의 "hitCount<=1 첫 1회 무료" 경로를 제거.
-        // 하루 한도 도달 시 "+5분 더"는 회차와 무관하게 항상 광고/크레딧 모달(showDailyLimitExtend)로
-        // 보낸다 — 그 모달이 실제 지급(addBonusMinutes)+마지막 플랫폼 재진입까지 전부 담당(onExtend prop).
-        // 이로써 Focus Session 게이트(feed/index.tsx, 무료 없이 바로 광고/크레딧)와 규칙이 완전히 동일해진다.
-        onExtend={() => {
-          dismissLimitHit(hitCount);
-          setShowDailyLimitExtend(true);
-        }}
-        onDismiss={() => dismissLimitHit(hitCount)}
-      />
-
+      {/* 2026-08-02 사장님 지시("60분에 대한 팝업 없애라고, 그냥 focus 일때 광고 5분만 남겨") —
+          하루 한도(60분) 도달 팝업(LimitReachedOverlay)과 그에 딸린 광고/크레딧 연장 모달을 전부
+          제거한다. 남는 연장 경로는 Focus Session 타임아웃 하나뿐(아래) — 하루 한도는 이제 팝업으로
+          가로막지 않고 조용히 추적만 한다(사용시간 집계/통계는 그대로). 직전까지 겪던 "5분 더 눌렀는데
+          또 한도 팝업이 뜬다", "팝업 두 개가 연달아 뜬다" 문제도 이 경로가 사라지면서 같이 없어진다. */}
       <FocusSessionExtendModal
         visible={showFocusSessionExtend && !celebrationVisible}
         onDismiss={() => setShowFocusSessionExtend(false)}
-      />
-
-      {/* 2026-08-01 — 하루 한도 연장(항상 광고/크레딧, 무료 없음). onExtend가 실제 지급(addBonusMinutes)
-          + 마지막 플랫폼 재진입까지 담당. Focus Session 게이트와 동일 규칙(무료 5분 제거). */}
-      <FocusSessionExtendModal
-        visible={showDailyLimitExtend && !celebrationVisible}
-        onDismiss={() => setShowDailyLimitExtend(false)}
-        titleKey="home.dailyLimitExtendTitle"
-        messageKey="home.dailyLimitExtendMessage"
-        onExtend={(minutes) => {
-          addBonusMinutes(minutes);
-          const p = lastPlatformRef.current;
-          if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
-        }}
       />
     </SafeAreaView>
   );

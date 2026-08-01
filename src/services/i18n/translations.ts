@@ -514,8 +514,11 @@ export const translations = {
       tier1Body: 'You can keep watching, or stop here.',
       tier2Title: 'Time for a break?',
       tier2Subtitle: '{{n}} minutes have already passed',
-      extendTier1: '+5 minutes',
-      extendTier2: 'Keep watching',
+      // 2026-08-02 실기기 지적("5분 더 보겠다고 눌렀는데 광고 보고 5분 받기가 뜬다 — 이게 맞아?") —
+      // 하루 한도 무료 5분이 제거되면서(d103179) 이 버튼은 이제 항상 광고/크레딧 모달로 가는데,
+      // 문구만 예전 그대로 "+5분"이라 공짜로 즉시 주는 것처럼 읽혔다. 실제 동작과 일치시킨다.
+      extendTier1: 'Watch ad for +5 min',
+      extendTier2: 'Watch ad to keep watching',
       dismissTier1: "That's it for today",
       dismissTier2: 'Stop here',
       tier3Title1: 'Take your pace.',
@@ -956,8 +959,9 @@ export const translations = {
       tier1Body: '계속 시청할 수도, 여기서 멈출 수도 있습니다.',
       tier2Title: '잠시 쉬어갈까요?',
       tier2Subtitle: '벌써 {{n}}분이 지났습니다',
-      extendTier1: '5분 추가',
-      extendTier2: '계속 보기',
+      // 2026-08-02 — 위 영문 주석 참고(버튼 문구가 실제 동작과 어긋나 있던 것 수정).
+      extendTier1: '광고 보고 5분 추가',
+      extendTier2: '광고 보고 계속 보기',
       dismissTier1: '오늘은 여기까지',
       dismissTier2: '여기까지 보기',
       tier3Title1: '천천히 가세요.',

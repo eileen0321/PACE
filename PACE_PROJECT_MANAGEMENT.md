@@ -3385,3 +3385,11 @@ Metro `-c` 재시작(watchman 미설치라 최신 코드 반영) + 콜드런치 
 - **Metro 로그 전체 스캔**: non-RevenueCat ERROR 0, "Maximum update depth"/re-render 루프/컴포넌트 예외 0.
 
 **시뮬로 검증 못 함(실기기 필요, 회귀 아님)**: Focus Session 10분 타임아웃→연장 모달(광고, 시간의존—모달 렌더는 dc19620에서 확인됨), 리스트 이어보기 스와이프 넘김(제스처), BT 리모컨/손짓(카메라), Live Activity/취침 블랙아웃. 광고는 dev에서 test-ad만.
+
+### 2026-08-02 (자율세션, Mac) — co-session `364f7a4`(하루한도 팝업 제거)+BT 2건 iOS 검토
+QA 스윕 커밋 시 pull로 co-session 신규 3건 유입. 검토:
+- **`364f7a4`(하루 한도 팝업 전면 제거, 공유 home.tsx+translations)**: 사장님 최신 지시("60분 팝업 없애고 focus 광고 5분만 남겨"). LimitReachedOverlay 렌더 + showDailyLimitExtend 모달 + onSelectPlatform 한도차단 게이트 전부 제거 → 하루 한도는 이제 **차단/팝업 없이 추적·표시만**(분석 탭 "토 61분 ⚠️" 등 통계는 유지). 유일 연장 게이트 = Focus Session 타임아웃(in-feed 광고 5분). **내 `d103179`(하루한도 규칙 통일)를 상위 지시로 대체 — 정상.** iOS 영향 검토: 플랫폼 카드 탭 시 한도차단 없이 startSession→/feed(회귀 없음, QA에서 카드→피드 진입 확인). home의 `showFocusSessionExtend`는 iOS에서 `consumeFocusSessionTimedOut` no-op이라 안 뜸(iOS는 in-feed 모달). tsc 통과.
+  - ⚠️ **잔여 데드코드(co-session 파일, 무해·tree-shake)**: `LimitReachedOverlay` import(L28) 미사용, `dismissLimitHit`/`lastPlatformRef`(write-only) 등 고아 변수. tsc-clean(noUnusedLocals off)이라 블로커 아님. co-session이 활발히 커밋 중인 파일이라 리베이스 충돌 방지 위해 손 안 댐 — 다음에 그들이 정리하거나 조용한 사이클에 제거.
+- **`41e8c6b`+`f467b12`(BT 리모컨 — a11y config `canRequestFilterKeyEvents` 누락 + stale foreground 신호)**: Kotlin/xml 전용(Android 접근성 설정). iOS BT 리모컨은 별개(`useFeedRemoteControl.ios`, 기존 세션에서 동작 확인됨) → parity 불필요.
+
+**출시 전 전수 QA 결과(위 스윕 로그 참고)**: 홈/집중/분석/설정/피드 전 구간 크래시·red-box 0건. 실기기 필요 항목(Focus 연장 광고/리스트 스와이프/BT/손짓/Live Activity)은 문서화됨. iOS 코드 기준 출시 준비 양호.

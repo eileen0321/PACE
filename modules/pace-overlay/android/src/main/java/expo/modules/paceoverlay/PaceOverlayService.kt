@@ -757,7 +757,17 @@ class PaceOverlayService : Service() {
     private var focusSessionTimedOutPending = false
     private val focusSessionAutoStop = Runnable {
       focusSessionTimedOutPending = true
-      instance?.let { setAutoMode(it.applicationContext, false) }
+      instance?.let {
+        setAutoMode(it.applicationContext, false)
+        // 2026-08-01 사용자 지시("맥은 Focus Session이 끝나면 홈으로 복귀한다는데, 그래서 앱에서
+        // 다시 쇼츠를 누르면 보상광고를 보고 이어준대") — iOS와 동일한 흐름으로 맞춘다: 무료
+        // 사용자는 세션이 끝나는 그 순간 자동으로 앱(Home)으로 돌아온다(사용자가 "FOCUS OFF"
+        // 배지를 알아채고 직접 눌러야만 광고가 뜨던 예전 방식은 배지를 못 보면 그대로 무한정
+        // 유튜브에 남아 광고 기회 자체가 없었다). Home으로 돌아오면 JS checkTimedOut()이
+        // AppState 'active' 전환에서 그대로 소비해 보상형 광고 모달을 띄운다 — 여기서 추가
+        // 플러밍 불필요. 프리미엄은 광고 자체가 필요 없으니 방해하지 않고 그대로 둔다.
+        if (!isPremium(it.applicationContext)) it.openApp()
+      }
     }
 
     fun consumeFocusSessionTimedOut(): Boolean {

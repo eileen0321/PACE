@@ -104,11 +104,16 @@ class PaceOverlayModule : Module() {
     // 대신 `?.let { }`으로 감싸 전체 블록이 Unit 하나로만 추론되게 통일한다.
     Function("requestOverlayPermission") {
       appContext.reactContext?.let { context ->
+        // 2026-08-01 사용자 지시("권한 관련된것들은... 설정하고 다시 돌아오고") — 아래 3개 권한
+        // 함수 전부 동일하게 currentActivity가 있으면 NEW_TASK 없이 그 Activity에서 열어, 설정
+        // 화면이 Pace와 같은 태스크 백스택에 얹히게 한다(뒤로가기 한 번 = Pace로 복귀). NEW_TASK로
+        // 별개 태스크를 만들면 뒤로가기가 설정 앱 자체의 백스택만 돌다 결국 홈으로 빠져버린다.
+        val activity = appContext.currentActivity
         val intent = Intent(
           Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
           Uri.parse("package:${context.packageName}")
-        ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-        context.startActivity(intent)
+        ).apply { if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        (activity ?: context).startActivity(intent)
       }
     }
 
@@ -135,10 +140,11 @@ class PaceOverlayModule : Module() {
         }
         showGuidanceToast()
         Handler(Looper.getMainLooper()).postDelayed({ showGuidanceToast() }, 3500L)
+        val activity = appContext.currentActivity
         val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(intent)
+        (activity ?: context).startActivity(intent)
       }
     }
 
@@ -155,19 +161,20 @@ class PaceOverlayModule : Module() {
 
     Function("requestBatteryOptimizationExemption") {
       appContext.reactContext?.let { context ->
+        val activity = appContext.currentActivity
         try {
           val intent = Intent(
             Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
             Uri.parse("package:${context.packageName}")
-          ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-          context.startActivity(intent)
+          ).apply { if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+          (activity ?: context).startActivity(intent)
         } catch (e: ActivityNotFoundException) {
           // 일부 OEM 커스텀 ROM은 이 다이렉트 인텐트를 안 지원 — 일반 배터리 설정 목록으로 폴백.
           Log.w("PaceOverlayModule", "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS not supported, falling back", e)
           val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
           }
-          context.startActivity(fallback)
+          (activity ?: context).startActivity(fallback)
         }
       }
     }
@@ -279,20 +286,28 @@ class PaceOverlayModule : Module() {
     // 갈 때 안내 토스트를 띄운다.
     Function("requestAccessibilityPermission") {
       appContext.reactContext?.let { context ->
+        // 2026-08-01 사용자 지적("설정하고 back하면 앱으로 와야 할거 아냐, 계속 설정이면 사람들이
+        // 앱으로 다시 찾아오겠니") — FLAG_ACTIVITY_NEW_TASK로 열면 설정 앱이 Pace와 별개의 태스크로
+        // 뜬다. 별개 태스크에서 뒤로가기를 계속 누르면 그 태스크(설정) 안의 화면들만 돌다가 결국
+        // 런처(홈)로 빠져버려 Pace로 못 돌아온다. 지금 포그라운드 Activity(currentActivity)가 있으면
+        // NEW_TASK 없이 그 Activity에서 startActivity — 그러면 설정 화면이 Pace의 "같은 태스크"
+        // 백스택에 얹혀서 뒤로가기 한 번에 정확히 Pace로 돌아온다. currentActivity가 없는 예외적인
+        // 경우(백그라운드에서 호출 등)에만 NEW_TASK로 폴백.
+        val activity = appContext.currentActivity
         val serviceComponent = ComponentName(context, PaceAccessibilityService::class.java)
         val directIntent = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
-          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
           putExtra(":settings:fragment_args_key", serviceComponent.flattenToString())
           putExtra("extra_fragment_arg_key", serviceComponent.flattenToString())
         }
         try {
-          context.startActivity(directIntent)
+          (activity ?: context).startActivity(directIntent)
         } catch (e: RuntimeException) {
           try {
             val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-              flags = Intent.FLAG_ACTIVITY_NEW_TASK
+              if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            context.startActivity(fallbackIntent)
+            (activity ?: context).startActivity(fallbackIntent)
             val guidance = if (java.util.Locale.getDefault().language == "ko") {
               "설치된 앱(또는 다운로드된 앱) 목록에서 'Pace'를 찾아 켜주세요"
             } else {

@@ -47,7 +47,7 @@ type Props = {
 // (로그인/consent) 감지해 보고.
 const INJECTED_JS = `
 (function () {
-  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  function send(o) { if (o && o.type === 'domlog' && !window.__PACE_DIAG__) return; if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
   var reportedReady = false, reportedEnded = false, lastT = -1;
   function attach(n) {
     var v = document.querySelector('video');
@@ -184,7 +184,7 @@ true;
 // 기기에서 뭐가 먹히는지 관찰해 다듬는다. reload 모드(위 INJECTED_JS)는 플래그로 즉시 롤백 가능하게 유지.
 const INJECTED_JS_SWIPE = `
 (function () {
-  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  function send(o) { if (o && o.type === 'domlog' && !window.__PACE_DIAG__) return; if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
   var reportedReady = false, reportedEnded = false, lastT = -1;
   var curHref = '' + location.href, curV = null, globalsOn = false;
 
@@ -385,7 +385,7 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
         source={source}
         injectedJavaScript={NAV_MODE === 'swipe' ? INJECTED_JS_SWIPE : INJECTED_JS}
         // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
-        injectedJavaScriptBeforeContentLoaded={`window.__pacePreload=${preload ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__PACE_DIAG__=${__DEV__ ? 'true' : 'false'};window.__pacePreload=${preload ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
@@ -412,12 +412,12 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
             return;
           }
           if (msg.type === 'domlog') {
-            try { PaceGestureLog?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
+            try { if (__DEV__) PaceGestureLog?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
             return;
           }
           if (msg.type === 'audio') {
             const m = msg as any;
-            try { PaceGestureLog?.nativeLog?.(`AUDIO ${m.tag} muted=${m.muted}`); } catch {}
+            try { if (__DEV__) PaceGestureLog?.nativeLog?.(`AUDIO ${m.tag} muted=${m.muted}`); } catch {}
             onAudioDiag?.(`${m.tag} muted=${m.muted} vol=${m.vol ?? '?'}${m.err ? ' ' + m.err : ''}`);
             return;
           }

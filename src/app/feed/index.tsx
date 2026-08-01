@@ -257,6 +257,11 @@ export default function PaceFeedScreen() {
       if (state === 'background') {
         flushWatchTime('completed');     // 앱을 벗어나면 그때까지의 시청 시간을 기록(세그먼트 닫힘)
         setIsAutoMode((prev) => (prev ? false : prev));
+        // 2026-08-01 배터리 감사 — 백그라운드에선 status를 PAUSED로 내려 playing=false로 만든다.
+        // iOS는 백그라운드오디오 권한이 없어 WebView 영상을 자동 일시정지하지만 status는 그대로라
+        // 복귀 시 keepAwake가 "정지된 영상" 위에서 계속 화면을 켜둬 최대 30분(idle 상한) 배터리를
+        // 태웠다. PAUSED로 내리면 keepAwake/타이머/센서가 즉시 해제되고, 복귀 후 탭으로 재개한다.
+        setStatus('PAUSED');
       } else if (state === 'active') {
         // background로 세그먼트가 닫혔을(null) 때만 새로 시작 — 'inactive'(권한 팝업 등)에서 돌아온
         // 경우엔 세그먼트가 살아 있으므로 건드리지 않아 그 사이 시청 시간을 잃지 않는다.
@@ -455,7 +460,10 @@ export default function PaceFeedScreen() {
       {/* ⚠️ 프리로드(다음영상 미리로드)는 기기에서 YouTube WebView 2개가 디코더/대역폭 경합 → 재생 중
           버퍼링 멈춤(stalled) + 손짓 카메라 불안정을 유발했다(실기기 로그 확정). 전환 간극보다 mid-play
           멈춤이 더 나쁘므로 단일 플레이어로 유지한다. (next는 큐 프리페치/캐시로만 미리 확보.) */}
-      {current && !feedBlocked && (
+      {/* 2026-08-01 배터리 감사 — sleepBlackout(취침/슬립타이머/idle 상한 발동)이면 WebView를 통째로
+          언마운트한다. 예전엔 검은 Pressable로 가리기만 해서 유튜브 페이지가 메모리에 남고 내부
+          500ms 폴링이 계속 브릿지로 메시지를 쏘았다(재생은 정지됐어도 CPU/wakeup 낭비). */}
+      {current && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
           ref={playerRef}
           videoId={current.videoId}

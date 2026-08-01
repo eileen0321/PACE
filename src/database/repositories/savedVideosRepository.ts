@@ -87,9 +87,14 @@ export async function addSavedVideo(params: {
 
 export async function getSavedVideos(userId: string, kind: SavedVideoKind): Promise<SavedVideo[]> {
   const db = await getDb();
+  // 2026-08-01 사장님 지시 — Saved/Favorite 병합(네이티브 P 메뉴와 동일). 'favorite' 조회 시 예전
+  // 'capture' 저장분도 같은 리스트에 함께 보여준다(마이그레이션 없이 조회 시점 병합). 'capture'는 P
+  // 메뉴에서 제거됐지만 타입/호출 호환을 위해 유지.
+  const kinds: SavedVideoKind[] = kind === 'favorite' ? ['favorite', 'capture'] : [kind];
+  const placeholders = kinds.map(() => '?').join(',');
   const rows = await db.getAllAsync<SavedVideoRow>(
-    `SELECT * FROM saved_videos WHERE user_id = ? AND kind = ? ORDER BY added_at DESC`,
-    [userId, kind]
+    `SELECT * FROM saved_videos WHERE user_id = ? AND kind IN (${placeholders}) ORDER BY added_at DESC`,
+    [userId, ...kinds]
   );
   return rows.map(rowToSavedVideo);
 }

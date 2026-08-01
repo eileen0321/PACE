@@ -13,9 +13,10 @@ export type PaceMenuAction = 'app' | 'hot' | 'capture' | 'favorite';
 export function PaceMenu({ onSelect, onClose, top }: { onSelect: (action: PaceMenuAction) => void; onClose: () => void; top: number }) {
   const { t } = useTranslation();
   const items: { action: PaceMenuAction; icon: keyof typeof Feather.glyphMap; label: string }[] = [
+    // 2026-08-01 사장님 지시 — Saved(capture)/Favorite 병합. 네이티브 P 메뉴와 동일하게 "Favorite"
+    // 하나만 남기고 Saved 항목 제거(favorite 리스트가 예전 capture 저장분까지 함께 보여줌).
     { action: 'app', icon: 'smartphone', label: t('overlay.menuOpenApp') },
     { action: 'hot', icon: 'trending-up', label: t('overlay.menuHot') },
-    { action: 'capture', icon: 'bookmark', label: t('overlay.menuCapture') },
     { action: 'favorite', icon: 'star', label: t('overlay.menuFavorite') },
   ];
   return (

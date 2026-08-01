@@ -141,3 +141,18 @@ export const settingsApi = {
   getSettings: () => request<SettingsPayload>('/settings'),
   updateSettings: (patch: Partial<SettingsPayload>) => request<SettingsPayload>('/settings', { method: 'PUT', body: patch }),
 };
+
+// 2026-08-01 — 오버레이 P 메뉴 "Shorts HOT". Android는 네이티브(ShortsHotStore.kt)가 이 엔드포인트를
+// 직접 호출하고, iOS는 이 RN 클라이언트로 같은 백엔드를 재사용한다(백엔드/데이터는 공용, UI만 플랫폼별).
+export type ShortsHotVideo = {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnailUrl: string;
+};
+// 백엔드 curated 카테고리(Android ShortsHotStore.CATEGORIES와 동일).
+export const SHORTS_HOT_CATEGORIES = ['all', 'music', 'gaming', 'comedy', 'entertainment', 'pets'] as const;
+export const shortsHotApi = {
+  list: (category: string): Promise<ShortsHotVideo[]> =>
+    request<ShortsHotVideo[]>(`/shorts-hot?category=${encodeURIComponent(category)}`),
+};

@@ -501,6 +501,14 @@ export default function PaceFeedScreen() {
           }}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
+          onNotShorts={() => {
+            // 2026-08-01 사장님 지적 — HOT/Favorite에서 연 항목이 비-쇼츠(라이브/롱폼)라 watch로 리다이렉트되면
+            // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔
+            // 리마운트한다: forcedVideoId(강제 오픈) 해제 → 큐의 정상 쇼츠로 복귀, 없으면 다음 큐로 advance.
+            useToastStore.getState().show(t('feed.notShortsSkippedToast'));
+            if (forcedVideoId) setForcedVideoId(null);
+            else advance();
+          }}
           onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
         />
       )}

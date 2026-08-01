@@ -34,6 +34,9 @@ type Props = {
   onVideoChange?: (videoId: string) => void;
   /** iOS 유저 손가락 스와이프(1=위로/다음, -1=아래로/이전) — WebView JS가 감지해 통보(2026-08-01). */
   onUserSwipe?: (dir: number) => void;
+  /** /shorts/{id}가 watch로 리다이렉트된 "비-쇼츠"(라이브/롱폼) 감지 — 스와이프/자동넘김/손짓이 전부
+   *  Shorts 릴 DOM에 의존해 동작 불가하므로, 부모가 정상 쇼츠로 리마운트하게 통보(2026-08-01 사장님 지적). */
+  onNotShorts?: () => void;
   /** 진단(임시): WebView 오디오 상태 — 무음 원인(소리 자동재생 차단 여부) 파악용. */
   onAudioDiag?: (text: string) => void;
   /** 프리로드 모드 — 다음 영상 페이지를 미리 로드만(재생·소리 없음). 활성화(false 전환) 시 처음부터 재생. */
@@ -282,6 +285,13 @@ const INJECTED_JS_SWIPE = `
       var signin = /consent|accounts\\.google|signin|login/i.test(href) || !!document.querySelector('form[action*="consent"]');
       send({ type: 'novideo', signin: signin, href: href.slice(0, 80) }); return;
     }
+    // 2026-08-01 사장님 지적 — <video>는 있지만 URL이 /shorts/가 아니면(라이브/롱폼이 watch로 리다이렉트됨)
+    // 이 화면에선 스와이프/자동넘김/손짓이 전부 Shorts 릴 DOM에 의존해 동작 불가. 리다이렉트는 내비게이션
+    // 시점(서버 303)에 끝나 이 시점 href는 이미 최종값이라 오탐 없음(정상 쇼츠는 항상 /shorts/ 유지). 부모가
+    // 정상 쇼츠로 리마운트하도록 통보하고, watch 페이지 <video>엔 핸들러를 안 붙인다(재생 안 함).
+    if (('' + location.href).indexOf('/shorts/') < 0) {
+      send({ type: 'notshorts', href: ('' + location.href).slice(0, 80) }); return;
+    }
     curV = v;
     window.pacePlay = function () { v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
@@ -329,7 +339,7 @@ function isAllowedNavigation(url: string): boolean {
 export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
-  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, preload }: Props,
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -450,6 +460,11 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
             // 12초간 <video> 없음(로그인/consent/차단 페이지) → 까만화면에 갇히지 말고 다음 영상으로 스킵.
             if (__DEV__) console.log('[WV] novideo → skip', JSON.stringify(msg));
             onError?.(-2);
+          } else if (msg.type === 'notshorts') {
+            // /shorts/{id}가 watch로 리다이렉트된 비-쇼츠 → 스와이프로는 복구 불가(릴 DOM 없음), 부모가
+            // key 교체(forcedVideoId 해제)로 정상 쇼츠에 리마운트해야 한다. onError(스와이프 스킵)와 구분.
+            if (__DEV__) console.log('[WV] notshorts → remount', JSON.stringify(msg));
+            onNotShorts?.();
           }
         }}
       />

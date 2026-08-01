@@ -3327,3 +3327,16 @@ co-session의 두 Android 커밋을 pull해서 iOS 영향 검토 — **둘 다 i
 ### 2026-08-01 (자율세션, Mac) — co-session `1c32866`(접근성 부여 즉시 Pace 자동복귀) iOS 검토 — 무관, 코드변경 없음
 `1c32866`은 Kotlin 3파일(PaceAccessibilityService/PaceOverlayModule/PaceOverlayService)만 수정 — 공유 JS/TS 무변경. 안드로이드 AccessibilityService가 설정에서 켜지는 순간 Pace로 자동 복귀하는 네이티브 흐름. **iOS는 AccessibilityService 개념 자체가 없어 무관**: home.tsx의 접근성 감지/프롬프트는 전부 `Platform.OS !== 'android' return`(L151/170/230)로 게이팅되고 `overlayService.ios.hasAccessibilityPermission()`은 true 스텁 → iOS는 프롬프트 자체가 안 떠 "복귀시킬 대상"이 없음. tsc 통과, git clean.
 ※ 참고: 이 커밋은 앞서 요청한 "Android 무료 5분 제거(하루한도 tier1 무료 경로)"와 무관 — 그 항목은 아직 Windows 세션 미반영, 위 핸드오프 유효.
+
+### 2026-08-01 (자율세션, Mac) — co-session `0a50b24`(스플래시) iOS 검증 완료 + iOS 회귀 1건 발견/수정
+co-session의 "🔴 Mac 확인 요청" 3건 처리. **공용 `AnimatedSplash.tsx` 변경(로고 120→188dp, 글로우 원·시머 제거)이 iOS 네이티브 런치스크린과 크기 불일치(회귀)를 만들었다 — 수정함.**
+
+**발견한 iOS 회귀**: co-session은 JS 스플래시 로고를 188dp로 키우면서 그 근거를 Android 네이티브 스플래시(drawable 재생성)에 맞췄는데, **iOS 네이티브 런치스크린은 `app.json`의 `expo-splash-screen.imageWidth`로 따로 사이징**된다. co-session은 `android.*`만 고치고 iOS는 `imageWidth: 120`으로 남겨둬서, iOS에선 [네이티브 런치(120)]→[JS 스플래시(188)]로 **로고가 1.57× 커지는 점프**가 생겼다(이 파일 자체 원칙 "네이티브 런치와 JS 첫 프레임은 시각적으로 동일해야 한다" 위반). 시뮬 콜드런치 프레임 캡처로 실제 점프 확인(네이티브 프레임 로고 < JS 프레임 로고).
+- **수정**: `app.json` expo-splash-screen의 top-level + `ios` 블록 `imageWidth` **120 → 188**(JS AnimatedSplash와 일치). `android`는 co-session이 튜닝한 140 유지(Android 12 스플래시는 마스킹/스케일 방식이 달라 imageWidth 의미가 iOS와 다름 — 손대지 않음). ⚠️ **이 변경은 prebuild/네이티브 리빌드(EAS 프로덕션 빌드가 prebuild 수행) 후에야 iOS 네이티브 런치에 반영됨** — 현재 시뮬의 설치본은 옛 120으로 빌드돼 있어 점프가 아직 보이나, 다음 iOS 빌드부터 네이티브(188)=JS(188)로 일치.
+
+**나머지 확인**:
+1. JS AnimatedSplash 렌더 — 시뮬 캡처로 확인: 로고 vibrant(빛바램 없음), 정중앙, **글로우 원 제거로 사각 카드 경계가 배경(#060709)에 묻혀 안 보임**(co-session 의도대로). iOS 정상.
+2. `Image.onLoad` 게이팅 — 스플래시가 뜨고 홈까지 정상 진입(핸드오프 성공) 확인. onLoad 또는 1.5s 폴백 정상 동작.
+3. `app.json` iOS 스플래시 설정 — 위 회귀 수정으로 `ios.imageWidth`만 120→188 변경(이미지/배경색 무변경).
+
+tsc 통과, 원본 자산 무변경. TEMP 없음.

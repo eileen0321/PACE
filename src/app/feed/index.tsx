@@ -36,6 +36,21 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // Next/Previous는 이 스위치와 무관하게 항상 즉시 이동(상태 전이표 규칙 A/B).
 type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
 
+// 2026-08-01 사장님 지적 — Focus Session ON일 때 남은시간이 피드에 안 보였다(예전에 시계 리렌더가
+// 영상 "씹힘"을 유발해 통째로 제거됨). 부모(피드/WebView)를 리렌더하지 않도록 자체 타이머를 가진
+// 격리 컴포넌트로 남은시간만 갱신한다 — 이 컴포넌트가 tick할 때 이 텍스트만 리렌더되고 WebView는 무관.
+function SessionRemaining({ endsAt }: { endsAt: number }) {
+  const calc = () => Math.max(0, Math.ceil((endsAt - Date.now()) / 60000));
+  const [min, setMin] = useState(calc);
+  useEffect(() => {
+    setMin(calc());
+    const id = setInterval(() => setMin(calc()), 15000); // 15s — 분 단위 표시엔 충분, 배터리/리렌더 최소
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endsAt]);
+  return <Text style={styles.sessionRemainingText}>{min}m</Text>;
+}
+
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -451,6 +466,13 @@ export default function PaceFeedScreen() {
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             {isAutoMode ? <View style={styles.sessionOnDot} /> : <Feather name="play" size={12} color="rgba(255,255,255,0.92)" />}
             <Text style={styles.sessionOnText}>{isAutoMode ? t('feed.focusSessionOnBadge') : t('feed.focusSessionStartBadge')}</Text>
+            {/* Focus Session ON일 때 남은시간(격리 컴포넌트 — 부모 리렌더 없음, WebView 씹힘 방지) */}
+            {isAutoMode && sessionEndsAt != null && (
+              <>
+                <View style={styles.sessionDivider} />
+                <SessionRemaining endsAt={sessionEndsAt} />
+              </>
+            )}
           </Pressable>
           <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))} hitSlop={12} style={styles.appIconBtn}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
@@ -544,6 +566,8 @@ const styles = StyleSheet.create({
   diagText: { color: '#00E5A0', fontSize: 15, fontFamily: typography.monoFontFamilyBold, textAlign: 'center' },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
+  sessionDivider: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },
+  sessionRemainingText: { color: colors.success, fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.4, fontVariant: ['tabular-nums'] },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.
   appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.

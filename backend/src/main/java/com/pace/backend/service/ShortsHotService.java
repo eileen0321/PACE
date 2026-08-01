@@ -44,19 +44,23 @@ public class ShortsHotService {
     private static final String SEARCH_API = "https://www.googleapis.com/youtube/v3/search";
     private static final int MAX_SHORT_SECONDS = 60;
     private static final int FETCH_COUNT = 50;
-    private static final int KEEP_COUNT = 15;
+    // 2026-08-01 사장님 지시 — 클라이언트가 "본 영상"을 뒤로 미루는 대신 아예 목록에서 제외하는
+    // 방식으로 바뀌면서(PaceOverlayService.ShortsHotStore.fetch 참고), 다 본 카테고리가 쉽게
+    // 텅 비지 않도록 15→30으로 2배 확보. search.list는 호출당 정액 비용(maxResults와 무관)이라
+    // 이 증가가 쿼터에 미치는 영향은 사실상 없음(아래 SEARCH_FALLBACK_RESULTS 주석 참고).
+    private static final int KEEP_COUNT = 30;
     // 2026-08-01 발견 — music/gaming처럼 트렌드가 뮤직비디오/풀 게임플레이 위주인 카테고리는 상위
     // 50개 안에 60초 이하가 하나도 없는 날이 흔했다(music/gaming 탭이 통째로 빈 리스트로 보였음).
     // chart=mostPopular도 다른 목록형 API처럼 nextPageToken으로 더 내려갈 수 있어서, 부족하면
     // 최대 이만큼 더 페이지를 넘겨가며 60초 이하를 찾는다 — 페이지당 1 unit이라 최악의 경우도
-    // 카테고리당 4 units(하루 총 24 units)로 쿼터엔 무의미한 수준.
+    // 카테고리당 4 units로 쿼터엔 무의미한 수준.
     private static final int MAX_PAGES = 4;
     // 2026-08-01 발견 — 페이지를 늘려도 music은 여전히 0건, gaming은 1건뿐이었다(실제로 KR
     // mostPopular 차트 자체에 해당 카테고리 60초 이하 영상이 거의 없음, 인기 뮤비/풀영상 위주라
     // 근본적 한계). chart 기반으로 부족하면 search.list(videoDuration=short)로 보충한다 — 100
-    // units/회로 videos.list보다 비싸지만 카테고리당 하루 1회뿐이라 최악에도 6*100=600 units,
-    // 일일 쿼터(10,000) 대비 무의미한 수준.
-    private static final int SEARCH_FALLBACK_RESULTS = 25;
+    // units/회로 videos.list보다 비싸지만 검색 결과 개수(maxResults)는 비용에 영향 없는 정액 요금이라
+    // KEEP_COUNT를 15→30으로 올린 것에 맞춰 후보 풀만 25→45로 넉넉히 키움(비용 증가 없음).
+    private static final int SEARCH_FALLBACK_RESULTS = 45;
 
     // 카테고리 코드(앱/DB에서 쓰는 값) → YouTube videoCategoryId. "all"은 categoryId 없이
     // chart=mostPopular 전체 순위(카테고리 무관)를 그대로 쓴다.
@@ -98,9 +102,11 @@ public class ShortsHotService {
                 .toList();
     }
 
-    // 매일 새벽 4시(KST, 서버 타임존 기준) 1회 전체 카테고리 갱신 — 트렌드는 하루 단위로도 충분하고,
-    // 카테고리당 videos.list 1회(≈1 unit)라 일일 쿼터(기본 10,000 units)에 전혀 부담이 없다.
-    @Scheduled(cron = "0 0 4 * * *")
+    // 2026-08-01 사장님 지시로 1일 1회 → 6시간마다(하루 4회)로 단축 — 트렌드 신선도 개선.
+    // 카테고리당 최악(search fallback 필요) 105 units × 5개 = 525 units/회, 하루 4회면 최악 약
+    // 2,100 units(일일 쿼터 10,000의 ~21%) — 이 키는 클라이언트 Shorts 피드용 키와 별개 전용
+    // 키라 다른 기능과 쿼터를 나눠쓰지 않음, 여유 충분.
+    @Scheduled(cron = "0 0 0,6,12,18 * * *")
     public void refreshAll() {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("[ShortsHot] YOUTUBE_API_KEY 미설정 — 갱신 스킵");

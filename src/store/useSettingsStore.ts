@@ -26,7 +26,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   sleepStillnessMinutes: 10,
   volumeKeyRemote: false,
   handsFreeEnabled: true,
-  handsFreeGesture: true,
+  // 2026-08-01 사용자 지시 — 손짓(카메라 hand-wave)은 Focus Session 내내(프리미엄은 최대 ~120분/일)
+  // 전면카메라를 계속 구동해 배터리 비용이 실제로 있다고 판단, volumeKeyRemote와 같은 패턴으로
+  // 기본 OFF·opt-in 전환(Focus 탭에서 직접 켜야 함). feed/index.tsx의 handsFreeDetectActive 참고.
+  // 기존 사용자(이미 로컬에 true로 저장된 값)는 이 기본값 변경의 영향을 안 받음 — 마이그레이션 없음.
+  handsFreeGesture: false,
 };
 
 type SettingsState = {

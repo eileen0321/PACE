@@ -70,6 +70,7 @@ export default function PaceFeedScreen() {
   const sleepStillnessMinutes = useSettingsStore((s) => s.settings.sleepStillnessMinutes); // 수면감지 임계(안드 parity, D8)
   const breakIntervalMinutes = useSettingsStore((s) => s.settings.breakIntervalMinutes); // 브레이크 리마인더(안드 parity)
   const volumeKeyRemote = useSettingsStore((s) => s.settings.volumeKeyRemote); // BT 볼륨키 토글(opt-in, 기본 OFF)
+  const handsFreeGesture = useSettingsStore((s) => s.settings.handsFreeGesture); // 손짓 토글(opt-in, 기본 OFF, 2026-08-01)
   const todayUsageMinutes = useStatsStore((s) => s.todayUsageMinutes); // 세션 시작 전 오늘 사용시간(일일한도 계산)
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
@@ -212,11 +213,17 @@ export default function PaceFeedScreen() {
   // (고개짓 head-nod는 2026-07-23 "비현실적" 판단으로 계속 제외 — 'snap' 모드만 start.)
   //
   // 2026-07-26 사장님 결정 번복 — D9 프리미엄 게이팅을 다시 무료로 개방. Focus Session(isAutoMode)
-  // 중에는 무료/유료 동일하게 손짓 감지가 켜진다.
-  // 손짓 감지 ON 조건 = Focus Session(isAutoMode)만 켜지면 무조건 작동. ⚠️ 2026-07-27: 핸즈프리 마스터/손짓
-  // 하위토글에 묶었더니 마스터를 끄면(사용자가 UI 테스트로 자주 끔) 손짓이 통째로 안 켜져 "한번도 안 됨"이
-  // 됐다 — 손짓 동작을 확실히 하려고 설정 토글과 완전히 분리하고 Focus Session에만 묶는다(분리 전 상태 복구).
-  const handsFreeDetectActive = isAutoMode;
+  // 중에는 무료/유료 동일하게 손짓 감지가 켜진다(프리미엄 여부와 무관, 켜는 조건 자체는 아래로 대체됨).
+  // ⚠️ 2026-07-27: 한때 핸즈프리 "마스터"(handsFreeEnabled)와 손짓 하위토글에 같이 묶었더니 마스터를
+  // 끄면(사용자가 UI 테스트로 자주 끔) 손짓이 통째로 안 켜져 "한번도 안 됨"이 됐던 적이 있다 — 그래서
+  // 한동안 설정 토글과 완전히 분리하고 Focus Session에만 묶여 있었다(무조건 ON).
+  // 2026-08-01 사용자 지시 — 그 사이 배터리 검토에서, 손짓이 Focus Session 내내(프리미엄은 최대
+  // ~120분/일까지 이어짐) 전면카메라를 계속 구동해 배터리 비용이 실재한다고 판단. volumeKeyRemote와
+  // 같은 opt-in 패턴으로 전환: 이번엔 마스터(handsFreeEnabled)가 아니라 손짓 "하위" 토글
+  // (handsFreeGesture, 기본값 false — useSettingsStore.ts)에만 물려서 위 회귀를 재현하지 않는다
+  // (마스터는 여전히 UI 표시용일 뿐 이 게이팅과 무관). 세션 시작 시 꺼져 있으면 toggleAutoMode가
+  // 토스트로 "Focus 탭에서 켤 수 있다" 안내(알림 대신 인앱 토스트 — 매 세션 알림은 과함).
+  const handsFreeDetectActive = isAutoMode && handsFreeGesture;
 
   useEffect(() => {
     loadInitial();
@@ -369,7 +376,17 @@ export default function PaceFeedScreen() {
     markUserInput();
     const next = !isAutoMode;
     setIsAutoMode(next);
-    useToastStore.getState().show(next ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes }) : t('feed.focusSessionEndedToast'));
+    // 2026-08-01 — 손짓이 opt-in(기본 OFF)으로 바뀌면서, 세션을 켰는데 손짓이 꺼져있는 유저에게
+    // Focus 탭에서 켤 수 있다고 짧게 안내(별도 푸시 알림 대신 기존 세션-시작 토스트에 얹는다).
+    if (next) {
+      useToastStore.getState().show(
+        handsFreeGesture
+          ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes })
+          : t('feed.focusSessionStartedNoGestureToast', { n: focusSessionDurationMinutes })
+      );
+    } else {
+      useToastStore.getState().show(t('feed.focusSessionEndedToast'));
+    }
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).

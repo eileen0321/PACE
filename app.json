@@ -60,8 +60,8 @@
             "backgroundColor": "#060709"
           },
           "android": {
-            "image": "./assets/android-icon-foreground.png",
-            "imageWidth": 200,
+            "image": "./assets/ios-splash-icon.png",
+            "imageWidth": 140,
             "resizeMode": "contain",
             "backgroundColor": "#060709"
           }

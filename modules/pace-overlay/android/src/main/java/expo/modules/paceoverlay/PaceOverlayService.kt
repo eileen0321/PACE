@@ -29,6 +29,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -65,6 +66,8 @@ class PaceOverlayService : Service() {
   // 네이티브 오버레이로 그 자리에서 뜬다(유튜브를 벗어나면 자동 PIP가 걸리는 문제 자체를 원천 차단,
   // showSavedFavoriteList 참고).
   private var savedListView: FrameLayout? = null
+  // 2026-08-01 사장님 지시 — Shorts HOT도 같은 이유로 네이티브 오버레이(showShortsHotList 참고).
+  private var shortsHotListView: FrameLayout? = null
   // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
   // 맞춘다: Focus Session이 켜져 있을 때만 보이는 작은 보라 링 글래스 원(⚡). iOS의 focusDot과 동일한
   // 역할(비클릭, 순수 상태표시) — applyAutoBadgeStyle()이 autoBadge와 함께 이 가시성도 갱신한다.
@@ -618,6 +621,10 @@ class PaceOverlayService : Service() {
     // 2026-07-31 — Saved/Favorite 네이티브 오버레이가 saved_videos에 쓸 때 필요한 user_id 캐시(위
     // PaceOverlayModule.cacheUserId 참고).
     const val PREF_CACHED_USER_ID = "cached_user_id"
+    // 2026-08-01 — Shorts HOT 네이티브 오버레이가 백엔드 REST를 직접 호출할 때 필요(위
+    // PaceOverlayModule.cacheApiBaseUrl/cacheAuthToken 참고, client.ts가 값 변경마다 채워줌).
+    const val PREF_CACHED_API_BASE_URL = "cached_api_base_url"
+    const val PREF_CACHED_AUTH_TOKEN = "cached_auth_token"
     // 2026-07-26 사용자 지적 — "1시 3분에 잠들었는데 실제로는 10분 전(무진동 시작 시점)이 진짜
     // 잠든 시각에 더 가깝지 않냐" — markExpired() 호출 시각(=무진동 임계값을 넘긴 시각)은 실제
     // 마지막 움직임(lastMotionAtMs)보다 stillnessThresholdMs만큼 항상 늦다. sleep_detected일 때만
@@ -1688,6 +1695,212 @@ class PaceOverlayService : Service() {
     }.start()
   }
 
+  private fun hideShortsHotList() {
+    shortsHotListView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
+    shortsHotListView = null
+  }
+
+  // 2026-08-01 사장님 지시 — "Shorts HOT" 실제 구현. Saved/Favorite 패널과 동일한 글래스모피즘
+  // 스타일/블러/위치를 그대로 재사용하되, 로컬 SQLite 대신 ShortsHotStore로 백엔드를 호출하고
+  // (네트워크라 백그라운드 스레드 필수), 상단은 Add 버튼 대신 카테고리 가로 스크롤 탭이다. 항목은
+  // 읽기 전용 콘텐츠라 공유/삭제 없이 탭하면 바로 원본 유튜브로 이동한다.
+  private fun showShortsHotList(initialCategory: String) {
+    hideShortsHotList()
+    val d = resources.displayMetrics.density
+    val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
+
+    val panel = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 16f * d
+        setColor(Color.parseColor("#591A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+      clipToOutline = true
+      setPadding((14 * d).toInt(), (14 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+    }
+
+    val header = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    header.addView(TextView(this).apply {
+      text = "Shorts HOT"
+      textSize = 15f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    header.addView(TextView(this).apply {
+      text = "✕"
+      textSize = 15f
+      setTextColor(Color.parseColor("#B3FFFFFF"))
+      setPadding((10 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
+      isClickable = true
+      setOnClickListener { hideShortsHotList() }
+    })
+    panel.addView(header)
+
+    var currentCategory = if (ShortsHotStore.CATEGORIES.contains(initialCategory)) initialCategory else "all"
+    val categoryTabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+    val categoryScroll = HorizontalScrollView(this).apply {
+      isHorizontalScrollBarEnabled = false
+      addView(categoryTabs)
+    }
+    panel.addView(categoryScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = (8 * d).toInt()
+      bottomMargin = (8 * d).toInt()
+    })
+
+    val listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    val scroll = ScrollView(this).apply { addView(listContainer) }
+    panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+    fun renderTabs() {
+      categoryTabs.removeAllViews()
+      ShortsHotStore.CATEGORIES.forEachIndexed { index, category ->
+        val selected = category == currentCategory
+        val tab = TextView(this).apply {
+          text = category.replaceFirstChar { it.uppercase() }
+          textSize = 12f
+          setTextColor(if (selected) Color.WHITE else Color.parseColor("#99FFFFFF"))
+          setTypeface(typeface, if (selected) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+          background = GradientDrawable().apply {
+            cornerRadius = 999f
+            setColor(if (selected) Color.parseColor("#59FFFFFF") else Color.parseColor("#1FFFFFFF"))
+          }
+          setPadding((12 * d).toInt(), (6 * d).toInt(), (12 * d).toInt(), (6 * d).toInt())
+          isClickable = true
+        }
+        categoryTabs.addView(tab, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+          if (index > 0) marginStart = (6 * d).toInt()
+        })
+      }
+    }
+
+    fun loadCategory(category: String) {
+      currentCategory = category
+      renderTabs()
+      listContainer.removeAllViews()
+      listContainer.addView(TextView(this).apply {
+        text = "Loading…"
+        textSize = 12f
+        setTextColor(Color.parseColor("#80FFFFFF"))
+        gravity = Gravity.CENTER
+        setPadding(0, (18 * d).toInt(), 0, (18 * d).toInt())
+      })
+      Thread {
+        val items = ShortsHotStore.fetch(applicationContext, category)
+        foregroundPollHandler.post {
+          if (currentCategory != category) return@post // 로딩 중 다른 탭으로 넘어갔으면 버림
+          listContainer.removeAllViews()
+          if (items.isEmpty()) {
+            listContainer.addView(TextView(this@PaceOverlayService).apply {
+              text = "No trending videos in this category yet"
+              textSize = 12f
+              setTextColor(Color.parseColor("#80FFFFFF"))
+              gravity = Gravity.CENTER
+              setPadding(0, (18 * d).toInt(), 0, (18 * d).toInt())
+            })
+          }
+          items.forEachIndexed { index, item ->
+            val itemRow = LinearLayout(this@PaceOverlayService).apply {
+              orientation = LinearLayout.HORIZONTAL
+              gravity = Gravity.CENTER_VERTICAL
+              setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+              isClickable = true
+              setOnClickListener {
+                try {
+                  val url = "https://www.youtube.com/shorts/${item.videoId}"
+                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                  Log.w("PaceOverlayService", "Shorts HOT 재생 실패", e)
+                }
+              }
+            }
+            val thumb = ImageView(this@PaceOverlayService).apply {
+              scaleType = ImageView.ScaleType.CENTER_CROP
+              background = GradientDrawable().apply {
+                cornerRadius = 8f * d
+                setColor(Color.parseColor("#14FFFFFF"))
+              }
+            }
+            val thumbSize = (44 * d).toInt()
+            itemRow.addView(thumb, LinearLayout.LayoutParams(thumbSize, thumbSize))
+            loadThumbnailInto(thumb, item.thumbnailUrl)
+
+            val textCol = LinearLayout(this@PaceOverlayService).apply { orientation = LinearLayout.VERTICAL }
+            textCol.addView(TextView(this@PaceOverlayService).apply {
+              text = item.title
+              textSize = 12f
+              maxLines = 2
+              setTextColor(Color.WHITE)
+            })
+            if (!item.channel.isNullOrEmpty()) {
+              textCol.addView(TextView(this@PaceOverlayService).apply {
+                text = item.channel
+                textSize = 10f
+                setTextColor(Color.parseColor("#8CFFFFFF"))
+              })
+            }
+            itemRow.addView(textCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+              marginStart = (10 * d).toInt()
+            })
+
+            listContainer.addView(itemRow)
+            if (index < items.size - 1) {
+              listContainer.addView(View(this@PaceOverlayService).apply { setBackgroundColor(Color.parseColor("#14FFFFFF")) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))
+            }
+          }
+          val estimatedRowHeightPx = (60 * d).toInt()
+          val estimatedHeight = (items.size.coerceAtLeast(1) * estimatedRowHeightPx)
+          val maxHeight = (resources.displayMetrics.heightPixels * 0.4f).toInt()
+          scroll.layoutParams = (scroll.layoutParams ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0)).apply {
+            height = estimatedHeight.coerceAtMost(maxHeight)
+          }
+        }
+      }.start()
+    }
+
+    // 탭 클릭 리스너는 renderTabs()가 매번 뷰를 새로 만드므로, 클릭 시 loadCategory를 다시 걸어준다.
+    categoryTabs.setOnHierarchyChangeListener(object : android.view.ViewGroup.OnHierarchyChangeListener {
+      override fun onChildViewAdded(parent: android.view.View?, child: android.view.View?) {
+        val index = categoryTabs.indexOfChild(child)
+        if (index in ShortsHotStore.CATEGORIES.indices) {
+          child?.setOnClickListener { loadCategory(ShortsHotStore.CATEGORIES[index]) }
+        }
+      }
+      override fun onChildViewRemoved(parent: android.view.View?, child: android.view.View?) {}
+    })
+
+    loadCategory(currentCategory)
+
+    val root = FrameLayout(this).apply { addView(panel, FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)) }
+    shortsHotListView = root
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * d).toInt()
+      y = 80 + (44 * d).toInt()
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        blurBehindRadius = (28 * d).toInt()
+      }
+    }
+    try {
+      windowManager?.addView(shortsHotListView, params)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "showShortsHotList 실패", e)
+      shortsHotListView = null
+    }
+  }
+
   private fun showPaceMenu() {
     val d = resources.displayMetrics.density
     val menu = LinearLayout(this).apply {
@@ -1702,7 +1915,7 @@ class PaceOverlayService : Service() {
 
     val items = listOf<Pair<String, () -> Unit>>(
       "Open App" to { openApp(); hidePaceMenu() },
-      "Shorts HOT" to { Toast.makeText(applicationContext, "Shorts HOT — coming soon", Toast.LENGTH_SHORT).show(); hidePaceMenu() },
+      "Shorts HOT" to { hidePaceMenu(); showShortsHotList("all") },
       "Saved" to { hidePaceMenu(); showSavedFavoriteList("capture") },
       "Favorite" to { hidePaceMenu(); showSavedFavoriteList("favorite") },
     )
@@ -2100,6 +2313,7 @@ class PaceOverlayService : Service() {
     zapBadge = null
     hidePaceMenu() // 세션 종료 시 P 메뉴가 열려있던 채로 알약만 사라지면 메뉴 창이 고아로 남는다.
     hideSavedFavoriteList() // 위와 동일한 이유로 Saved/Favorite 리스트 창도 같이 정리.
+    hideShortsHotList() // 위와 동일한 이유로 Shorts HOT 리스트 창도 같이 정리.
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽
@@ -2237,6 +2451,70 @@ private object SavedVideosStore {
       false
     } finally {
       db.close()
+    }
+  }
+}
+
+// 2026-08-01 사장님 지시 — Shorts HOT. Saved/Favorite과 같은 이유(RN 브릿지 생존을 보장 못 하는
+// 네이티브 오버레이 컨텍스트)로 백엔드 REST(backend/.../ShortsHotController)를 직접 호출한다.
+// baseUrl/JWT는 PaceOverlayModule.cacheApiBaseUrl/cacheAuthToken이 미리 캐시해둔 값을 읽는다
+// (client.ts가 로그인/토큰 갱신마다 채움) — 토큰이 아직 없으면(콜드스타트 타이밍) 빈 목록 반환.
+private object ShortsHotStore {
+  // backend ShortsHotService.CATEGORIES와 반드시 동일하게 유지 — GET /shorts-hot/categories로
+  // 매번 동기화하는 대신 카테고리가 자주 안 바뀐다는 전제로 하드코딩(왕복 1회 절약).
+  val CATEGORIES = listOf("all", "music", "gaming", "comedy", "entertainment", "pets")
+
+  data class HotVideo(val videoId: String, val title: String, val channel: String?, val thumbnailUrl: String)
+
+  private fun baseUrl(context: Context): String? {
+    val url = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      .getString(PaceOverlayService.PREF_CACHED_API_BASE_URL, null)
+    return if (url.isNullOrEmpty()) null else url
+  }
+
+  private fun authToken(context: Context): String? {
+    val token = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      .getString(PaceOverlayService.PREF_CACHED_AUTH_TOKEN, null)
+    return if (token.isNullOrEmpty()) null else token
+  }
+
+  // 동기 호출 — 호출부(showShortsHotList)가 이미 백그라운드 스레드에서 부른다.
+  fun fetch(context: Context, category: String): List<HotVideo> {
+    val base = baseUrl(context) ?: return emptyList()
+    val token = authToken(context) ?: return emptyList()
+    var conn: java.net.HttpURLConnection? = null
+    return try {
+      val url = java.net.URL("$base/shorts-hot?category=${java.net.URLEncoder.encode(category, "UTF-8")}")
+      conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 8000
+        readTimeout = 8000
+        requestMethod = "GET"
+        setRequestProperty("Authorization", "Bearer $token")
+      }
+      if (conn.responseCode != 200) {
+        Log.w("PaceOverlay", "ShortsHotStore.fetch failed: HTTP ${conn.responseCode}")
+        return emptyList()
+      }
+      val body = conn.inputStream.bufferedReader().use { it.readText() }
+      val arr = org.json.JSONArray(body)
+      val out = mutableListOf<HotVideo>()
+      for (i in 0 until arr.length()) {
+        val obj = arr.getJSONObject(i)
+        out.add(
+          HotVideo(
+            videoId = obj.getString("videoId"),
+            title = obj.optString("title", "—"),
+            channel = if (obj.has("channel") && !obj.isNull("channel")) obj.getString("channel") else null,
+            thumbnailUrl = obj.getString("thumbnailUrl")
+          )
+        )
+      }
+      out
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "ShortsHotStore.fetch failed", e)
+      emptyList()
+    } finally {
+      conn?.disconnect()
     }
   }
 }

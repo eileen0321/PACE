@@ -439,6 +439,22 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 2026-08-01 사장님 지시(Shorts HOT) — 위 cacheUserId와 동일한 이유. Shorts HOT은 SQLite가 아니라
+    // 백엔드 REST 호출이 필요해 baseUrl+JWT를 같은 방식으로 미리 캐시해둔다(client.ts 참고).
+    Function("cacheApiBaseUrl") { baseUrl: String ->
+      appContext.reactContext?.let { context ->
+        context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+          .edit().putString(PaceOverlayService.PREF_CACHED_API_BASE_URL, baseUrl).apply()
+      }
+    }
+
+    Function("cacheAuthToken") { token: String ->
+      appContext.reactContext?.let { context ->
+        context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+          .edit().putString(PaceOverlayService.PREF_CACHED_AUTH_TOKEN, token).apply()
+      }
+    }
+
     // Focus Session이 켜져 있는 동안에만 호출된다 — 앱 시작부터 상시 청취가 아님(사용자 지시).
     // 스냅 감지 시 알약/Bluetooth와 동일한 triggerNext(swipeOnce + 카운터 + 토스트)를 그대로 재사용.
     Function("startSnapDetection") {

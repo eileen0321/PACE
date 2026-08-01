@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../storage/keys';
 
@@ -6,6 +7,25 @@ import { STORAGE_KEYS } from '../storage/keys';
 export const API_BASE_URL = __DEV__
   ? process.env.EXPO_PUBLIC_API_BASE_URL_DEV || 'http://localhost:8080'
   : process.env.EXPO_PUBLIC_API_BASE_URL || '';
+
+// 2026-08-01 사장님 지시(Shorts HOT) — 오버레이 P 메뉴는 유튜브를 벗어나지 않는 네이티브 창이라
+// RN 브릿지 없이 직접 백엔드를 호출해야 한다(Saved/Favorite이 SQLite를 직접 여는 것과 동일 이유).
+// baseUrl은 안 바뀌므로 모듈 로드 시 1회, 토큰은 값이 바뀔 때마다 캐시.
+if (Platform.OS === 'android' && API_BASE_URL) {
+  try {
+    require('../../../modules/pace-overlay').PaceOverlay?.cacheApiBaseUrl(API_BASE_URL);
+  } catch {
+    // 네이티브 미링크(Dev Client 빌드 전) — 조용히 무시.
+  }
+}
+function cacheAuthTokenNative(token: string | null) {
+  if (Platform.OS !== 'android') return;
+  try {
+    require('../../../modules/pace-overlay').PaceOverlay?.cacheAuthToken(token ?? '');
+  } catch {
+    // 네이티브 미링크 — 조용히 무시.
+  }
+}
 
 let cachedToken: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
@@ -17,16 +37,22 @@ export function setUnauthorizedHandler(handler: () => void) {
 export async function getToken(): Promise<string | null> {
   if (cachedToken) return cachedToken;
   cachedToken = await AsyncStorage.getItem(STORAGE_KEYS.authToken);
+  // 콜드 스타트 복원 경로 — setToken()을 거치지 않고 여기서 처음 채워지는 경우 네이티브 캐시가
+  // 비어있을 수 있어 여기서도 동기화(오버레이가 로그인 세션 복원 전에 먼저 SavedList/ShortsHot을
+  // 열 수 있는 타이밍 문제 방지).
+  if (cachedToken) cacheAuthTokenNative(cachedToken);
   return cachedToken;
 }
 
 export async function setToken(token: string): Promise<void> {
   cachedToken = token;
+  cacheAuthTokenNative(token);
   await AsyncStorage.setItem(STORAGE_KEYS.authToken, token);
 }
 
 export async function clearToken(): Promise<void> {
   cachedToken = null;
+  cacheAuthTokenNative(null);
   await AsyncStorage.removeItem(STORAGE_KEYS.authToken);
 }
 

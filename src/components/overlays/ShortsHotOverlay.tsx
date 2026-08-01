@@ -27,14 +27,20 @@ export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
   // ⚠️ 셀렉터가 `?? []`로 매번 새 배열을 반환하면 useSyncExternalStore가 "스냅샷이 계속 바뀐다"고
   // 판단해 무한 리렌더("Maximum update depth")로 앱이 죽는다. 셀렉터는 stable 참조(undefined 또는
   // 캐시 배열)만 반환하고, 기본값 처리는 밖에서 한다.
-  const items = useShortsHotStore((s) => s.cache[category]) ?? [];
+  const rawItems = useShortsHotStore((s) => s.cache[category]) ?? [];
   const loading = useShortsHotStore((s) => s.loading[category]) ?? false;
+  const opened = useShortsHotStore((s) => s.opened);
 
   useEffect(() => {
     useShortsHotStore.getState().fetch(category);
   }, [category]);
 
+  // Android(7854a38)와 동일 취지 — 이미 연 영상은 "본 것"이라 뒤로 밀고 안 본 것을 먼저 보여준다.
+  // Array.sort는 modern JS 엔진에서 stable이라 같은 그룹 내 원래 순위(HOT 순)는 유지된다.
+  const items = [...rawItems].sort((a, b) => (opened[a.videoId] ? 1 : 0) - (opened[b.videoId] ? 1 : 0));
+
   const onOpen = (item: ShortsHotVideo) => {
+    useShortsHotStore.getState().markOpened(item.videoId);
     Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 

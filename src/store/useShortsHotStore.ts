@@ -7,13 +7,18 @@ import { shortsHotApi, type ShortsHotVideo } from '../services/api/client';
 type ShortsHotState = {
   cache: Record<string, ShortsHotVideo[]>;
   loading: Record<string, boolean>;
+  // 2026-08-01 사장님 지시(Android 7854a38 대응) — 이미 연 Shorts HOT 영상은 "본 것"으로 표시해
+  // 다음에 리스트에서 뒤로 민다(안 본 것 우선). videoId만 기억(세션 한정, 마이그레이션/영속 불필요).
+  opened: Record<string, true>;
   fetch: (category: string) => Promise<void>;
   prefetch: () => void;
+  markOpened: (videoId: string) => void;
 };
 
 export const useShortsHotStore = create<ShortsHotState>((set, get) => ({
   cache: {},
   loading: {},
+  opened: {},
   fetch: async (category) => {
     if (get().loading[category]) return;
     set((s) => ({ loading: { ...s.loading, [category]: true } }));
@@ -28,4 +33,8 @@ export const useShortsHotStore = create<ShortsHotState>((set, get) => ({
   },
   // 앱 시작 시 기본 카테고리('all')만 미리 받아둔다(나머지는 탭 선택 시 온디맨드 + 캐시).
   prefetch: () => { get().fetch('all').catch(() => {}); },
+  markOpened: (videoId) => {
+    if (get().opened[videoId]) return;
+    set((s) => ({ opened: { ...s.opened, [videoId]: true } }));
+  },
 }));

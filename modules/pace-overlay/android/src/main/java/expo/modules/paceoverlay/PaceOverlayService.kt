@@ -2104,7 +2104,11 @@ class PaceOverlayService : Service() {
         setTextColor(Color.WHITE)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
       })
-      menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+      // 2026-08-01 사장님 지적("Open App 뒤에 공간 왜 두는데") — 행을 MATCH_PARENT로 두면 짧은
+      // 행("Open App")도 가장 넓은 행("Shorts"+HOT배지)에 맞춰 강제로 늘어나 라벨 뒤에 빈 공간이
+      // 생겼다. 각 행을 WRAP_CONTENT로 바꿔 자기 내용물 크기만큼만 차지하게 한다 — 구분선만
+      // MATCH_PARENT로 남겨 메뉴 전체 너비(가장 넓은 행 기준)에 맞게 그어진다.
+      menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
       if (index < items.size - 1) {
         val divider = View(this).apply { setBackgroundColor(Color.parseColor("#1FFFFFFF")) }
         menu.addView(divider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))

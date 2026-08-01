@@ -53,6 +53,12 @@ const FREE_FOCUS_SESSION_DURATION_MINUTES = 10;
 // focusSessionDurationMinutes와 동일한 패턴으로 강제 리셋.
 const FREE_SLEEP_STILLNESS_MINUTES = 10;
 function enforceFreeFocusSessionDuration(isPremium: boolean) {
+  // 2026-08-01 사용자 지시("포커스 다 쓰면... 누르면 광고 보고 시간주면 되잖아") — 네이티브
+  // "FOCUS OFF" 배지가 타임아웃 후 탭됐을 때 광고 없이 바로 재활성화할지(프리미엄) 앱을 열어
+  // 보상형 광고 모달로 보낼지(무료) 판단하려면 네이티브가 구독 상태를 알아야 한다. 이 함수가
+  // isPremium이 바뀔 때마다(부팅 1회 + 구독 상태 변경마다) 항상 호출되는 유일한 지점이라 여기서
+  // 같이 밀어준다 — 아래 얼리 리턴(무료 전용 로직)보다 먼저 실행해야 true 값도 항상 전달된다.
+  if (Platform.OS === 'android') bluetoothService.setIsPremium(isPremium).catch(() => {});
   if (isPremium) return;
   const current = useSettingsStore.getState().settings;
   const patch: { focusSessionDurationMinutes?: number; sleepStillnessMinutes?: number } = {};

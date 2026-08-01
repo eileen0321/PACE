@@ -120,6 +120,21 @@ class PaceOverlayModule : Module() {
 
     Function("requestUsageAccessPermission") {
       appContext.reactContext?.let { context ->
+        // 2026-08-01 사용자 지적("왜 앱 키자마자 사용정보 접근 허용 메뉴가 나와") — 접근성 권한
+        // 안내(위 requestAccessibilityPermission)와 달리 이건 아무 설명 없이 바로 시스템 설정을
+        // 띄웠다. 같은 톤(상단 가운데 토스트, 2회 노출)으로 무슨 화면인지 먼저 알려준다.
+        val guidance = if (java.util.Locale.getDefault().language == "ko") {
+          "다른 앱 사용 감지 권한 — 목록에서 'Pace'를 찾아 켜주세요"
+        } else {
+          "Usage access — find \"Pace\" in the list and turn it on"
+        }
+        fun showGuidanceToast() {
+          Toast.makeText(context, guidance, Toast.LENGTH_LONG).apply {
+            setGravity(Gravity.TOP, 0, (180 * context.resources.displayMetrics.density).toInt())
+          }.show()
+        }
+        showGuidanceToast()
+        Handler(Looper.getMainLooper()).postDelayed({ showGuidanceToast() }, 3500L)
         val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
           flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
@@ -367,6 +382,14 @@ class PaceOverlayModule : Module() {
     // 호출부터 반영된다 — 이미 도는 중인 세션의 예약된 자동 종료 시각은 안 바뀜.
     Function("setFocusSessionDurationMinutes") { minutes: Int ->
       appContext.reactContext?.let { context -> PaceOverlayService.setFocusSessionDurationMinutes(context, minutes) }
+    }
+
+    // 2026-08-01 사용자 지시("포커스 다 쓰면... 누르면 광고 보고 시간주면 되잖아") — 네이티브
+    // "FOCUS OFF" 배지가 타임아웃 이후 탭됐을 때 광고 없이 바로 재활성화하지 않고 앱을 열어
+    // 보상형 광고 유도 모달로 보내려면, 네이티브가 지금 프리미엄인지 알아야 한다(구독 상태 자체는
+    // JS에만 있음) — isPremium이 바뀔 때마다(_layout.tsx) 이 값을 밀어준다.
+    Function("setIsPremium") { isPremium: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setIsPremium(context, isPremium) }
     }
 
     // 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 sleepStillnessMinutes(D8, 무진동

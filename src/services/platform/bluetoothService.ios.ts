@@ -30,6 +30,7 @@ export const bluetoothService: BluetoothService = {
   async setSleepTimerMinutes() {}, // no-op — iOS는 취침 타이머 네이티브 경로 자체가 없음(feed/index.tsx의 JS setTimeout이 직접 sleepTimerMinutes를 읽음)
   async setFocusSessionDurationMinutes() {},
   async getFocusSessionDurationMinutes() { return 10; },
+  async setIsPremium() {}, // no-op — iOS엔 이 네이티브 "FOCUS OFF" 배지/오버레이 알약 자체가 없음
   async setSleepStillnessMinutes() {}, // no-op — iOS는 sleepStillnessMinutes 네이티브 경로 자체가 없음
   async consumeFocusSessionTimedOut() { return false; },
   async extendFocusSession() {},

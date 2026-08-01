@@ -157,6 +157,8 @@ export interface BluetoothService {
   /** Focus Session 지속 시간(분) — 사용자가 직접 선택(Android만 실제로 native에 반영, iOS는 no-op). */
   setFocusSessionDurationMinutes(minutes: number): Promise<void>;
   getFocusSessionDurationMinutes(): Promise<number>;
+  /** 네이티브 "FOCUS OFF" 배지 탭 시 광고 게이트 여부 판단용 구독 상태 동기화(Android만 실제 동작, iOS는 no-op). */
+  setIsPremium(isPremium: boolean): Promise<void>;
   /**
    * 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 이미 도는 중인 세션의 무진동 수면감지
    * 임계값(sleepStillnessMinutes)을 즉시 무료 기본값으로 되돌린다(focusSessionDurationMinutes와

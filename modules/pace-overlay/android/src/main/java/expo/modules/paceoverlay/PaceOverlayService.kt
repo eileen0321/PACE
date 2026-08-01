@@ -680,6 +680,13 @@ class PaceOverlayService : Service() {
     // 기존엔 setAutoMode(enable)의 enable 하나가 손짓 감지 시작/중지까지 같이 묶어버렸다. 블루투스
     // 볼륨키 스킵과 동일한 원칙으로, 손짓도 마스터(Focus Session)와 별개인 자체 on/off를 갖는다.
     private const val PREF_HANDSFREE_GESTURE_ENABLED = "handsfree_gesture_enabled"
+    // 2026-08-01 사용자 지시("포커스 다 쓰면 오버레이 Focus off로 띄우고 누르면 광고 보고 시간
+    // 주면 되잖아") — "FOCUS OFF" 배지(아래 appBtn 옆 autoBadge)는 이미 있었고 탭도 되지만,
+    // 탭하면 무조건 setAutoMode(true)로 바로 재활성화돼서 무료 사용자도 광고 한 번 없이 계속
+    // 무한정 10분씩 다시 켤 수 있었다(보상형 광고로 시간 늘려주기로 한 설계와 모순). 네이티브는
+    // 구독 상태를 모르므로 JS가 isPremium이 바뀔 때마다 이 값을 여기로 밀어준다
+    // (PaceOverlayModule.setIsPremium, _layout.tsx).
+    private const val PREF_IS_PREMIUM = "is_premium"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
     private const val PREF_SESSION_ACTIVE = "session_active"
@@ -760,6 +767,20 @@ class PaceOverlayService : Service() {
       }
       return false
     }
+
+    // 2026-08-01 — 배지 탭 핸들러가 "지금 껴진 이유가 타임아웃인지"를 소비 없이 미리 봐야 한다
+    // (실제 소비는 JS의 checkTimedOut()이 앱 포그라운드 시 그대로 담당 — 여기서 먼저 소비해버리면
+    // 앱을 열어도 JS가 이미 늦어 광고 모달을 못 띄운다).
+    fun hasPendingFocusSessionTimeout(): Boolean = focusSessionTimedOutPending
+
+    // JS(useSubscriptionStore)가 구독 상태 바뀔 때마다 밀어주는 값 — 네이티브는 자체적으로
+    // 구독 상태를 모른다.
+    fun setIsPremium(context: Context, isPremium: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PREMIUM, isPremium).apply()
+    }
+
+    private fun isPremium(context: Context): Boolean =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_IS_PREMIUM, false)
 
     // 보상형 광고 시청 완료 후 호출 — 이미 타임아웃으로 꺼져 있으면 워처를 다시 켜고, extraMinutes
     // 뒤에 다시 자동 종료되도록 예약(원래 설정값(PREF_FOCUS_SESSION_MINUTES)이 아니라 이 값을 씀).
@@ -1456,10 +1477,20 @@ class PaceOverlayService : Service() {
       setTypeface(typeface, android.graphics.Typeface.BOLD)
       isClickable = true
       setOnClickListener {
-        // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해
-        // 일괄 처리한다(위 companion setAutoMode 참고) — 여기서 중복으로 안 건드림.
-        setAutoMode(applicationContext, !autoNextEnabled)
-        persistState()
+        // 2026-08-01 사용자 지시 — "FOCUS OFF" 상태에서 탭했을 때, 그게 자유의사로 끈 게 아니라
+        // 무료 사용자의 Focus Session이 시간 다 돼서 자동으로 꺼진 경우라면 그냥 바로 재활성화하지
+        // 않는다(광고 없이 무한정 다시 켤 수 있던 구멍). 앱을 열어 JS의 보상형 광고 유도 모달
+        // (FocusSessionExtendModal)로 보낸다 — 실제 소비(consumeFocusSessionTimedOut)는 JS가
+        // 포그라운드 시 담당하므로 여기선 peek만 한다. 프리미엄이거나 수동으로 껐던 경우는
+        // 기존처럼 바로 재활성화(광고 게이트 불필요).
+        if (!autoNextEnabled && hasPendingFocusSessionTimeout() && !isPremium(applicationContext)) {
+          openApp()
+        } else {
+          // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해
+          // 일괄 처리한다(위 companion setAutoMode 참고) — 여기서 중복으로 안 건드림.
+          setAutoMode(applicationContext, !autoNextEnabled)
+          persistState()
+        }
       }
     }
     statusPill.addView(autoBadge)

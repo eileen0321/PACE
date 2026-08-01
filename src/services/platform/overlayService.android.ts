@@ -1,5 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { OverlayService } from './types';
 import type { SessionEndStatus } from '../../types/models';
+import { STORAGE_KEYS } from '../storage/keys';
 
 // modules/pace-overlay(Expo Modules API 로컬 모듈, PACE_ARCHITECTURE.md "Android Overlay 네이티브 POC"
 // 참고)는 npx expo prebuild + EAS Dev Client 빌드가 있어야 링크된다 — Expo Go/일반 JS 번들에서
@@ -62,8 +64,15 @@ export const overlayService: OverlayService = {
     // 포그라운드 앱 감지(ForegroundAppWatcher, UsageStatsManager)용 별도 권한 — 없으면 오버레이가
     // 지원 앱(YouTube/Instagram) 여부와 무관하게 항상 표시되는 구버전 동작으로 자동 폴백된다
     // (PaceOverlayService.kt의 startForegroundAppPolling 참고), 세션 자체는 막지 않는다.
+    // 2026-08-01 사용자 지적("왜 앱 키자마자 사용정보 접근 허용 메뉴가 나와") — 예전엔 이 권한이
+    // 없으면 세션을 시작할 때마다 매번 설명 없이 시스템 설정을 띄웠다(배터리 최적화 배너와 똑같은
+    // 원인인데 "1회만 안내" 처리가 안 돼 있었음). 이제 세션당이 아니라 평생 1회만 안내한다.
     if (!PaceOverlay.hasUsageAccessPermission()) {
-      PaceOverlay.requestUsageAccessPermission();
+      AsyncStorage.getItem(STORAGE_KEYS.usageAccessPromptSeen).then((seen) => {
+        if (seen) return;
+        AsyncStorage.setItem(STORAGE_KEYS.usageAccessPromptSeen, 'true').catch(() => {});
+        PaceOverlay?.requestUsageAccessPermission();
+      }).catch(() => {});
     }
     await PaceOverlay.start({
       remainingMinutes,

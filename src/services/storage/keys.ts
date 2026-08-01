@@ -30,6 +30,11 @@ export const STORAGE_KEYS = {
   // 배너로 1회 능동 안내한다. 이 키는 "배너를 보여줬는지"만 기록(허용 여부와 무관) — 매 세션마다
   // 시스템 다이얼로그를 다시 띄우면 사용자 짜증 + Google Play가 이 권한 오남용으로 보는 리스크가 있다.
   batteryOptimizationPromptSeen: 'pace_battery_optimization_prompt_seen',
+  // 2026-08-01 사용자 지적("왜 앱 키자마자 사용정보 접근 허용 메뉴가 나와") — overlayService.android.ts의
+  // startSession()이 이 권한(포그라운드 앱 감지용, 없어도 세션 자체는 안 막힘 — 구버전 폴백으로 동작)이
+  // 없으면 세션을 시작할 때마다(매번!) 설명 없이 바로 시스템 설정 화면을 띄웠다. 위 배터리 최적화 배너와
+  // 똑같은 원인(One UI가 회수하는 권한)인데 "1회만 안내" 처리가 안 돼 있었던 것 — 동일한 패턴으로 통일.
+  usageAccessPromptSeen: 'pace_usage_access_prompt_seen',
   // 2026-07-29 — 인사이트 배너를 탭했을 때 "가끔" 보너스 크레딧을 주는 선물상자 연출. 하루에 한 번만
   // 보상 시도(연속으로 계속 눌러서 파밍하는 것 방지) — 오늘 이미 시도했는지 날짜로 기록.
   insightGiftClaimedDate: 'pace_insight_gift_claimed_date',

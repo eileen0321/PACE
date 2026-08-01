@@ -21,6 +21,7 @@ let PaceOverlay: {
   setSleepTimerMinutes(minutes: number): void;
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
+  setIsPremium(isPremium: boolean): void;
   setSleepStillnessMinutes(minutes: number): void;
   consumeFocusSessionTimedOut(): boolean;
   extendFocusSession(extraMinutes: number): void;
@@ -123,6 +124,17 @@ export const bluetoothService: BluetoothService = {
       PaceOverlay?.setFocusSessionDurationMinutes(minutes);
     } catch (e) {
       console.warn('[bluetoothService.android] setFocusSessionDurationMinutes failed', e);
+    }
+  },
+
+  // 2026-08-01 — 네이티브 "FOCUS OFF" 배지가 타임아웃 후 탭됐을 때 광고 없이 바로 재활성화할지
+  // (프리미엄) 앱을 열어 보상형 광고 모달로 보낼지(무료) 판단하려면 네이티브가 구독 상태를 알아야
+  // 한다 — isPremium이 바뀔 때마다 밀어준다(_layout.tsx).
+  async setIsPremium(isPremium: boolean) {
+    try {
+      PaceOverlay?.setIsPremium(isPremium);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setIsPremium failed', e);
     }
   },
 

@@ -24,8 +24,11 @@ export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
   const [category, setCategory] = useState<string>('all');
   // 프리페치 스토어에서 캐시를 먼저 읽어 즉시 표시(stale-while-revalidate) — 앱 시작 시 'all'은 이미
   // 프리페치돼 있어 로딩 없이 뜬다. 탭 변경/재방문 시 백그라운드로 최신화.
-  const items = useShortsHotStore((s) => s.cache[category] ?? []);
-  const loading = useShortsHotStore((s) => s.loading[category] ?? false);
+  // ⚠️ 셀렉터가 `?? []`로 매번 새 배열을 반환하면 useSyncExternalStore가 "스냅샷이 계속 바뀐다"고
+  // 판단해 무한 리렌더("Maximum update depth")로 앱이 죽는다. 셀렉터는 stable 참조(undefined 또는
+  // 캐시 배열)만 반환하고, 기본값 처리는 밖에서 한다.
+  const items = useShortsHotStore((s) => s.cache[category]) ?? [];
+  const loading = useShortsHotStore((s) => s.loading[category]) ?? false;
 
   useEffect(() => {
     useShortsHotStore.getState().fetch(category);

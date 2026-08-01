@@ -429,25 +429,12 @@ export default function PaceFeedScreen() {
   // 폰 볼륨을 뺏는, 정확히 반대로 동작하는 잘못된 신호였다. 유일하게 맞는 방식 = "핸즈프리(Focus Session) ON
   // + 피드 화면"일 때만 하이재킹을 국한한다. 평소 폰 볼륨은 항상 정상, 핸즈프리로 피드 볼 때만 볼륨키=스킵
   // (그 상황에선 리모컨을 쓰는 중이라 폰 볼륨 상실이 사실상 문제 안 됨). up=다음/down=이전.
-  // 2026-07-28 사장님 지적("블루투스 꺼져있는데 왜 볼륨키로 넘어가지") — 예전엔 세션+토글만으로 볼륨키를
-  // 하이재킹해서, BT 리모컨 없이 폰만 있어도 볼륨키가 스킵이 됐다. 이제 실제 BT 오디오 연결됐을 때만 스킵하고
-  // BT 꺼져있으면 폰 볼륨은 정상 동작하게 게이트에 추가한다. (BT 오디오형 리모컨/이어버드는 감지됨. 오디오
-  // 아닌 HID 카메라 리모컨은 iOS가 감지 못 해 이 게이트에선 안 잡힐 수 있음 — 그건 실기기 테스트로 확인.)
-  const [btConnected, setBtConnected] = useState(false);
-  useEffect(() => {
-    if (!(isAutoMode && volumeKeyRemote)) { setBtConnected(false); return; }
-    const mod = requireOptionalNativeModule<{ isBluetoothAudioConnected(): boolean }>('PaceGesture');
-    if (!mod) return;
-    const check = () => { try { setBtConnected(!!mod.isBluetoothAudioConnected()); } catch {} };
-    check();
-    const id = setInterval(check, 3000); // BT 연결/해제 반영(폴링 — route 이벤트 대신 단순·확실)
-    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
-    return () => { clearInterval(id); sub.remove(); };
-  }, [isAutoMode, volumeKeyRemote]);
-
+  // 2026-08-01 사장님 지적("BT 리모컨이 저번엔 됐는데 갑자기 안돼") — 07-28에 추가한 btConnected(BT 오디오
+  // 연결) 게이트가 위 07-27 결론(오디오 아닌 HID 카메라 리모컨은 iOS가 감지 못 해 영영 안 켜짐)대로 리모컨을
+  // 죽였다. 되돌린다: 볼륨키 리모컨은 opt-in 토글(기본 OFF)이라 켰다는 건 "리모컨 쓴다"는 의도 → 세션+토글만
+  // 으로 하이재킹(토글 OFF면 폰 볼륨 항상 정상). Android는 접근성 오버레이(Kotlin) 별도 — co-session 확인 필요.
   useVolumeNext({
-    // 볼륨키 스킵 ON 조건 = Focus Session 중 && 블루투스 토글 && 실제 BT 오디오 연결됨. BT 꺼져있으면 폰 볼륨 정상.
-    enabled: isAutoMode && volumeKeyRemote && btConnected,
+    enabled: isAutoMode && volumeKeyRemote,
     onNext: () => { markUserInput(); goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
     onPrevious: () => { markUserInput(); if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
   });

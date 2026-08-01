@@ -112,7 +112,10 @@ export default function RootLayout() {
   const hasCheckedInRef = useRef(false);
   useEffect(() => {
     if (hasCheckedInRef.current) return;
-    if (pathname === '/onboarding') return;
+    // 온보딩(가이드)뿐 아니라 앱 콜드스타트 로딩 순간(RootIndex '/' — 리다이렉트 직전)도 스킵해야 한다.
+    // 이걸 안 걸면 온보딩이 필요한 신규 사용자에서 '/' 프레임에 출석 팝업이 온보딩보다 먼저 떠버린다.
+    // 실제 화면(홈 등 '/home')에 도달한 최초 시점에만 1회 발동 → 가이드 다 본 뒤 홈에서 팝업.
+    if (pathname === '/' || pathname === '/onboarding') return;
     hasCheckedInRef.current = true;
     useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
       if (checkedIn) {

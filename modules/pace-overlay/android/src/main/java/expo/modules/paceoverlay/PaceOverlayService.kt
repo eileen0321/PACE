@@ -2059,7 +2059,9 @@ class PaceOverlayService : Service() {
     data class MenuItem(val label: String, val action: () -> Unit, val icon: String? = null, val badge: String? = null)
     val items = listOf(
       MenuItem("Open App", { openApp(); hidePaceMenu() }, icon = "↗"),
-      MenuItem("Shorts HOT", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
+      // "Shorts"만 — 뒤 HOT 배지가 이미 트렌드를 표시하므로 라벨에 또 "HOT"을 넣으면 중복이라
+      // 가장 넓은 행이 됨(사장님 지적: "가로 길이 줄이라고").
+      MenuItem("Shorts", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
       MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
@@ -2071,7 +2073,7 @@ class PaceOverlayService : Service() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
-        setPadding((14 * d).toInt(), (7 * d).toInt(), (14 * d).toInt(), (7 * d).toInt())
+        setPadding((12 * d).toInt(), (7 * d).toInt(), (12 * d).toInt(), (7 * d).toInt())
         setOnClickListener { item.action() }
       }
       if (item.icon != null) {
@@ -2745,10 +2747,13 @@ private object ShortsHotStore {
           )
         )
       }
+      // 2026-08-01 사장님 지시 — 본 영상을 뒤로 미루기만 하던 걸(가려지긴 해도 스크롤하면 여전히
+      // 보임) 아예 목록에서 제외하는 것으로 변경. 백엔드가 같은 날 KEEP_COUNT를 15→30으로 올려서
+      // (ShortsHotService.java 참고) 다 본 카테고리가 쉽게 텅 비지 않을 만큼 여유를 확보해뒀다.
       val watched = watchedIds(context, category)
-      val sorted = out.sortedBy { if (it.videoId in watched) 1 else 0 } // 안 본 영상 먼저, 상대 순서는 유지(stable sort)
-      cache[category] = sorted
-      sorted
+      val unwatched = out.filterNot { it.videoId in watched }
+      cache[category] = unwatched
+      unwatched
     } catch (e: Exception) {
       Log.e("PaceOverlay", "ShortsHotStore.fetch failed", e)
       emptyList()

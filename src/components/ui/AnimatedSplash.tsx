@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   Easing,
@@ -13,7 +13,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
 
-const ICON = require('../../../assets/splash-icon.png');
+// iOS는 vibrant 글로우 버전(ios-splash-icon.png = 앱 아이콘과 동일 밝기), Android는 기존 유지.
+const ICON = Platform.OS === 'ios'
+  ? require('../../../assets/ios-splash-icon.png')
+  : require('../../../assets/splash-icon.png');
 const DURATION_MS = 600;
 
 // 2026-07-26 재작성(웹리서치 반영 — Apple HIG + Uber/Swiggy 방식): 앱 실행 "아이콘 번쩍" 해결.

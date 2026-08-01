@@ -148,6 +148,20 @@ export default function FocusScreen() {
   const gestureBlocked = !isIOS && (!hasAccessibility || !hasCameraPerm);
   const bluetoothBlocked = !isIOS && !hasAccessibility;
 
+  // 2026-08-01 사장님 실기기 지적("손짓 켜져 있는데 안 됨") — setHandsFreeGestureEnabled()가
+  // onValueChange(토글을 직접 만졌을 때)에서만 네이티브로 밀어졌다. handsFreeGesture가 예전
+  // 기본값(true)으로 이미 저장돼 있던 기존 사용자는 이 토글을 한 번도 직접 안 건드려서 네이티브
+  // SharedPreferences에 handsfree_gesture_enabled 키 자체가 없었고, 오늘 그 fallback이
+  // true→false로 바뀌면서(e088091) UI는 계속 ON인데 실제 감지기는 꺼진 채로 남는 불일치가
+  // 생겼다 — 화면 진입 시(그리고 값이 바뀔 때마다) 현재 JS 값을 네이티브로 무조건 다시 밀어준다
+  // (setHandsFreeGestureEnabled는 멱등이라 반복 호출해도 안전).
+  useFocusEffect(
+    useCallback(() => {
+      if (isIOS || gestureBlocked) return;
+      bluetoothService.setHandsFreeGestureEnabled(settings.handsFreeGesture).catch(() => {});
+    }, [isIOS, gestureBlocked, settings.handsFreeGesture])
+  );
+
   // 2026-07-31 사장님 지시 — 오버레이 P 메뉴의 Saved/Favorite은 앱을 벗어나지 않는 네이티브
   // 창이라 앱 안에서는 그 결과를 확인할 방법이 없었다("앱안에 메뉴와 리스트를 만들라고 했는데
   // 왜 아무 메뉴가 없어"). 같은 saved_videos 테이블을 여기서도 그대로 읽어 보여준다 — 이 화면은

@@ -655,6 +655,15 @@ class PaceOverlayService : Service() {
     private const val PREF_DAILY_LIMIT_ORIGINAL_MINUTES = "daily_limit_original_minutes"
     // 2026-07-26 — "접근성이 이전에 켜져 있었다" 기억용(checkAccessibilityRevoked 참고).
     private const val PREF_A11Y_WAS_ENABLED = "a11y_was_enabled"
+    // 2026-08-01 사용자 지시("설정하면 바로 PACE로 와야 한다고 말했을 텐데 계속 설정이잖아") —
+    // 뒤로가기로 Pace 태스크에 복귀하는 것(PaceOverlayModule.requestAccessibilityPermission,
+    // currentActivity 수정)만으론 부족했다: 사용자가 토글을 켠 "그 즉시" 자동으로 Pace로 돌아와야
+    // 한다는 요구. PaceAccessibilityService.onServiceConnected()가 정확히 "토글이 켜진 순간"
+    // 호출되므로 거기서 Pace를 앞으로 가져오면 되는데, 이 콜백은 재부팅/프로세스 재시작 등 사용자
+    // 액션과 무관한 경우에도 똑같이 불려서 아무 때나 Pace를 강제로 띄우면 안 된다. requestAccessibilityPermission()
+    // 호출 직전 시각을 저장해두고, onServiceConnected가 그 시각으로부터 일정 시간 안에 왔을 때만
+    // "방금 설정에서 직접 켠 것"으로 간주해 자동 복귀시킨다(PaceOverlayModule 참고).
+    const val PREF_ACCESSIBILITY_REQUEST_AT_MS = "accessibility_request_at_ms"
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.

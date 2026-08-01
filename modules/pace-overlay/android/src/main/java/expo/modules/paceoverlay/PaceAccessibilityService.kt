@@ -3,8 +3,10 @@ package expo.modules.paceoverlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -326,6 +328,30 @@ class PaceAccessibilityService : AccessibilityService() {
     Log.d("PaceAccessibility", "onServiceConnected — instance bound")
     // 세부 설정(canPerformGestures, packageNames, eventTypes)은 전부
     // res/xml/accessibility_service_config.xml에 선언 — 여기서 serviceInfo를 재조립하지 않는다.
+    maybeReturnToPaceAfterAccessibilityGranted()
+  }
+
+  // 2026-08-01 사용자 지시("설정하면 바로 PACE로 와야 한다고 말했을 텐데 계속 설정이잖아") — 위
+  // PaceOverlayService.PREF_ACCESSIBILITY_REQUEST_AT_MS 선언부 참고. onServiceConnected는 재부팅/
+  // 프로세스 재시작 등 사용자와 무관한 경우에도 불리므로, "우리가 방금 연 설정 화면에서 토글을
+  // 막 켰다"고 볼 수 있는 좁은 시간창 안일 때만 자동 복귀시킨다. 소비형(1회) — 재사용 방지로 즉시 지운다.
+  private fun maybeReturnToPaceAfterAccessibilityGranted() {
+    val prefs = getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+    val requestedAtMs = prefs.getLong(PaceOverlayService.PREF_ACCESSIBILITY_REQUEST_AT_MS, 0L)
+    if (requestedAtMs <= 0L) return
+    prefs.edit().remove(PaceOverlayService.PREF_ACCESSIBILITY_REQUEST_AT_MS).apply()
+    if (System.currentTimeMillis() - requestedAtMs > 3 * 60 * 1000L) return // 3분 지났으면 무관한 재연결로 간주
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+      startActivity(intent)
+    } catch (e: Exception) {
+      Log.w("PaceAccessibility", "설정→Pace 자동 복귀 딥링크 실패, 기본 런치인텐트로 폴백", e)
+      val fallback = packageManager.getLaunchIntentForPackage(packageName)
+      fallback?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+      fallback?.let { startActivity(it) }
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {

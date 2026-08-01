@@ -300,6 +300,12 @@ class PaceOverlayModule : Module() {
     // 갈 때 안내 토스트를 띄운다.
     Function("requestAccessibilityPermission") {
       appContext.reactContext?.let { context ->
+        // 2026-08-01 사용자 지시("설정하면 바로 PACE로 와야 한다고 말했을 텐데") — 지금 이 순간(설정
+        // 화면으로 나가기 직전) 시각을 저장해둔다. PaceAccessibilityService.onServiceConnected()가
+        // 이 시각으로부터 일정 시간 안에 불리면 "방금 여기서 연 설정에서 사용자가 직접 토글을 켰다"로
+        // 판단해 자동으로 Pace를 앞으로 가져온다(위 PREF_ACCESSIBILITY_REQUEST_AT_MS 선언부 참고).
+        context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .putLong(PaceOverlayService.PREF_ACCESSIBILITY_REQUEST_AT_MS, System.currentTimeMillis()).apply()
         // 2026-08-01 사용자 지적("설정하고 back하면 앱으로 와야 할거 아냐, 계속 설정이면 사람들이
         // 앱으로 다시 찾아오겠니") — FLAG_ACTIVITY_NEW_TASK로 열면 설정 앱이 Pace와 별개의 태스크로
         // 뜬다. 별개 태스크에서 뒤로가기를 계속 누르면 그 태스크(설정) 안의 화면들만 돌다가 결국

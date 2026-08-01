@@ -3365,3 +3365,11 @@ tsc 통과, 원본 자산 무변경. TEMP 없음.
 - tsc 통과. 스와이프 넘김은 제스처 의존 → 실기기 검증 권장(시뮬 자동탭 부정확).
 
 **참고 — Favorite 썸네일**: 이미 56×56 썸네일(youtubeThumbnailUrl) 표시 중(`SavedVideoListOverlay`), HOT와 동일 레이아웃. 별도 작업 없음.
+
+### 2026-08-02 (자율세션, Mac) — co-session `e33e85c`(손짓/재시작/이중넘김/검은프레임 4건) iOS 검토 — 무관/면역, 코드변경 없음
+`e33e85c`는 Kotlin 4파일만(PaceHandWaveDetector/PaceOverlayModule/PaceOverlayService/PaceAccessibilityService) — 공유 JS/TS 무변경, MD "iOS도 맞춰라" 지시 없음. 4건 각각 iOS 영향 검토:
+1. **손짓 100% 실패(growthRatio 항상 1.0)**: Android MediaPipe 카메라 알고리즘의 08-01 냉각최적화 회귀(프레임 간격이 GROWTH_WINDOW 밖으로 벌어져 sizeHistory에 1샘플만 남아 자기비교=1.0). iOS 손짓은 별개 파이프라인이고 **사장님 원칙상 iOS 손짓/카메라 블라인드 수정 금지** — Kotlin 전용 최적화라 iOS 무관.
+2. **프로세스 재시작 후 감지기/타이머 미복구**: `6e11eeb`와 같은 버그 클래스 — iOS 구조상 면역. `isAutoMode`는 영속 안 되는 React state(재마운트 시 false), `handsFreeDetectActive = isAutoMode && handsFreeGesture`라 감지기도 같이 꺼짐 → "배지 ON인데 감지기 死" 상태 자체가 iOS엔 없음.
+3. **3초 이중넘김(loopedBack에도 performSwipeUp)**: Android 네이티브는 loopedBack(영상이 이미 바뀜)에 직접 스와이프를 또 쳐서 이중넘김. **iOS는 구조적으로 다르고 가드가 있음** — `YouTubeShortsPlayer.ios.tsx` 폴링루프가 loopedBack/nearEnd에 `ended`를 **1회만**(`reportedEnded` 가드) 보내고, onEnded→goNext는 **auto 모드에서만**. `reportedEnded`는 URL 변경(reattach) 시에만 리셋(L263)이라 한 영상당 ended 1회 보장 → 이중넘김 없음. (수동 스와이프 전환 중 ~500ms 폴링창의 이론적 레이스는 URL이 대개 그 전에 바뀌어 reattach 리셋됨. 확정은 실기기 검증 항목이나, 블라인드 수정 대상 아님.)
+4. **영상 전환 시 화면 상단 검게(removeView→addView 순서)**: Android WindowManager 오버레이 창 합성 이슈. **iOS엔 네이티브 오버레이 창 개념 자체가 없음**(iOS 피드는 RN 풀스크린 + 로딩 커버로 전환 프레임 가림) → 무관.
+결론: iOS 코드변경 없음. tsc 통과(Kotlin 전용이라 TS 무영향).

@@ -2049,17 +2049,13 @@ class PaceOverlayService : Service() {
         setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
       }
       clipToOutline = true
-      // 각 행을 MATCH_PARENT로 채우므로(아래) 짧은 라벨(Favorite)만 있을 때도 메뉴가 너무 좁아
-      // 보이지 않게 최소 너비만 지정 — 가장 넓은 행(Shorts HOT+배지)이 필요하면 이보다 더 커진다.
-      minimumWidth = (170 * d).toInt()
     }
 
-    // 2026-08-01 사장님 지시("애플처럼 팝업 아이콘 예쁘게") — iOS 컨텍스트 메뉴 관례(라벨 왼쪽,
-    // 아이콘 오른쪽 끝 정렬)를 따르되, 컬러 이모지(🔥/⭐)는 쓰지 않는다 — 기기 이모지 폰트에 따라
-    // 모양이 깨지거나 이상하게 렌더링된다고 실기기에서 확인(사장님 지적: "저게 트렌드 아이콘 모양이냐").
-    // 이 파일 전체가 이미 쓰는 방식(⇪/✕ — 색 없는 순수 유니코드 기호, 라벨과 같은 색으로 렌더링)만
-    // 그대로 따른다. "HOT"은 아이콘 모양이 아예 없어(불꽃을 대체할 깔끔한 단색 기호가 마땅치 않음)
-    // 작은 배지(pill) 텍스트로 대신한다 — 이것도 iOS에서 흔한 관례(설정 앱의 "NEW" 배지류).
+    // 2026-08-01 사장님 지시 — 아이콘을 라벨 왼쪽에("↗ Open App" 순서). 컬러 이모지(🔥/⭐)는 기기
+    // 이모지 폰트에 따라 이상하게 렌더링돼(사장님 확인) 이 파일이 이미 쓰는 순색 유니코드 기호
+    // (⇪/✕ 방식)로 통일. "HOT"은 마땅한 단색 기호가 없어 작은 배지(pill)로 대신한다. 각 행은
+    // 강제로 넓히지 않고 자기 내용물 크기 그대로(WRAP_CONTENT) — 불필요하게 커지지 않는다
+    // (사장님 지적: "왜 창은 크게 키워놓은건데").
     data class MenuItem(val label: String, val action: () -> Unit, val icon: String? = null, val badge: String? = null)
     val items = listOf(
       MenuItem("Open App", { openApp(); hidePaceMenu() }, icon = "↗"),
@@ -2076,18 +2072,12 @@ class PaceOverlayService : Service() {
         setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
         setOnClickListener { item.action() }
       }
-      row.addView(TextView(this).apply {
-        text = item.label
-        textSize = 13f
-        setTextColor(Color.WHITE)
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-      }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
       if (item.icon != null) {
         row.addView(TextView(this).apply {
           text = item.icon
           textSize = 15f
           setTextColor(Color.parseColor("#CCFFFFFF"))
-          setPadding((10 * d).toInt(), 0, 0, 0)
+          setPadding(0, 0, (10 * d).toInt(), 0)
         })
       } else if (item.badge != null) {
         row.addView(TextView(this).apply {
@@ -2101,14 +2091,15 @@ class PaceOverlayService : Service() {
           }
           setPadding((7 * d).toInt(), (2 * d).toInt(), (7 * d).toInt(), (2 * d).toInt())
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-          marginStart = (10 * d).toInt()
+          marginEnd = (10 * d).toInt()
         })
       }
-      // 2026-08-01 사장님 지적("아이콘이 글자 뒤에 가 있어") — 행 너비를 170dp로 고정해뒀던 게
-      // 원인이었다: "Shorts HOT" 라벨 + HOT 배지를 합치면 170dp보다 넓어서, weight=1 라벨이 남은
-      // 공간만 억지로 배분받다 배지와 겹쳐 그려졌다. 행 너비를 강제하지 않고 메뉴 컨테이너 쪽에
-      // 최소 너비만 주고(menu.minimumWidth, 아래) 각 행은 그 너비를 그대로 채우게(MATCH_PARENT) —
-      // 가장 넓은 행(Shorts HOT)이 실제로 필요한 만큼 메뉴 전체 너비를 자연스럽게 넓힌다.
+      row.addView(TextView(this).apply {
+        text = item.label
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+      })
       menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
       if (index < items.size - 1) {
         val divider = View(this).apply { setBackgroundColor(Color.parseColor("#1FFFFFFF")) }

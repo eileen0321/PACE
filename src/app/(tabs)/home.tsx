@@ -527,22 +527,14 @@ export default function HomeScreen() {
         hitCount={hitCount}
         limitMinutes={effectiveDailyLimitMinutes}
         todayUsageMinutes={todayUsageMinutes}
-        // 2026-07-31 사용자 지적("5분더는 쇼츠를 보겠다는건데 종료해버리는지 확인해") — 예전엔 보너스
-        // 분만 더해주고 팝업만 닫아서, "+5분 더 보기"를 눌러도 실제로는 Home에 그대로 남아 사용자가
-        // 플랫폼 카드를 다시 탭해야 했다(연장의 의도와 정반대 경험). 마지막으로 보던 플랫폼을
-        // lastPlatformRef로 기억해뒀다가, 연장 시 그 플랫폼으로 즉시 재진입시킨다.
-        // 2026-08-01 사용자 지시("5분 1회만 무료, 그다음부턴 광고/크레딧") — hitCount===1(오늘 첫
-        // 도달)일 때만 이 무료 경로를 타고, 그 이후엔 광고/크레딧 모달(아래 showDailyLimitExtend)로
-        // 넘긴다 — 그 모달이 실제 지급/재진입까지 전부 담당(onExtend prop).
+        // 2026-08-01 사용자 지시 최종("무료 5분 빼자 — 1,2번(하루한도/Focus Session) 둘 다 무료 없이
+        // 10분 지나면 광고 보고 5분 더 동일하게") — 예전의 "hitCount<=1 첫 1회 무료" 경로를 제거.
+        // 하루 한도 도달 시 "+5분 더"는 회차와 무관하게 항상 광고/크레딧 모달(showDailyLimitExtend)로
+        // 보낸다 — 그 모달이 실제 지급(addBonusMinutes)+마지막 플랫폼 재진입까지 전부 담당(onExtend prop).
+        // 이로써 Focus Session 게이트(feed/index.tsx, 무료 없이 바로 광고/크레딧)와 규칙이 완전히 동일해진다.
         onExtend={() => {
           dismissLimitHit(hitCount);
-          if (hitCount <= 1) {
-            addBonusMinutes(5);
-            const p = lastPlatformRef.current;
-            if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
-          } else {
-            setShowDailyLimitExtend(true);
-          }
+          setShowDailyLimitExtend(true);
         }}
         onDismiss={() => dismissLimitHit(hitCount)}
       />
@@ -552,8 +544,8 @@ export default function HomeScreen() {
         onDismiss={() => setShowFocusSessionExtend(false)}
       />
 
-      {/* 2026-08-01 — 하루 한도 2회차 이상 연장(광고/크레딧). onExtend가 실제 지급(addBonusMinutes)
-          + 마지막 플랫폼 재진입까지 담당 — 위 tier1 무료 경로(onExtend prop)와 동일한 후속 동작. */}
+      {/* 2026-08-01 — 하루 한도 연장(항상 광고/크레딧, 무료 없음). onExtend가 실제 지급(addBonusMinutes)
+          + 마지막 플랫폼 재진입까지 담당. Focus Session 게이트와 동일 규칙(무료 5분 제거). */}
       <FocusSessionExtendModal
         visible={showDailyLimitExtend && !celebrationVisible}
         onDismiss={() => setShowDailyLimitExtend(false)}

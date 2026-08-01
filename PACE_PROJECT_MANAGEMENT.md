@@ -3249,3 +3249,13 @@ co-session의 두 Android 커밋을 pull해서 iOS 영향 검토 — **둘 다 i
   - 결정적: **타이머(`setTimeout`)와 `isAutoMode` 플래그가 같은 `useEffect`(L314-342, deps=[isAutoMode,duration])에 묶여 있어 desync 불가** — Android 버그는 플래그(SharedPreferences)와 타이머(Handler)가 별개 저장소라 어긋난 것. iOS는 그런 분리가 없음.
 
 **② `a37968d`(P-메뉴 아이콘 슬롯 폭 22→32dp, "HOT" 배지 pill 안 눌리게)**: Android 네이티브 FrameLayout 고정폭 슬롯의 AT_MOST 클램프 이슈. **iOS `PaceMenu.tsx`는 flexbox 행 리스트(190px 폭, 각 행=`trending-up` 아이콘 16px + 라벨 텍스트)라 "HOT" 텍스트 배지 pill 자체가 없음** → 눌릴 요소 없음, iOS 무관.
+
+### 2026-08-01 (Mac 세션, 사장님 실시간 지시) — 🔴 연장 규칙 최종 통일: "무료 5분" 완전 제거 (Android도 맞춰야 함)
+**사장님 최종 결정(번복)**: "그냥 간편하게 5분 더 주는거(무료 1회) 빼자. 10분 지나면 **1번(하루 한도)·2번(Focus Session) 둘 다 광고 보면 5분 더**로 동일하게." → 예전 "하루 한도는 첫 1회 무료 5분, Focus Session은 바로 광고"였던 비대칭을 **양쪽 다 무료 없이 광고/크레딧으로 통일.**
+
+**iOS 수정 완료(이 커밋)**:
+- `src/app/(tabs)/home.tsx` — `LimitReachedOverlay`의 `onExtend`에서 `hitCount<=1` 무료 분기(`addBonusMinutes(5)`+즉시 재진입) **제거**. 이제 회차 무관 항상 `setShowDailyLimitExtend(true)`(광고/크레딧 모달)로 보냄. 그 모달이 지급+마지막 플랫폼 재진입 담당(기존과 동일).
+- `src/services/i18n/translations.ts` — `home.dailyLimitExtendMessage`(ko/en)에서 "오늘 무료로 드리는 N분 연장은 이미 썼어요" 문구 제거(무료가 없어졌고, 이제 이 모달이 첫 도달에도 뜨므로 거짓말이 됨). → "짧은 광고를 보거나 크레딧을 사용하면 N분 더 볼 수 있어요."로 교체.
+- Focus Session(①)은 원래부터 무료 없이 바로 광고/크레딧(`feed/index.tsx:412`)이라 변경 없음 — 이번에 ②를 ①에 맞춘 것. tsc 통과.
+
+**⚠️ Android(Windows 세션) 해야 할 일**: Android 쪽 하루 한도 게이트에도 동일한 "첫 1회 무료 5분" 무료 경로가 있으면(예: `LimitReachedOverlay` 대응 네이티브/`addBonusMinutes` 첫 도달 무료 분기, 최근 `7682273`/`8468a82` 계열에서 만든 tier1 무료 경로) **제거하고 항상 광고/크레딧으로 통일**. Focus Session도 무료 없이 광고만. 규칙: **10분 경과(하루한도 도달 or Focus Session 타임아웃) → 무료 연장 일절 없음 → 광고 시청(또는 크레딧) 시에만 +5분.** 관련 i18n에 "무료" 문구 있으면 같이 제거.

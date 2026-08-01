@@ -3323,3 +3323,7 @@ co-session의 두 Android 커밋을 pull해서 iOS 영향 검토 — **둘 다 i
 2. `Image.onLoad` 게이팅이 iOS에서도 정상 동작하는지(=런치스크린이 제때 내려가는지) 확인. 만약 iOS에서
    `onLoad`가 안 오는 케이스가 있으면 1.5초 폴백으로 넘어가긴 하지만 그만큼 런치스크린이 길어진다.
 3. `app.json`의 `android.*`만 건드렸고 `ios.*`는 안 건드렸다 — iOS 스플래시 설정은 무변경.
+
+### 2026-08-01 (자율세션, Mac) — co-session `1c32866`(접근성 부여 즉시 Pace 자동복귀) iOS 검토 — 무관, 코드변경 없음
+`1c32866`은 Kotlin 3파일(PaceAccessibilityService/PaceOverlayModule/PaceOverlayService)만 수정 — 공유 JS/TS 무변경. 안드로이드 AccessibilityService가 설정에서 켜지는 순간 Pace로 자동 복귀하는 네이티브 흐름. **iOS는 AccessibilityService 개념 자체가 없어 무관**: home.tsx의 접근성 감지/프롬프트는 전부 `Platform.OS !== 'android' return`(L151/170/230)로 게이팅되고 `overlayService.ios.hasAccessibilityPermission()`은 true 스텁 → iOS는 프롬프트 자체가 안 떠 "복귀시킬 대상"이 없음. tsc 통과, git clean.
+※ 참고: 이 커밋은 앞서 요청한 "Android 무료 5분 제거(하루한도 tier1 무료 경로)"와 무관 — 그 항목은 아직 Windows 세션 미반영, 위 핸드오프 유효.

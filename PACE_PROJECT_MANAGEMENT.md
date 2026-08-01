@@ -3004,3 +3004,29 @@ API가 있음. 하지만 Pace(Expo SDK 57, expo-navigation-bar v57.0.2)의 실�
 교체. `phone05.png`는 900×900으로 리사이즈만 해두고 그대로 남아있음(더 이상 참조 안 됨, 필요시
 삭제 가능). iOS 쪽에 동일 컴포넌트나 별도 폰 목업을 쓰는 화면이 있다면 같이 `phone10.png`로
 맞출 것.
+
+### 2026-08-01 (이어서) — Mac(iOS) 세션: 보상광고 연장 흐름(Android matching) + 스플래시/아이콘 이슈
+
+**🟡 보상광고(무료 세션 연장) 흐름 — Android와 맞춰야 함(사장님 지시 "md 기록하고 안드로이드랑 맞춰")**
+- 현재 iOS: 무료 Focus Session/일일한도 **소진 시 feed가 정지 + 홈으로 복귀**(feed/index.tsx: `remaining<=0
+  → setStatus('PAUSED') + router.back/replace('/(tabs)/home')`) → 홈의 `FocusSessionExtendModal`
+  (watchAdToExtend=보상광고 `rewardedAd.ts` / useCreditsToExtend=크레딧)에서 `bluetoothService.
+  extendFocusSession(N)`로 연장. 즉 **보상광고가 "홈 모달"에서 뜸.**
+- Android: 오버레이(네이티브)가 세션 컨텍스트 그대로라, 오버레이에서 세션 소진 시 그 자리에서 처리
+  (PaceOverlayService/Module의 `extendFocusSession`, "무료 10분 고정, 보상광고 보면 늘려줘" 주석).
+- **사장님 요구/맞출 것**: iOS도 **홈으로 안 보내고, 피드/오버레이에서 Focus 토글(또는 소진 시점)에
+  바로 보상광고 → 그 자리에서 연장**되게. 즉 `FocusSessionExtendModal`(또는 동등 UI)을 **feed 안에서**
+  띄우고 `showRewardedAd()→extendFocusSession()`을 feed 컨텍스트로 옮긴다. (구현 예정 — feed 소진
+  로직에서 홈 복귀 대신 in-feed extend 모달 표시.)
+
+**🟢 스플래시/아이콘 이슈(사장님 실기기 "빛바랜 아이콘 잠깐" 반복 지적) — 진행/검증 로그**
+- 시행착오: splash-icon.png(어두움) ↔ ios-splash-icon.png(vibrant) 여러 번 오갔고, 사장님 요구는
+  최종적으로 **앱 아이콘=ios-icon.png(원래대로, 패딩 없음) / 스플래시=vibrant(ios-splash-icon.png)**.
+- **시뮬레이터 실측(Debug 빌드 런치 캡처)로 확인**: 네이티브 런치스크린 + AnimatedSplash 모두 **vibrant**
+  (0.5s 프레임 = 밝은 글로우 타일). 즉 코드/에셋은 정상 vibrant.
+- 실기기에서 재부팅 후에도 빛바래 보인다는 지적 지속 → 원인 후보: **Release 임베드 JS가 stale**
+  (이 세션 내내 watchman 미설치로 Metro 캐시 stale 반복 — AnimatedSplash가 옛 dim 에셋 참조). 대응:
+  **Metro/Hermes 캐시 완전 삭제 후 기기 Release 재빌드(build8) + 삭제/재설치**. buildNumber는 4(런치
+  스냅샷 캐시 무효화). 그래도 빛바래면 홈스크린 아이콘 캐시(기기)일 가능성 — 앱 완전삭제+대기+재설치.
+- ⚠️ **근본 해결 권장: `brew install watchman`**(현재 brew도 미설치) — Metro 캐시 stale이 이 세션의
+  수많은 "반영 안 됨" 문제(스플래시/아이콘/P메뉴 등)의 공통 원인.

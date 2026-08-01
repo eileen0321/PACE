@@ -154,12 +154,14 @@ export default function FocusScreen() {
   // 일반 RN 컨텍스트(브릿지 항상 살아있음)라 오버레이처럼 네이티브 SQLite 직접 접근이 필요 없고
   // 기존 savedVideosRepository를 그대로 쓴다. 탭에 포커스될 때마다 다시 불러와 오버레이에서
   // 방금 추가한 항목도 바로 반영되게 한다.
-  const [savedKind, setSavedKind] = useState<SavedVideoKind>('capture');
+  // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합(오버레이
+  // P메뉴와 동일). getSavedVideos가 kind='favorite' 조회 시 예전 'capture' 데이터도 같이 읽어온다.
+  const savedKind: SavedVideoKind = 'favorite';
   const [savedItems, setSavedItems] = useState<SavedVideo[]>([]);
   const reloadSavedItems = useCallback(() => {
     if (!user?.id) return;
     getSavedVideos(user.id, savedKind).then(setSavedItems).catch(() => setSavedItems([]));
-  }, [user?.id, savedKind]);
+  }, [user?.id]);
   useFocusEffect(useCallback(() => { reloadSavedItems(); }, [reloadSavedItems]));
   const onRemoveSaved = useCallback((id: string) => {
     setSavedItems((prev) => prev.filter((v) => v.id !== id));
@@ -420,31 +422,16 @@ export default function FocusScreen() {
             들어가므로(home.tsx, iOS) 집중화면의 진입 버튼은 중복이었다. dev Shorts POC 버튼도 함께 제거. */}
 
         <View>
-          <Text style={styles.sectionLabel}>{t('focus.savedVideosSection')}</Text>
+          <Text style={styles.sectionLabel}>{t('overlay.favoriteListTitle')}</Text>
           <GlassSurface style={styles.card}>
-            <View style={styles.savedKindTabs}>
-              {(['capture', 'favorite'] as SavedVideoKind[]).map((kind) => (
-                <Pressable
-                  key={kind}
-                  onPress={() => setSavedKind(kind)}
-                  style={[styles.savedKindTab, savedKind === kind && styles.savedKindTabActive]}
-                >
-                  <Text style={[styles.savedKindTabText, savedKind === kind && styles.savedKindTabTextActive]}>
-                    {kind === 'capture' ? t('overlay.captureListTitle') : t('overlay.favoriteListTitle')}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
             {savedItems.length === 0 ? (
-              <Text style={styles.savedEmptyText}>
-                {savedKind === 'capture' ? t('overlay.captureListEmpty') : t('overlay.favoriteListEmpty')}
-              </Text>
+              <Text style={styles.savedEmptyText}>{t('overlay.favoriteListEmpty')}</Text>
             ) : (
               savedItems.map((item) => (
                 <Pressable
                   key={item.id}
                   style={styles.savedRow}
-                  onPress={() => (savedKind === 'favorite' ? onOpenSaved(item) : undefined)}
+                  onPress={() => onOpenSaved(item)}
                 >
                   {item.thumbnailUrl ? (
                     <Image source={{ uri: item.thumbnailUrl }} style={styles.savedThumb} resizeMode="cover" />
@@ -501,11 +488,6 @@ const styles = StyleSheet.create({
   sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.card, padding: spacing.lg, gap: spacing.sm },
 
-  savedKindTabs: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xs },
-  savedKindTab: { flex: 1, borderRadius: radius.pill, paddingVertical: 8, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)' },
-  savedKindTabActive: { backgroundColor: colors.primary },
-  savedKindTabText: { fontSize: 12, fontFamily: typography.bodyFontFamilyBold, color: colors.textSecondary },
-  savedKindTabTextActive: { color: '#FFFFFF' },
   savedEmptyText: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.lg },
   savedRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 8 },
   savedThumb: { width: 48, height: 48, borderRadius: radius.card, backgroundColor: 'rgba(255,255,255,0.06)' },

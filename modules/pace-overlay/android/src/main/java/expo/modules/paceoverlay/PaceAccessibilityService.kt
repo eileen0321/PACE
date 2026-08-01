@@ -639,6 +639,9 @@ class PaceAccessibilityService : AccessibilityService() {
           completed = true
           PaceShareCaptureActivity.pendingCallback = null
           Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 결과 대기 타임아웃")
+          // "Pace"를 못 찾아 폴링이 끝까지 실패한 경우, 시스템 공유시트가 화면에 뜬 채로 남아
+          // 사용자가 직접 닫아야 하는 상태가 된다 — 뒤로가기로 우리가 대신 닫아준다.
+          performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
           callback(title, channel, null, null)
         }
       }

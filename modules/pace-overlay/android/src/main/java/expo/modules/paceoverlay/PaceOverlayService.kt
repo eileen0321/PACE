@@ -126,12 +126,24 @@ class PaceOverlayService : Service() {
         // 실제로 재현됐다. accessibility 쪽이 "여기 없음"이라고 할 때는 그 값을 바로 믿지 않고
         // UsageStatsManager(실시간 조회, 캐시 아님)로 한 번 더 확인해서 오탐으로 인한 오버레이
         // 실종을 막는다 — accessibility가 "여기 있음"이라고 할 때는 기존대로 즉시 신뢰한다.
+        val usageStatsForeground = ForegroundAppWatcher.getForegroundPackage(applicationContext)
         val foregroundPackage = if (accessibilityForeground != null && SupportedApps.PACKAGES.contains(accessibilityForeground)) {
           accessibilityForeground
         } else {
-          ForegroundAppWatcher.getForegroundPackage(applicationContext) ?: accessibilityForeground
+          usageStatsForeground ?: accessibilityForeground
         }
-        val shouldShow = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
+        // 2026-08-01 실기기 재현(사용자: "지금도 오버레이가 또 없어") — dumpsys usagestats로 실기기에서
+        // 직접 확인: YouTube Shorts는 영상이 바뀌어도 같은 Activity 안에서 콘텐츠만 바뀌지 새 화면
+        // 전환 자체가 없다. 그래서 한 화면에 5분(STALENESS_MS) 넘게 머물면 위 두 신호(접근성 이벤트/
+        // UsageStatsManager) 다 "전환 이벤트 기반"이라 똑같이 조용해진다 — 실기기에서 YouTube의
+        // lastTimeUsed가 7분 넘게 안 갱신되는데도 실제로는 계속 포그라운드였음을 확인(PIP는 이 문제의
+        // 일부일 뿐, 더 흔한 원인은 이 "장시간 무전환" 케이스였다). PaceAccessibilityService.
+        // isSupportedAppWindowVisible()은 이벤트가 아니라 그 순간을 직접 묻는 getWindows() 기반이라
+        // 이 문제 자체가 없다(같은 API로 도는 재생시간 폴링이 이 기간 내내 안 끊기고 정상 작동한 걸로
+        // 이미 확인됨) — 최후 순위로 덧붙여 위 두 신호가 놓쳐도 알약이 계속 보이게 한다.
+        val windowVisible = PaceAccessibilityService.isSupportedAppWindowVisible()
+        val shouldShow = (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible
+        Log.d("PaceOverlay", "fgPoll a11y=$accessibilityForeground usm=$usageStatsForeground windowVisible=$windowVisible shouldShow=$shouldShow")
         if (shouldShow) refreshOverlayIfDue(remainingMinutes)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
       } catch (e: Exception) {
@@ -1917,7 +1929,8 @@ class PaceOverlayService : Service() {
     val items = listOf<Pair<String, () -> Unit>>(
       "Open App" to { openApp(); hidePaceMenu() },
       "Shorts HOT" to { hidePaceMenu(); showShortsHotList("all") },
-      "Saved" to { hidePaceMenu(); showSavedFavoriteList("capture") },
+      // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
+      // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
       "Favorite" to { hidePaceMenu(); showSavedFavoriteList("favorite") },
     )
     items.forEachIndexed { index, (label, action) ->
@@ -2394,10 +2407,14 @@ private object SavedVideosStore {
     val userId = getUserId(context) ?: return emptyList()
     val db = openDb(context) ?: return emptyList()
     val out = mutableListOf<SavedVideoRow>()
+    // 2026-08-01 Saved/Favorite 통합 — 메뉴에서 "Saved"는 없어졌지만, 예전에 kind="capture"로
+    // 저장된 항목이 새 "Favorite" 목록에서 사라지지 않도록 같이 읽어온다.
+    val kinds = if (kind == "favorite") arrayOf("favorite", "capture") else arrayOf(kind)
+    val placeholders = kinds.joinToString(",") { "?" }
     try {
       db.rawQuery(
-        "SELECT id, video_id, title, channel, url, thumbnail_url FROM saved_videos WHERE user_id=? AND kind=? ORDER BY added_at DESC",
-        arrayOf(userId, kind)
+        "SELECT id, video_id, title, channel, url, thumbnail_url FROM saved_videos WHERE user_id=? AND kind IN ($placeholders) ORDER BY added_at DESC",
+        arrayOf(userId, *kinds)
       ).use { c ->
         while (c.moveToNext()) {
           out.add(

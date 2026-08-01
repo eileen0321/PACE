@@ -73,5 +73,28 @@
         android:name="android.accessibilityservice"
         android:resource="@xml/accessibility_service_config" />
     </service>
+
+    <!-- 2026-08-01 발견 — PaceShareCaptureActivity.kt는 시스템 공유시트로 유튜브 영상 URL을 가로채는
+         핵심 메커니즘인데(PaceAccessibilityService.captureCurrentVideoInfoInternal 참고) 이 activity
+         선언 자체가 매니페스트에 빠져 있었다. 선언이 없으면 공유시트에 "Pace"가 아예 뜰 수 없어서
+         PaceAccessibilityService의 자동 클릭 폴링이 못 찾고 타임아웃까지 계속 돌고, 사용자 눈엔
+         "Add current video"를 눌렀는데 공유시트만 뜬 채 멈춰있는 것으로 보였다(실기기 재현 확인).
+         exported=true + SEND/text-plain 인텐트필터로 시스템 공유시트 대상에 등록. android:label을
+         "Pace"로 고정 — pollForShareTarget이 findNodeByExactText(root, "Pace")로 정확히 이 문자열을
+         찾는다(앱 표시 이름이 나중에 바뀌어도 이 라벨은 그대로 유지해야 함). Translucent 테마 +
+         noHistory + excludeFromRecents로 화면 깜빡임/최근앱 잔류 없이 즉시 처리 후 사라진다. -->
+    <activity
+      android:name="expo.modules.paceoverlay.PaceShareCaptureActivity"
+      android:exported="true"
+      android:label="Pace"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar"
+      android:noHistory="true"
+      android:excludeFromRecents="true">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+      </intent-filter>
+    </activity>
   </application>
 </manifest>

@@ -20,9 +20,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 // 2026-07-31/08-01 사장님 지시 — 오버레이 P 메뉴 "Shorts HOT". 클라이언트는 절대 YouTube API 키를
 // 직접 쓰지 않는다(src/services/api/youtube.ts 상단 주석의 2026-07-19 보안 교훈과 동일 원칙 — 키를
@@ -81,18 +83,51 @@ public class ShortsHotService {
             log.warn("[ShortsHot] YOUTUBE_API_KEY 미설정 — 갱신 스킵");
             return;
         }
+        // "all"은 여기서 직접 API를 부르지 않고, 아래에서 카테고리별 결과를 합쳐 따로 만든다
+        // (refreshAllTab 참고) — categoryId==null인 항목이 "all" 하나뿐이라 이걸로 구분한다.
+        List<List<ShortsHotVideo>> perCategory = new ArrayList<>();
         CATEGORIES.forEach((category, categoryId) -> {
+            if (categoryId == null) return;
             try {
-                refreshCategory(category, categoryId);
+                perCategory.add(refreshCategory(category, categoryId));
             } catch (Exception e) {
                 // 카테고리 하나가 실패해도(쿼터 초과, 일시적 네트워크 오류 등) 나머지는 계속 갱신 —
                 // 부분 실패가 전체 갱신을 막으면 안 됨. 실패한 카테고리는 기존 캐시가 그대로 유지된다.
                 log.error("[ShortsHot] 카테고리 갱신 실패: category={}", category, e);
             }
         });
+        refreshAllTab(perCategory);
     }
 
-    private void refreshCategory(String category, String categoryId) throws Exception {
+    // "all" 탭은 별도 API 호출(카테고리 무관 전체 인기차트) 대신, 방금 갱신한 카테고리별 결과를
+    // 라운드로빈으로 섞어 만든다 — 2026-08-01 발견: KR 전체 인기차트 상위 50개 중 60초 이하가
+    // 하나도 없는 날이 있어(뮤직비디오/방송 클립 등 긴 영상 위주) "all" 탭 전체가 비어 보이는
+    // 문제가 있었다. 카테고리별 결과를 합치면 어느 한 카테고리라도 결과가 있는 한 "all"도 채워진다.
+    private void refreshAllTab(List<List<ShortsHotVideo>> perCategory) {
+        List<ShortsHotVideo> merged = new ArrayList<>();
+        Set<String> seenVideoIds = new HashSet<>();
+        LocalDateTime now = LocalDateTime.now();
+        int rank = 0;
+        for (int index = 0; rank < KEEP_COUNT; index++) {
+            boolean addedAny = false;
+            for (List<ShortsHotVideo> categoryRows : perCategory) {
+                if (index >= categoryRows.size()) continue;
+                ShortsHotVideo source = categoryRows.get(index);
+                if (!seenVideoIds.add(source.getVideoId())) continue;
+                merged.add(new ShortsHotVideo("all", rank, source.getVideoId(), source.getTitle(),
+                        source.getChannel(), source.getThumbnailUrl(), now));
+                rank++;
+                addedAny = true;
+                if (rank >= KEEP_COUNT) break;
+            }
+            if (!addedAny) break;
+        }
+        repository.deleteByCategory("all");
+        repository.saveAll(merged);
+        log.info("[ShortsHot] category=all(카테고리 집계) 갱신 완료: {}건", merged.size());
+    }
+
+    private List<ShortsHotVideo> refreshCategory(String category, String categoryId) throws Exception {
         StringBuilder url = new StringBuilder(VIDEOS_API)
                 .append("?part=snippet,contentDetails")
                 .append("&chart=mostPopular")
@@ -133,6 +168,7 @@ public class ShortsHotService {
         repository.deleteByCategory(category);
         repository.saveAll(rows);
         log.info("[ShortsHot] category={} 갱신 완료: {}건", category, rows.size());
+        return rows;
     }
 
     // ISO-8601 duration(PT#M#S 등)을 초로 변환 — java.time.Duration.parse가 표준을 정확히 처리하므로

@@ -3030,3 +3030,26 @@ API가 있음. 하지만 Pace(Expo SDK 57, expo-navigation-bar v57.0.2)의 실�
   스냅샷 캐시 무효화). 그래도 빛바래면 홈스크린 아이콘 캐시(기기)일 가능성 — 앱 완전삭제+대기+재설치.
 - ⚠️ **근본 해결 권장: `brew install watchman`**(현재 brew도 미설치) — Metro 캐시 stale이 이 세션의
   수많은 "반영 안 됨" 문제(스플래시/아이콘/P메뉴 등)의 공통 원인.
+
+### 2026-08-01 (이어서, 자율세션) — 🔴 iOS 보상광고 연장 흐름 부재/파손 발견 (매출 직결, Android matching 필요)
+
+**Android(8468a82)**: 무료 세션 타임아웃 후 네이티브 "FOCUS OFF" 배지 탭 → (타임아웃+비프리미엄이면)
+앱 열어 `FocusSessionExtendModal`(보상광고/크레딧)로 보냄. `setIsPremium` 네이티브 푸시 추가.
+**즉 무료 무한 재활성화 구멍을 막고 광고로 유도.**
+
+**iOS 현황(자율세션 조사)** — 같은 구멍 + 연장 자체가 안 됨:
+1. `feed/index.tsx` 무료 세션은 `focusSessionDurationMinutes`(기본 10) 후 `setIsAutoMode(false)` auto-off.
+   → `toggleAutoMode`가 광고/프리미엄/타임아웃 체크 없이 그냥 다시 켬 = **무한 무료 재활성화 구멍.**
+2. `bluetoothService.ios.extendFocusSession()` = **빈 no-op** → 광고 봐도 연장 로직 없음.
+3. home `checkTimedOut`은 **`Platform.OS !== 'android' return`** → iOS에선 `FocusSessionExtendModal`이
+   절대 트리거 안 됨(렌더는 되지만 visible이 never true).
+
+**iOS 구현 계획(Android matching)** — feed 자체가 앱이므로 홈 안 보내고 in-feed 처리:
+- feed에 `sessionTimedOutRef`(auto-off 타이머 발화 시 true, 수동 off/재활성화 성공 시 false).
+- `toggleAutoMode`에서 재활성화(next) 시: `sessionTimedOutRef && !isPremium`이면 setIsAutoMode 안 하고
+  `FocusSessionExtendModal`(feed에 렌더) 표시.
+- 모달에 optional `onExtended` 콜백 추가(공유 컴포넌트 — home/Android는 미전달=기존 extendFocusSession
+  유지, feed는 전달=세션 재활성화+타이머 리셋). 광고 earned/크레딧 spent 시 onExtended 호출.
+- 광고 실패/미보상 시 재활성화 안 함(무료 손해 방지) + 재시도 가능하게 모달 유지/닫기.
+- ⚠️ **실기기 검증 필수**(보상광고 실제 로드/보상 + 연장 재활성화 — 시뮬레이터로 광고 검증 불가).
+  Metro watchman 미설치로 임베드 JS stale 위험도 있어 캐시 클리어 빌드로 확인.

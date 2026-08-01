@@ -2600,3 +2600,26 @@ Security 필터체인은 그 전에 이미 붙어 있던 구버전 프로세스�
 - 배포 과정에서 최초 시도 1회는 원인불명 크래시(로그에 "Starting Container" 한 줄만 찍히고 종료) —
   `railway redeploy`로 같은 이미지 재기동하니 바로 Online. Railway 플랫폼 쪽 일시적 문제로 추정,
   재발하면 그냥 재배포 한 번 더 시도해볼 것.
+
+### 2026-08-01 (이어서) — Windows 세션: ⚠️ 포트 8081을 jlpt-master와 공유 — Metro 엉뚱한 프로젝트 서빙 사고 + Shorts HOT UI 라이브 검증 완료
+
+**중요 인프라 사실(다음 세션도 꼭 알아야 함)**: 이 기기에는 Pace 말고 `jlpt-master`라는 다른 RN/Expo
+프로젝트도 있고, 둘 다 Metro 기본 포트 8081을 그대로 씀. 오늘 기기 테스트 중 Pace 앱이 계속 스플래시
+화면(로고)에서 멈춰서 한참 헤맸는데, 원인은 8081에 **jlpt-master의 Metro가 떠 있어서** Pace 앱이
+엉뚱한 프로젝트의 JS 번들을 받아 `TurboModuleRegistry: 'PlatformConstants' could not be found` 같은
+런타임 에러로 조용히 죽고 있었던 것 — `netstat -ano | grep 8081`로 PID 확인 → PowerShell
+`Get-CimInstance Win32_Process -Filter 'ProcessId = <pid>'`의 CommandLine으로 어느 프로젝트인지 확인
+가능. 기기 테스트 전엔 **항상 8081을 누가 물고 있는지 먼저 확인**하고, Pace 것이 아니면 그 프로세스를
+내리고 `cd Pace && npx expo start --port 8081`로 Pace 것을 띄울 것. (`adb reverse tcp:8081 tcp:8081`도
+adb 연결이 불안정하면 — 이 세션에서 USB가 몇 번 offline으로 끊겼다 — 조용히 사라지니 매번 재확인 필요.)
+
+**Shorts HOT/Favorite 수정사항 실기기 라이브 검증 완료** (`fcb0b47`, 오버레이 재빌드+설치 후):
+- Shorts HOT "All" 탭 — 실데이터(짜장면/동물 영상 등) 정상 표시 확인.
+- P 메뉴에 "Saved" 없어지고 "Favorite" 하나만 남은 것 확인.
+- "Add current video" — 유튜브 공유시트가 자동으로 뜨고 자동으로 닫히며(사용자 개입 없음) 실제
+  영상 제목("##cute #kitten..." @catfun_meow)이 정확히 캡처되어 리스트에 추가되는 것까지 확인
+  (매니페스트 등록 누락이 근본원인이었던 버그, 위 커밋 참고). 예전 kind="capture" 데이터도 병합
+  리스트에 같이 보임(마이그레이션 없이 조회 시점에 병합).
+- 주의: 재설치/force-stop 후에는 접근성 서비스가 매번 꺼지므로(기존에 알려진 이슈) 매번
+  `adb shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService`
+  재실행 필요 — 오늘도 이걸 깜빡해서 "Add current video"가 한 번 실패("Couldn't read this video")했었음.

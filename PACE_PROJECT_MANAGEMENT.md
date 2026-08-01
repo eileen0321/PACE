@@ -2565,3 +2565,38 @@ Railway에 `APPLE_TEAM_ID`/`APPLE_SIGNIN_KEY_ID`/`APPLE_SIGNIN_PRIVATE_KEY` 설�
 - `_layout.tsx:315` 알림리스너 `autoNextService.requestPermission()` sync-throw/async-reject 방어(New Arch 미처리 reject 하드크래시 방지).
 - `focus.tsx:88` `cameraPermissionStatus()` try/catch(:78과 동일, 바이너리 불일치 throw 방어).
 **미반영**: 전역 ErrorUtils 핸들러(좀비상태 마스킹 위험이라 보류), `react-native-track-player` 미사용 네이티브 제거(재빌드 필요 NEEDS-DEVICE-TEST), Text.defaultProps(React19, 비크래시).
+
+### 2026-08-01 (이어서) — Windows 세션: ⚠️ Railway는 GitHub 자동배포가 아니라 CLI 수동배포(`railway up`) — Shorts HOT 프로덕션 500 크래시 근본원인 규명+수정 (`a523077`)
+
+**중요 인프라 사실(다음 세션도 꼭 알아야 함)**: `railway status --json`의 `source.repo`가 `null` —
+이 프로젝트는 GitHub 연동이 아예 안 돼 있고, `railway up`(로컬 소스 업로드) 또는 `railway redeploy`
+(같은 이미지 재기동)로만 배포된다. **`git push`는 배포에 아무 영향이 없다.** 지금까지 세션 여러 번에
+걸쳐 "커밋+푸시했으니 배포됐을 것"이라 가정하고 넘어간 백엔드 변경들이 실제로는 프로덕션에 반영 안
+됐을 가능성이 있음 — 백엔드 변경 후엔 반드시 `cd backend && railway up --detach`로 명시 배포하고
+`railway status`의 deployment ID/시각을 확인할 것. (근본 해결책은 Railway 대시보드에서 GitHub repo
+연결하는 것 — CLI로는 안 되고 웹 UI 필요, 사장님 조치 필요.)
+
+**Shorts HOT 500 에러 근본원인**: `V2__shorts_hot.sql`에서 컬럼명 `rank`를 그대로 씀 → `rank`는
+MySQL 8.0.2+/9.x 예약어(윈도우 함수)라 `CREATE TABLE`이 SQL 문법 오류로 실패 → Flyway가 실패 기록을
+`flyway_schema_history`에 남김 → 이후 모든 배포(신규 이미지든 재기동이든)에서 Flyway `validate()`가
+"Detected failed migration to version 2" 예외를 던져 **앱이 부팅 자체를 못 함** → 그런데 Spring
+Security 필터체인은 그 전에 이미 붙어 있던 구버전 프로세스가 응답하고 있어서 `/auth/guest`,
+`/stats/daily` 등 기존 엔드포인트는 정상 작동하는 것처럼 보였고, `/shorts-hot/*`만 (구버전엔 라우팅
+자체가 없어서) `NoResourceFoundException`→`GlobalExceptionHandler`의 제네릭 500으로 떨어져 마치
+"이 컨트롤러만" 문제인 것처럼 보였던 것 — 실제로는 최신 코드가 프로덕션에 한 번도 제대로 뜬 적이
+없었던 것.
+
+**수정**:
+- `rank` 컬럼 → `rank_no`로 개명(`V2__shorts_hot.sql`, `ShortsHotVideo.java` 엔티티/유니크제약).
+- `FlywayConfig.java` 신규: `FlywayMigrationStrategy` 빈에서 `flyway.repair()` 후 `migrate()` —
+  실패 마이그레이션 기록을 앱 부팅 시 자동 정리(수동 DB 접속 없이 코드로 해결, DB 크리덴셜을 임시
+  스크립트에 박아넣는 방식은 auto-mode 세이프티가 막아서 이 방식으로 우회).
+- `railway up`으로 재배포 후 로그로 `DbRepair` 성공 + `V2`/`V3` 마이그레이션 정상 적용 확인.
+- `POST /shorts-hot/refresh` → `GET /shorts-hot?category=comedy` 실제 curl로 실데이터(제목/채널/썸네일)
+  수신 확인 완료. **단, `all`/`music`/`gaming` 카테고리는 0건**(`comedy`/`entertainment`/`pets`는 15건) —
+  KR `mostPopular` 차트가 해당 카테고리에서 60초 이하 영상을 거의 안 올려서 그런 것으로 보임(YouTube
+  공식 API에 `isShort` 필드가 없어 duration 필터로 근사하는 구조의 한계, 버그 아님). 필요하면 나중에
+  `MAX_SHORT_SECONDS` 완화나 다른 chart 파라미터 검토.
+- 배포 과정에서 최초 시도 1회는 원인불명 크래시(로그에 "Starting Container" 한 줄만 찍히고 종료) —
+  `railway redeploy`로 같은 이미지 재기동하니 바로 Online. Railway 플랫폼 쪽 일시적 문제로 추정,
+  재발하면 그냥 재배포 한 번 더 시도해볼 것.

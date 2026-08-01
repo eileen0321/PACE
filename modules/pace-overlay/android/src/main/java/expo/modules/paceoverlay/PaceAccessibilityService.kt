@@ -201,6 +201,10 @@ class PaceAccessibilityService : AccessibilityService() {
     // 재생 여부(maxStaleMs 이내에 재생 위치가 실제로 늘어난 적이 있는지).
     fun isLikelyPlaying(maxStaleMs: Long = 5_000L): Boolean? {
       val service = instance ?: return null
+      // 2026-08-01 — 감시 대상 앱 창이 지금 실제로 떠 있으면(PIP 포함) 재생시간 텍스트를 못 찾아도
+      // (초소형 PIP 화면은 보통 그 텍스트 자체가 없음) "재생 중"으로 간주한다. 다른 판정보다 먼저
+      // 체크 — 창이 화면에 떠 있다는 것 자체가 이미 강한 증거다.
+      if (service.supportedAppWindowVisible()) return true
       // 2026-07-31 실기기 발견(사용자 지적: "쇼츠 안 틀고 있는데 왜 휴식 알림 떠", "P로 앱 가면 시간
       // 멈춰야지") — 아래 isTrackingPlayback 체크는 Auto Next(핸즈프리 자동넘김) 기능을 켰을 때만
       // true가 된다. 이 기능을 안 켠(플레인 Focus Session만 쓰는) 사용자는 항상 null을 받았고,
@@ -220,6 +224,11 @@ class PaceAccessibilityService : AccessibilityService() {
       if (service.lastPlaybackAdvanceAtMs == 0L) return null
       return SystemClock.elapsedRealtime() - service.lastPlaybackAdvanceAtMs <= maxStaleMs
     }
+
+    // PaceOverlayService의 오버레이 알약 표시 여부 판정에 쓰는 직접 신호 노출(위 isLikelyPlaying과
+    // 동일한 supportedAppWindowVisible() 재사용) — 접근성이 꺼져있으면(instance==null) false로 안전
+    // 폴백, 기존 UsageStatsManager 기반 판정만 그대로 적용된다.
+    fun isSupportedAppWindowVisible(): Boolean = instance?.supportedAppWindowVisible() ?: false
 
     // 2026-07-19: Bluetooth Hands-Free Next/Previous — 위 interval 기반 Auto Next 루프와 별개로,
     // 리모컨 버튼 1회 입력에 스와이프 1회로 즉시 응답하는 단발성 트리거. 감시 대상 앱이 포그라운드가
@@ -482,6 +491,38 @@ class PaceAccessibilityService : AccessibilityService() {
       Log.w("PaceAccessibility", "trackedAppRootNode lookup failed, falling back to rootInActiveWindow", e)
     }
     return rootInActiveWindow
+  }
+
+  // 2026-08-01 실기기 재현(사용자: "지금도 오버레이가 또 없어") — 처음엔 PIP만 의심했으나(위 커밋
+  // 참고), 실기기 진단(dumpsys usagestats)으로 훨씬 더 흔한 진짜 원인을 확정: YouTube Shorts는 영상이
+  // 바뀌어도 같은 Activity 안에서 콘텐츠만 바뀌지 새 화면 전환 자체가 없다 — 그래서 한 화면에 5분
+  // (ForegroundAppWatcher.STALENESS_MS) 넘게 머물면 UsageStatsManager의 lastTimeUsed도, 접근성
+  // TYPE_WINDOW_STATE_CHANGED 이벤트도 똑같이 "새 전환 없음=조용함"에 빠진다 — 실기기에서 YouTube의
+  // lastTimeUsed가 7분 넘게 안 갱신되는데도 실제로는 계속 포그라운드였음을 직접 확인. 반면
+  // getWindows()는 이벤트가 아니라 "그 순간을 직접 묻는" 쿼리라 이 문제 자체가 없다 — 같은 기간 동안
+  // 재생시간 텍스트 폴링(trackedAppRootNode, 아래)은 한 번도 안 끊기고 정상 작동했다(로그로 확인,
+  // 그래서 시간 차감 자체는 이 버그와 무관하게 항상 정확했다 — 사라지는 건 알약 표시뿐이었음).
+  // 그래서 오버레이 표시 여부도 이 신뢰할 수 있는 신호로 직접 확인한다 — PIP 여부와 무관하게
+  // "감시 대상 앱 창이 화면에 지금 실제로 떠 있는가"만 본다(PIP도 이 창 목록에 잡히므로 자동으로
+  // 포함됨, 별도 분기 불필요).
+  // 2026-08-01 실기기 재현(사장님: "Open App 눌러도 다시 쇼츠로 옴") — 원래 PIP도 자동으로 이
+  // 목록에 잡히게 뒀는데, 그게 정확히 문제였다. 유튜브가 PIP로 떠 있으면(자동진입 방지 플래그가
+  // 안 먹는 경우 포함) 그 작은 창이 Pace로 전환한 뒤에도 화면 위에 계속 남아있고, getWindows()는
+  // 이 PIP 창도 여전히 "유튜브 창 있음"으로 잡아서 shouldShow가 계속 true로 고정돼버렸다 — 알약/
+  // 패널이 Pace 위에 계속 뜨고, 사용자 눈엔 "안 나가고 다시 쇼츠로 온 것"처럼 보였다. PIP 창은
+  // 이 판정에서 제외한다(TYPE_PICTURE_IN_PICTURE, API 26+) — PIP는 없어도 감시 대상 앱을 못 찾는
+  // 문제(장시간 무전환) 자체가 없으므로 이 신호가 굳이 필요하지 않다.
+  private fun supportedAppWindowVisible(): Boolean {
+    try {
+      for (window in windows) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && window.isInPictureInPictureMode) continue
+        val pkg = window.root?.packageName?.toString() ?: continue
+        if (pkg in SupportedApps.PACKAGES) return true
+      }
+    } catch (e: Exception) {
+      Log.w("PaceAccessibility", "supportedAppWindowVisible lookup failed", e)
+    }
+    return false
   }
 
   // 캐시된 노드가 있으면 refresh()로 그 하나만 저렴하게 재검증(트리 워크 없음) — 유효하면 바로

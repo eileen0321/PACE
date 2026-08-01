@@ -44,6 +44,12 @@ public class ShortsHotService {
     private static final int MAX_SHORT_SECONDS = 60;
     private static final int FETCH_COUNT = 50;
     private static final int KEEP_COUNT = 15;
+    // 2026-08-01 발견 — music/gaming처럼 트렌드가 뮤직비디오/풀 게임플레이 위주인 카테고리는 상위
+    // 50개 안에 60초 이하가 하나도 없는 날이 흔했다(music/gaming 탭이 통째로 빈 리스트로 보였음).
+    // chart=mostPopular도 다른 목록형 API처럼 nextPageToken으로 더 내려갈 수 있어서, 부족하면
+    // 최대 이만큼 더 페이지를 넘겨가며 60초 이하를 찾는다 — 페이지당 1 unit이라 최악의 경우도
+    // 카테고리당 4 units(하루 총 24 units)로 쿼터엔 무의미한 수준.
+    private static final int MAX_PAGES = 4;
 
     // 카테고리 코드(앱/DB에서 쓰는 값) → YouTube videoCategoryId. "all"은 categoryId 없이
     // chart=mostPopular 전체 순위(카테고리 무관)를 그대로 쓴다.
@@ -128,41 +134,50 @@ public class ShortsHotService {
     }
 
     private List<ShortsHotVideo> refreshCategory(String category, String categoryId) throws Exception {
-        StringBuilder url = new StringBuilder(VIDEOS_API)
-                .append("?part=snippet,contentDetails")
-                .append("&chart=mostPopular")
-                .append("&regionCode=KR")
-                .append("&maxResults=").append(FETCH_COUNT)
-                .append("&key=").append(URLEncoder.encode(apiKey, StandardCharsets.UTF_8));
-        if (categoryId != null) {
-            url.append("&videoCategoryId=").append(categoryId);
-        }
-
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url.toString())).GET().build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            throw new IllegalStateException("YouTube API " + response.statusCode() + ": " + response.body());
-        }
-
-        JsonNode items = objectMapper.readTree(response.body()).path("items");
         List<ShortsHotVideo> rows = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
-        int rank = 0;
-        for (JsonNode item : items) {
-            String duration = item.path("contentDetails").path("duration").asText("");
-            if (parseDurationSeconds(duration) > MAX_SHORT_SECONDS) continue;
+        String pageToken = null;
 
-            String videoId = item.path("id").asText(null);
-            JsonNode snippet = item.path("snippet");
-            String title = snippet.path("title").asText(null);
-            if (videoId == null || title == null) continue;
+        for (int page = 0; page < MAX_PAGES && rows.size() < KEEP_COUNT; page++) {
+            StringBuilder url = new StringBuilder(VIDEOS_API)
+                    .append("?part=snippet,contentDetails")
+                    .append("&chart=mostPopular")
+                    .append("&regionCode=KR")
+                    .append("&maxResults=").append(FETCH_COUNT)
+                    .append("&key=").append(URLEncoder.encode(apiKey, StandardCharsets.UTF_8));
+            if (categoryId != null) {
+                url.append("&videoCategoryId=").append(categoryId);
+            }
+            if (pageToken != null) {
+                url.append("&pageToken=").append(URLEncoder.encode(pageToken, StandardCharsets.UTF_8));
+            }
 
-            String channel = snippet.path("channelTitle").asText(null);
-            String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url.toString())).GET().build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("YouTube API " + response.statusCode() + ": " + response.body());
+            }
 
-            rows.add(new ShortsHotVideo(category, rank, videoId, title, channel, thumbnailUrl, now));
-            rank++;
-            if (rank >= KEEP_COUNT) break;
+            JsonNode body = objectMapper.readTree(response.body());
+            JsonNode items = body.path("items");
+            for (JsonNode item : items) {
+                String duration = item.path("contentDetails").path("duration").asText("");
+                if (parseDurationSeconds(duration) > MAX_SHORT_SECONDS) continue;
+
+                String videoId = item.path("id").asText(null);
+                JsonNode snippet = item.path("snippet");
+                String title = snippet.path("title").asText(null);
+                if (videoId == null || title == null) continue;
+
+                String channel = snippet.path("channelTitle").asText(null);
+                String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+
+                rows.add(new ShortsHotVideo(category, rows.size(), videoId, title, channel, thumbnailUrl, now));
+                if (rows.size() >= KEEP_COUNT) break;
+            }
+
+            pageToken = body.path("nextPageToken").asText(null);
+            if (pageToken == null) break; // 더 넘길 페이지가 없음
         }
 
         repository.deleteByCategory(category);

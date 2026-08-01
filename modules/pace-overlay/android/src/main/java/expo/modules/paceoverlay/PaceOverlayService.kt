@@ -144,8 +144,23 @@ class PaceOverlayService : Service() {
         val windowVisible = PaceAccessibilityService.isSupportedAppWindowVisible()
         val shouldShow = (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible
         Log.d("PaceOverlay", "fgPoll a11y=$accessibilityForeground usm=$usageStatsForeground windowVisible=$windowVisible shouldShow=$shouldShow")
+        if (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) {
+          getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(PREF_LAST_TRACKED_APP_PACKAGE, foregroundPackage).apply()
+        }
         if (shouldShow) refreshOverlayIfDue(remainingMinutes)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+        // 2026-08-01 사용자 실기기 지적("크게 나오던 오버레이" — 최근 앱/멀티태스킹 화면으로 가도
+        // P메뉴/Saved/Shorts HOT 리스트 창이 원래 크기 그대로 그 위에 떠서 화면이 깨져 보임) —
+        // 이 창들은 SYSTEM_ALERT_WINDOW라 다른 앱 창과 달리 Recents가 축소 썸네일로 캡처하지 않고
+        // 항상 실제 화면 크기로 최상단에 렌더링된다. 세션 종료(removeOverlay) 때만 정리되고 있어서,
+        // 세션이 계속 켜진 채로 YouTube를 벗어나면(Recents 포함) 계속 떠 있었다 — 알약과 동일한
+        // "지금 감시 대상 앱을 보고 있는가" 신호에 묶어 벗어나면 즉시 닫는다.
+        if (!shouldShow) {
+          hidePaceMenu()
+          hideSavedFavoriteList()
+          hideShortsHotList()
+        }
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
       }
@@ -637,6 +652,11 @@ class PaceOverlayService : Service() {
     // PaceOverlayModule.cacheApiBaseUrl/cacheAuthToken 참고, client.ts가 값 변경마다 채워줌).
     const val PREF_CACHED_API_BASE_URL = "cached_api_base_url"
     const val PREF_CACHED_AUTH_TOKEN = "cached_auth_token"
+    // 2026-08-01 사장님 지적 — 보상형 광고로 Focus Session 5분 연장해도 유튜브로 자동 복귀가 안 됨
+    // (사용자가 Pace 홈 화면에 남겨져서 직접 다시 스와이프해 돌아가야 했음). foregroundPollRunnable이
+    // 감시 대상 앱을 감지할 때마다 여기 저장해두고, extendFocusSession()에서 이 패키지를 다시 전경으로
+    // 불러온다 — 광고 보러 Pace로 오기 직전에 뭘 보고 있었는지는 폴링 결과로만 알 수 있다.
+    private const val PREF_LAST_TRACKED_APP_PACKAGE = "last_tracked_app_package"
     // 2026-07-26 사용자 지적 — "1시 3분에 잠들었는데 실제로는 10분 전(무진동 시작 시점)이 진짜
     // 잠든 시각에 더 가깝지 않냐" — markExpired() 호출 시각(=무진동 임계값을 넘긴 시각)은 실제
     // 마지막 움직임(lastMotionAtMs)보다 stillnessThresholdMs만큼 항상 늦다. sleep_detected일 때만
@@ -731,6 +751,27 @@ class PaceOverlayService : Service() {
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       focusSessionHandler.postDelayed(focusSessionAutoStop, extraMinutes.coerceAtLeast(1) * 60 * 1000L)
       showToast(context, "🎯 Focus Session +${extraMinutes}m")
+      returnToLastTrackedApp(context)
+    }
+
+    // 2026-08-01 사장님 지적 — 보상형 광고/크레딧으로 연장한 목적 자체가 "쇼츠 계속 보기"인데, 연장
+    // 후에도 사용자가 Pace 화면에 남겨져 직접 다시 스와이프해 돌아가야 했다. 광고를 보러 오기 전
+    // 마지막으로 감시 중이던 앱(foregroundPollRunnable이 매 폴마다 저장)을 다시 전경으로 불러온다 —
+    // REORDER_TO_FRONT라 기존 태스크를 그대로 살려서 보던 화면 그대로 이어진다(새로 앱 시작 아님).
+    private fun returnToLastTrackedApp(context: Context) {
+      val pkg = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(PREF_LAST_TRACKED_APP_PACKAGE, null) ?: return
+      try {
+        val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: return
+        intent.addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+            Intent.FLAG_ACTIVITY_NO_USER_ACTION
+        )
+        context.startActivity(intent)
+      } catch (e: Exception) {
+        Log.w("PaceOverlayService", "returnToLastTrackedApp 실패: pkg=$pkg", e)
+      }
     }
 
     fun setFocusSessionDurationMinutes(context: Context, minutes: Int) {
@@ -958,6 +999,9 @@ class PaceOverlayService : Service() {
         putExtra(EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, bluetoothVolumeKeySkipEnabled)
       }
       ContextCompat.startForegroundService(context, intent)
+      // 2026-08-01 사장님 지시 — Shorts HOT을 세션 시작 시점에 미리 받아둬서, P 메뉴에서 실제로
+      // 열 때는 캐시된 걸 바로 보여준다(ShortsHotStore.prefetchAll/getCached 참고).
+      ShortsHotStore.prefetchAll(context)
     }
 
     fun updateRemaining(context: Context, remainingMinutes: Int) {
@@ -1589,11 +1633,17 @@ class PaceOverlayService : Service() {
 
         // 2026-07-31 — Saved/Favorite 둘 다 공유 아이콘 표시(사장님 지시 "favorit도... 공유가
         // 보이게"). Favorite은 행 자체를 탭하면 재생(원본 유튜브 링크로 이동).
+        // 2026-08-01 사장님 지적("공유 아이콘이 너무 작다") — 16sp+최소 패딩이라 실제 탭 영역이
+        // 안드로이드 권장 최소 터치 타깃(48dp)에 한참 못 미쳐서, 근처를 눌러도 행 자체의 재생
+        // 클릭리스너로 새서 안 눌리는 것처럼 느껴졌다(실기기 재현). 아이콘 크기+패딩을 키우고
+        // minWidth/minHeight로 탭 영역 자체를 48dp 이상 보장.
         itemRow.addView(TextView(this@PaceOverlayService).apply {
           text = "⇪"
-          textSize = 16f
-          setTextColor(Color.parseColor("#CCFFFFFF"))
-          setPadding((8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), (4 * d).toInt())
+          textSize = 26f
+          setTextColor(Color.WHITE)
+          gravity = Gravity.CENTER
+          minWidth = (48 * d).toInt()
+          minHeight = (48 * d).toInt()
           isClickable = true
           setOnClickListener {
             val url = item.url ?: return@setOnClickListener
@@ -1789,21 +1839,7 @@ class PaceOverlayService : Service() {
       }
     }
 
-    fun loadCategory(category: String) {
-      currentCategory = category
-      renderTabs()
-      listContainer.removeAllViews()
-      listContainer.addView(TextView(this).apply {
-        text = "Loading…"
-        textSize = 12f
-        setTextColor(Color.parseColor("#80FFFFFF"))
-        gravity = Gravity.CENTER
-        setPadding(0, (18 * d).toInt(), 0, (18 * d).toInt())
-      })
-      Thread {
-        val items = ShortsHotStore.fetch(applicationContext, category)
-        foregroundPollHandler.post {
-          if (currentCategory != category) return@post // 로딩 중 다른 탭으로 넘어갔으면 버림
+    fun renderItems(category: String, items: List<ShortsHotStore.HotVideo>) {
           listContainer.removeAllViews()
           if (items.isEmpty()) {
             listContainer.addView(TextView(this@PaceOverlayService).apply {
@@ -1871,6 +1907,32 @@ class PaceOverlayService : Service() {
           scroll.layoutParams = (scroll.layoutParams ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0)).apply {
             height = estimatedHeight.coerceAtMost(maxHeight)
           }
+    }
+
+    // 2026-08-01 사장님 지시("미리 로딩해놓으면... 누르면 개느리게 뜨잖아") — 세션 시작 시
+    // prefetchAll()이 채워둔 캐시가 있으면 "Loading…" 없이 바로 그린다. 캐시가 아직 없을 때만
+    // (프리페치가 안 끝났거나 로그인 타이밍 등) 기존처럼 로딩 표시 후 네트워크로 받는다.
+    fun loadCategory(category: String) {
+      currentCategory = category
+      renderTabs()
+      val cached = ShortsHotStore.getCached(category)
+      if (cached != null) {
+        renderItems(category, cached)
+        return
+      }
+      listContainer.removeAllViews()
+      listContainer.addView(TextView(this).apply {
+        text = "Loading…"
+        textSize = 12f
+        setTextColor(Color.parseColor("#80FFFFFF"))
+        gravity = Gravity.CENTER
+        setPadding(0, (18 * d).toInt(), 0, (18 * d).toInt())
+      })
+      Thread {
+        val items = ShortsHotStore.fetch(applicationContext, category)
+        foregroundPollHandler.post {
+          if (currentCategory != category) return@post // 로딩 중 다른 탭으로 넘어갔으면 버림
+          renderItems(category, items)
         }
       }.start()
     }
@@ -2484,6 +2546,25 @@ private object ShortsHotStore {
 
   data class HotVideo(val videoId: String, val title: String, val channel: String?, val thumbnailUrl: String)
 
+  // 2026-08-01 사장님 지시("미리 로딩해놓으면 되잖아, 누르면 개느리게 뜨잖아") — 세션 시작 시점에
+  // 카테고리 6개를 전부 미리 받아 메모리에 캐시해둔다. 패널을 열 때 이 캐시가 있으면 "Loading…"
+  // 없이 바로 그려주고(사용자 체감 즉시 로딩), 최신화를 위해 뒤에서 조용히 재요청도 같이 건다.
+  private val cache = java.util.concurrent.ConcurrentHashMap<String, List<HotVideo>>()
+
+  fun getCached(category: String): List<HotVideo>? = cache[category]
+
+  fun prefetchAll(context: Context) {
+    Thread {
+      CATEGORIES.forEach { category ->
+        try {
+          fetch(context, category)
+        } catch (e: Exception) {
+          Log.w("PaceOverlay", "ShortsHotStore.prefetchAll failed: category=$category", e)
+        }
+      }
+    }.start()
+  }
+
   private fun baseUrl(context: Context): String? {
     val url = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
       .getString(PaceOverlayService.PREF_CACHED_API_BASE_URL, null)
@@ -2545,7 +2626,9 @@ private object ShortsHotStore {
         )
       }
       val watched = watchedIds(context, category)
-      out.sortedBy { if (it.videoId in watched) 1 else 0 } // 안 본 영상 먼저, 상대 순서는 유지(stable sort)
+      val sorted = out.sortedBy { if (it.videoId in watched) 1 else 0 } // 안 본 영상 먼저, 상대 순서는 유지(stable sort)
+      cache[category] = sorted
+      sorted
     } catch (e: Exception) {
       Log.e("PaceOverlay", "ShortsHotStore.fetch failed", e)
       emptyList()

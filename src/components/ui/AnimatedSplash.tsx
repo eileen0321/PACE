@@ -14,7 +14,9 @@ import Animated, {
 import { colors, radius, typography } from '../../constants/theme';
 
 const ICON = require('../../../assets/splash-icon.png');
-const DURATION_MS = 600;
+// 2026-08-01 사장님 지시 — 로고 위 "빛 지나가는(shine sweep)" 효과가 600ms + 12% 흰색이라 실질적으로
+// 안 보였다. 스플래시를 950ms로 살짝 늘려 스윕 1회가 온전히 보이게 하고, 빛 바를 그라데이션+밝기 상향.
+const DURATION_MS = 950;
 
 // 2026-07-26 재작성(웹리서치 반영 — Apple HIG + Uber/Swiggy 방식): 앱 실행 "아이콘 번쩍" 해결.
 // 상용앱 규칙: 네이티브 런치스크린과 애니메이션 스플래시의 "첫 프레임"이 시각적으로 동일해야 한다.
@@ -31,7 +33,7 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
   useEffect(() => {
     // 로고는 애니메이션 없음(런치스크린과 동일 고정). 효과만 등장.
     glowOpacity.value = withDelay(60, withTiming(1, { duration: 280 }));
-    shimmerX.value = withRepeat(withTiming(1, { duration: 550, easing: Easing.linear }), -1, false);
+    shimmerX.value = withDelay(120, withRepeat(withTiming(1, { duration: 700, easing: Easing.linear }), -1, false));
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));
     barX.value = withRepeat(withSequence(withTiming(1, { duration: 260, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
@@ -66,7 +68,15 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
         <Animated.View style={[styles.glow, glowStyle]} />
         <View style={styles.iconClip}>
           <Image source={ICON} style={styles.icon} />
-          <Animated.View style={[styles.shimmer, shimmerStyle]} />
+          {/* 로고 위를 대각선으로 지나가는 "빛 스윕" — 가장자리가 투명한 그라데이션이라 은은하게 번쩍인다. */}
+          <Animated.View style={[styles.shimmer, shimmerStyle]}>
+            <LinearGradient
+              colors={['transparent', 'rgba(255,255,255,0.5)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
         </View>
       </View>
 
@@ -117,8 +127,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -40,
     bottom: -40,
-    width: 40,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    width: 60,
   },
   textBlock: { position: 'absolute', top: '50%', marginTop: 84, alignItems: 'center' },
   title: {

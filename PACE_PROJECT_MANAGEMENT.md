@@ -2650,9 +2650,38 @@ adb 연결이 불안정하면 — 이 세션에서 USB가 몇 번 offline으로 
 P0 목록은 이 수정을 반영 못 하고 있어 stale — 갱신 권장.
 
 **🟡 미해결로 재확인된 것(사장님 결정 필요)**:
-- **구독 가격 플랫폼 불일치**: Android(사장님 지시, 월₩1,100/연₩9,900) vs iOS(App Store Connect
-  기등록, 월₩2,200/연₩22,000) — 정확히 2배 차이. 의도된 것인지 확인 필요, Android 상품 생성
-  전에 정해야 함.
+- ~~구독 가격 플랫폼 불일치~~ **2026-08-01 확인 완료** — 위 "Android 월₩1,100/연₩9,900"은 착오였고,
+  사장님이 재확인: **양쪽 다 2026-07-28에 확정한 월₩2,200/연₩22,000이 맞다.** Android 상품을
+  Play Console에 생성할 때 이 가격으로 만들 것(아직 미생성, 아래 항목 참고).
 - **오버레이 서비스 조용히 사라짐 버그** — 위 핸드오프 항목 그대로 미해결(별도 세션이 이어받기로 함).
+  2026-08-01 Windows 세션이 관련 버그 하나 수정: PIP 창이 계속 "감시 대상 앱 보임"으로 잡혀
+  Open App/Focus ON이 불안정하던 문제(fix(overlay) 커밋 `312a5fd` 참고) — 다만 이건 "PIP 잔류"
+  케이스이고, 이 항목이 말하는 "몇 분 후 원인불명으로 조용히 꺼짐"(장시간 무전환 케이스)과
+  동일 버그인지는 미확인 — 다음 세션이 실기기로 구분해서 확인 필요.
 - Android/iOS 구독 상품 자체는 아직 각 스토어에 생성/등록 안 된 상태(Merchant Account는 풀린 것으로
   보이나 Play Console "정기 결제"에서 상품 생성 전 단계, App Store Connect는 미착수).
+
+### 2026-08-01 (이어서) — Windows 세션: Favorite Add UX 개선(낙관적 추가) + Focus 탭 정리 (`cad90e9`, `9ea68ba`)
+
+**"Add 누르면 리스트에 추가되면서 공유도 동시에 뜨게" 요청 처리**: 순서 자체(공유시트 → videoId
+확보 → 저장)는 바꿀 수 없음을 웹 검색으로 재확인(MediaSession 메타데이터/AccessibilityService
+대안 등 찾아봤으나 유튜브가 Shorts 재생 중 영상 URL을 노출하는 공식 방법 없음 — 공유 인텐트
+가로채기가 여전히 표준). 대신 대기 체감을 없앰 — `captureCurrentVideoInfo` 콜백이 이제 2번
+온다: 1차(접근성 트리에서 즉시 읽은 제목/채널만, videoId=null)로 낙관적으로 리스트에 바로
+추가해서 보여주고, 2차(공유 결과 도착, 최대 8초 후)에서 같은 행을 실제 videoId/url/썸네일로
+채운다. `SavedVideosStore.insert`가 Boolean 대신 생성된 id를 반환하도록 바꾸고 `updateVideoUrl`
+신규 추가.
+
+**Focus 탭 "저장한 영상" 섹션도 Saved/Favorite 통합에 맞춤**: 오버레이 P메뉴(네이티브)와 공용
+저장소(Mac 세션 `692cc86`)는 이미 병합됐는데 `focus.tsx`만 capture/favorite 탭 전환 UI가 남아
+있었음 — 탭 스위처 제거, Favorite 하나만 표시.
+
+**실기기 검증 중 발견한 인프라 이슈(다음 세션 참고)**:
+- 오늘 여러 차례 USB가 `offline` 상태로 끊김(재현 조건 불명) — `adb devices`가 `offline`으로
+  보이면 케이블 재연결/폰의 "USB 디버깅 허용" 팝업 확인 외엔 CLI로 복구 불가했음.
+- `adb reverse tcp:8081 tcp:8081`이 USB 재연결마다 조용히 사라짐(에러 없이 그냥 없어짐) — 매번
+  재확인 필요, 안 하면 앱이 스플래시에서 계속 멈춤(Metro 연결 실패인데 에러 로그가 명확치 않음).
+- `adb exec-out screencap`이 큰 파일에서 자주 잘림(63KB/131KB 등 특정 크기에서 끊김) — `adb shell
+  screencap -p //sdcard/x.png` + `adb pull //sdcard/x.png`(더블 슬래시로 Git Bash 경로 변환 방지)
+  방식이 더 안정적이었지만 이것도 가끔 재시도 필요.
+- Gradle CMake 빌드가 가끔 "다른 프로세스가 파일 사용 중" 에러로 실패 — 재시도하면 대부분 성공.

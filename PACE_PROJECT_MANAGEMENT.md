@@ -2552,3 +2552,16 @@ Log)은 아직 없음.
 ⚠️ **이 Mac엔 JDK 없어 백엔드 컴파일 미검증** — Railway 배포/co-session(Windows, JDK 있음)이 확인 필요.
 ⚠️ **사장님 조치**: App Store Connect → Keys에서 "Sign in with Apple"용 .p8 키(IAP 키와 별개) 발급 →
 Railway에 `APPLE_TEAM_ID`/`APPLE_SIGNIN_KEY_ID`/`APPLE_SIGNIN_PRIVATE_KEY` 설정.
+
+### 2026-08-01 (이어서) — Mac 세션: 크래시·성능 감사(웹리서치) SAFE 건 반영
+
+**성능 감사 결과**: 과거 리렌더 폭풍(setProgress 500ms/setDiag 3×s) 프로덕션 해결 확인, 새 SessionRemaining 격리도 정상. 반영(SAFE-JS):
+- feed: 죽은 `diag` 상태 + `setDiag`/onDiag/onAudioDiag 리렌더 소스 제거(dev 손짓테스트 흐림 방지), 죽은 `sessionRemainingMin` 제거.
+- home: whole-store 구독 3종(stats/dailyBonus/limitHit) → 필드별 좁은 셀렉터(session 종료/stats refresh마다 Home+카드 리렌더 감소).
+- 시뮬레이터로 홈/피드 무회귀 확인.
+**미반영(NEEDS-DEVICE-TEST)**: 플레이어 React.memo+useCallback(재생 스모크 필요), WebView 500ms progress 폴링 정지시 skip(end-detection JS라 위험), settings/기타 whole-store(저위험).
+
+**크래시 감사 결과**: 코드베이스 매우 견고(옵셔널 네이티브 로드/JSON.parse/RC/AdMob/SQLite 전부 가드, ErrorBoundary 존재). HIGH 없음. 반영(SAFE-JS):
+- `_layout.tsx:315` 알림리스너 `autoNextService.requestPermission()` sync-throw/async-reject 방어(New Arch 미처리 reject 하드크래시 방지).
+- `focus.tsx:88` `cameraPermissionStatus()` try/catch(:78과 동일, 바이너리 불일치 throw 방어).
+**미반영**: 전역 ErrorUtils 핸들러(좀비상태 마스킹 위험이라 보류), `react-native-track-player` 미사용 네이티브 제거(재빌드 필요 NEEDS-DEVICE-TEST), Text.defaultProps(React19, 비크래시).

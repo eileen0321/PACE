@@ -75,7 +75,9 @@ export default function PaceFeedScreen() {
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
-  const [diag, setDiag] = useState<{ wave: string; snap: string; audio: string }>({ wave: '—', snap: '—', audio: '—' }); // 디버그 오버레이
+  // 2026-08-01 성능 감사 — diag 상태는 렌더에서 전혀 안 쓰였는데(오버레이 미표시) onDiag/onAudioDiag가
+  // dev에서 초당 ~3회 setDiag로 피드(WebView 서브트리 포함)를 리렌더시켜 dev 손짓 테스트를 흐렸다.
+  // 죽은 상태라 제거 — 온디바이스 진단은 PaceGestureLog.nativeLog(리렌더 무관)가 담당.
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
@@ -315,7 +317,6 @@ export default function PaceFeedScreen() {
   }, [isAutoMode, focusSessionDurationMinutes]);
 
   // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
-  const sessionRemainingMin = sessionEndsAt != null ? Math.max(0, Math.ceil((sessionEndsAt - Date.now()) / 60000)) : null;
 
   // 전환 동안 손짓 추론 정지(iOS) → 페이지 로드에 CPU 양보. 손짓/볼륨/자연종료/수동 등 모든 넘김이
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
@@ -404,7 +405,7 @@ export default function PaceFeedScreen() {
     // diag state를 매번 새 객체로 갱신 → PaceFeedScreen(웹뷰 서브트리 포함) 전체가 초당 수회 리렌더 →
     // 예전에 setProgress 제거로 고쳤던 영상 "씹힘/히치"·손짓 카메라 불안정이 그대로 재발하는 회귀 벡터.
     // 릴리즈에선 완전히 끄고(__DEV__ false), dev에서만 진단 유지. 손짓 발화는 onHandWave라 이와 무관.
-    onDiag: (kind, text) => { if (__DEV__) setDiag((d) => (kind === 'wave' ? { ...d, wave: text } : { ...d, snap: text })); },
+    onDiag: () => {}, // diag 상태 제거(성능) — 진단은 네이티브 로그가 담당
   });
   // 전환 정지 함수를 goNext가 쓰는 ref에 연결(iOS=실제 정지, Android=no-op).
   pauseWaveRef.current = feedRemote?.pauseWaveForTransition ?? null;
@@ -471,7 +472,7 @@ export default function PaceFeedScreen() {
           onProgress={handleProgress}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
-          onAudioDiag={(text) => { if (__DEV__) setDiag((d) => ({ ...d, audio: text })); }} // C1: 릴리즈 리렌더 폭풍 차단
+          onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
         />
       )}
 
@@ -587,8 +588,6 @@ const styles = StyleSheet.create({
   // 상단 세션 토글 필(항상 표시) — OFF는 "▶ START SESSION"(중립 테두리), ON은 "● SESSION ON"(초록 테두리).
   sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   sessionPillOn: { borderColor: colors.success },
-  diagBox: { alignSelf: 'center', marginTop: 8, backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' },
-  diagText: { color: '#00E5A0', fontSize: 15, fontFamily: typography.monoFontFamilyBold, textAlign: 'center' },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   sessionDivider: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },

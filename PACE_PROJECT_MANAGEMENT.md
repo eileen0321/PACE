@@ -3237,3 +3237,15 @@ object의 인메모리 `Handler`)에 예약된다. 이 서비스 프로세스가
 재활성화까지 완료. **⚠️ iOS 쪽도 동일 클래스 버그 가능성 점검 필요** — iOS는 WebView 기반 Pace
 Feed라 아키텍처가 달라 그대로 적용은 안 되지만, "타이머를 인메모리에만 예약해두고 프로세스/뷰
 재생성 시 다시 안 거는" 패턴이 iOS 쪽 Focus Session 구현에도 있는지 확인 요청.
+
+### 2026-08-01 (자율세션, Mac) — co-session `6e11eeb`+`a37968d` iOS parity 검토 완료 (둘 다 코드변경 불필요)
+co-session의 두 Android 커밋을 pull해서 iOS 영향 검토 — **둘 다 iOS는 이미 안전, 코드변경 없음.** tsc 통과, 워킹트리 clean.
+
+**① `6e11eeb`(Focus 타임아웃 홈복귀 번복 + 타이머 프로세스복구 버그)**:
+- 정책 번복(홈으로 안 보내고 피드에 머물며 배지만 FOCUS OFF): iOS는 원래부터 이렇게 동작(`dc19620` — 피드 유지 + 배지 재탭 시 in-feed 광고/크레딧 모달). **"설계 차이" 항목 해소 확인.**
+- 🔴 타이머 프로세스복구 버그(Android: `bt_auto_mode`=SharedPreferences에 `true`로 남는데 인메모리 Handler 예약은 프로세스 죽으면 사라져 → 무료 무제한 자동넘김): **iOS엔 이 버그 클래스가 구조적으로 불가능.** 근거 — `feed/index.tsx`:
+  - `isAutoMode`는 순수 React state `useState(false)`(L83)로 **어디에도 영속 안 됨**. 앱 kill/재시작 → 피드 재마운트 → `false`로 리셋 → 사용자가 배지 다시 눌러야 세션 켜짐(타이머도 그때 새로 예약). Android처럼 "플래그만 true로 남는" 상태 자체가 없음.
+  - 백그라운드 진입 시 `setIsAutoMode(false)`(L285)로 명시적 OFF.
+  - 결정적: **타이머(`setTimeout`)와 `isAutoMode` 플래그가 같은 `useEffect`(L314-342, deps=[isAutoMode,duration])에 묶여 있어 desync 불가** — Android 버그는 플래그(SharedPreferences)와 타이머(Handler)가 별개 저장소라 어긋난 것. iOS는 그런 분리가 없음.
+
+**② `a37968d`(P-메뉴 아이콘 슬롯 폭 22→32dp, "HOT" 배지 pill 안 눌리게)**: Android 네이티브 FrameLayout 고정폭 슬롯의 AT_MOST 클램프 이슈. **iOS `PaceMenu.tsx`는 flexbox 행 리스트(190px 폭, 각 행=`trending-up` 아이콘 16px + 라벨 텍스트)라 "HOT" 텍스트 배지 pill 자체가 없음** → 눌릴 요소 없음, iOS 무관.

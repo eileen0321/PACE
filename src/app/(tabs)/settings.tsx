@@ -18,6 +18,7 @@ import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useToastStore } from '../../store/useToastStore';
+import { DAILY_LIMIT_OPTIONS, FOCUS_SESSION_DURATION_OPTIONS } from '../../constants/limits';
 import { clearUserHistory } from '../../database/repositories/sessionsRepository';
 import { capabilities, overlayService, autoNextService, bluetoothService } from '../../services/platform';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
@@ -49,10 +50,10 @@ const LANGUAGE_OPTIONS: { value: UserSettings['language']; labelKey: 'settings.l
   { value: 'ko', labelKey: 'settings.languageKorean' },
 ];
 const SLEEP_TIMER_OPTIONS = [15, 30, 45, 60, 0];
-const DAILY_LIMIT_OPTIONS = [30, 45, 60, 90, 120];
 const BREAK_OPTIONS = [10, 15, 20, 30, 0];
-// 2026-07-20 사용자 지시 — Focus Session(자동넘김) 지속 시간을 10분 하드코딩이 아니라 직접 고르게.
-const FOCUS_SESSION_DURATION_OPTIONS = [5, 10, 20, 30, 60];
+// 2026-08-01 — DAILY_LIMIT_OPTIONS/FOCUS_SESSION_DURATION_OPTIONS는 quick-control-sheet.tsx와
+// 중복 정의였고 DAILY_LIMIT 쪽은 값까지 달랐다(여기 15가 빠져 있어, quick-control-sheet에서 15로
+// 설정한 뒤 여기 cycle()로 넘기면 못 찾고 30으로 튀는 버그) — constants/limits.ts로 통합.
 // 2026-07-26 사장님 결정(D8, "고급 취침모드") — 무진동 수면감지 임계값, 프리미엄 전용 조절.
 const SLEEP_STILLNESS_OPTIONS = [5, 10, 15, 20];
 

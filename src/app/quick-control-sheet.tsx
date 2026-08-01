@@ -7,6 +7,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useBluetoothStore } from '../store/useBluetoothStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useTranslation } from '../services/i18n';
+import { DAILY_LIMIT_OPTIONS, FOCUS_SESSION_DURATION_OPTIONS } from '../constants/limits';
 
 // 2026-07-25 사용자 지적("몇번을 말하는데 안고쳐") — QuickControlSheet를 RN <Modal>로 띄우는 한
 // navigationBarTranslucent/statusBarTranslucent를 다 켜도 하단 내비게이션 바가 흰색으로 남는
@@ -20,9 +21,7 @@ import { useTranslation } from '../services/i18n';
 // Sleep Timer/Daily Limit/Break Reminder 시트를 Modal 컴포넌트에서 이 라우트로 옮긴다 —
 // UI/동작은 기존 QuickControlSheet과 동일, 여는 방식만 로컬 state+Modal에서 router.push로 교체.
 const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
-const DAILY_LIMIT_OPTIONS = [15, 30, 45, 60, 90, 120];
 const BREAK_OPTIONS = [0, 10, 15, 20, 30];
-const FOCUS_SESSION_DURATION_OPTIONS = [5, 10, 20, 30, 60];
 
 export type QuickControlSheetKind = 'sleepTimer' | 'dailyLimit' | 'breakReminder' | 'focusSessionDuration';
 

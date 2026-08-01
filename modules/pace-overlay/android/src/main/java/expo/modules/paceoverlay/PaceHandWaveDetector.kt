@@ -64,6 +64,10 @@ object PaceHandWaveDetector {
   // 재조정한다.
   private const val GROWTH_RATIO_THRESHOLD = 1.2
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
+  // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
+  private const val REARM_SIZE_RATIO = 0.75
+  // 손이 안 작아지고 계속 카메라 앞에 머무는 극단적인 경우를 위한 안전판(무한정 재무장 안 되는 것 방지).
+  private const val REARM_TIMEOUT_MS = 3000L
 
   // 2026-07-26 사용자 관찰("손모양이 아니여도 카메라만 가리면 넘어가는듯") — MediaPipe 손 랜드마크
   // 신뢰도(0.5)가 빠른 움직임/블러에서 프레임을 놓치는 경우의 안전망. 손 랜드마크와 별개로 Y평면
@@ -90,6 +94,14 @@ object PaceHandWaveDetector {
   private var fakeLifecycleOwner: FakeLifecycleOwner? = null
   private var lastProcessedAtMs = 0L
   private var lastTriggerAtMs = 0L
+  // 2026-08-01 사용자 지적("화면이 2개씩 넘어가냐 큐에 넣었다가") — 손을 밀어낸 뒤 바로 안 치우고
+  // 카메라 앞에 머물러 있으면, 그 잔류 흔들림만으로도 GROWTH_WINDOW_MS(700ms) 새 창에서 growthRatio가
+  // 다시 1.2를 넘어 REFRACTORY_MS(1.2초)만 지나면 또 트리거됐다(실기기 로그로 확인 — 한 번의 제스처
+  // 뒤에 1.7~3초 간격으로 WAVE가 연달아 찍힘). 시간 기반 냉각만으로는 "손이 안 물러났다"를 못 잡는다 —
+  // 트리거 시점 손 크기의 REARM_SIZE_RATIO 이하로 다시 작아져야(=손을 치웠다는 증거) 재무장하도록
+  // 게이트를 추가한다. 손이 화면에서 완전히 사라지는 경우(landmarks 없음)도 물러난 것으로 간주.
+  private var awaitingRearm = false
+  private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
   private val sizeHistory = ArrayDeque<Pair<Long, Double>>()
   // (timestamp, averageLuma) 짧은 이력 — occlusion(가려짐) 안전망용, sizeHistory와 동일한 원리.
@@ -337,7 +349,10 @@ object PaceHandWaveDetector {
   }
 
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
-    if (result.landmarks().isEmpty()) return
+    if (result.landmarks().isEmpty()) {
+      awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
+      return
+    }
     val landmarks = result.landmarks()[0]
     if (landmarks.size <= 9) return
     val wrist = landmarks[0]
@@ -346,6 +361,16 @@ object PaceHandWaveDetector {
     if (handSize < MIN_HAND_SIZE) return
 
     val now = System.currentTimeMillis()
+
+    if (awaitingRearm) {
+      if (handSize <= rearmBelowSize || now - lastTriggerAtMs > REARM_TIMEOUT_MS) {
+        awaitingRearm = false
+      } else {
+        // 아직 손을 안 치웠음 — 방금 그 제스처의 잔류 흔들림이므로 새 제스처로 세지 않는다.
+        return
+      }
+    }
+
     sizeHistory.addLast(now to handSize)
     while (sizeHistory.isNotEmpty() && now - sizeHistory.first().first > GROWTH_WINDOW_MS) {
       sizeHistory.removeFirst()
@@ -364,6 +389,8 @@ object PaceHandWaveDetector {
       Log.i(TAG, "WAVE detected growthRatio=$growthRatio handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
+      awaitingRearm = true
+      rearmBelowSize = handSize * REARM_SIZE_RATIO
       // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
       // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
       Handler(Looper.getMainLooper()).post { onWave() }

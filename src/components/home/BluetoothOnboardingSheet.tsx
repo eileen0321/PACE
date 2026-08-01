@@ -84,11 +84,15 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
             <Text style={styles.recommendedBadgeText}>{t('handsFreeSheet.recommended')}</Text>
           </View>
         </View>
+        {/* 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓 줄에만 있던
+            보조 설명(hint)이 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지" 정보가 부족했다.
+            손짓 hint와 같은 스타일(들여쓰기·크기)로 통일. */}
+        <Text style={styles.hintText}>{t('handsFreeSheet.bluetoothRemoteHint')}</Text>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><GestureFlickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>
         </View>
-        <Text style={styles.handWaveHint}>{t('handsFreeSheet.handWaveHint')}</Text>
+        <Text style={styles.hintText}>{t('handsFreeSheet.handWaveHint')}</Text>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><Feather name="play-circle" size={16} color={colors.textSecondary} /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.handsFreeModeLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.staysOnLabel')}</Text>
@@ -123,7 +127,7 @@ const styles = StyleSheet.create({
   // 같은 x에서 시작하게 한다. 2026-07-27 — 아이콘 자체를 56x50으로 키워서 스테이지도 맞춰 확대.
   iconStage: { width: 56, height: 50, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary },
-  handWaveHint: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textTertiary, lineHeight: 16, marginTop: -spacing.xs, marginBottom: spacing.xs, marginLeft: 44 },
+  hintText: { fontSize: 11, fontFamily: typography.bodyFontFamilyMedium, color: colors.textTertiary, lineHeight: 16, marginTop: -spacing.xs, marginBottom: spacing.xs, marginLeft: 44 },
   actionArrow: { color: colors.textTertiary },
   recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 6 },
   recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },

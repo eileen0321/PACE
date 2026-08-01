@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -380,9 +381,16 @@ export default function HomeScreen() {
           </Pressable>
         )}
 
-        {showBatteryPrompt && (
+        {/* 2026-08-01 사용자 지적("그걸 저렇게 촌스럽게 띄운다고", "노티를 저렇게 줄줄이 띄우는게
+            트렌드야?") — 배터리 배너에 이모지(🔋)를 써서 위 인사이트 배너(P 배지)와 톤이 안 맞았고,
+            둘 다 조건이 맞으면 동시에 쌓여 보였다. 이모지를 인사이트 배너와 동일한 원형 배지로
+            통일하고, "노티가 다음에 나오게"라는 요청대로 인사이트 배너가 떠 있는 동안은 배터리
+            배너를 미룬다 — 인사이트 배너를 닫아야(todaysInsight → null) 그다음에 나타난다. */}
+        {showBatteryPrompt && !todaysInsight && (
           <Pressable style={styles.sleepInsightBanner} onPress={acceptBatteryPrompt}>
-            <Text style={styles.sleepInsightIcon}>🔋</Text>
+            <View style={styles.sleepInsightBadge}>
+              <Feather name="battery-charging" size={14} color="#FFFFFF" />
+            </View>
             <Text style={styles.sleepInsightText}>{t('focus.batteryPromptBanner')}</Text>
             <Text style={styles.sleepInsightDismiss} onPress={dismissBatteryPrompt}>✕</Text>
           </Pressable>
@@ -486,7 +494,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(129,140,248,0.25)',
   },
-  sleepInsightIcon: { fontSize: 18 },
   sleepInsightBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   sleepInsightBadgeText: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF' },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },

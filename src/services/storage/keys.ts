@@ -30,18 +30,14 @@ export const STORAGE_KEYS = {
   // 배너로 1회 능동 안내한다. 이 키는 "배너를 보여줬는지"만 기록(허용 여부와 무관) — 매 세션마다
   // 시스템 다이얼로그를 다시 띄우면 사용자 짜증 + Google Play가 이 권한 오남용으로 보는 리스크가 있다.
   batteryOptimizationPromptSeen: 'pace_battery_optimization_prompt_seen',
-  // 2026-07-28 사장님 지시 — 재미있는 랜덤 사용 인사이트 노티(어제 몇시까지 봤는지/오늘 평균 대비
-  // 얼마나 더·덜 봤는지)를 하루 1회만 띄우기 위한 "오늘 이미 보여줬는지" 날짜 문자열(YYYY-MM-DD).
-  lastUsageInsightShownDate: 'pace_last_usage_insight_shown_date',
-  // 2026-07-29 사장님 지시 — 홈 배너를 "수면 감지 후 고정 문구"에서 "매일 하나의 랜덤 인사이트(사용
-  // 습관/신조어/힐링 문구/명언)"로 확장. 노티와 배너가 같은 날 서로 다른 걸 보여주면 혼란스러우니,
-  // "오늘 뽑은 항목"(카테고리+인덱스, 렌더링된 텍스트가 아니라 원본 선택값)을 캐시해 노티/배너 둘 다
-  // 이 값을 공유한다 — 언어를 하루 중에 바꿔도 텍스트가 그 시점 언어로 다시 렌더링되도록 완성된
-  // 문자열이 아니라 "무엇을 뽑았는지"만 저장한다.
-  todaysInsightPick: 'pace_todays_insight_pick',
   // 2026-07-29 — 인사이트 배너를 탭했을 때 "가끔" 보너스 크레딧을 주는 선물상자 연출. 하루에 한 번만
   // 보상 시도(연속으로 계속 눌러서 파밍하는 것 방지) — 오늘 이미 시도했는지 날짜로 기록.
   insightGiftClaimedDate: 'pace_insight_gift_claimed_date',
+  // 2026-08-01 사용자 지시("출시전에" 백엔드로 이전) — 홈 배너 문구 풀을 백엔드(/insights)에서 받아
+  // 하루 단위로 캐싱. 날짜가 바뀌거나 캐시가 없으면 재요청, 실패 시 이 캐시(또는 없으면 로컬 폴백
+  // insightContent.ts)로 계속 동작 — 앱이 오프라인이거나 백엔드가 잠깐 죽어도 배너가 안 죽는다.
+  insightBundleCache: 'pace_insight_bundle_cache',
+  insightBundleCacheDate: 'pace_insight_bundle_cache_date',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

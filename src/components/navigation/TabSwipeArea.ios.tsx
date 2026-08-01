@@ -3,10 +3,12 @@ import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { Directions, Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePathname, useRouter } from 'expo-router';
 
-// 2026-08-01 사장님 지시 — iOS 탭(홈/집중/분석/설정) 좌우 스와이프. 하단탭 네비게이터(@react-navigation/
+// 2026-08-01 사장님 지시 — 탭(홈/집중/분석/설정) 좌우 스와이프. 하단탭 네비게이터(@react-navigation/
 // bottom-tabs)는 스와이프를 기본 미지원이라, 화면 위에 좌우 Fling(빠른 좌우 플릭) 제스처를 얹어 인접 탭으로
 // 이동한다. Fling은 방향(수평)이 명확해 화면 내부의 세로 ScrollView·탭과 경쟁하지 않는다(탭/세로 스크롤 보존).
-// Android는 TabSwipeArea.tsx(패스스루) — 스와이프 구현을 OS별로 분리(jlpt-master 방식).
+// 2026-08-01 — Android도 동일 로직 지원(TabSwipeArea.tsx 참고, 이 파일과 내용 동일). OS별로 파일을 나눈
+// 이유는 이 기능 때문이 아니라 피드(Shorts) 손가락 스와이프 쪽 iOS 전용 제약과 같은 디렉토리 패턴을
+// 맞추기 위함 — 로직 자체엔 iOS 전용 API가 없다.
 const TAB_ORDER = ['home', 'focus', 'stats', 'settings'];
 
 export function TabSwipeArea({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {

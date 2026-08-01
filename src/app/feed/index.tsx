@@ -92,6 +92,12 @@ export default function PaceFeedScreen() {
   // 추적. 타임아웃 후 재활성화 시도 시 비프리미엄이면 무료 재개 대신 보상광고 연장 모달로 보낸다.
   const sessionTimedOutRef = useRef(false);
   const [showExtendModal, setShowExtendModal] = useState(false);
+  // 2026-08-01 사장님 지적("Shorts HOT/Favorite 누르면 우리 앱에서 열려야지 사파리로 열지 마") — 이 값이
+  // 설정되면 플레이어를 그 videoId로 리마운트(key 변경)해 앱 내 피드에서 재생하고, 이후 YouTube 네이티브
+  // 스와이프로 이어진다(Safari로 안 튕김). 스와이프 모드는 firstVideoIdRef에 첫 영상을 핀하므로 key 교체로
+  // 리마운트해야 새 영상이 로드된다.
+  const [forcedVideoId, setForcedVideoId] = useState<string | null>(null);
+  const playInFeed = (videoId: string) => { markUserInput(); setForcedVideoId(videoId); setStatus('PLAYING'); };
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
   const userId = useUserStore((s) => s.user?.id);
@@ -480,8 +486,9 @@ export default function PaceFeedScreen() {
           500ms 폴링이 계속 브릿지로 메시지를 쏘았다(재생은 정지됐어도 CPU/wakeup 낭비). */}
       {current && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
+          key={forcedVideoId ?? current.videoId}
           ref={playerRef}
-          videoId={current.videoId}
+          videoId={forcedVideoId ?? current.videoId}
           playing={playing}
           onProgress={handleProgress}
           onVideoChange={(id) => { currentVideoIdRef.current = id; }}
@@ -547,6 +554,7 @@ export default function PaceFeedScreen() {
             userId={userId}
             kind={activeSavedList}
             onClose={() => setActiveSavedList(null)}
+            onOpenVideo={playInFeed}
             onAddCurrent={async () => {
               if (!userId) return;
               const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
@@ -566,7 +574,7 @@ export default function PaceFeedScreen() {
             }}
           />
         )}
-        {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} />}
+        {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}
 
         {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
             feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상

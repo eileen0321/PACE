@@ -19,6 +19,7 @@ export function SavedVideoListOverlay({
   kind,
   onClose,
   onAddCurrent,
+  onOpenVideo,
 }: {
   userId: string;
   kind: SavedVideoKind;
@@ -26,6 +27,9 @@ export function SavedVideoListOverlay({
   // iOS 전용 — 피드가 현재 영상 정보를 직접 알아서(Android처럼 공유시트 캡처가 불필요) "현재 영상 추가"를
   // 넘겨준다. 주어졌을 때만 favorite 리스트 상단에 추가 버튼을 렌더한다. 추가 후 리스트 새로고침.
   onAddCurrent?: () => Promise<void> | void;
+  // onOpenVideo(optional) — 제공되면 항목 탭 시 외부 브라우저(Safari) 대신 앱 내 피드에서 재생
+  // (2026-08-01 사장님 지적). 미제공이면 기존 Linking(url) 폴백.
+  onOpenVideo?: (videoId: string) => void;
 }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<SavedVideo[]>([]);
@@ -50,9 +54,10 @@ export function SavedVideoListOverlay({
   }, []);
 
   const onOpen = useCallback((item: SavedVideo) => {
+    if (onOpenVideo && item.videoId) { onOpenVideo(item.videoId); onClose(); return; }
     if (!item.url) return;
     Linking.openURL(item.url).catch(() => {});
-  }, []);
+  }, [onOpenVideo, onClose]);
 
   const onShare = useCallback((item: SavedVideo) => {
     if (!item.url) return;

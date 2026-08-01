@@ -19,7 +19,9 @@ const CATEGORY_LABEL_KEY: Record<string, TranslationKey> = {
   pets: 'overlay.hotCatPets',
 };
 
-export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
+// onOpenVideo(optional) — 제공되면 항목 탭 시 외부 브라우저(Safari) 대신 앱 내 피드에서 그 videoId를
+// 재생한다(2026-08-01 사장님 지적 "우리 앱에서 열려야지 사파리로 열지 마"). 미제공이면 기존 Linking 폴백.
+export function ShortsHotOverlay({ onClose, onOpenVideo }: { onClose: () => void; onOpenVideo?: (videoId: string) => void }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState<string>('all');
   // 프리페치 스토어에서 캐시를 먼저 읽어 즉시 표시(stale-while-revalidate) — 앱 시작 시 'all'은 이미
@@ -41,7 +43,8 @@ export function ShortsHotOverlay({ onClose }: { onClose: () => void }) {
 
   const onOpen = (item: ShortsHotVideo) => {
     useShortsHotStore.getState().markOpened(item.videoId);
-    Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
+    if (onOpenVideo) { onOpenVideo(item.videoId); onClose(); }
+    else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 
   return (

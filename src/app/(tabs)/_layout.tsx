@@ -9,6 +9,7 @@ import { useTranslation } from '../../services/i18n';
 import { AdBanner } from '../../components/home/AdBanner';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
+import { TabSwipeArea } from '../../components/navigation/TabSwipeArea';
 
 // 2026-07-19 실기기(갤럭시 Note20, 3버튼 내비게이션) 1차 수정 — jlpt-master/zen-master의 방어적
 // 최솟값 패턴(paddingBottom = Math.max(insets.bottom, 10))을 그대로 이식했으나, 실기기 스크린샷을
@@ -62,7 +63,7 @@ export default function TabsLayout() {
   };
 
   return (
-    <View style={styles.root}>
+    <TabSwipeArea style={styles.root}>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -108,7 +109,7 @@ export default function TabsLayout() {
         <AdBanner />
       </View>
     )}
-    </View>
+    </TabSwipeArea>
   );
 }
 

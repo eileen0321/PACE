@@ -289,10 +289,15 @@ class PaceAccessibilityService : AccessibilityService() {
     // 띄운 뒤 그 목록에서 우리 앱("Pace")을 찾아 클릭 — PaceShareCaptureActivity가 받는 진짜 공유
     // 텍스트에서 파싱한다. 실패해도(공유 버튼을 못 찾음/공유시트에 Pace가 안 보임/타임아웃) 최소한
     // 제목/채널은 넘겨준다 — videoId=null이면 호출부(JS)가 썸네일 없이 저장한다.
-    fun captureCurrentVideoInfo(callback: (title: String?, channel: String?, videoId: String?, url: String?) -> Unit) {
+    // 2026-08-01 사장님 지시("Add 누르면 리스트에 추가되면서 공유도 동시에 뜨게") — 공유시트가
+    // 뜨는 동안(최대 8초) 사용자가 아무 반응 없이 기다리는 게 아니라, 접근성 트리에서 즉시 읽을 수
+    // 있는 제목/채널로 먼저 "낙관적" 추가를 보여주고, 공유 결과(videoId/url)가 나오면 그 항목을
+    // 갱신한다 — 콜백이 두 번 불린다: 1차(isFinal=false, videoId/url=null) 즉시, 2차(isFinal=true)
+    // 공유 결과 도착 시. 공유 버튼 자체를 못 찾는 등 즉시 실패하는 경우엔 1차 없이 2차만 온다.
+    fun captureCurrentVideoInfo(callback: (title: String?, channel: String?, videoId: String?, url: String?, isFinal: Boolean) -> Unit) {
       val service = instance
       if (service == null) {
-        callback(null, null, null, null)
+        callback(null, null, null, null, true)
         return
       }
       service.captureCurrentVideoInfoInternal(callback)
@@ -651,7 +656,7 @@ class PaceAccessibilityService : AccessibilityService() {
 
   // ── Favorite/Capture: 현재 영상 정보 캡처(2026-07-31) ──
 
-  private fun captureCurrentVideoInfoInternal(callback: (String?, String?, String?, String?) -> Unit) {
+  private fun captureCurrentVideoInfoInternal(callback: (String?, String?, String?, String?, Boolean) -> Unit) {
     try {
       val root = trackedAppRootNode()
       val texts = mutableListOf<String>()
@@ -670,9 +675,13 @@ class PaceAccessibilityService : AccessibilityService() {
       val shareNode = findNodeByContentDesc(root, "공유")
       if (shareNode == null) {
         Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 버튼을 못 찾음")
-        callback(title, channel, null, null)
+        callback(title, channel, null, null, true)
         return
       }
+
+      // 1차: 공유 결과를 기다리지 않고 지금 바로 아는 것(제목/채널)만으로 낙관적 콜백 — 호출부가
+      // 리스트에 즉시 추가해 보여준다. videoId/url은 아직 모르므로 null.
+      callback(title, channel, null, null, false)
 
       var completed = false
       val timeoutRunnable = Runnable {
@@ -683,7 +692,7 @@ class PaceAccessibilityService : AccessibilityService() {
           // "Pace"를 못 찾아 폴링이 끝까지 실패한 경우, 시스템 공유시트가 화면에 뜬 채로 남아
           // 사용자가 직접 닫아야 하는 상태가 된다 — 뒤로가기로 우리가 대신 닫아준다.
           performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-          callback(title, channel, null, null)
+          callback(title, channel, null, null, true)
         }
       }
       PaceShareCaptureActivity.pendingCallback = { sharedText ->
@@ -691,7 +700,7 @@ class PaceAccessibilityService : AccessibilityService() {
           completed = true
           handler.removeCallbacks(timeoutRunnable)
           val videoId = extractYouTubeVideoId(sharedText)
-          callback(title, channel, videoId, sharedText)
+          callback(title, channel, videoId, sharedText, true)
         }
       }
       handler.postDelayed(timeoutRunnable, CAPTURE_TIMEOUT_MS)
@@ -702,7 +711,7 @@ class PaceAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(timeoutRunnable)
         PaceShareCaptureActivity.pendingCallback = null
         Log.w("PaceAccessibility", "captureCurrentVideoInfo: 공유 버튼 클릭 실패")
-        callback(title, channel, null, null)
+        callback(title, channel, null, null, true)
         return
       }
       pollForShareTarget(attemptsLeft = 12)
@@ -710,7 +719,7 @@ class PaceAccessibilityService : AccessibilityService() {
       // 방어적 전체 캐치 — 이 기능은 부가 기능이라 실패해도 앱이 죽으면 안 됨(사장님 지시:
       // "예외처리도 다 적용해가면서").
       Log.e("PaceAccessibility", "captureCurrentVideoInfo 예외", e)
-      callback(null, null, null, null)
+      callback(null, null, null, null, true)
     }
   }
 

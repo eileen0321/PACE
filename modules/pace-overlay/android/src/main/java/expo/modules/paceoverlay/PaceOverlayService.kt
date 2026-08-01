@@ -1698,16 +1698,39 @@ class PaceOverlayService : Service() {
       }
     }
 
+    // 2026-08-01 사장님 지시("Add 누르면 리스트에 추가되면서 공유도 동시에 뜨게") — videoId/url을
+    // 알아내려면 공유시트를 거쳐야 하지만(최대 8초), 그동안 사용자를 기다리게 두지 않는다. 접근성
+    // 트리에서 즉시 읽을 수 있는 제목/채널로 먼저 낙관적으로 추가해 보여주고(1차 콜백), 공유 결과가
+    // 나오면 같은 행을 실제 videoId/url/썸네일로 채운다(2차 콜백) — captureCurrentVideoInfo 참고.
     addRow.setOnClickListener {
-      Toast.makeText(applicationContext, "Reading video info…", Toast.LENGTH_SHORT).show()
-      PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url ->
+      var placeholderId: String? = null
+      PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url, isFinal ->
         foregroundPollHandler.post {
-          val hasCapture = !title.isNullOrEmpty() || !videoId.isNullOrEmpty()
-          if (hasCapture && SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url)) {
-            Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
-            renderList()
+          if (!isFinal) {
+            if (!title.isNullOrEmpty()) {
+              placeholderId = SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url)
+              if (placeholderId != null) {
+                Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
+                renderList()
+              }
+            }
+            return@post
+          }
+          val pid = placeholderId
+          if (pid != null) {
+            if (videoId != null) {
+              SavedVideosStore.updateVideoUrl(applicationContext, pid, videoId, url)
+              renderList()
+            }
           } else {
-            Toast.makeText(applicationContext, "Couldn't read this video — try again", Toast.LENGTH_SHORT).show()
+            // 1차 콜백 없이 바로 실패로 끝난 경우(공유 버튼 자체를 못 찾음 등) — 예전 방식대로 처리.
+            val hasCapture = !title.isNullOrEmpty() || !videoId.isNullOrEmpty()
+            if (hasCapture && SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url) != null) {
+              Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
+              renderList()
+            } else {
+              Toast.makeText(applicationContext, "Couldn't read this video — try again", Toast.LENGTH_SHORT).show()
+            }
           }
         }
       }
@@ -2499,9 +2522,12 @@ private object SavedVideosStore {
     return out
   }
 
-  fun insert(context: Context, kind: String, videoId: String?, title: String?, channel: String?, url: String?): Boolean {
-    val userId = getUserId(context) ?: return false
-    val db = openDb(context) ?: return false
+  // 2026-08-01 사장님 지시("Add 누르면 리스트에 추가되면서 공유도 동시에") — videoId/url이 아직 없어도
+  // (공유 결과를 기다리는 중) 일단 낙관적으로 행을 만들고, 나중에 updateVideoUrl로 채워 넣을 수 있게
+  // 생성된 id를 반환한다.
+  fun insert(context: Context, kind: String, videoId: String?, title: String?, channel: String?, url: String?): String? {
+    val userId = getUserId(context) ?: return null
+    val db = openDb(context) ?: return null
     return try {
       val id = "sv-${System.currentTimeMillis()}-${(1000..9999).random()}"
       val thumbnailUrl = videoId?.let { youtubeThumbnailUrl(it) }
@@ -2512,9 +2538,26 @@ private object SavedVideosStore {
         "INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         arrayOf(id, userId, kind, videoId, title, channel, url, thumbnailUrl, "youtube", addedAt)
       )
-      true
+      id
     } catch (e: Exception) {
       Log.e("PaceOverlay", "SavedVideosStore.insert failed", e)
+      null
+    } finally {
+      db.close()
+    }
+  }
+
+  // 공유 결과(videoId/url)가 나중에 도착하면 낙관적으로 만든 행을 실제 값으로 채운다.
+  fun updateVideoUrl(context: Context, id: String, videoId: String, url: String?): Boolean {
+    val db = openDb(context) ?: return false
+    return try {
+      db.execSQL(
+        "UPDATE saved_videos SET video_id=?, url=?, thumbnail_url=? WHERE id=?",
+        arrayOf(videoId, url, youtubeThumbnailUrl(videoId), id)
+      )
+      true
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.updateVideoUrl failed", e)
       false
     } finally {
       db.close()

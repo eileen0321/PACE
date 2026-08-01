@@ -32,6 +32,11 @@ export const translations = {
       watchAdToExtend: 'Watch ad for +{{extend}}m',
       useCreditsToExtend: 'Use {{credits}} credits for +{{extend}}m',
       focusSessionExtendedToast: 'Focus Session extended by {{extend}} minutes',
+      // 2026-08-01 사용자 지시("룰을 다시 정해") — 하루 한도(daily limit)를 다 쓴 뒤 두 번째부터의
+      // 연장은 Focus Session 타이머와 같은 광고/크레딧 모달을 재사용한다(FocusSessionExtendModal
+      // titleKey/messageKey prop) — 문구만 "오늘 한도"로 바꾼 자매 키.
+      dailyLimitExtendTitle: "Today's limit reached",
+      dailyLimitExtendMessage: 'Your one free extra {{extend}} minutes today is already used. Watch a short ad or use credits for {{extend}} more.',
       // 2026-07-26 감사 발견 — useBluetoothStore.toggleAutoMode의 iOS 토스트(하드웨어 리모컨 없어
       // 네이티브 토스트가 없는 플랫폼이라 인앱에서 직접 표시)가 언어 설정과 무관하게 항상 영어였다.
       focusSessionEnabledToast: '🎧 Focus Session Enabled',
@@ -534,6 +539,8 @@ export const translations = {
       watchAdToExtend: '광고 보고 +{{extend}}분 받기',
       useCreditsToExtend: '크레딧 {{credits}}개로 +{{extend}}분 받기',
       focusSessionExtendedToast: 'Focus Session이 {{extend}}분 더 이어져요',
+      dailyLimitExtendTitle: '오늘 한도를 다 썼어요',
+      dailyLimitExtendMessage: '오늘 무료로 드리는 {{extend}}분 연장은 이미 썼어요. 짧은 광고를 보거나 크레딧을 사용하면 {{extend}}분 더 볼 수 있어요.',
       focusSessionEnabledToast: '🎧 Focus Session 켜짐',
       focusSessionDisabledToast: '🎧 Focus Session 꺼짐',
       usageInsightTitle: 'Pace 인사이트',

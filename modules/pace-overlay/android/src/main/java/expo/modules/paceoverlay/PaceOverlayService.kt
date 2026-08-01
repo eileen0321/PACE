@@ -2135,7 +2135,10 @@ class PaceOverlayService : Service() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
-        setPadding((14 * d).toInt(), (9 * d).toInt(), (14 * d).toInt(), (9 * d).toInt())
+        // 2026-08-01 사용자 지시("가로 넓이 키우라고") — 이전에 줄였던 좌우 패딩을 14→18dp로 늘려
+        // 박스 전체 너비를 살짝 키운다(WRAP_CONTENT 구조는 유지 — MATCH_PARENT로 되돌리면 짧은 행
+        // 뒤에 빈 공간이 생기던 예전 버그가 재발함).
+        setPadding((18 * d).toInt(), (9 * d).toInt(), (18 * d).toInt(), (9 * d).toInt())
         setOnClickListener { item.action() }
       }
       val iconSlot = FrameLayout(this).apply {
@@ -2159,7 +2162,9 @@ class PaceOverlayService : Service() {
             cornerRadius = 999f
             setColor(Color.parseColor("#E5484D"))
           }
-          setPadding((6 * d).toInt(), (1 * d).toInt(), (6 * d).toInt(), (1 * d).toInt())
+          // 2026-08-01 사용자 지적("HOT 아이콘이 세로로 줄어들어 보이잖아") — 상하 패딩이 1dp뿐이라
+          // 옆 라벨 텍스트(13sp)에 비해 배지가 납작하게 눌려 보였다. 3dp로 늘려 배지다운 비율로.
+          setPadding((6 * d).toInt(), (3 * d).toInt(), (6 * d).toInt(), (3 * d).toInt())
         }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
       }
       row.addView(iconSlot)

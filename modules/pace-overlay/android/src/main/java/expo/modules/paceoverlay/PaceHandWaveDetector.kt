@@ -65,7 +65,11 @@ object PaceHandWaveDetector {
   private const val GROWTH_RATIO_THRESHOLD = 1.2
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
-  private const val REARM_SIZE_RATIO = 0.75
+  // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
+  // 살짝 오므라들거나 흔들리는 정도로도 우연히 만족되기 쉬웠다(한 번의 연속 동작인데 중간에
+  // 재무장→그 남은 전진 동작이 새 기준선 대비 또 growthRatio를 넘겨 트리거 두 번). 손을 화면
+  // 앞에서 확실히 뺐다고 볼 수 있는 수준까지 훨씬 낮춘다.
+  private const val REARM_SIZE_RATIO = 0.45
   // 손이 안 작아지고 계속 카메라 앞에 머무는 극단적인 경우를 위한 안전판(무한정 재무장 안 되는 것 방지).
   private const val REARM_TIMEOUT_MS = 3000L
 

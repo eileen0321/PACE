@@ -125,26 +125,40 @@ class PaceOverlayModule : Module() {
 
     Function("requestUsageAccessPermission") {
       appContext.reactContext?.let { context ->
-        // 2026-08-01 사용자 지적("왜 앱 키자마자 사용정보 접근 허용 메뉴가 나와") — 접근성 권한
-        // 안내(위 requestAccessibilityPermission)와 달리 이건 아무 설명 없이 바로 시스템 설정을
-        // 띄웠다. 같은 톤(상단 가운데 토스트, 2회 노출)으로 무슨 화면인지 먼저 알려준다.
-        val guidance = if (java.util.Locale.getDefault().language == "ko") {
-          "다른 앱 사용 감지 권한 — 목록에서 'Pace'를 찾아 켜주세요"
-        } else {
-          "Usage access — find \"Pace\" in the list and turn it on"
-        }
-        fun showGuidanceToast() {
-          Toast.makeText(context, guidance, Toast.LENGTH_LONG).apply {
-            setGravity(Gravity.TOP, 0, (180 * context.resources.displayMetrics.density).toInt())
-          }.show()
-        }
-        showGuidanceToast()
-        Handler(Looper.getMainLooper()).postDelayed({ showGuidanceToast() }, 3500L)
+        // 2026-08-01 사용자 지시("더 단축할순 없어?") — ACCESSIBILITY_DETAILS_SETTINGS(위 함수)와
+        // 달리 사용정보 접근은 signature 권한 없이도 data=package: URI로 앱 상세 토글 화면에 바로
+        // 갈 수 있다는 게 AOSP에 문서화돼 있다(서드파티도 됨) — 접근성처럼 항상 막히는 게 아니라
+        // OEM에 따라 다를 수 있어 try로 감싸고, 실패하면 일반 목록 + 안내 토스트로 폴백한다.
         val activity = appContext.currentActivity
-        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+        val directIntent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+          data = Uri.parse("package:${context.packageName}")
           if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        (activity ?: context).startActivity(intent)
+        try {
+          (activity ?: context).startActivity(directIntent)
+        } catch (e: RuntimeException) {
+          Log.w("PaceOverlayModule", "requestUsageAccessPermission: direct per-app intent failed, falling back to list", e)
+          val guidance = if (java.util.Locale.getDefault().language == "ko") {
+            "다른 앱 사용 감지 권한 — 목록에서 'Pace'를 찾아 켜주세요"
+          } else {
+            "Usage access — find \"Pace\" in the list and turn it on"
+          }
+          fun showGuidanceToast() {
+            Toast.makeText(context, guidance, Toast.LENGTH_LONG).apply {
+              setGravity(Gravity.TOP, 0, (180 * context.resources.displayMetrics.density).toInt())
+            }.show()
+          }
+          showGuidanceToast()
+          Handler(Looper.getMainLooper()).postDelayed({ showGuidanceToast() }, 3500L)
+          val fallbackIntent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+            if (activity == null) flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          try {
+            (activity ?: context).startActivity(fallbackIntent)
+          } catch (fallbackError: RuntimeException) {
+            Log.e("PaceOverlayModule", "requestUsageAccessPermission: fallback also failed", fallbackError)
+          }
+        }
       }
     }
 

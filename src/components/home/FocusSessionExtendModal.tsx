@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useTranslation } from '../../services/i18n';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { bluetoothService } from '../../services/platform';
 import { showRewardedAd } from '../../services/ads/rewardedAd';
 import { useToastStore } from '../../store/useToastStore';
@@ -17,7 +17,17 @@ export const FOCUS_SESSION_EXTEND_MINUTES = 5;
 // 모달 — 예전 overlay/index.tsx의 "자동넘김 30편 한도" 모달을 완전히 대체한다(그 시스템은 제거됨).
 // Home 화면이 AppState 'active'마다 bluetoothService.consumeFocusSessionTimedOut()을 1회성 소비
 // 확인해 이 모달을 띄운다.
-export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boolean; onDismiss: () => void }) {
+// 2026-08-01 사용자 지시("룰을 다시 정해 — focus on 다 보면 5분 1회만 더 주기, 그다음부턴 광고/
+// 크레딧") — 하루 한도(LimitReachedOverlay)도 같은 광고/크레딧 게이트가 필요해졌다. onExtend를
+// prop으로 받게 일반화해서 Focus Session 타이머(bluetoothService.extendFocusSession)와 하루 한도
+// (addBonusMinutes) 양쪽에서 이 모달 하나를 재사용한다 — 로직 중복 없이 동일한 규칙을 보장.
+export function FocusSessionExtendModal({ visible, onDismiss, onExtend, titleKey = 'home.focusSessionTimedOutTitle', messageKey = 'home.focusSessionTimedOutMessage' }: {
+  visible: boolean;
+  onDismiss: () => void;
+  onExtend?: (minutes: number) => void;
+  titleKey?: TranslationKey;
+  messageKey?: TranslationKey;
+}) {
   const { t } = useTranslation();
   const [watchingAd, setWatchingAd] = useState(false);
   // 2026-07-26 감사 발견 — onWatchAd는 watchingAd로 막혀 있었지만 onUseCredits는 아무 가드가 없었다.
@@ -28,13 +38,14 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
   const restCredits = useFlipStore((s) => s.credits);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const totalCredits = restCredits + bonusCredits;
+  const grant = onExtend ?? ((minutes: number) => { bluetoothService.extendFocusSession(minutes).catch(() => {}); });
 
   const onWatchAd = () => {
     setWatchingAd(true);
     showRewardedAd().then((result) => {
       setWatchingAd(false);
       if (result === 'earned') {
-        bluetoothService.extendFocusSession(FOCUS_SESSION_EXTEND_MINUTES).catch(() => {});
+        grant(FOCUS_SESSION_EXTEND_MINUTES);
         useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: FOCUS_SESSION_EXTEND_MINUTES }));
         onDismiss();
       } else if (result === 'failed') {
@@ -56,7 +67,7 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
       const spentBonus = useAttendanceStore.getState().spendBonusCredits(Math.min(need - spentRest, bonusCredits));
       const spent = spentRest + spentBonus;
       if (spent <= 0) return;
-      bluetoothService.extendFocusSession(spent).catch(() => {});
+      grant(spent);
       useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: spent }));
       onDismiss();
     } finally {
@@ -72,8 +83,8 @@ export function FocusSessionExtendModal({ visible, onDismiss }: { visible: boole
         <View style={styles.iconWrap}>
           <Feather name="zap" size={22} color={colors.primary} />
         </View>
-        <Text style={styles.title}>{t('home.focusSessionTimedOutTitle')}</Text>
-        <Text style={styles.message}>{t('home.focusSessionTimedOutMessage', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+        <Text style={styles.title}>{t(titleKey)}</Text>
+        <Text style={styles.message}>{t(messageKey, { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
         <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd || usingCredits}>
           {watchingAd ? (
             <ActivityIndicator color="#FFFFFF" />

@@ -104,6 +104,11 @@ export default function HomeScreen() {
   // 구독한다(위 destructure) — 로컬 useState였을 땐 앱을 완전히 재시작할 때마다 0으로 리셋돼서,
   // 오늘 이미 닫은 한도도달 팝업이 세션을 시작하지도 않았는데 재실행마다 다시 떴다.
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
+  // 2026-08-01 사용자 지시("룰을 다시 정해 — focus on 다 보면 5분 1회만 더 주기, 그다음부턴 광고나
+  // 크레딧 쓰기") — 하루 한도 "5분 추가"/"계속 보기"가 예전엔 무제한으로 공짜 +5분을 계속 줬다.
+  // 이제 hitCount===1(오늘 처음 한도 도달)일 때만 무료로 즉시 +5분, 그 이후(hitCount>=2)부턴 이
+  // 모달(광고 또는 크레딧 5개=5분)로 넘긴다.
+  const [showDailyLimitExtend, setShowDailyLimitExtend] = useState(false);
 
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
   const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
@@ -264,19 +269,29 @@ export default function HomeScreen() {
     // 탭 이벤트를 처리 중인 지금(액티비티가 확실히 포그라운드인 시점)에 네이티브 서비스를 직접
     // 켜서 이 경쟁 상태를 없앤다 — PaceOverlayService.start()는 멱등(ensureInfraReady의 infraReady
     // 가드)이라 /overlay의 useEffect가 나중에 한 번 더 불러도 안전하다.
-    const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + bonusMinutes - todayUsageMinutes);
+    // 2026-08-01 사용자 지적("5분 추가 눌렀는데 오버레이에 1분으로 나옴") — 이 콜백(onSelectPlatform)의
+    // useCallback 의존성 배열이 [enableAutoModeForSession]뿐이라 settings/bonusMinutes/todayUsageMinutes를
+    // 훅 클로저로 캡처해뒀다. LimitReachedOverlay의 "+5분 추가"는 addBonusMinutes(5)를 호출한 바로
+    // 다음 줄에서 곧장 onSelectPlatform을 부르는데, addBonusMinutes는 비동기 상태 갱신이라 이 시점엔
+    // 아직 리렌더 전 — 방금 추가한 보너스가 반영 안 된(그리고 최신 사용량도 아닌) 값으로 잔여시간을
+    // 계산해 실제보다 훨씬 적은 시간이 오버레이에 표시됐다. 훅 클로저 대신 각 스토어의 getState()로
+    // 지금 이 순간의 실제 값을 읽어 이 레이스를 없앤다.
+    const freshSettings = useSettingsStore.getState().settings;
+    const freshBonusMinutes = useDailyBonusStore.getState().extraMinutes;
+    const freshTodayUsageMinutes = useStatsStore.getState().todayUsageMinutes;
+    const remainingMinutes = Math.max(0, freshSettings.dailyLimitMinutes + freshBonusMinutes - freshTodayUsageMinutes);
     overlayService.startSession({
-      dailyLimitMinutes: settings.dailyLimitMinutes,
+      dailyLimitMinutes: freshSettings.dailyLimitMinutes,
       remainingMinutes,
-      autoNext: settings.autoNext,
-      sleepTimerMinutes: settings.sleepTimerMinutes ?? 0,
-      breakIntervalMinutes: settings.breakIntervalMinutes,
-      notifyRemaining: settings.notifyRemaining,
-      notifyLimit: settings.notifyLimit,
-      notifyBreak: settings.notifyBreak,
-      hardBlockMode: settings.hardBlockMode,
-      sleepStillnessMinutes: settings.sleepStillnessMinutes,
-      bluetoothVolumeKeySkipEnabled: settings.bluetoothVolumeKeySkipEnabled,
+      autoNext: freshSettings.autoNext,
+      sleepTimerMinutes: freshSettings.sleepTimerMinutes ?? 0,
+      breakIntervalMinutes: freshSettings.breakIntervalMinutes,
+      notifyRemaining: freshSettings.notifyRemaining,
+      notifyLimit: freshSettings.notifyLimit,
+      notifyBreak: freshSettings.notifyBreak,
+      hardBlockMode: freshSettings.hardBlockMode,
+      sleepStillnessMinutes: freshSettings.sleepStillnessMinutes,
+      bluetoothVolumeKeySkipEnabled: freshSettings.bluetoothVolumeKeySkipEnabled,
     }).catch(() => {});
     setConnectingPlatform(platform);
     // 2026-07-23 버그 수정 — 예전엔 BluetoothOnboardingSheet에서 Enable을 고른 "그 첫 세션"에만
@@ -465,11 +480,18 @@ export default function HomeScreen() {
         // 분만 더해주고 팝업만 닫아서, "+5분 더 보기"를 눌러도 실제로는 Home에 그대로 남아 사용자가
         // 플랫폼 카드를 다시 탭해야 했다(연장의 의도와 정반대 경험). 마지막으로 보던 플랫폼을
         // lastPlatformRef로 기억해뒀다가, 연장 시 그 플랫폼으로 즉시 재진입시킨다.
+        // 2026-08-01 사용자 지시("5분 1회만 무료, 그다음부턴 광고/크레딧") — hitCount===1(오늘 첫
+        // 도달)일 때만 이 무료 경로를 타고, 그 이후엔 광고/크레딧 모달(아래 showDailyLimitExtend)로
+        // 넘긴다 — 그 모달이 실제 지급/재진입까지 전부 담당(onExtend prop).
         onExtend={() => {
-          addBonusMinutes(5);
           dismissLimitHit(hitCount);
-          const p = lastPlatformRef.current;
-          if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
+          if (hitCount <= 1) {
+            addBonusMinutes(5);
+            const p = lastPlatformRef.current;
+            if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
+          } else {
+            setShowDailyLimitExtend(true);
+          }
         }}
         onDismiss={() => dismissLimitHit(hitCount)}
       />
@@ -477,6 +499,20 @@ export default function HomeScreen() {
       <FocusSessionExtendModal
         visible={showFocusSessionExtend && !celebrationVisible}
         onDismiss={() => setShowFocusSessionExtend(false)}
+      />
+
+      {/* 2026-08-01 — 하루 한도 2회차 이상 연장(광고/크레딧). onExtend가 실제 지급(addBonusMinutes)
+          + 마지막 플랫폼 재진입까지 담당 — 위 tier1 무료 경로(onExtend prop)와 동일한 후속 동작. */}
+      <FocusSessionExtendModal
+        visible={showDailyLimitExtend && !celebrationVisible}
+        onDismiss={() => setShowDailyLimitExtend(false)}
+        titleKey="home.dailyLimitExtendTitle"
+        messageKey="home.dailyLimitExtendMessage"
+        onExtend={(minutes) => {
+          addBonusMinutes(minutes);
+          const p = lastPlatformRef.current;
+          if (p === 'youtube' || p === 'instagram' || p === 'tiktok') onSelectPlatform(p);
+        }}
       />
     </SafeAreaView>
   );

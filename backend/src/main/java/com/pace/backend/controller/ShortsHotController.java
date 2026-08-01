@@ -27,4 +27,14 @@ public class ShortsHotController {
     public List<String> categories() {
         return shortsHotService.categories();
     }
+
+    // 2026-08-01 — 매일 새벽 4시 스케줄러를 기다리지 않고 YOUTUBE_API_KEY 배포 직후 바로 검증하려는
+    // 목적의 수동 트리거. 민감 정보 노출은 없고(YouTube API 유닛 몇 개만 소모) 표준 JWT 인증으로
+    // 충분해 별도 admin 권한을 새로 만들지 않는다 — 로그인/게스트 누구나 호출 가능하지만 남용돼도
+    // 피해가 없다(멱등, 같은 카테고리를 다시 채울 뿐).
+    @PostMapping("/refresh")
+    public String refresh() {
+        shortsHotService.refreshAll();
+        return "ok";
+    }
 }

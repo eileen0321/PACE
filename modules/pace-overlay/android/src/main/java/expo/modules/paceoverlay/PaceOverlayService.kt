@@ -2001,35 +2001,51 @@ class PaceOverlayService : Service() {
 
   private fun showPaceMenu() {
     val d = resources.displayMetrics.density
+    // 2026-08-01 사장님 지적("왜케 까매, 글래스모피즘으로 하라고 안 했어") — Saved/Favorite/Shorts
+    // HOT 패널과 톤을 맞춘다(옅은 틴트 + 실제 블러, showSavedFavoriteList 참고). 예전엔 "드롭다운은
+    // 가독성 위해 덜 투명하게"로 90% 불투명 검정을 썼는데, 그 원칙 자체가 사장님 지시와 어긋났었다.
     val menu = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       background = GradientDrawable().apply {
         cornerRadius = 14f * d
-        setColor(Color.parseColor("#E60C0D12")) // rgba(12,13,18,0.9) — 드롭다운은 알약보다 덜 투명하게(가독성)
-        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#38FFFFFF"))
+        setColor(Color.parseColor("#591A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
       }
       clipToOutline = true
     }
 
-    val items = listOf<Pair<String, () -> Unit>>(
-      "Open App" to { openApp(); hidePaceMenu() },
-      "Shorts HOT" to { hidePaceMenu(); showShortsHotList("all") },
+    // 2026-08-01 사장님 지시("애플처럼 팝업 아이콘 예쁘게") — iOS 컨텍스트 메뉴 관례(라벨 왼쪽,
+    // SF Symbol류 아이콘 오른쪽 끝 정렬)를 그대로 따른다. 새 drawable 리소스 없이 이 파일 전체가
+    // 이미 쓰는 패턴(⇪/✕ 등 유니코드 글리프를 아이콘처럼 사용)을 그대로 재사용.
+    data class MenuItem(val label: String, val icon: String, val action: () -> Unit)
+    val items = listOf(
+      MenuItem("Open App", "↗", { openApp(); hidePaceMenu() }),
+      MenuItem("Shorts HOT", "🔥", { hidePaceMenu(); showShortsHotList("all") }),
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
-      "Favorite" to { hidePaceMenu(); showSavedFavoriteList("favorite") },
+      MenuItem("Favorite", "⭐", { hidePaceMenu(); showSavedFavoriteList("favorite") }),
     )
-    items.forEachIndexed { index, (label, action) ->
-      val row = TextView(this).apply {
-        text = label
+    items.forEachIndexed { index, item ->
+      val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        isClickable = true
+        setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        setOnClickListener { item.action() }
+      }
+      row.addView(TextView(this).apply {
+        text = item.label
         textSize = 13f
         setTextColor(Color.WHITE)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
-        isClickable = true
-        setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
-        setOnClickListener { action() }
-      }
+      }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+      row.addView(TextView(this).apply {
+        text = item.icon
+        textSize = 15f
+        setPadding((10 * d).toInt(), 0, 0, 0)
+      })
       menu.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-        width = (150 * d).toInt()
+        width = (170 * d).toInt()
       })
       if (index < items.size - 1) {
         val divider = View(this).apply { setBackgroundColor(Color.parseColor("#1FFFFFFF")) }
@@ -2049,6 +2065,11 @@ class PaceOverlayService : Service() {
       gravity = Gravity.TOP or Gravity.END
       x = (16 * d).toInt()
       y = 80 + (44 * d).toInt() // 알약(y=80) 바로 아래 — appBtn 높이(36dp)+여백만큼 내림
+      // Saved/Favorite/Shorts HOT 패널과 동일한 실제 블러(API 31+, 구버전은 위 틴트 배경만으로 폴백).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        blurBehindRadius = (28 * d).toInt()
+      }
     }
     try {
       windowManager?.addView(paceMenuView, params)

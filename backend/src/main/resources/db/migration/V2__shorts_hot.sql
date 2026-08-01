@@ -5,12 +5,12 @@
 CREATE TABLE shorts_hot_video (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
     category      VARCHAR(32)   NOT NULL,
-    rank          INT           NOT NULL,
+    rank_no       INT           NOT NULL,
     video_id      VARCHAR(32)   NOT NULL,
     title         VARCHAR(500)  NOT NULL,
     channel       VARCHAR(255)  NULL,
     thumbnail_url VARCHAR(500)  NOT NULL,
     refreshed_at  DATETIME      NOT NULL,
-    CONSTRAINT uq_shorts_hot_video_category_rank UNIQUE (category, rank)
+    CONSTRAINT uq_shorts_hot_video_category_rank UNIQUE (category, rank_no)
 );
 CREATE INDEX idx_shorts_hot_video_category ON shorts_hot_video (category);

@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "shorts_hot_video", uniqueConstraints = @UniqueConstraint(columnNames = {"category", "rank"}))
+@Table(name = "shorts_hot_video", uniqueConstraints = @UniqueConstraint(columnNames = {"category", "rank_no"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -21,7 +21,7 @@ public class ShortsHotVideo {
     @Column(name = "category", nullable = false, length = 32)
     private String category;
 
-    @Column(name = "rank", nullable = false)
+    @Column(name = "rank_no", nullable = false)
     private int rank;
 
     @Column(name = "video_id", nullable = false, length = 32)

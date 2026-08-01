@@ -46,21 +46,23 @@ public class ShortsHotService {
     private static final int FETCH_COUNT = 50;
     // 2026-08-01 사장님 지시 — 클라이언트가 "본 영상"을 뒤로 미루는 대신 아예 목록에서 제외하는
     // 방식으로 바뀌면서(PaceOverlayService.ShortsHotStore.fetch 참고), 다 본 카테고리가 쉽게
-    // 텅 비지 않도록 15→30으로 2배 확보. search.list는 호출당 정액 비용(maxResults와 무관)이라
-    // 이 증가가 쿼터에 미치는 영향은 사실상 없음(아래 SEARCH_FALLBACK_RESULTS 주석 참고).
-    private static final int KEEP_COUNT = 30;
+    // 텅 비지 않도록 확보량을 키움. 2026-08-01(추가 지시) "60초내 50개로 늘려(공통)" → 30→50.
+    // search.list는 호출당 정액 비용(maxResults와 무관)이라 이 증가가 쿼터에 미치는 영향은 사실상
+    // 없음(아래 SEARCH_FALLBACK_RESULTS 주석 참고). 필터(≤60초·비라이브)는 그대로 유지.
+    private static final int KEEP_COUNT = 50;
     // 2026-08-01 발견 — music/gaming처럼 트렌드가 뮤직비디오/풀 게임플레이 위주인 카테고리는 상위
     // 50개 안에 60초 이하가 하나도 없는 날이 흔했다(music/gaming 탭이 통째로 빈 리스트로 보였음).
     // chart=mostPopular도 다른 목록형 API처럼 nextPageToken으로 더 내려갈 수 있어서, 부족하면
     // 최대 이만큼 더 페이지를 넘겨가며 60초 이하를 찾는다 — 페이지당 1 unit이라 최악의 경우도
-    // 카테고리당 4 units로 쿼터엔 무의미한 수준.
-    private static final int MAX_PAGES = 4;
+    // 카테고리당 몇 units로 쿼터엔 무의미. KEEP_COUNT를 50으로 올린 만큼 4→6페이지로 여유 확보
+    // (인기차트에 60초 이하가 드물어 50개를 채우려면 더 깊이 내려가야 함).
+    private static final int MAX_PAGES = 6;
     // 2026-08-01 발견 — 페이지를 늘려도 music은 여전히 0건, gaming은 1건뿐이었다(실제로 KR
     // mostPopular 차트 자체에 해당 카테고리 60초 이하 영상이 거의 없음, 인기 뮤비/풀영상 위주라
     // 근본적 한계). chart 기반으로 부족하면 search.list(videoDuration=short)로 보충한다 — 100
     // units/회로 videos.list보다 비싸지만 검색 결과 개수(maxResults)는 비용에 영향 없는 정액 요금이라
-    // KEEP_COUNT를 15→30으로 올린 것에 맞춰 후보 풀만 25→45로 넉넉히 키움(비용 증가 없음).
-    private static final int SEARCH_FALLBACK_RESULTS = 45;
+    // KEEP_COUNT를 50으로 올린 것에 맞춰 후보 풀도 search.list 최대치(50)로 키움(비용 증가 없음).
+    private static final int SEARCH_FALLBACK_RESULTS = 50;
 
     // 카테고리 코드(앱/DB에서 쓰는 값) → YouTube videoCategoryId. "all"은 categoryId 없이
     // chart=mostPopular 전체 순위(카테고리 무관)를 그대로 쓴다.

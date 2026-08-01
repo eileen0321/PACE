@@ -3340,3 +3340,18 @@ co-session의 "🔴 Mac 확인 요청" 3건 처리. **공용 `AnimatedSplash.tsx
 3. `app.json` iOS 스플래시 설정 — 위 회귀 수정으로 `ios.imageWidth`만 120→188 변경(이미지/배경색 무변경).
 
 tsc 통과, 원본 자산 무변경. TEMP 없음.
+
+### 2026-08-01 (Mac 세션, 사장님 지시) — Shorts HOT 카테고리당 개수 30→50 (공통 백엔드) + iOS 리스트 이어보기
+**사장님 지시**: "쇼츠 리스트가 더 많아야 한다 — 60초내 50개로만 늘려, 공통으로." + "카테고리를 골랐으면 그 카테고리 리스트를 이어서 보여주고, 다 보면 유튜브 앱 순서로."
+
+**① 개수 30→50 (backend `ShortsHotService.java`, 공용 — Android도 같은 엔드포인트라 자동 반영)**:
+- `KEEP_COUNT` 30→50. 필터(≤60초·비라이브)는 그대로 유지 — 개수만 늘림.
+- `MAX_PAGES` 4→6(인기차트에 60초 이하가 드물어 50 채우려면 더 깊이 페이지네이션 필요, 페이지당 1 unit이라 쿼터 무의미).
+- `SEARCH_FALLBACK_RESULTS` 45→50(search.list 최대치, 정액 비용이라 증가 없음) — 희소 카테고리(music/gaming) 보충용.
+- ⚠️ 실제 전달 개수는 여전히 카테고리별로 다를 수 있음(KR 인기차트/검색에 60초 이하가 근본적으로 적은 카테고리 존재). 50은 "목표 상한". **배포 필요**(Railway + `/shorts-hot/refresh` 또는 6h 크론).
+
+**② iOS 리스트 이어보기(커밋 `a1ca770`, iOS 전용 — Android 네이티브 HOT은 오픈 방식이 달라 해당 시 별도)**:
+- HOT/Favorite 항목 탭 시 그 리스트(카테고리 표시순서)를 `onOpenVideo(videoId, playlist)`로 피드에 전달. 피드 `forcedListRef`가 goNext/goPrev를 리스트 순서 리마운트로 처리, 리스트 소진 시 유튜브 네이티브 스와이프로 폴백(토스트 `feed.listEndYoutubeToast`). onNotShorts도 리스트 내에서 다음으로 스킵.
+- tsc 통과. 스와이프 넘김은 제스처 의존 → 실기기 검증 권장(시뮬 자동탭 부정확).
+
+**참고 — Favorite 썸네일**: 이미 56×56 썸네일(youtubeThumbnailUrl) 표시 중(`SavedVideoListOverlay`), HOT와 동일 레이아웃. 별도 작업 없음.

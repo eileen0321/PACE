@@ -3186,3 +3186,9 @@ Android/iOS 양쪽에서 실제로 동작하는지, 그리고 서로 다른 화�
   등)이 흔하므로 **이 버그는 일회성 사고가 아니라 상시 재발 가능한 클래스**였다는 뜻 — 이번 배너
   추가로 최소한 사용자가 조용히 방치되진 않게 됐다. iOS는 accessibility service 개념이 달라
   해당 없음(no-op).
+
+### 2026-08-01 (자율세션, Mac) — co-session `03fbaf8`(접근성 서비스 감지) iOS 안전 검토 완료
+공유 파일(types.ts/overlayService.ios.ts) 변경이나 **iOS parity 이미 완료 — 작업 불필요.**
+overlayService.ios의 `hasAccessibilityPermission`은 항상 true/`requestAccessibilityPermission` no-op
+(iOS엔 AccessibilityService 개념 없음). home.tsx의 감지 effect/프롬프트 전부 `Platform.OS !== 'android'
+return`으로 게이팅 + `showAccessibilityPrompt` 배너도 그 state에만 의존 → iOS엔 절대 안 뜸. 타입체크 통과.

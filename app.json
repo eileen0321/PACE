@@ -19,7 +19,7 @@
         "NSCameraUsageDescription": "Pace watches for a hand wave over the front camera to advance to the next Short hands-free during a Focus Session. Video never leaves your device and is not recorded."
       },
       "icon": "./assets/ios-icon.png",
-      "backgroundColor": "#060709"
+      "backgroundColor": "#0B0C0F"
     },
     "android": {
       "package": "com.strides7.pace",

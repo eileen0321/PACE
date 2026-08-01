@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../storage/keys';
+import type { FlatContent } from '../insightContent';
 
 // 커스텀 백엔드 REST 클라이언트 (zen-master src/common/services/api.ts 패턴 이식).
 // Supabase 대신 자체 API 서버 + JWT를 쓰기로 결정 — PACE_ARCHITECTURE.md "확정 결정" 참고.
@@ -155,4 +156,19 @@ export const SHORTS_HOT_CATEGORIES = ['all', 'music', 'gaming', 'comedy', 'enter
 export const shortsHotApi = {
   list: (category: string): Promise<ShortsHotVideo[]> =>
     request<ShortsHotVideo[]>(`/shorts-hot?category=${encodeURIComponent(category)}`),
+};
+
+// 2026-08-01 — 홈 배너 인사이트 문구(힐링/명언/기능가이드/통계템플릿) 백엔드 이전. 문구 하나 고칠
+// 때마다 앱스토어 재배포하던 걸 없애려는 목적(usageInsight.ts 참고) — DB insight_item 테이블,
+// InsightController(/insights)가 카테고리별로 묶어서 반환.
+export type InsightBundle = {
+  healing: FlatContent[];
+  quote: FlatContent[];
+  tip: FlatContent[];
+  statYesterdayLastWatched: FlatContent[];
+  statTodayMoreThanAvg: FlatContent[];
+  statTodayLessThanAvg: FlatContent[];
+};
+export const insightApi = {
+  getBundle: (): Promise<InsightBundle> => request<InsightBundle>('/insights'),
 };

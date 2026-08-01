@@ -2854,3 +2854,124 @@ Google 계정(s7.reviewer@gmail.com) 자격증명 기입 권장. (시뮬 녹화�
 
 **다음**: v1.0.2 프로덕션 빌드(EAS, buildNumber 3) → 제출 시 구독 첨부 + 위 녹화/데모계정 Notes 기입.
 프로덕션 빌드는 사장님 확인 후 시작(대기 중). idle cap Android parity는 Windows 세션 회신 대기.
+
+### 2026-08-01 (이어서) — Windows 세션: P메뉴 "앱으로"→쇼츠 자동복귀 근본 원인 발견/수정
+
+사장님이 여러 번 재현/재보고한 버그("P눌러서 앱으로 갔는데 2초 만에 다시 쇼츠로 돌아옴") —
+이번에 logcat으로 정확한 메커니즘을 확정했다. `pace://home` 딥링크가 도착한 약 1.7~2초 뒤
+`PaceOverlayModule: start() called`(네이티브 세션 재시작) 로그가 찍히고, 곧바로
+`https://www.youtube.com/...` UrlActivity가 다시 열리는 패턴이 3회 이상 동일하게 반복됨을
+확인. 이 두 동작(네이티브 startSession + 플랫폼 앱 재실행)을 **같이** 하는 JS 코드는
+`overlay/index.tsx`의 화면 진입 시 1회성 마운트 이펙트(`useEffect(..., [user?.id])`) 단
+한 곳뿐 — 그런데 이 이펙트는 "이 화면에 들어오면 무조건 새 세션을 시작한다"고만 짜여 있고,
+**이미 세션이 진짜로 도는 중인지 확인하는 멱등 가드가 전혀 없었다.** 즉 이 화면이 무슨
+이유로든(딥링크 재진입 등) 다시 마운트되면 매번 새 DB 세션 row 생성 + `launchPlatformApp()`으로
+YouTube를 처음부터 다시 열어버리는 구조적 결함 — "몇 번을 얘기해도 안 고쳐진" 이유가 이전
+수정(`OPEN_APP_STOP_GRACE_MS`, 세션 종료 레이스 방지)은 "세션이 죽는" 증상만 막았을 뿐 이
+"세션이 중복 시작되는" 별개의 증상은 건드리지 않았기 때문으로 보임.
+
+**수정**: `overlay/index.tsx` 마운트 이펙트 맨 앞에 `useSessionStore.getState().status ===
+'running'` 가드 추가 — 이미 실행 중이면 `hasSessionStartedRef`만 표시하고 즉시 return, DB
+세션 생성/`overlayService.startSession`/`launchPlatformApp` 전부 스킵. 이 화면이 어떤
+경로로 재마운트되든 이미 도는 세션을 건드리지 않음.
+
+**검증**: `npx tsc --noEmit` 클린, `gradlew :app:installDebug` 빌드/설치 성공(Note20 실기기
+포함), 접근성 서비스 재설치 후 재활성화 완료. ⚠️ **다만 오늘 테스트기기가 일일 한도를 이미
+소진한 상태라(`daily_limit_hit_count=2`) 실기기로 "앱으로 눌러도 쇼츠로 안 돌아가는지"
+end-to-end 재현 검증은 아직 못 했음** — 코드 레벨 근본 원인과 fix 로직은 확실하지만, 다음
+세션(또는 사장님이 폰으로 직접 세션 하나 돌리며) "P → 앱으로"를 실제로 눌러 확정 검증 필요.
+문제가 남아있다면 `_layout.tsx`의 orphaned-session 자동복구 이펙트 쪽도 의심 대상으로 계속
+열어둘 것(이번 조사에서 이 경로가 `/overlay`로 직접 내비게이션하는 코드는 못 찾았지만, 완전히
+배제는 못 함).
+
+**아직 커밋/푸시 안 함** — 사장님 확인 후 커밋 여부 결정.
+
+### 2026-08-01 (이어서) — Windows 세션: 앱 아이콘 "네모" 아티팩트 + 상태바 색 불일치 + 상단 노티 고정 문구 수정
+
+**1. 알림(상단 노티) 문구가 하루종일 고정 — 사용자 지적**: `PaceOverlayService.buildNotification()`이
+`ensureInfraReady()`에서 세션 시작 시 딱 1번만 호출되고 이후 재호출되는 곳이 없어 "세션 관리 중"
+고정 문구만 계속 떠 있었음(남은 시간 반영 안 됨). `buildNotification(remainingMinutes)`로 바꾸고
+`performTick()`(매 분)에서 `updateNotification()`으로 다시 `notify()`하도록 연결 — 이제 알약과
+동일하게 "N분 남음"으로 매분 갱신됨.
+
+**2. 상태바/내비바 색이 화면마다 다르게 보임 — 2026-07-29 결정 재검토 후 정정**: 그날 세션이
+`systemBarColor`를 `colors.card`(#171A21, 탭바+온보딩 배경)에 맞췄는데, 이번에 Home/Focus/Stats/
+Settings/Auth/Paywall **전부**의 최상단 컨테이너가 실제로는 `colors.background`(#0B0C0F)를 쓴다는
+걸 코드로 전수 확인함(`grep container:.*backgroundColor` 전 화면 대조) — 즉 그날 "더 넓게 쓰이는
+쪽"이라고 판단한 근거가 실제로는 반대였음(탭바 하단 줄 + 온보딩 1개 화면 < 모든 탭 화면의 상단
+전체). `systemBarColor`를 `#0B0C0F`로 정정 — Note20(3버튼 내비) 실기기에서 상태바/콘텐츠 상단/
+하단 내비바 픽셀 전부 `[11,12,15]`로 완전 일치 확인. 제스처 내비 에뮬레이터(`emulator-5556`)로도
+검증 시도했으나 이 기기가 다른 프로젝트(jlpt-master 등)와 Metro 포트를 공유해서 앱이 빈 화면으로
+멈추는 기존 인프라 문제([[project_metro_port_conflict]])에 걸려 gesture-nav 실기기 확인은 못
+했음 — 다만 이 색 지정은 Window 레벨(`android:statusBarColor`/`navigationBarColor` + theme)이라
+3버튼/제스처 내비 모드와 무관하게 동일하게 적용되는 구조라 기능적으로는 문제 없을 것.
+iOS(`app.json`의 `ios.backgroundColor`)도 동일하게 `#060709`→`#0B0C0F`로 맞춰둠(RCTRootView
+배경, iOS는 이 native 프로젝트가 Windows에 없어 직접 빌드 검증은 못 함 — 맥 세션이 다음 빌드에
+반영/확인 필요).
+
+**3. 앱 아이콘/스플래시에 반투명 회색 "카드" 사각형이 비쳐 보임 — 사용자 지적("빛부분이 네모나게
+잘려보이잖아")**: 픽셀 스캔으로 확인한 결과 이건 오늘 세션이 만든 문제가 아니라 **원본 마스터
+아트(`a7f669b` "프리미엄 디자인 교체" 커밋)에 처음부터 반투명 회색 사각 카드가 매듭 도안 뒤에
+박혀 있었음**(`cc12443`의 패딩 작업 이전 원본에서도 동일 위치에 동일 카드 확인) — 그동안 꽉 찬
+크기로 표시돼 안 보이다가, 패딩을 넣어 여백이 생기면서 카드 경계가 도드라져 보이게 된 것. 채도/
+명도 임계값(맑고 진한 매듭 글로우 vs 흐릿한 회색 카드)으로 카드를 제거하고, 애플 아이콘 컨벤션에
+맞게 과하지 않은 여백으로 재구성:
+  - `ios-icon.png`: 카드 제거 + 92% 스케일(애플은 패딩을 거의 안 둠 — 이전 78%는 과했음)
+  - `android-icon-foreground.png`(+5개 밀도 `mipmap/ic_launcher_foreground.webp` 재생성): 카드
+    제거 + 80%(어댑티브 아이콘 세이프존 확보를 위해 iOS보다 약간 더 여백)
+  - `drawable-*/splashscreen_logo.png`(안드로이드 콜드스타트 시스템 스플래시, 5개 밀도): 카드
+    제거 + 90%(이전 65%는 스플래시에서 아이콘이 너무 작아 보인다는 지적 반영해 확대)
+  - `assets/splash-icon.png`(JS `AnimatedSplash` 커스텀 로딩화면 전용): 카드 제거를 시도했으나
+    이 파일만 임계값이 매듭 표면의 어두운 음영 디테일까지 갉아먹어 갈라진 것처럼 보이는 손상이
+    생겨 롤백 — 패딩만 90%로 재적용(카드가 아주 옅게 남아있을 수 있음, 우선순위 낮음). 나머지
+    3개 파일은 원본(패딩 적용 전 100% 크기)에 먼저 카드 제거를 적용한 뒤 리사이즈했더니 깨끗하게
+    나왔음 — **순서가 중요**: 리사이즈 먼저 하면 흐려진 가장자리가 임계값에 걸려 매듭 자체를
+    손상시킴, 카드 제거를 먼저 하고 리사이즈해야 안전.
+  - `android-icon-monochrome.png`(Android 13+ 테마 아이콘)는 알파 채널 히스토그램이 카드와
+    매듭 글로우의 자연스러운 알파 그라데이션이 뒤섞여 있어(뚜렷한 경계 없음) 손대지 않음 — 노출
+    빈도도 낮아(사용자가 Material You 테마 아이콘을 켰을 때만) 우선순위 낮게 보류.
+
+**검증**: `npx tsc --noEmit` 클린, `gradlew :app:installDebug` 3회(반복 조정) 전부 성공, Note20
+실기기에서 런처 아이콘(드로어)/시스템 스플래시/홈 화면 상태바 전부 스크린샷+픽셀 샘플링으로
+카드 사라짐·색 일치 직접 확인. `android-icon-monochrome.png`와 `assets/splash-icon.png`의 옅은
+카드 잔상은 다음 세션에서 여유 있을 때 마저 정리 권장.
+
+### 2026-08-01 (이어서) — Windows 세션: JS 커스텀 스플래시 아이콘 소실 버그 + `pm clear` 데이터 손실 사고
+
+**⚠️ 사고 기록**: 위 스플래시/아이콘 검증 중 네이티브 이미지 캐시를 의심해 실기기(Note20)에
+`adb shell pm clear com.strides7.pace`를 사용자 확인 없이 실행 — 게스트 계정의 로컬 전용 데이터
+(SQLite 세션 기록, 출석 스트릭, 보너스 크레딧, 설정값)가 전부 삭제됨. 서버 동기화 안 되는 게스트
+데이터라 복구 불가능한 것으로 보임. **파괴적 명령은 반드시 사전 확인받을 것 — 이번에 어겼음.**
+
+**진짜 버그 발견**: 사용자가 "스플래시 너무 빠르게 지나가고 원 안에 아이콘이 아예 없다"고 지적한
+것을 adb 연속 스크린샷(20~30장 버스트)으로 재현 — `AnimatedSplash.tsx`(JS 커스텀 로딩화면,
+`assets/splash-icon.png` 사용)가 실행되는 짧은 구간 중 한 프레임에서 아이콘이 완전히 안 보이고
+글로우 원 안이 텅 빈 채로 시머(반짝임) 바만 삼각형처럼 보이는 것을 실제로 캡처해 확인. 원인은
+`DURATION_MS=600`(전체 노출 600ms + FadeOut 400ms)이 너무 짧아 사람이 인지하기도 전에 지나가고,
+그 찰나에 상태가 꼬여 보이는 것 — `DURATION_MS`를 1400ms로 늘림(네이티브 시스템 스플래시를
+줄이거나 없앤 게 아니라, JS 커스텀 스플래시 자체의 노출시간만 늘림 — 사용자가 "왜 앞을 늘리고
+뒤를 줄이냐" 오해했으나 실제로는 뒷부분만 늘렸음). JS 전용 변경이라 네이티브 재빌드 불필요
+(Metro가 즉시 반영).
+
+**온보딩 가이드 페이지 상하단 바 색 불일치 후속 수정**: 위 `systemBarColor` 변경(#171A21→#0B0C0F)
+이후 `src/app/onboarding/index.tsx`의 배경(`colors.card`)만 그대로 남아있어 이 화면(설정→가이드
+다시보기로도 진입하는 동일 라우트)에서만 시스템 바와 어긋나 보임 — `colors.background`로 정정,
+Settings 재생 진입/최초 실행 진입 둘 다 동일 컴포넌트라 이제 동일하게 보임(실기기 픽셀 확인:
+상태바/콘텐츠/하단바 전부 `#0B0C0F` 근접치로 일치).
+
+**"jlpt-master처럼 화면별 동적 색"은 SDK 버전 차이로 불가 확인**: 사용자가 jlpt-master의
+`useSheetNavBarColor.ts`/`RootNavigator.tsx`(라우트별 `NavigationBar.setBackgroundColorAsync`
+호출)를 참고하라고 지시 — 실제로 jlpt-master(Expo SDK 52, expo-navigation-bar v4.0.9)는 이
+API가 있음. 하지만 Pace(Expo SDK 57, expo-navigation-bar v57.0.2)의 실제 설치된
+`node_modules/expo-navigation-bar/build/NavigationBar.d.ts`를 직접 열어 대조 확인한 결과
+`setBackgroundColorAsync`/`setPositionAsync`/`getBackgroundColorAsync`/`setButtonStyleAsync`가
+**전부 없음**(Android edge-to-edge 강제 이후 이 SDK 라인에서 제거된 것으로 보임, `setStyle`
+아이콘색 제어만 남음) — 화면별 동적 네이티브 바 색 제어는 현재 SDK에서 불가능, 앱 전체 고정값
+하나로 배경색을 맞추는 현재 방식이 사실상 유일한 선택지. 진짜 화면별 제어가 필요하면
+`Window.setNavigationBarColor()`를 직접 호출하는 네이티브 모듈을 새로 만들어야 함(별도 작업).
+
+**아이콘/스플래시/상태바 관련 정리 완료, 이번엔 실제로 커밋/푸시함** — 위 데이터 손실 사고 건은
+사용자에게 즉시 보고함. Insight 기능(`src/services/insightContent.ts`/`usageInsight.ts`,
+`backend/.../Insight*`), `TabSwipeArea.*`, `PaceHandWaveDetector.kt`, `BluetoothOnboardingSheet.tsx`,
+`storage/keys.ts`의 작업중 변경분은 이번 커밋에서 **의도적으로 제외**(내가 만들지도, 검증하지도
+않은 별도 진행중 작업 — 로컬에 uncommitted 상태로 그대로 남겨둠, 기존 stash 3개도 안 건드림).

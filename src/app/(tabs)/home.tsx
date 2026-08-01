@@ -145,6 +145,19 @@ export default function HomeScreen() {
     return () => sub.remove();
   }, []);
 
+  // 2026-08-01 사용자 지적("앱 나갔다 다시 들어왔는데 무한 스크롤 같은 문구야") — useFocusEffect는
+  // react-navigation의 화면 포커스(탭 전환)에만 반응한다. 홈 탭에 계속 머문 채로 홈 버튼 등으로
+  // 앱만 백그라운드로 보냈다가 다시 열면 화면 포커스 자체는 안 바뀌므로 재추첨이 안 됐다. 앱이
+  // 다시 active로 돌아올 때도 별도로 재추첨한다.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && user?.id) {
+        getTodaysInsightMessage(user.id).then(setTodaysInsight).catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [user?.id]);
+
   // 2026-07-22 사용자 지시 — 한도 도달 알림 3단계화. 한도를 넘긴 뒤 5분 단위로 "몇 번째 도달인지"
   // 계산(정확히 한도=1차, +5분=2차, +10분 이상=3차 이상)해서 useLimitHitStore를 그 값까지 따라잡게
   // 하고, 그 값(tier로 clamp)에 맞는 다이얼로그/토스트를 렌더한다.

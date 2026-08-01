@@ -136,6 +136,17 @@ export default function OverlaySessionScreen() {
 
   useEffect(() => {
     if (!user?.id) return;
+    // 2026-08-01 사용자 재현("P메뉴 앱으로 눌렀는데 쇼츠로 자동복귀") — 이 이펙트는 원래 "이
+    // 화면에 처음 진입할 때 딱 한 번" 세션을 시작한다고 가정하고 무조건 startSession(새 DB row)+
+    // launchPlatformApp(YouTube 재실행)까지 실행했는데, 실제로는 아무 멱등 가드가 없었다. 세션이
+    // 이미 useSessionStore에 'running'으로 떠 있는 상태에서(=진짜 세션이 계속 도는 중) 이 화면이
+    // 무슨 이유로든(딥링크 재진입, 네비게이션 레이스 등) 다시 마운트되면 매번 새 DB 세션 row를
+    // 만들고 launchPlatformApp으로 YouTube를 다시 열어버렸다 — "앱으로"를 눌러도 곧장 쇼츠로
+    // 되돌아가 보이는 증상과 정확히 일치. 이미 실행 중이면 아무 것도 다시 하지 않는다.
+    if (useSessionStore.getState().status === 'running') {
+      hasSessionStartedRef.current = true;
+      return;
+    }
     (async () => {
       const id = await startSession(user.id, platform ?? null);
       sessionIdRef.current = id;

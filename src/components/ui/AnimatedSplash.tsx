@@ -14,7 +14,11 @@ import Animated, {
 import { colors, radius, typography } from '../../constants/theme';
 
 const ICON = require('../../../assets/splash-icon.png');
-const DURATION_MS = 600;
+// 2026-08-01 사용자 실기기 지적("스플래시 너무 빠르게 지나가고 원 안에 아이콘이 아예 없다") —
+// 600ms는 너무 짧아서 이 화면 자체를 거의 인지 못 하고 지나갔다("멋있는" 글로우/텍스트/로딩바
+// 연출이 있는데도 볼 시간이 없었음). 앞단(네이티브 시스템 스플래시)을 줄이는 게 아니라 이 JS
+// 스플래시 자체를 더 오래 보이게 늘린다.
+const DURATION_MS = 1400;
 
 // 2026-07-26 재작성(웹리서치 반영 — Apple HIG + Uber/Swiggy 방식): 앱 실행 "아이콘 번쩍" 해결.
 // 상용앱 규칙: 네이티브 런치스크린과 애니메이션 스플래시의 "첫 프레임"이 시각적으로 동일해야 한다.

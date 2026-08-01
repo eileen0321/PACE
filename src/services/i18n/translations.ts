@@ -477,8 +477,13 @@ export const translations = {
       bodyWithoutSnap: 'Pace can advance Shorts from your Bluetooth remote\'s volume button or a hand wave.',
       fingerSnapLabel: 'Finger snap',
       handWaveLabel: 'Hand wave',
-      handWaveHint: 'Sweep your open hand toward the front camera — start ~40 cm away and move in to ~15 cm. The approaching motion is what triggers it, not a fixed distance, so keep it moving (a still hand won\'t register). Detection may not always be accurate.',
+      // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
+      // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
+      handWaveHint: 'Push your open hand toward the camera in one motion — a still hand won\'t register, and detection isn\'t always accurate.',
       bluetoothRemoteLabel: 'Bluetooth remote',
+      // 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓엔 힌트 문구가
+      // 있었는데 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지, 뭘 눌러야 하는지" 정보가 부족했다.
+      bluetoothRemoteHint: 'Any Bluetooth remote with a volume button works — just pair it and press.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: 'Recommended',
       nextShort: 'Next Short',
@@ -914,8 +919,13 @@ export const translations = {
       bodyWithoutSnap: '블루투스 리모컨의 볼륨 버튼 또는 손짓으로 Shorts를 넘길 수 있어요.',
       fingerSnapLabel: '핑거스냅',
       handWaveLabel: '손짓',
-      handWaveHint: '편 손을 전면 카메라 쪽으로 "훠이" 하듯 다가가세요 — 약 40cm에서 시작해 15cm까지. 고정 거리가 아니라 다가오는 "동작"이 인식돼요(가만히 있으면 안 됩니다). 인식이 항상 정확하지 않을 수 있어요.',
+      // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
+      // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
+      handWaveHint: '편 손을 카메라 쪽으로 한 번에 훠이 밀어보세요. 가만히 있으면 인식이 안 되고, 가끔 안 잡힐 수도 있어요.',
       bluetoothRemoteLabel: '블루투스 리모컨',
+      // 2026-08-01 — 사용자 지시("설명 좀더 상세히") → 바로 다음 지적("너무 길어", "좀 적당히
+      // 조절을 못하냐") — 손짓 hint와 길이가 맞게 한 문장으로 줄였다.
+      bluetoothRemoteHint: '볼륨 버튼 있는 블루투스 리모컨이면 뭐든 페어링만 하면 바로 돼요.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: '추천',
       nextShort: '다음 영상',

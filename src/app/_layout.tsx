@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { ActivityIndicator, AppState, LogBox, Platform, StyleSheet, Text, View } from 'react-native';
 
 // 개발(LogBox) 전용 소음 억제 — RevenueCat SDK가 시뮬레이터(StoreKit 없음)에서 "issue with your
@@ -7,7 +7,7 @@ import { ActivityIndicator, AppState, LogBox, Platform, StyleSheet, Text, View }
 if (__DEV__) {
   LogBox.ignoreLogs(['[RevenueCat]', 'There is an issue with your configuration', 'Purchases']);
 }
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
@@ -101,15 +101,26 @@ export default function RootLayout() {
   // 2026-07-26 사용자 지시("매일 출석하기") — 부팅마다 오늘 처음 앱을 연 것인지 확인, 맞으면 크레딧
   // 지급 + 축하 팝업. checkInIfNeeded()가 내부에서 "오늘 이미 출석했으면 no-op"을 보장하므로 여기서
   // 매 부팅마다 불러도 하루 1번만 실제로 지급된다.
+  // 2026-08-01 사용자 지적("가이드 뜰때는 가이드 다 뜨고 홈에가야 출석 완료가 떠야지") — 이 효과가
+  // RootLayout 마운트 즉시(빈 deps) 실행돼서, 최초 실행이라 index.tsx가 /onboarding으로 리다이렉트
+  // 하는 것과 완전히 동시에 축하 팝업이 떴다. DailyCheckInModal은 이 파일에서 <Stack> 밖(=항상 최상단)
+  // 에 렌더되므로 onboarding 위에 그대로 겹쳐 보였다. pathname이 '/onboarding'인 동안은 체크인 자체를
+  // 미루고, 온보딩을 벗어난(=홈 등 실제 화면에 도달한) 최초 시점에만 1회 실행한다 — 온보딩이 필요
+  // 없는 기존 사용자는 pathname이 곧장 홈이 되므로 예전과 동일하게 즉시 실행된다(회귀 없음).
   const [checkInEarned, setCheckInEarned] = useState<number | null>(null);
+  const pathname = usePathname();
+  const hasCheckedInRef = useRef(false);
   useEffect(() => {
+    if (hasCheckedInRef.current) return;
+    if (pathname === '/onboarding') return;
+    hasCheckedInRef.current = true;
     useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
       if (checkedIn) {
         setCheckInEarned(earned);
         useAttendanceStore.getState().setCelebrationVisible(true);
       }
     }).catch(() => {});
-  }, []);
+  }, [pathname]);
 
   // Flip Mode(스펙 §4-A) — 앱이 떠 있는 동안 전역으로 "내려놓은 시간(쉬는시간)"을 측정한다.
   // iOS(CMMotionManager)/Android(SensorManager) 둘 다 실제 감지, 포그라운드에서만 동작(§4-A 제약).

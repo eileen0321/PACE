@@ -2,9 +2,15 @@
   <color name="splashscreen_background">#060709</color>
   <color name="iconBackground">#060709</color>
   <color name="colorPrimary">#023c69</color>
-  <!-- theme.ts colors.card와 동일(colors.background 아님) — 탭바 실제 표면색 + onboarding/index.tsx의
-       전체 화면 배경(absoluteFill)이 둘 다 card색이라 이걸 시스템 바에도 써야 두 군데 다 이음매 없이
-       맞는다. 상태바/내비게이션 바를 투명으로 두면 기기별로 edge-to-edge inset 처리가 어긋날 때 raw
-       검정으로 보이는 문제(실기기 확인)가 있어 고정 색으로 지정. -->
-  <color name="systemBarColor">#171A21</color>
+  <!-- 2026-08-01 사용자 실기기 지적("포커스 세션 화면에서 상태바 색이 앱과 다르다") — 예전엔
+       colors.card(#171A21, 탭바/온보딩 배경)와 맞췄는데, 정작 실제 탭 화면(Home/Focus/Stats/
+       Settings) 4개 전부의 최상단 컨테이너는 colors.card가 아니라 colors.background(#0B0C0F)를
+       쓴다(각 screen.tsx의 `container: { backgroundColor: colors.background }` 참고) — 그 결과
+       상태바 바로 아래에서 매 화면마다 눈에 띄는 이음매가 생기고 있었다. 탭바/온보딩(card색)보다
+       일반 화면(background색)이 훨씬 넓고 빈번한 노출 면적이라 background에 맞춘다 — 대신 하단
+       내비게이션 바가 탭바(card색)와 맞닿는 아주 좁은 경계에서만 미세한 차이가 생기는데, 이건
+       상태바 이음매보다 훨씬 덜 눈에 띈다. 상태바/내비게이션 바를 투명으로 두면 기기별로
+       edge-to-edge inset 처리가 어긋날 때 raw 검정으로 보이는 문제(실기기 확인)가 있어 고정
+       색으로 지정. -->
+  <color name="systemBarColor">#0B0C0F</color>
 </resources>

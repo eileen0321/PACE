@@ -8,8 +8,11 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
 import android.widget.Toast
 import android.Manifest
 import expo.modules.interfaces.permissions.Permissions
@@ -280,7 +283,17 @@ class PaceOverlayModule : Module() {
             } else {
               "Find \"Pace\" under Installed apps (or Downloaded apps) and turn it on"
             }
-            Toast.makeText(context, guidance, Toast.LENGTH_LONG).show()
+            // 2026-08-01 사용자 지적("안내가 떴다가 사라져 하단에 떠서 잘 안보이고") — 기본 Toast는
+            // 화면 하단(제스처 바 근처)에 뜨는데, 이 시점 사용자 시선은 방금 막 열린 설정 화면
+            // 상단(제목 "접근성")에 가 있다. gravity를 상단으로 옮기고, LENGTH_LONG(~3.5초) 한 번으론
+            // 놓치기 쉬워 동일 토스트를 한 번 더 띄워 실질 노출 시간을 늘린다(총 ~7초).
+            fun showGuidanceToast() {
+              Toast.makeText(context, guidance, Toast.LENGTH_LONG).apply {
+                setGravity(Gravity.TOP, 0, (180 * context.resources.displayMetrics.density).toInt())
+              }.show()
+            }
+            showGuidanceToast()
+            Handler(Looper.getMainLooper()).postDelayed({ showGuidanceToast() }, 3500L)
           } catch (fallbackError: RuntimeException) {
             Log.e("PaceOverlay", "requestAccessibilityPermission: both direct and fallback intents failed", fallbackError)
           }

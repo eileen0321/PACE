@@ -555,7 +555,7 @@ class PaceOverlayService : Service() {
   // 경로. 이미 세팅돼 있으면(같은 프로세스에서 이미 돌고 있던 정상 틱) 아무 것도 안 한다.
   private fun ensureInfraReady() {
     if (infraReady) return
-    startForeground(NOTIFICATION_ID, buildNotification())
+    startForeground(NOTIFICATION_ID, buildNotification(remainingMinutes))
     showOverlay(remainingMinutes)
     startForegroundAppPolling()
     setupMediaSession()
@@ -1248,6 +1248,7 @@ class PaceOverlayService : Service() {
         }
       }
       setRemainingText(remainingMinutes)
+      updateNotification(remainingMinutes)
       persistState()
       Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
 
@@ -1349,17 +1350,31 @@ class PaceOverlayService : Service() {
     }
   }
 
-  private fun buildNotification(): Notification {
+  // 2026-08-01 사용자 지적("상단 노티가 하루종일 똑같은데?") — buildNotification()이 ensureInfraReady()
+  // 에서 딱 1번만 호출되고 이후 다시 notify()되는 곳이 없어, 세션 내내 "세션 관리 중" 고정 문구만
+  // 떠 있었다(남은 시간이 줄어도 전혀 반영 안 됨). remainingMinutes를 받아 알약(remainingLabel)과
+  // 동일한 정보를 보여주고, performTick()에서 매 분 updateNotification()으로 갱신한다.
+  private fun buildNotification(remainingMinutes: Int): Notification {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val channel = NotificationChannel(CHANNEL_ID, "Pace Session", NotificationManager.IMPORTANCE_MIN)
       getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
+    val body = if (isKoreanLocale()) "${remainingMinutes}분 남음" else "${remainingMinutes}m left"
     return Notification.Builder(this, CHANNEL_ID)
       .setContentTitle("Pace")
-      .setContentText(if (isKoreanLocale()) "세션 관리 중" else "Managing session")
+      .setContentText(body)
       .setSmallIcon(android.R.drawable.ic_menu_recent_history)
       .setOngoing(true)
       .build()
+  }
+
+  private fun updateNotification(remainingMinutes: Int) {
+    try {
+      (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+        .notify(NOTIFICATION_ID, buildNotification(remainingMinutes))
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "updateNotification failed", e)
+    }
   }
 
   // 2026-07-19: healthy-shorts-assistant(3) ShortsPlayer.tsx의 Android 컴팩트 알약(dark glass +
@@ -2066,25 +2081,35 @@ class PaceOverlayService : Service() {
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
       MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
     )
+    // 2026-08-01 사장님 지적("아이콘 정렬해야 할거 아냐") — 아이콘(↗/★)과 배지(HOT)는 폭이
+    // 서로 달라서 그냥 붙이면 라벨("Open App"/"Shorts"/"Favorite") 시작 위치가 행마다 어긋나
+    // 보였다. 모든 행에 동일한 고정폭 슬롯을 두고 그 안에서 아이콘/배지를 가운데 정렬해 라벨이
+    // 항상 같은 x 위치에서 시작하도록 한다(iOS 컨텍스트 메뉴 아이콘 컬럼과 동일한 방식).
+    val iconSlotWidth = (22 * d).toInt()
     items.forEachIndexed { index, item ->
-      // 2026-08-01 사장님 지적("박스 크기 줄이라고") — 행 패딩/글자 크기를 iOS 컨텍스트 메뉴에
-      // 가깝게 더 촘촘히 줄임(특히 상하 패딩 12dp→7dp가 3줄 누적되면 세로로 가장 크게 체감됨).
+      // 2026-08-01 사장님 지적("박스도 너무 줄였잖아") — 이전에 너무 촘촘히 줄인 패딩/글자
+      // 크기를 살짝 되돌림(가로 12→14dp, 세로 7→9dp, 라벨 12f→13f). WRAP_CONTENT 자체는
+      // 유지 — 짧은 행 뒤에 빈 공간이 생기는 문제와는 별개다.
       val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isClickable = true
-        setPadding((12 * d).toInt(), (7 * d).toInt(), (12 * d).toInt(), (7 * d).toInt())
+        setPadding((14 * d).toInt(), (9 * d).toInt(), (14 * d).toInt(), (9 * d).toInt())
         setOnClickListener { item.action() }
       }
+      val iconSlot = FrameLayout(this).apply {
+        layoutParams = LinearLayout.LayoutParams(iconSlotWidth, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+          marginEnd = (8 * d).toInt()
+        }
+      }
       if (item.icon != null) {
-        row.addView(TextView(this).apply {
+        iconSlot.addView(TextView(this).apply {
           text = item.icon
-          textSize = 13f
+          textSize = 14f
           setTextColor(Color.parseColor("#CCFFFFFF"))
-          setPadding(0, 0, (6 * d).toInt(), 0)
-        })
+        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
       } else if (item.badge != null) {
-        row.addView(TextView(this).apply {
+        iconSlot.addView(TextView(this).apply {
           text = item.badge
           textSize = 9f
           setTextColor(Color.WHITE)
@@ -2094,13 +2119,12 @@ class PaceOverlayService : Service() {
             setColor(Color.parseColor("#E5484D"))
           }
           setPadding((6 * d).toInt(), (1 * d).toInt(), (6 * d).toInt(), (1 * d).toInt())
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-          marginEnd = (6 * d).toInt()
-        })
+        }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
       }
+      row.addView(iconSlot)
       row.addView(TextView(this).apply {
         text = item.label
-        textSize = 12f
+        textSize = 13f
         setTextColor(Color.WHITE)
         setTypeface(typeface, android.graphics.Typeface.BOLD)
       })

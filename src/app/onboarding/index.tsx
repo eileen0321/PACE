@@ -162,7 +162,12 @@ export default function OnboardingScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  background: { backgroundColor: colors.card },
+  // 2026-08-01 사용자 실기기 지적("이전 가이드 페이지 상하단이 회색이어야 하는데 검은색") —
+  // systemBarColor를 colors.card(#171A21)에서 colors.background(#0B0C0F, 실제 탭 화면 전부가
+  // 쓰는 색)로 정정하면서 이 화면만 여전히 card색 배경이라 시스템 바와 다시 어긋났다. 시스템 바
+  // 색은 Android edge-to-edge 강제 이후 앱 전체 고정값 하나뿐이라(화면별로 못 바꿈) 이 화면 쪽을
+  // 시스템 바에 맞춘다.
+  background: { backgroundColor: colors.background },
   container: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'center', gap: spacing.xl },
   headerBlock: { alignItems: 'center', gap: spacing.xs, marginBottom: spacing.sm },
   handsFreeIconWrap: { width: 52, height: 52, borderRadius: radius.pill, backgroundColor: `${colors.primary}1A`, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },

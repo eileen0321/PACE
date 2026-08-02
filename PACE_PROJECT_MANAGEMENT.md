@@ -3641,3 +3641,11 @@ Windows 세션이 요청한 "iOS 네이티브의 폴링/파싱 루프 예외 보
 - **전 Swift 파일에 `as!`/`try!` 0건.** 표준 force-unwrap도 위 381 한 곳뿐이고 그마저 가드됨.
 - pace-flip(CoreMotion x/y/z는 배열 아닌 프로퍼티라 인덱스 위험 없음), pace-sleep(JS단 SLEEP_DETECTION_DISABLED=true), pace-volumekey/live-activity — 위험 패턴 미검출.
 **결론: iOS는 이 축(핫루프 크래시)에서 클린. 안드는 co-session이 pollRunnable try/catch + parseTiming toIntOrNull로 수정 예정(그쪽 담당).**
+
+### 2026-08-02 (Mac 세션) — co-session 대형 푸시(9d6cd90/bb42b16) iOS 회귀 검토: 이상 없음
+Android MediaPipe SIGSEGV 근본수정 + 오버레이 권한회수 감지 커밋의 공유 TS 변경분 iOS 영향 확인:
+- `overlayService.ios.ts`: 인터페이스 신규 2메서드(`consumeOverlayRevoked`/`isOverlayServiceAlive`)를 iOS 안전 스텁(false/true)으로 구현 — Live Activity가 대신하므로 no-op. 패리티 정상.
+- `home.tsx`: 오버레이 권한회수 토스트 effect는 `if (Platform.OS !== 'android') return`으로 iOS no-op.
+- `rewardedAd.ts`: `RewardedAdResult` 'failed'를 `failed_unavailable/failed_no_fill/failed_error`로 3분화 + `isAdFailure()` 헬퍼. **유일 호출부 `FocusSessionExtendModal`(iOS 피드에서 사용)이 전부 갱신됨**(earned→grant 무결, unavailable→크레딧 유도, no_fill/error→재시도 안내). 다른 호출부 없음(grep 확인). tsc가 'failed' 비교 잔재를 잡았을 것이나 0건.
+- 번역키 `autoNextAdUnavailable`/`autoNextAdFailed`/`overlayPermissionRevoked`/`overlayServiceDead` 전부 ko/en 존재.
+- `types.ts`/`models.ts`: 인터페이스·타입 추가만. tsc OK. **iOS 회귀 없음.**

@@ -18,7 +18,7 @@
         "NSSupportsLiveActivities": true,
         "NSCameraUsageDescription": "Pace watches for a hand wave over the front camera to advance to the next Short hands-free during a Focus Session. Video never leaves your device and is not recorded."
       },
-      "icon": "./assets/ios-icon.png",
+      "icon": "./assets/icon-phone11.png",
       "backgroundColor": "#0B0C0F"
     },
     "android": {

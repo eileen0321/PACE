@@ -18,6 +18,15 @@ type SleepModule = {
 
 const DEFAULT_STILLNESS_MINUTES = 10; // 설정 미지정 시(안드 free 기본과 동일)
 
+// 2026-08-02 사장님 지시("수면 감지 기능 꺼 / 어차피 제대로 동작도 안 하잖아 / 수면감지 삭제해") +
+// Android parity(fae0ff6). 취침 감지는 가속도계(폰의 물리적 움직임)만 보는데, 폰을 거치대/책상에 두고
+// 손가락으로만 스와이프하며 보는 가장 흔한 사용 패턴에선 폰이 안 움직여 무진동=수면으로 오판했다 →
+// 멀쩡히 시청 중인 세션을 강제 종료(피드 블랙아웃)시켰다(Android는 오버레이가 반복 소실). 오탐 비용이
+// 이득보다 훨씬 커서 감지 자체를 비활성화한다. 되살릴 땐 이 플래그만 false로 되돌리면 됨(네이티브 모듈/
+// 임계값/설정 배선은 그대로 둠). ⚠️ 이 훅은 "실시간 취침 감지"만 담당 — sleepBlackout의 다른 경로
+// (슬립 타이머, idle 상한)와 백그라운드 이력 기반 수면 인사이트(_layout backfill)는 이와 무관하게 계속 동작.
+const SLEEP_DETECTION_DISABLED = true;
+
 // 2026-07-27 안드로이드 parity — 예전엔 임계값이 10분 하드코딩이라 설정의 sleepStillnessMinutes(안드는
 // 사용, D8 프리미엄 조절 5~20분)를 무시했다. 이제 stillnessMinutes를 받아 임계값으로 쓴다. 오디오 라우트가
 // 끊기면(이어폰 탈착 등 보조 신호) 그 60%로 단축(기존 10→6분 비율 유지).
@@ -33,7 +42,7 @@ export function useSleepGuard({ enabled, onSleep, stillnessMinutes }: { enabled:
   const stillnessShortMs = Math.round(mins * 0.6) * 60 * 1000;
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || SLEEP_DETECTION_DISABLED) return;
     let mod: SleepModule | null = null;
     try {
       mod = requireNativeModule<SleepModule>('PaceSleep');

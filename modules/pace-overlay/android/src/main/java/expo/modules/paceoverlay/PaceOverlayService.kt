@@ -1381,7 +1381,16 @@ class PaceOverlayService : Service() {
       // 오탐(거치대/adb 등으로 폰만 가만히 있는 경우) 방지를 위해 밤 시간대(위 SLEEP_WINDOW_*)에만
       // 무진동 판정을 수면으로 인정한다. 창 밖에서는 아무리 오래 무진동이어도 sleepDetected=false —
       // 그 시간의 무진동은 그냥 무진동일 뿐 세션을 끊지 않는다(Daily Limit 등 다른 조건은 그대로 적용).
-      val sleepDetected = stillnessElapsedMs >= stillnessThresholdMs && isWithinSleepDetectionWindow()
+      // 2026-08-02 사장님 지시("수면 감지 기능 꺼 / 어차피 제대로 동작도 안 하잖아 / 수면감지 삭제해") —
+      // 오늘 밤 "오버레이가 자꾸 사라진다"의 실제 원인이 이 기능이었다(prefs에 expire_reason=
+      // sleep_detected, expired=true로 확인). 가속도계(폰의 물리적 움직임)만 보고 판단하는데, 폰을
+      // 책상/거치대에 두고 손가락으로만 스와이프하며 보는 가장 흔한 사용 패턴에서는 폰이 전혀 안
+      // 움직여서, 멀쩡히 시청 중인데도 무진동 임계값이 차 세션이 수면으로 강제 종료됐다. 오탐 비용이
+      // (한창 보는 중에 앱이 꺼짐) 이득보다 훨씬 커서 기능 자체를 비활성화한다.
+      // 판정만 끄고 나머지 배선(센서 등록/임계값/프리미엄 설정값)은 그대로 남겨둔다 — 되살릴 때
+      // 이 한 줄만 되돌리면 되고, lastMotionAtMs는 다른 곳에서도 참조하기 때문.
+      @Suppress("UNUSED_EXPRESSION") (stillnessElapsedMs >= stillnessThresholdMs && isWithinSleepDetectionWindow())
+      val sleepDetected = false
 
       // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
       // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게

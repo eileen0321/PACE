@@ -112,6 +112,10 @@ class PaceAccessibilityService : AccessibilityService() {
     private const val DEFAULT_SAFETY_TIMEOUT_MS = 45_000L
     // 물리 볼륨 버튼 1회 입력의 반복 ACTION_DOWN을 하나로 묶는 불응 구간(onKeyEvent 참고).
     private const val VOLUME_KEY_DEBOUNCE_MS = 500L
+    // 2026-08-02 — "우리가 방금 스와이프한 결과"와 "사용자가 직접 손으로 넘긴 것"을 가르는 최소 간격.
+    // 우리 스와이프 직후의 재생위치 하락(loopedBack)까지 사용자 활동으로 오인하면 수면감지가 영원히
+    // 리셋돼 무력화되므로, 우리 스와이프로부터 이 시간이 지난 뒤의 전환만 사용자 조작으로 인정한다.
+    private const val MANUAL_SWIPE_MIN_GAP_MS = 3000L
     // 한국어 로케일 실측: "0분 5초 중 0분 2초"(현재 중 전체). 콜론 포맷("0:05 / 0:15")도 방어적으로
     // 같이 시도 — YouTube 앱 버전/기기 로케일이 다르면 문구가 바뀔 수 있다.
     private val KOREAN_TIME_PATTERN = Pattern.compile("(\\d+)분\\s*(\\d+)초\\s*중\\s*(\\d+)분\\s*(\\d+)초")
@@ -503,6 +507,16 @@ class PaceAccessibilityService : AccessibilityService() {
         if (nearEnd && isWatching) {
           performSwipeUp()
           lastSwipeAtMs = now
+        } else if (loopedBack && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+          // 2026-08-02 실기기 근본원인("오버레이가 자꾸 사라짐" — prefs에 expire_reason=sleep_detected,
+          // expired=true로 확인). 수면감지는 가속도계(폰의 물리적 움직임)만 보고, 깨어있음 증거로는
+          // markUserActivity()(손짓/핑거스냅/BT 리모컨 경로)만 인정했다. 그런데 폰을 거치대나 책상에
+          // 두고 손가락으로 직접 스와이프하며 보는 가장 흔한 사용 패턴에서는 폰이 전혀 안 움직이고
+          // 핸즈프리 트리거도 안 타므로, 사용자가 멀쩡히 보고 있는데도 무진동 임계값이 차서 세션이
+          // 수면으로 종료돼 버렸다(오늘 밤 오버레이가 반복해서 사라진 원인). 우리가 스와이프한 직후가
+          // 아닌데 영상이 바뀌었다 = 사용자가 직접 손으로 넘긴 것 = 확실한 "깨어있음" 증거이므로
+          // 무진동 시계를 리셋한다.
+          PaceOverlayService.markUserActivity()
         }
         lastKnownCurrentSec = -1
         return

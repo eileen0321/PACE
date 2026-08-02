@@ -3506,3 +3506,12 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 3. **settings 수면 민감도 조절행 `{false &&}` 게이팅 = iOS 무해**: 죽은 컨트롤 숨김만, iOS 렌더 영향 없음.
 4. AndroidManifest 저장소 권한 제거는 Android 전용 — iOS 무관.
 **남은 대기(변동 없음)**: AdMob iOS 테스트기기 해시(사장님 Console.app 캡처 대기 → adsConfig.ts TEST_DEVICE_IDS 추가), daily-remaining pill 포함 재빌드 여부 사장님 결정 대기.
+
+### 2026-08-02 (Mac 세션) — AdMob iOS 테스트기기 해시 캡처 시도 → os_log 마스킹으로 막힘, 출시 블로커 아님
+릴리즈 리스크 #1(자기 폰에서 실광고 반복 탭 시 invalid traffic 계정정지)을 위해 iOS 테스트기기 해시를 `adsConfig.ts TEST_DEVICE_IDS`에 등록하려 시도. **결론: 이 맥 환경에선 해시 추출 불가 — 출시 블로커 아니며 OTA로 후속 가능.**
+- **환경 제약**: 이 맥엔 Homebrew·libimobiledevice(idevicesyslog) 없음, `log stream --device-udid` 미지원, `log collect --device-udid`는 root 필요(비interactive sudo 불가). 즉 Claude Bash로 기기 로그 직접 못 읽음. adb 같은 iOS 대체 도구 부재.
+- **시도 경로**: (a) 사장님이 `sudo log collect`로 3회 아카이브 생성 → 내가 `/usr/bin/log show`(zsh `log` alias 회피 필수)로 파싱. (b) `xcrun devicectl device process launch --terminate-existing --console`로 앱을 확실한 새 프로세스(PID 2891)로 재실행+stderr 스트림 — 단 RN 시작 이후 로그는 os_log로 빠져 `--console`엔 안 잡힘(초기 NSLog만 캡처).
+- **핵심 발견**: 새 프로세스 2891에서 `Pace: [com.google.GoogleMobileAds:Default] <private>` 로그 확인 = SDK 정상 동작하고 테스트기기 메시지도 찍힘. **그러나 내용이 `<private>`로 마스킹** — iOS가 기록 시점에 프라이버시 보호로 가림. 기기에 로깅 프로파일(private_data:on)을 먼저 설치하지 않는 한 어떤 방법으로도 해시 복구 불가.
+- **관련 코드 사실**(재확인): 배너·보상광고 모두 `EXPO_PUBLIC_USE_REAL_ADS==='true'`에서만 실 단위 사용(eas.json production만 true). `configureAdsForTesting()`는 `__DEV__` 무관하게 항상 `setRequestConfiguration({testDeviceIdentifiers})` 적용 → 해시 등록 시 **출시빌드에도 효과 있음**(등록 가치 유효). 배너는 `(tabs)/_layout.tsx:107` `{!isPremium && <AdBanner/>}` — 게스트/무료만 노출.
+- **권고/후속**: 그냥 출시. 실위험은 사장님 폰 자기광고 반복탭뿐(회피 가능), Android는 이미 등록됨. iOS 해시는 나중에 아이폰에 Apple 로깅 프로파일 설치 → 앱 재현 → 언마스킹 캡처로 잡아서 `adsConfig.ts`(JS, OTA 배포 가능)에 추가하면 됨. **재빌드 불필요, 출시 후에도 반영 가능.**
+- **미결(사장님 결정)**: 사장님 폰에 현재 **실광고 로컬 빌드** 설치됨(캡처용). 원래 테스트광고 빌드로 되돌릴지 대기 중(어차피 출시빌드도 실광고라 "탭 안 하기"로 둬도 무방).

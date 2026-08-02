@@ -151,7 +151,9 @@ class PaceOverlayService : Service() {
         // 이미 확인됨) — 최후 순위로 덧붙여 위 두 신호가 놓쳐도 알약이 계속 보이게 한다.
         val windowVisible = PaceAccessibilityService.isSupportedAppWindowVisible()
         val shouldShow = (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible
-        Log.d("PaceOverlay", "fgPoll a11y=$accessibilityForeground usm=$usageStatsForeground windowVisible=$windowVisible shouldShow=$shouldShow")
+        // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
+        // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
+        // 밀려나 디버깅을 방해했다(실기기 조사 중 반복 확인). 오버레이 표시 로직 자체는 무변경.
         if (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) {
           getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(PREF_LAST_TRACKED_APP_PACKAGE, foregroundPackage).apply()

@@ -400,8 +400,12 @@ object PaceHandWaveDetector {
     val pastRefractory = now - lastTriggerAtMs > REFRACTORY_MS
 
     // 2026-07-26 튜닝용 — 임계값을 못 넘긴 시도도 실측값을 남겨야 다음 조정 근거가 생긴다("안 됨"만
-    // 알아서는 얼마나 못 미쳤는지 알 수 없었다). 스팸 방지로 임계값 근처(0.9배 이상)일 때만 남긴다.
-    if (growthRatio > GROWTH_RATIO_THRESHOLD * 0.9 && growthRatio <= GROWTH_RATIO_THRESHOLD) {
+    // 알아서는 얼마나 못 미쳤는지 알 수 없었다).
+    // 2026-08-02 출시 전 정리 — 게이트가 "임계값의 0.9배 이상"이었는데 임계값이 1.1로 낮아지면서
+    // 0.99 이상이면 전부 걸려, 손이 화면에 잡혀 있는 동안 사실상 매 프레임(최대 초당 6~7회) 찍혔다.
+    // 오늘 실기기 조사에서 이 로그가 다른 로그를 계속 밀어냈다. 진짜 "아깝게 실패"(임계값의 97% 이상)
+    // 일 때만 남기도록 좁힌다 — 튜닝 근거는 그대로 확보하면서 스팸은 사라진다.
+    if (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 && growthRatio <= GROWTH_RATIO_THRESHOLD) {
       Log.d(TAG, "near-miss growthRatio=$growthRatio handSize=$handSize threshold=$GROWTH_RATIO_THRESHOLD")
     }
 

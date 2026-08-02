@@ -479,7 +479,10 @@ class PaceAccessibilityService : AccessibilityService() {
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
-      Log.d("PaceAccessibility", "timing current=${currentSec}s total=${totalSec}s")
+      // 2026-08-02 출시 전 정리 — 여기 있던 "timing current=Xs total=Ys" 로그 제거. 재생위치 폴링이
+      // 500ms마다 도는데 매 폴마다 찍혀서(시간당 7,200줄) logcat 링버퍼를 채우고, 정작 필요한
+      // VIDEO_ADVANCE/스와이프/onKeyEvent 로그를 밀어내 실기기 디버깅을 반복적으로 방해했다.
+      // 판정에 진짜 필요한 이벤트(VIDEO_ADVANCE, tier2 타임아웃)는 아래에서 계속 로깅한다.
       // 2026-07-26 — currentSec가 이전 폴링보다 실제로 늘었다는 건 스와이프 여부(isWatching)와
       // 무관하게 "지금 영상이 실제로 재생 중"이라는 강한 증거. isLikelyPlaying()이 이 시각의
       // 신선도로 PaceOverlayService의 사용시간 차감을 게이팅한다.

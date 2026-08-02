@@ -3441,3 +3441,53 @@ Mac의 스플래시 커밋(`427362c`)이 `app.json`의 네이티브 런치 이�
 `dumpsys window`의 `mCurrentFocus`, SharedPreferences 직접 덤프(`run-as ... cat`),
 그리고 JS `console.log` 추적(ReactNativeJS 태그)으로 호출 지점을 특정하는 방식이
 "추측 후 값 조정"보다 압도적으로 빨랐다. 특히 BT/손짓은 로그 증거 없이는 절대 못 찾았을 원인이었다.
+
+## 2026-08-02 오후 (Windows/Android) — Focus Session 연장 UX 전면 재설계 (⚠️ iOS 확인 필요)
+
+사장님 지시로 **"앱으로 나가는 흐름"을 전부 없애고 쇼츠 위에서 끝나도록** 바꿨다.
+관련 지시 원문: "쇼츠 오버레이 상태 focus off일 때 누르면 광고 창 띄우는 걸로 하라고",
+"앱으로 가는 시나리오 만들지 말고", "광고 볼래 크레딧 쓸래 팝업 뜨고 광고 보겠다고 하면 광고
+보여주는 거 아냐?", "5분 더를 했을 때 오늘 한도는 40분 남았고 FOCUS 5분 다 썼을 때 오버레이 표시는?"
+
+### 최종 확정된 Android 흐름 (커밋 `8e9af6f`, `7b5aa60`)
+| 상태 | 오버레이 알약 | 탭했을 때 |
+|---|---|---|
+| Focus 진행 중 | `● 40m left  [FOCUS 5m]` | 수동으로 끄기 |
+| Focus 소진 | `● 40m left  [FOCUS OFF]` | **쇼츠 위** 선택 팝업(앱으로 안 감) |
+| 팝업 "나중에" | `FOCUS OFF` 유지 | 그대로 계속 시청(배지 재탭하면 팝업 다시) |
+
+선택 팝업: `[광고 보고 5분 더]` / `[크레딧 5개로 5분 더]`(잔액 충분 시만) / `[나중에]`
+
+### 구현 메모
+- **`PaceRewardedAdActivity`(신규)**: 화면을 그리지 않는 투명 액티비티. 보상형 광고는 SDK 특성상
+  Activity가 있어야만 띄울 수 있어(Service/오버레이 창에서 직접 불가) 껍데기만 두고 광고만 띄운다.
+  광고가 닫히면 즉시 finish → 사용자에겐 "쇼츠 위에 광고가 떴다 사라짐"으로만 보인다.
+  `pace-overlay/build.gradle`에 `play-services-ads:24.9.0` 추가(RN 광고 패키지가 이미 넣는 것과 동일
+  아티팩트라 새 의존성 아님). AndroidManifest에 투명 테마 + noHistory로 등록.
+- **크레딧 배선**: 크레딧 잔액은 JS 스토어(useFlipStore + useAttendanceStore)에만 있으므로
+  `setAvailableCredits`로 네이티브에 푸시(isPremium과 동일 패턴). 네이티브가 크레딧으로 연장하면
+  "쓴 양"만 기록하고, JS가 다음 포그라운드에 `consumePendingCreditSpend`로 1회성 회수해 실제
+  잔액을 차감한다 — **잔액의 진실원천은 계속 JS**.
+- **배지 카운트다운**: `PREF_FOCUS_SESSION_DEADLINE_AT_MS`(프로세스 재시작에도 살아남음)로 잔여를
+  계산하고 `performTick`에서 매분 `applyAutoBadgeStyle()` 호출. 안 하면 시작 시점 값에 멈춘다.
+- **제거**: home.tsx의 Android 전용 자동 트리거(앱 포그라운드 시 타임아웃 신호를 소비해 RN 모달을
+  띄우던 경로). 남겨두면 "나중에"를 고른 뒤 앱을 열었을 때 난데없이 앱에서 광고 모달이 뜬다.
+  **iOS용 `FocusSessionExtendModal` 렌더 자체는 그대로 유지**했다.
+
+### ⚠️ Mac(iOS) 확인 요청
+1. **공용 파일 변경 3건**이 iOS에 영향 없는지 확인 필요:
+   `services/platform/types.ts`(BluetoothService에 `setAvailableCredits`/`consumePendingCreditSpend`
+   추가), `bluetoothService.ios.ts`(둘 다 no-op 스텁 추가), `_layout.tsx`(크레딧 푸시/회수 effect —
+   `Platform.OS !== 'android'` 게이팅됨).
+2. **iOS의 Focus 연장 UX를 어떻게 맞출지 결정 필요.** iOS는 시스템 오버레이가 없고 Pace Feed(WebView)
+   안에서 재생하므로 "앱 밖으로 나간다"는 개념 자체가 없다 — 지금처럼 in-feed 모달이 자연스러울 수
+   있다. 다만 **"광고/크레딧 선택지를 함께 제시"**하는 부분은 Android와 동일하게 맞추는 게 좋아 보임
+   (현재 iOS도 FocusSessionExtendModal이 둘 다 제공하는지 확인 요망).
+3. iOS에도 "Focus 잔여 시간"이 사용자에게 보이는지 확인 — Android는 이번에 배지에 넣어 해결했다
+   (같은 숫자가 하루한도로 오해되던 문제).
+
+### 같은 세션 추가 수정
+- 손짓 재무장 완화(`0.45→0.85`, 타임아웃 `3초→1.5초`) — 로그상 트리거 간격이 정확히 3초에 붙어
+  있어(크기 기준 재무장이 한 번도 성립 안 함) 매번 타임아웃을 기다리고 있었다. 커밋 `efb0299`.
+- ⚠️ **prebuild 함정 재발 주의**(위 섹션 참고) — Mac 스플래시 반영 때 `versionCode 2→1` 등이
+  초기화됐다. prebuild 후엔 반드시 `git status android ios`로 확인하고 되돌릴 것.

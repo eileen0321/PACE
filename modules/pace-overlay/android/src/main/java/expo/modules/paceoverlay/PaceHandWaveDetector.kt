@@ -75,9 +75,19 @@ object PaceHandWaveDetector {
   // 살짝 오므라들거나 흔들리는 정도로도 우연히 만족되기 쉬웠다(한 번의 연속 동작인데 중간에
   // 재무장→그 남은 전진 동작이 새 기준선 대비 또 growthRatio를 넘겨 트리거 두 번). 손을 화면
   // 앞에서 확실히 뺐다고 볼 수 있는 수준까지 훨씬 낮춘다.
-  private const val REARM_SIZE_RATIO = 0.45
+  // 2026-08-02 실기기 로그로 재조정("그래도 잘 안 되잖아") — 트리거 간격이 2.8~3.5초로 정확히
+  // REARM_TIMEOUT_MS(3초)에 붙어 있었다. 즉 크기 기준(0.45)으로는 재무장이 사실상 한 번도 성립하지
+  // 않고 매번 3초 타임아웃을 기다렸다는 뜻 — 그 사이 사용자가 아무리 손짓해도 전부 무시되니 "안
+  // 된다"고 느껴진다. 0.45(트리거 당시 크기의 45%까지 축소)는 손을 카메라에서 아주 멀리 빼야만
+  // 만족하는 값이라 실사용 동작으로는 도달하지 않는다.
+  // 애초에 0.45로 조인 이유는 "두 번씩 넘어감"을 막기 위해서였는데, 그 진짜 원인은 오늘 따로 찾아
+  // 고쳤다(loopedBack에도 performSwipeUp을 호출하던 폴링 로직 — PaceAccessibilityService 수정 참고).
+  // 따라서 이 값을 이렇게까지 조일 필요가 없어졌다. 손을 살짝 뒤로 빼는 정도(85%)면 재무장.
+  private const val REARM_SIZE_RATIO = 0.85
   // 손이 안 작아지고 계속 카메라 앞에 머무는 극단적인 경우를 위한 안전판(무한정 재무장 안 되는 것 방지).
-  private const val REARM_TIMEOUT_MS = 3000L
+  // 위와 같은 이유로 3초 → 1.5초. REFRACTORY_MS(1.2초)와 함께 "연속 손짓의 최소 간격"을 정하는데,
+  // 3초는 체감상 너무 길어 반응이 없는 것처럼 느껴졌다.
+  private const val REARM_TIMEOUT_MS = 1500L
 
   // 2026-07-26 사용자 관찰("손모양이 아니여도 카메라만 가리면 넘어가는듯") — MediaPipe 손 랜드마크
   // 신뢰도(0.5)가 빠른 움직임/블러에서 프레임을 놓치는 경우의 안전망. 손 랜드마크와 별개로 Y평면
@@ -378,6 +388,9 @@ object PaceHandWaveDetector {
 
     if (awaitingRearm) {
       if (handSize <= rearmBelowSize || now - lastTriggerAtMs > REARM_TIMEOUT_MS) {
+        // 2026-08-02 진단 — 재무장이 "크기 축소"로 풀렸는지 "타임아웃"으로 풀렸는지 구분해야
+        // 손짓 반응성 문제의 원인을 계속 추적할 수 있다(트리거당 1줄이라 스팸 아님).
+        Log.d(TAG, "rearmed after ${now - lastTriggerAtMs}ms by=${if (handSize <= rearmBelowSize) "shrink" else "timeout"} size=$handSize needed<=$rearmBelowSize")
         awaitingRearm = false
       } else {
         // 아직 손을 안 치웠음 — 방금 그 제스처의 잔류 흔들림이므로 새 제스처로 세지 않는다.

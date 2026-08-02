@@ -3630,3 +3630,14 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 
 **미조사 영역**: iOS 네이티브(Swift) 쪽은 이 세션(Windows)에서 파일 접근이 안 돼 확인 못 함 —
 맥 세션에서 동일 관점(폴링/파싱 루프의 예외 보호)으로 한 번 봐주면 좋겠다.
+
+### 2026-08-02 (Mac 세션) — Windows 크래시 감사 요청 응답: iOS 네이티브(Swift) 전수 확인 = 크래시 위험 없음
+Windows 세션이 요청한 "iOS 네이티브의 폴링/파싱 루프 예외 보호" 감사 수행. 대상: `pace-gesture`(카메라/오디오/비전 핫루프), `pace-flip`, `pace-sleep`, `pace-volumekey`, `pace-live-activity`. **결과: 안드의 접근성 폴링 루프(무방어)와 달리 iOS 핫 콜백은 전부 이미 가드됨 — 수정 불필요.**
+- **손 랜드마크 인덱싱** `hand[0]/hand[9]`(PaceGestureModule.swift:649) → 바로 위 645행 `guard let hand = result?.landmarks.first, hand.count > 9 else { return }`로 out-of-bounds 차단 ✅
+- **오디오 Goertzel `Int(0.5 + Float(n)*targetHz/sr)`**(:333, sr=0이면 inf→Int() 크래시) → 호출부 `process()`가 312행 전에 282행 `guard sampleRate > 0` 로 차단 ✅
+- **MediaPipe `detectAsync`**(:634) → `do { } catch { }`(631~637) 안, 간헐 실패 무시 ✅
+- **머리 pitch force-unwrap** `baselinePitch!`(:381) → 380행 `if baselinePitch == nil { baselinePitch = pitch; return }`로 보호(head 모드는 기본 비활성) ✅
+- **avgLuma 픽셀 루프**(YUV:711 / BGRA:728) → `x<w, y<h` 스텝 + bytesPerRow≥width 라 `y*bpr + x*4 + 2 < h*bpr` 경계 안전 ✅
+- **전 Swift 파일에 `as!`/`try!` 0건.** 표준 force-unwrap도 위 381 한 곳뿐이고 그마저 가드됨.
+- pace-flip(CoreMotion x/y/z는 배열 아닌 프로퍼티라 인덱스 위험 없음), pace-sleep(JS단 SLEEP_DETECTION_DISABLED=true), pace-volumekey/live-activity — 위험 패턴 미검출.
+**결론: iOS는 이 축(핫루프 크래시)에서 클린. 안드는 co-session이 pollRunnable try/catch + parseTiming toIntOrNull로 수정 예정(그쪽 담당).**

@@ -1835,6 +1835,16 @@ class PaceOverlayService : Service() {
   // 이미 떠 있는 액티비티(singleTask → onNewIntent)에도 이 URL을 항상 홈 라우트로 매칭해준다.
   private fun openApp() {
     lastOpenAppAtMs = SystemClock.elapsedRealtime()
+    // 2026-08-02 실기기 영상 분석("화면 두 번씩 뜨는 것" 조사 중 발견) — Pace 앱으로 전환한 뒤에도
+    // 오버레이 알약이 Pace 자기 화면 위에 최대 1초(POLL_INTERVAL_MS)간 그대로 겹쳐 보였다. 알약을
+    // 숨기는 판단이 1초 주기 폴링(foregroundPollRunnable)에만 의존해서, 전환 직후 다음 폴이 올
+    // 때까지는 이전 상태(=감시 대상 앱이 전경)를 유지하기 때문. 화면 위에 두 UI가 겹쳐 보여
+    // "앱이 두 개처럼" 읽히는 원인이 될 수 있어, 우리가 직접 앱을 여는 이 시점에 즉시 숨긴다
+    // (다음 폴이 실제 상태를 다시 판단하므로 유튜브로 돌아가면 알약도 정상 복귀한다).
+    Handler(Looper.getMainLooper()).post {
+      overlayView?.visibility = View.GONE
+      hidePaceMenu()
+    }
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
       // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
       // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은

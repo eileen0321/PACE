@@ -5,6 +5,17 @@ import ARKit
 import Vision
 import MediaPipeTasksVision
 
+// 2026-08-02 사장님 지시 — 진단 NSLog을 Release 빌드에서 컴파일-아웃(제출용 콘솔 노이즈 제거).
+// 손짓/오디오/카메라 로직은 한 줄도 바꾸지 않고, 로깅 호출만 NSLog→paceGLog로 대체한다.
+// DEBUG: NSLogv로 기존과 100% 동일 출력. Release: no-op(로그 없음). 파일 스코프(모든 타입에서 호출).
+#if DEBUG
+private func paceGLog(_ format: String, _ args: CVarArg...) {
+  withVaList(args) { NSLogv(format, $0) }
+}
+#else
+@inline(__always) private func paceGLog(_ format: String, _ args: CVarArg...) {}
+#endif
+
 // Pace iOS 핸즈프리 "다음 영상 넘기기" 트리거 모듈 (2026-07-20, 사용자 지시).
 // AirPods 블루투스 리모컨(구 useFeedRemoteControl.ios.ts)을 대체 — 두 가지 무접촉 신호로 넘긴다:
 //   1) 핑거스냅 소리  → iOS SoundAnalysis 내장 분류기(version1)의 "finger_snapping" 클래스로 감지.
@@ -54,7 +65,7 @@ public class PaceGestureModule: Module {
 
     // 디버그: JS(WebView) 문자열을 NSLog로만(콘솔). 파일 로깅은 제출 전 제거함.
     Function("nativeLog") { (msg: String) in
-      NSLog("PACEWV %@", msg)
+      paceGLog("PACEWV %@", msg)
     }
 
     // 카메라 권한 상태 — 손짓 토글이 "거부 시 disable + 설정 링크"를 판단하는 데 JS가 사용.
@@ -104,12 +115,12 @@ public class PaceGestureModule: Module {
   // 짧은 창 안에서 급격히 커지는)" 모션을 감지한다(안드로이드와 동일한 모션-기반 휴리스틱, 특정 포즈
   // 분류 아님). Focus Session ON 동안만 켜져 게이팅됨(카메라 상시 구동 방지 — 배터리/프라이버시).
   private func startWave() {
-    NSLog("[pace-wave] startWave() called (SESSION ON→감지기 시작)")
+    paceGLog("[pace-wave] startWave() called (SESSION ON→감지기 시작)")
     guard #available(iOS 14.0, *) else {
       sendEvent("onError", ["kind": "wave", "message": "Hand pose needs iOS 14+"])
       return
     }
-    if waveDetector != nil { NSLog("[pace-wave] startWave: 이미 실행중(skip)"); return }
+    if waveDetector != nil { paceGLog("[pace-wave] startWave: 이미 실행중(skip)"); return }
     let d = WaveDetector(
       onWave: { [weak self] in self?.sendEvent("onHandWave", [:]) },
       onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "wave", "message": msg]) },
@@ -129,7 +140,7 @@ public class PaceGestureModule: Module {
     let bluetoothPortTypes: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
     let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
     let connected = outputs.contains { bluetoothPortTypes.contains($0.portType) }
-    NSLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
+    paceGLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
     return connected
   }
 
@@ -203,17 +214,17 @@ private final class SnapDetector {
   }
 
   func start() {
-    NSLog("PACESNAP start() called")
+    paceGLog("PACESNAP start() called")
     AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
       guard let self = self else { return }
-      NSLog("PACESNAP mic permission granted=%@", granted ? "YES" : "NO")
+      paceGLog("PACESNAP mic permission granted=%@", granted ? "YES" : "NO")
       guard granted else { self.onError("microphone permission denied"); return }
       self.queue.async { self.begin() }
     }
   }
 
   private func scheduleRetry(_ why: String) {
-    NSLog("PACESNAP retry(%d) after: %@", retryCount, why)
+    paceGLog("PACESNAP retry(%d) after: %@", retryCount, why)
     if engine.isRunning { engine.stop() }
     engine.inputNode.removeTap(onBus: 0)
     guard retryCount < 5 else { onError("snap start gave up: \(why)"); return }
@@ -222,7 +233,7 @@ private final class SnapDetector {
   }
 
   private func begin() {
-    NSLog("PACESNAP begin() enter")
+    paceGLog("PACESNAP begin() enter")
     let session = AVAudioSession.sharedInstance()
     do {
       // .measurement: AGC 최소화(순간 스파이크 보존). .mixWithOthers로 유튜브 소리와 공존.
@@ -234,7 +245,7 @@ private final class SnapDetector {
     } catch {
       scheduleRetry("session config: \(error.localizedDescription)"); return
     }
-    NSLog("PACESNAP session active (sr=%.0f)", session.sampleRate)
+    paceGLog("PACESNAP session active (sr=%.0f)", session.sampleRate)
     let input = engine.inputNode
 
     // ⭐ 핵심: AVAudioEngine.start()/installTap은 WebView 오디오와 충돌 시 Swift가 못 잡는 ObjC
@@ -252,7 +263,7 @@ private final class SnapDetector {
           self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))
         }
         do { try self.engine.start() }
-        catch { NSLog("PACESNAP engine.start swift-err %@", error.localizedDescription) }
+        catch { paceGLog("PACESNAP engine.start swift-err %@", error.localizedDescription) }
       }
     } catch {
       // ObjC NSException을 여기서 안전하게 받음(크래시 X) → 재시도.
@@ -261,7 +272,7 @@ private final class SnapDetector {
 
     if engine.isRunning {
       retryCount = 0
-      NSLog("[pace-snap] started (AEC) sr=%.0f", session.sampleRate)
+      paceGLog("[pace-snap] started (AEC) sr=%.0f", session.sampleRate)
     } else {
       scheduleRetry("engine not running after start")
     }
@@ -293,7 +304,7 @@ private final class SnapDetector {
     logTick += 1
     if logTick % 12 == 0 {
       onDiag(String(format: "rms=%.4f fl=%.4f", rms, noiseFloor)) // 주기적 상태
-      NSLog("PACESNAP rms=%.4f fl=%.4f", Double(rms), Double(noiseFloor))
+      paceGLog("PACESNAP rms=%.4f fl=%.4f", Double(rms), Double(noiseFloor))
     }
 
     guard rms > noiseFloor * spikeMult, rms > minAbsRms else { return }        // 스파이크(피크 기준)
@@ -307,13 +318,13 @@ private final class SnapDetector {
     // 스파이크가 잡히면(게이트 통과 여부와 무관) 진단으로 보여줘 임계 튜닝 근거를 만든다.
     // hilo/zcr은 참고용으로만 로그 — 게이트로는 안 씀(이 셋업에서 신뢰 못 함, 실기기 로그로 확인).
     onDiag(String(format: "SPIKE rms=%.3f hi/lo=%.2f", rms, hilo))
-    NSLog("PACESNAP SPIKE rms=%.4f hilo=%.2f zcr=%.3f", Double(rms), Double(hilo), Double(zcr))
+    paceGLog("PACESNAP SPIKE rms=%.4f hilo=%.2f zcr=%.3f", Double(rms), Double(hilo), Double(zcr))
 
     let now = CACurrentMediaTime()
     guard now - lastFire > refractory else { return }
     lastFire = now
     onDiag("🫰 SNAP!")
-    NSLog("PACESNAP 🫰 FIRED")
+    paceGLog("PACESNAP 🫰 FIRED")
     DispatchQueue.main.async { self.onSnap(Double(rms)) }
   }
 
@@ -449,7 +460,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func setupLandmarker() {
     guard let modelPath = Self.modelPath() else {
-      NSLog("[pace-wave] hand_landmarker.task 모델 못 찾음")
+      paceGLog("[pace-wave] hand_landmarker.task 모델 못 찾음")
       onError("hand model not found"); return
     }
     let options = HandLandmarkerOptions()
@@ -462,28 +473,28 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     options.handLandmarkerLiveStreamDelegate = self
     do {
       landmarker = try HandLandmarker(options: options)
-      NSLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(CPU): %@", modelPath)
+      paceGLog("[pace-wave] MediaPipe HandLandmarker 로드 성공(CPU): %@", modelPath)
     } catch {
-      NSLog("[pace-wave] HandLandmarker init 실패: %@", String(describing: error))
+      paceGLog("[pace-wave] HandLandmarker init 실패: %@", String(describing: error))
       onError("hand landmarker init failed")
     }
   }
 
   func start() {
     let st = AVCaptureDevice.authorizationStatus(for: .video)
-    NSLog("[pace-wave] start() cam authStatus=%ld (0=notDet 1=restr 2=DENIED 3=authorized)", st.rawValue)
+    paceGLog("[pace-wave] start() cam authStatus=%ld (0=notDet 1=restr 2=DENIED 3=authorized)", st.rawValue)
     switch st {
     case .authorized:
       queue.async { self.configureAndRun() }
     case .notDetermined:
       AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
         guard let self = self else { return }
-        NSLog("[pace-wave] cam requestAccess granted=%@", granted ? "YES" : "NO")
+        paceGLog("[pace-wave] cam requestAccess granted=%@", granted ? "YES" : "NO")
         guard granted else { self.onError("camera permission denied"); return }
         self.queue.async { self.configureAndRun() }
       }
     default:
-      NSLog("[pace-wave] cam DENIED/RESTRICTED — 설정에서 카메라 켜야 함")
+      paceGLog("[pace-wave] cam DENIED/RESTRICTED — 설정에서 카메라 켜야 함")
       onError("camera permission denied")
     }
   }
@@ -552,7 +563,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     nc.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)), name: .AVCaptureSessionInterruptionEnded, object: session)
     nc.addObserver(self, selector: #selector(sessionRuntimeError(_:)), name: .AVCaptureSessionRuntimeError, object: session)
     session.startRunning()
-    NSLog("[pace-wave] camera started (front, portrait+mirror)")
+    paceGLog("[pace-wave] camera started (front, portrait+mirror)")
     // 워치독: 프레임이 2.5초 이상 안 오면(인터럽션이 안 끝나거나 조용히 정지) 원인 불문 카메라를 강제 재시작.
     // "잘되다가 갑자기 안되고 계속 안됨"의 근본 대응 — 인터럽션-종료 알림에만 의존하던 복구의 사각지대를 메운다.
     lastFrameAt = CFAbsoluteTimeGetCurrent()
@@ -562,7 +573,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         guard let self = self else { return }
         let idle = CFAbsoluteTimeGetCurrent() - self.lastFrameAt
         if idle > 2.5 {
-          NSLog("[pace-wave] watchdog: no frames %.1fs → 카메라 강제 재시작", idle)
+          paceGLog("[pace-wave] watchdog: no frames %.1fs → 카메라 강제 재시작", idle)
           self.onDiag("watchdog restart")
           self.queue.async {
             if self.session.isRunning { self.session.stopRunning() }
@@ -576,16 +587,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   @objc private func sessionInterrupted(_ n: Notification) {
     let reason = (n.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? -1
-    NSLog("[pace-wave] session INTERRUPTED reason=%d", reason)
+    paceGLog("[pace-wave] session INTERRUPTED reason=%d", reason)
     onDiag("cam interrupted r=\(reason)")
   }
   @objc private func sessionInterruptionEnded(_ n: Notification) {
-    NSLog("[pace-wave] interruption ended → restart")
+    paceGLog("[pace-wave] interruption ended → restart")
     onDiag("cam resume")
     queue.async { if !self.session.isRunning { self.session.startRunning() } }
   }
   @objc private func sessionRuntimeError(_ n: Notification) {
-    NSLog("[pace-wave] runtime error → restart")
+    paceGLog("[pace-wave] runtime error → restart")
     queue.async { if !self.session.isRunning { self.session.startRunning() } }
   }
 
@@ -675,7 +686,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private func fireTrigger(_ reason: String, _ nowMs: Double) {
     lastTriggerMs = nowMs
     sizeHistory.removeAll(); lumaHistory.removeAll()
-    NSLog("[pace-wave] 👋 WAVE! %@", reason)
+    paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")
     DispatchQueue.main.async { self.onWave() }
   }

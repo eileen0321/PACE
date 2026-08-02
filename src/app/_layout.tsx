@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
-import { ActivityIndicator, AppState, LogBox, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, InteractionManager, LogBox, Platform, StyleSheet, Text, View } from 'react-native';
 
 // 개발(LogBox) 전용 소음 억제 — RevenueCat SDK가 시뮬레이터(StoreKit 없음)에서 "issue with your
 // configuration" 경고를 반복 출력해 개발 화면을 덮는다(계정삭제 녹화 등에 방해). LogBox는 프로덕션
@@ -115,6 +115,8 @@ export default function RootLayout() {
   // 미루고, 온보딩을 벗어난(=홈 등 실제 화면에 도달한) 최초 시점에만 1회 실행한다 — 온보딩이 필요
   // 없는 기존 사용자는 pathname이 곧장 홈이 되므로 예전과 동일하게 즉시 실행된다(회귀 없음).
   const [checkInEarned, setCheckInEarned] = useState<number | null>(null);
+  // 스플래시(브랜딩 로고) 종료 신호 — 출석 팝업을 스플래시 완료+홈 노출 후에만 띄우려 여기서 선언(TDZ 회피).
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
   const pathname = usePathname();
   const hasCheckedInRef = useRef(false);
   useEffect(() => {
@@ -123,14 +125,22 @@ export default function RootLayout() {
     // 이걸 안 걸면 온보딩이 필요한 신규 사용자에서 '/' 프레임에 출석 팝업이 온보딩보다 먼저 떠버린다.
     // 실제 화면(홈 등 '/home')에 도달한 최초 시점에만 1회 발동 → 가이드 다 본 뒤 홈에서 팝업.
     if (pathname === '/' || pathname === '/onboarding') return;
+    // 2026-08-03 사장님 지적("스플래시 완료하고 홈이 다 보일 때 떠야지") — pathname이 '/home'이 되는
+    // 순간은 JS 스플래시(AnimatedSplash, ~950ms+FadeOut 400ms)가 아직 화면을 덮고 있는 시점이라, 그때
+    // 팝업을 띄우면 스플래시 위로 먼저 떠 보였다. (1) 스플래시가 끝나(showAnimatedSplash=false) 홈이
+    // 실제로 드러난 뒤에만 발동하고, (2) InteractionManager.runAfterInteractions로 홈 첫 렌더·스플래시
+    // FadeOut 인터랙션이 모두 끝난 다음에 팝업을 띄운다(RN 공식 권장 패턴).
+    if (showAnimatedSplash) return;
     hasCheckedInRef.current = true;
-    useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
-      if (checkedIn) {
-        setCheckInEarned(earned);
-        useAttendanceStore.getState().setCelebrationVisible(true);
-      }
-    }).catch(() => {});
-  }, [pathname]);
+    InteractionManager.runAfterInteractions(() => {
+      useAttendanceStore.getState().checkInIfNeeded().then(({ checkedIn, earned }) => {
+        if (checkedIn) {
+          setCheckInEarned(earned);
+          useAttendanceStore.getState().setCelebrationVisible(true);
+        }
+      }).catch(() => {});
+    });
+  }, [pathname, showAnimatedSplash]);
 
   // Flip Mode(스펙 §4-A) — 앱이 떠 있는 동안 전역으로 "내려놓은 시간(쉬는시간)"을 측정한다.
   // iOS(CMMotionManager)/Android(SensorManager) 둘 다 실제 감지, 포그라운드에서만 동작(§4-A 제약).
@@ -416,7 +426,7 @@ export default function RootLayout() {
   // 브랜딩 로고는 이 AnimatedSplash(JS)가 담당한다 → 앱 실행 시 "첫 아이콘이 잠깐 떴다 사라지는"
   // 네이티브 런치 아이콘 플래시(사장님 지적)가 사라지고, 단색 배경에서 곧바로 애니메이션 스플래시
   // 하나만 자연스럽게 뜬다. (expo-splash-screen은 폰트 로딩 동안 단색 #060709만 유지.)
-  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
+  // (showAnimatedSplash 상태는 위 출석 팝업 게이팅 때문에 상단으로 이동해 선언됨.)
 
   if (!fontsLoaded) return null;
 

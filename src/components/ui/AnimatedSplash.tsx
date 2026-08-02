@@ -29,9 +29,12 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
   const textOpacity = useSharedValue(0);
   const textY = useSharedValue(10);
   const barX = useSharedValue(-1);
+  // 2026-08-02 사장님 지시("앞에 작은 아이콘 없애") — 네이티브 런치스크린을 아이콘 없이 배경만
+  // 나오게 바꿨으므로(app.json splash-blank), 로고는 이 JS 스플래시에서 부드럽게 페이드인한다.
+  const iconOpacity = useSharedValue(0);
 
   useEffect(() => {
-    // 로고는 애니메이션 없음(런치스크린과 동일 고정). 효과만 등장.
+    iconOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     glowOpacity.value = withDelay(60, withTiming(1, { duration: 280 }));
     shimmerX.value = withDelay(120, withRepeat(withTiming(1, { duration: 700, easing: Easing.linear }), -1, false));
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
@@ -40,8 +43,9 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
 
     const timer = setTimeout(onComplete, DURATION_MS);
     return () => clearTimeout(timer);
-  }, [barX, glowOpacity, onComplete, shimmerX, textOpacity, textY]);
+  }, [barX, glowOpacity, iconOpacity, onComplete, shimmerX, textOpacity, textY]);
 
+  const iconStyle = useAnimatedStyle(() => ({ opacity: iconOpacity.value }));
   const glowStyle = useAnimatedStyle(() => ({ opacity: glowOpacity.value }));
   const shimmerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shimmerX.value * 130 }, { rotate: '20deg' }],
@@ -62,9 +66,9 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
       // (reactnativeschool: onLayout 시점 = 첫 프레임 페인트 완료. 여기서 SplashScreen.hideAsync 호출.)
       onLayout={onLayoutReady}
     >
-      {/* 로고: 런치스크린과 동일 — 화면 중앙, 120px, 박스/애니메이션 없음(미동 없이 이어짐). */}
-      <View style={styles.iconArea}>
-        {/* 글로우는 로고 뒤에서 은은히 페이드인(첫 프레임엔 없음 → 런치와 일치). */}
+      {/* 로고 — 네이티브 런치엔 아이콘이 없으므로 여기서 부드럽게 페이드인. 화면 중앙, 120px. */}
+      <Animated.View style={[styles.iconArea, iconStyle]}>
+        {/* 글로우는 로고 뒤에서 은은히 페이드인. */}
         <Animated.View style={[styles.glow, glowStyle]} />
         <View style={styles.iconClip}>
           <Image source={ICON} style={styles.icon} />
@@ -78,7 +82,7 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
             />
           </Animated.View>
         </View>
-      </View>
+      </Animated.View>
 
       {/* 브랜딩 텍스트: 로고 아래 절대배치로 페이드인(로고 위치는 안 건드림). */}
       <Animated.View style={[styles.textBlock, textStyle]}>

@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
+import android.provider.Settings
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
@@ -244,6 +245,11 @@ class PaceOverlayService : Service() {
   // 지금은 꺼져 있다"는 전이를 잡아 JS가 재활성화 안내(notifyAccessibilityNeeded)를 띄울 수 있게
   // 1회성 신호를 세운다 — consumeExpired()와 동일 패턴.
   private var accessibilityRevokedPending = false
+
+  // 위 accessibilityRevokedPending과 동일한 1회성 신호 — 오버레이 권한(SYSTEM_ALERT_WINDOW)이
+  // 세션 도중 회수됐을 때 JS가 포그라운드 복귀 시 소비해 사용자에게 안내한다
+  // (checkOverlayPermissionRevoked 참고).
+  private var overlayRevokedPending = false
 
   // 한도 도달 UI 3단계화(2026-07-23, 사용자 지적 — "TAKE YOUR PACE" 3단계 시스템이 LimitReachedOverlay.tsx
   // (JS)에만 구현돼 있었는데, 그건 activeSessionPlatform===null(=홈 탭을 직접 보고 있을 때)에만 뜨는
@@ -560,6 +566,27 @@ class PaceOverlayService : Service() {
     }
   }
 
+  // 2026-08-02 사장님 지시("FOCUS OFF일 때 원인 구분을 못 한다 — 이런 게 또 있는지 전수 확인해") —
+  // 감사 결과 오버레이 권한(SYSTEM_ALERT_WINDOW)에는 위 접근성과 달리 회수 감지가 아예 없었다.
+  // canDrawOverlays()를 확인하는 곳은 PaceOverlayModule(세션 시작 전)과 PaceBootReceiver(부팅 시)
+  // 뿐이라, 세션 도중 사용자가 "다른 앱 위에 표시"를 끄면 알약만 조용히 사라지고 세션/타이머/한도
+  // 집행은 계속 돌았다 — 앱은 이걸 정상으로 알고 아무 안내도 하지 않았다. 사용자 입장에선 "또
+  // 오버레이가 사라졌다"로만 보이고, 원인이 권한 회수인지·서비스 사망인지·감시 대상 앱이 전경이
+  // 아닌 정상 상태인지 구분할 방법이 없었다(실제로 이 세션에서 권한이 꺼진 채 한참 헤맸다).
+  // 접근성과 완전히 동일한 "이전엔 있었는데 지금은 없다" 전이 감지 + 1회성 소비 패턴으로 맞춘다.
+  private fun checkOverlayPermissionRevoked() {
+    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val nowGranted = Settings.canDrawOverlays(this)
+    val wasGranted = prefs.getBoolean(PREF_OVERLAY_WAS_GRANTED, false)
+    if (nowGranted) {
+      if (!wasGranted) prefs.edit().putBoolean(PREF_OVERLAY_WAS_GRANTED, true).apply()
+    } else if (wasGranted) {
+      overlayRevokedPending = true
+      prefs.edit().putBoolean(PREF_OVERLAY_WAS_GRANTED, false).apply()
+      Log.w("PaceOverlay", "OVERLAY_PERMISSION_REVOKED — was granted, now denied (pill is invisible but session still running)")
+    }
+  }
+
   // 오버레이 창/포그라운드 알림/포그라운드 폴링/미디어세션 세팅 — ACTION_START(정상 시작)와
   // ACTION_TICK(프로세스가 죽었다 알람으로 되살아난 경우, infraReady==false)이 공유하는 초기화
   // 경로. 이미 세팅돼 있으면(같은 프로세스에서 이미 돌고 있던 정상 틱) 아무 것도 안 한다.
@@ -665,6 +692,8 @@ class PaceOverlayService : Service() {
     private const val PREF_DAILY_LIMIT_ORIGINAL_MINUTES = "daily_limit_original_minutes"
     // 2026-07-26 — "접근성이 이전에 켜져 있었다" 기억용(checkAccessibilityRevoked 참고).
     private const val PREF_A11Y_WAS_ENABLED = "a11y_was_enabled"
+    // 위와 동일 개념의 오버레이 권한 버전(checkOverlayPermissionRevoked 참고).
+    private const val PREF_OVERLAY_WAS_GRANTED = "overlay_was_granted"
     // 2026-08-01 사용자 지시("설정하면 바로 PACE로 와야 한다고 말했을 텐데 계속 설정이잖아") —
     // 뒤로가기로 Pace 태스크에 복귀하는 것(PaceOverlayModule.requestAccessibilityPermission,
     // currentActivity 수정)만으론 부족했다: 사용자가 토글을 켠 "그 즉시" 자동으로 Pace로 돌아와야
@@ -1210,6 +1239,23 @@ class PaceOverlayService : Service() {
       return false
     }
 
+    // 2026-08-02 사장님 지시("원인 구분 못 하는 곳 전수 확인") — 알약이 안 보이는 원인 네 가지
+    // (대상 앱이 전경 아님=정상 / 오버레이 권한 회수 / 서비스 사망 / 세션 종료) 중 "서비스 사망"을
+    // JS가 판별할 수단이 아예 없었다. session_active=true인데 이 서비스 프로세스는 죽어 있는 상태를
+    // 실제로 관측했다(틱이 11분간 멈추고 남은 시간이 얼어붙음). PaceAccessibilityService.isAlive()와
+    // 동일하게 인스턴스 존재 여부로 판별한다.
+    fun isServiceAlive(): Boolean = instance != null
+
+    // 위와 동일한 1회성 소비 패턴의 오버레이 권한 버전(checkOverlayPermissionRevoked 참고).
+    fun consumeOverlayRevoked(): Boolean {
+      val service = instance ?: return false
+      if (service.overlayRevokedPending) {
+        service.overlayRevokedPending = false
+        return true
+      }
+      return false
+    }
+
     // 2026-07-19: Handler.postDelayed 대신 AlarmManager.setAndAllowWhileIdle()로 다음 틱을 예약 —
     // Doze 유지보수 윈도우에서도 결국 깨어나고, 이 알람 자체는 시스템에 등록되므로 우리 프로세스가
     // 죽어도 살아남아 PaceTickReceiver→PaceOverlayService(ACTION_TICK)를 다시 깨운다.
@@ -1380,6 +1426,7 @@ class PaceOverlayService : Service() {
         Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
       }
       checkAccessibilityRevoked()
+      checkOverlayPermissionRevoked()
       if (sleepTimerRemainingMinutes > 0) {
         sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
       }

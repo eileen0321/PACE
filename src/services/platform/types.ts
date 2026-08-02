@@ -96,6 +96,19 @@ export interface OverlayService {
    */
   consumeAccessibilityRevoked(): Promise<boolean>;
   /**
+   * 2026-08-02 감사 — 접근성과 달리 오버레이 권한(SYSTEM_ALERT_WINDOW)에는 회수 감지가 없어서,
+   * 세션 도중 권한이 꺼지면 알약만 조용히 사라지고 세션/타이머/한도 집행은 계속 돌았다. 사용자는
+   * "또 오버레이가 사라졌다"만 볼 뿐 원인(권한 회수/서비스 사망/대상 앱 아님)을 구분할 수 없었다.
+   * 위 consumeAccessibilityRevoked와 동일한 1회성 소비 신호. Android만 실제 신호, iOS는 항상 false.
+   */
+  consumeOverlayRevoked(): Promise<boolean>;
+  /**
+   * 세션이 활성인데 네이티브 오버레이 서비스 프로세스가 죽어 있는 상태를 판별한다 — 알약이 안 보이는
+   * 원인 중 "서비스 사망"을 나머지(권한 회수/대상 앱 아님/세션 종료)와 구분하기 위한 것.
+   * Android만 실제 값, iOS는 항상 true(해당 개념 없음).
+   */
+  isOverlayServiceAlive(): Promise<boolean>;
+  /**
    * 2026-08-01 실기기 사고 — 사용자가 YouTube Shorts 안에 있는데 오버레이가 아예 안 뜬 원인을 추적한
    * 결과 접근성 서비스 자체가 꺼져 있었다(재빌드/재설치 때마다 OS가 자동으로 끔, 매번 수동으로 다시
    * 켜줘야 했는데 마지막 빌드 뒤 빠뜨림). session_active 프리퍼런스는 그대로 true라 앱 UI만 봐선

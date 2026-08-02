@@ -87,7 +87,11 @@ export type UserSettings = {
 // 'app_restarted' — 2026-07-26 감사 발견(재부팅/강제종료/크래시 예외처리 감사) 대응: 프로세스가
 // 중간에 죽어(overlay/index.tsx의 unmount cleanup이 못 돌아서) ended_at이 영원히 NULL로 남는 "고아"
 // 세션을 다음 콜드스타트 때 정리할 때 쓰는 사유 — 실제 종료 원인을 알 수 없을 때의 폴백.
-export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop' | 'app_restarted';
+// 2026-08-02 사장님 지시("원인 구분 못 하는 곳 전수 확인") — 'unknown' 추가. 예전엔 종료 사유를
+// 끝내 알아내지 못했을 때도 'manual_stop'(사용자가 직접 껐음)으로 기록해서, "정말 직접 끈 것"과
+// "판정에 실패한 것"이 통계상 구분되지 않았다(StatsService의 종료사유 집계가 그대로 왜곡됨).
+// 백엔드는 이 값을 자유 문자열로 저장하고 getOrDefault로 집계하므로 새 값 추가는 안전하다.
+export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop' | 'app_restarted' | 'unknown';
 
 export type ViewingSession = {
   id: string;

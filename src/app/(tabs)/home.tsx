@@ -154,6 +154,40 @@ export default function HomeScreen() {
   // ※ showFocusSessionExtend 상태와 아래 FocusSessionExtendModal 렌더는 iOS(피드 내 연장)에서
   //   계속 쓰이므로 남겨둔다 — 이 Android 전용 자동 트리거만 없앤 것.
 
+  // 2026-08-02 사장님 지시("FOCUS OFF일 때 원인 구분을 못 한다 — 이런 게 또 있는지 전수 확인해") —
+  // 감사 결과 오버레이 권한(SYSTEM_ALERT_WINDOW)에는 접근성과 달리 회수 감지가 아예 없었다. 세션
+  // 도중 권한이 꺼지면 알약만 조용히 사라지고 세션/타이머/한도 집행은 계속 돌아서, 사용자는 "또
+  // 오버레이가 사라졌다"만 볼 뿐 원인(권한 회수/서비스 사망/대상 앱이 전경 아님)을 구분할 수 없었다.
+  // 네이티브(checkOverlayPermissionRevoked)가 매 틱마다 전이를 잡아 1회성 신호를 세워두면, 여기서
+  // 앱이 다시 포그라운드로 올 때 소비해 사용자에게 알린다 — 바로 위 접근성 확인과 동일한 패턴.
+  // ※ overlay/index.tsx가 아니라 여기인 이유: Android는 그 화면이 마운트되자마자 Home으로
+  //   리다이렉트되므로(그 파일의 useFocusEffect) 거기 붙이면 실제로 실행될 기회가 없다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const checkOverlayRevoked = () => {
+      overlayService.consumeOverlayRevoked().then((revoked) => {
+        if (revoked) {
+          useToastStore.getState().show(t('home.overlayPermissionRevoked'));
+          return;
+        }
+        // 권한 회수가 아닌데도 알약이 안 보이는 나머지 원인 중 "서비스 사망"을 구분한다 —
+        // 세션은 running인데 네이티브 서비스 프로세스가 죽어 있으면 타이머/한도 집행이 멈춘
+        // 상태다(실기기에서 틱이 11분간 멈추고 남은 시간이 얼어붙은 것을 관측). 사용자가
+        // "왜 시간이 안 줄지?"를 원인 모른 채 겪지 않도록 그 사실을 알린다.
+        if (useSessionStore.getState().status !== 'running') return;
+        overlayService.isOverlayServiceAlive().then((alive) => {
+          if (!alive) useToastStore.getState().show(t('home.overlayServiceDead'));
+        }).catch(() => {});
+      }).catch(() => {});
+    };
+    checkOverlayRevoked();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkOverlayRevoked();
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 2026-08-01 실기기 사고 대응 — 접근성 꺼짐은 시스템 설정에서 언제든 조용히 일어날 수 있으므로
   // (재설치/재빌드뿐 아니라 OEM 배터리 관리·OS 업데이트로도 회수될 수 있음) Home 탭 포커스마다는
   // 물론(useFocusEffect, 아래) 앱이 다시 foreground로 돌아올 때도 재확인한다 — 설정 화면 다녀온

@@ -270,6 +270,16 @@ class PaceOverlayModule : Module() {
       PaceOverlayService.consumeAccessibilityRevoked()
     }
 
+    // 오버레이 서비스가 실제로 살아있는지(session_active=true인데 프로세스가 죽은 상태 판별용).
+    Function("isOverlayServiceAlive") {
+      PaceOverlayService.isServiceAlive()
+    }
+
+    // 오버레이 권한(SYSTEM_ALERT_WINDOW) 회수 1회성 신호 — 위 접근성과 동일 패턴.
+    Function("consumeOverlayRevoked") {
+      PaceOverlayService.consumeOverlayRevoked()
+    }
+
     // Auto Next 실제 스와이프(PaceAccessibilityService, 2026-07-18) — ⚠️ Play 스토어 정책 리스크
     // (PACE_ARCHITECTURE.md 참고): "사용자 대신 스와이프"는 AccessibilityService 심사에서 "접근성
     // 목적이 아닌 남용"으로 리젝될 수 있다. 사용자 결정(2026-07-18): 코드는 완성해두되 스토어 제출

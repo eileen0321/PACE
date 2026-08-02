@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { Feather } from '@expo/vector-icons';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { bluetoothService } from '../../services/platform';
-import { showRewardedAd } from '../../services/ads/rewardedAd';
+import { isAdFailure, showRewardedAd } from '../../services/ads/rewardedAd';
 import { useToastStore } from '../../store/useToastStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useAttendanceStore } from '../../store/useAttendanceStore';
@@ -48,7 +48,11 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, titleKey
         grant(FOCUS_SESSION_EXTEND_MINUTES);
         useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: FOCUS_SESSION_EXTEND_MINUTES }));
         onDismiss();
-      } else if (result === 'failed') {
+      } else if (result === 'failed_unavailable') {
+        // 모듈 자체가 없으니 재시도해도 소용없다 — 크레딧 쪽으로 유도한다.
+        useToastStore.getState().show(t('overlay.autoNextAdUnavailable'));
+      } else if (isAdFailure(result)) {
+        // no_fill(재고없음/네트워크)·error 둘 다 잠시 후 재시도가 유효하다.
         useToastStore.getState().show(t('overlay.autoNextAdFailed'));
       }
       // 'closed_without_reward' — 모달을 유지해 다시 시도할 수 있게 한다.

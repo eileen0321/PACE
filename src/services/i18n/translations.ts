@@ -48,6 +48,8 @@ export const translations = {
       usageInsightTitle: 'Pace Insight',
       // 2026-07-29 — 인사이트 배너(선물상자)를 탭했을 때 가끔 터지는 보너스 크레딧 토스트.
       insightGiftReward: '🎁 Surprise! +{{n}} credits',
+      overlayPermissionRevoked: 'Display-over-apps permission was turned off — the Pace pill is hidden. Your session is still running.',
+      overlayServiceDead: 'Session tracking stopped unexpectedly — tap your platform again to resume.',
       // 2026-07-26 감사 발견 — OTA 강제 업데이트 블로킹 화면(_layout.tsx)이 useTranslation을 아예
       // 안 써서 언어 설정과 무관하게 항상 한국어로만 떴다.
       updateDownloading: 'Downloading update...',
@@ -404,6 +406,7 @@ export const translations = {
       notifAccessibilityNeededTitle: 'Hands-Free Shorts needs one tap',
       notifAccessibilityNeededBody: 'Tap here, then turn PACE on under Installed apps.',
       autoNextAdFailed: "Couldn't load the ad — try again in a moment.",
+      autoNextAdUnavailable: "Ads aren't available on this device right now — you can use credits instead.",
       notNow: 'Not now',
       // 2026-07-31 사장님 지시 — 오버레이 P 버튼 메뉴(앱으로/HOT/Capture/Favorite) + 각 목록 화면.
       menuOpenApp: 'Open App',
@@ -551,6 +554,8 @@ export const translations = {
       focusSessionDisabledToast: '🎧 Focus Session 꺼짐',
       usageInsightTitle: 'Pace 인사이트',
       insightGiftReward: '🎁 깜짝 선물! +{{n}} 크레딧',
+      overlayPermissionRevoked: '"다른 앱 위에 표시" 권한이 꺼져 알약이 안 보여요. 세션은 계속 진행 중입니다.',
+      overlayServiceDead: '세션 추적이 예기치 않게 멈췄어요 — 플랫폼을 다시 눌러 이어가세요.',
       updateDownloading: '새 업데이트를 받는 중...',
       updateApplying: '적용하는 중...',
     },
@@ -864,6 +869,7 @@ export const translations = {
       notifAccessibilityNeededTitle: '한 번만 탭하면 핸즈프리 완성',
       notifAccessibilityNeededBody: '여기를 탭한 다음, 설치된 앱에서 PACE를 켜주세요.',
       autoNextAdFailed: '광고를 불러오지 못했어요 — 잠시 후 다시 시도해 주세요.',
+      autoNextAdUnavailable: '지금 이 기기에서는 광고를 쓸 수 없어요 — 크레딧으로 연장할 수 있습니다.',
       notNow: '나중에',
       menuOpenApp: '앱으로',
       menuHot: 'Shorts HOT',

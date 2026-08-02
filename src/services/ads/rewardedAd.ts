@@ -34,12 +34,29 @@ function getAdUnitId(): string {
 
 export const rewardedAdAvailable = Boolean(RewardedAd && RewardedAdEventType && AdEventType && TestIds);
 
-export type RewardedAdResult = 'earned' | 'closed_without_reward' | 'failed';
+// 2026-08-02 사장님 지시("원인 구분 못 하는 곳 전수 확인") — 예전엔 실패 원인 세 가지(모듈 미링크 /
+// 로드 타임아웃=재고없음·네트워크 / SDK 에러)가 전부 'failed' 하나로 뭉개져서, 호출부가 사용자에게
+// 무엇을 안내해야 할지(네트워크 확인하라고 할지, 그냥 다시 눌러보라고 할지) 판단할 근거가 없었다.
+// 무료 사용자가 시간을 연장하려는 순간이라 이탈 지점이기도 해서 원인별 안내가 필요하다.
+// 기존 호출부 호환을 위해 'failed'는 유니온에 남겨두지 않고, 대신 아래 isAdFailure()로 판별한다.
+export type RewardedAdResult =
+  | 'earned'
+  | 'closed_without_reward'
+  | 'failed_unavailable' // 광고 모듈 자체가 없음(네이티브 미링크) — 재시도해도 소용없음
+  | 'failed_no_fill'     // 20초 안에 아무 이벤트 없음 — 재고 없음/네트워크 지연, 잠시 후 재시도 권장
+  | 'failed_error';      // SDK가 명시적으로 에러 반환 — 재시도 가능
+
+const AD_FAILURES: RewardedAdResult[] = ['failed_unavailable', 'failed_no_fill', 'failed_error'];
+
+/** 결과가 실패 계열인지 — 호출부가 원인별로 분기하지 않고 뭉뚱그려 처리할 때 사용. */
+export function isAdFailure(result: RewardedAdResult): boolean {
+  return AD_FAILURES.includes(result);
+}
 
 // 매 호출마다 새 인스턴스를 만든다 — RewardedAd는 1회성(보여준 뒤 재사용 불가)이라, 세션 중 여러 번
 // 한도에 도달하면(연속으로 광고를 봐서 계속 이어가는 경우) 그때마다 새로 로드해야 한다.
 export function showRewardedAd(): Promise<RewardedAdResult> {
-  if (!rewardedAdAvailable) return Promise.resolve('failed');
+  if (!rewardedAdAvailable) return Promise.resolve('failed_unavailable');
 
   return new Promise((resolve) => {
     let settled = false;
@@ -56,11 +73,11 @@ export function showRewardedAd(): Promise<RewardedAdResult> {
     };
     // 로드 타임아웃 — 노필(no-fill) 등으로 LOADED/ERROR가 끝내 안 오면 프라미스가 영영 안 풀려
     // 모달의 "광고 보는 중" 스피너가 무한 대기한다(감사 발견). 20초 안에 아무 이벤트도 없으면 실패 처리.
-    const timeoutId = setTimeout(() => finish('failed'), 20000);
+    const timeoutId = setTimeout(() => finish('failed_no_fill'), 20000);
 
     unsubscribers.push(
       rewarded.addAdEventListener(RewardedAdEventType!.LOADED, () => {
-        rewarded.show().catch(() => finish('failed'));
+        rewarded.show().catch(() => finish('failed_error'));
       })
     );
     unsubscribers.push(
@@ -69,7 +86,7 @@ export function showRewardedAd(): Promise<RewardedAdResult> {
       })
     );
     unsubscribers.push(
-      rewarded.addAdEventListener(AdEventType!.ERROR, () => finish('failed'))
+      rewarded.addAdEventListener(AdEventType!.ERROR, () => finish('failed_error'))
     );
     unsubscribers.push(
       rewarded.addAdEventListener(AdEventType!.CLOSED, () => finish(earned ? 'earned' : 'closed_without_reward'))

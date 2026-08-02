@@ -326,7 +326,11 @@ export default function OverlaySessionScreen() {
               sleepOnsetAtMsRef.current = result.sleepOnsetAtMs;
             }
           }
-          const endReason = endReasonRef.current ?? 'manual_stop';
+          // 2026-08-02 사장님 지시("원인 구분 못 하는 곳 전수 확인") — 여기 폴백이 'manual_stop'이라
+          // "사용자가 정말 직접 껐다"와 "끝내 사유를 알아내지 못했다"가 통계상 같은 값으로 섞였다.
+          // 위 네이티브 재조회까지 실패한 경우는 진짜로 원인을 모르는 것이므로 'unknown'으로 남긴다 —
+          // 진짜 수동 종료는 stopSession()에서 명시적으로 'manual_stop'을 세우므로 여기 안 온다.
+          const endReason = endReasonRef.current ?? 'unknown';
           // 2026-07-26 사용자 지적("1시 3분에 잠들었으면 실제 마지막으로 움직인 시각을 써야지") —
           // sleep_detected면 네이티브가 무진동 임계값을 "넘긴" 시각(now) 대신 실제 마지막 움직임 시각
           // (sleepOnsetAtMsRef, PaceOverlayService.markExpired 참고)을 세션 종료 시각으로 쓴다 —

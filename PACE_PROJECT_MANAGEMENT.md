@@ -3515,3 +3515,11 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 - **관련 코드 사실**(재확인): 배너·보상광고 모두 `EXPO_PUBLIC_USE_REAL_ADS==='true'`에서만 실 단위 사용(eas.json production만 true). `configureAdsForTesting()`는 `__DEV__` 무관하게 항상 `setRequestConfiguration({testDeviceIdentifiers})` 적용 → 해시 등록 시 **출시빌드에도 효과 있음**(등록 가치 유효). 배너는 `(tabs)/_layout.tsx:107` `{!isPremium && <AdBanner/>}` — 게스트/무료만 노출.
 - **권고/후속**: 그냥 출시. 실위험은 사장님 폰 자기광고 반복탭뿐(회피 가능), Android는 이미 등록됨. iOS 해시는 나중에 아이폰에 Apple 로깅 프로파일 설치 → 앱 재현 → 언마스킹 캡처로 잡아서 `adsConfig.ts`(JS, OTA 배포 가능)에 추가하면 됨. **재빌드 불필요, 출시 후에도 반영 가능.**
 - **미결(사장님 결정)**: 사장님 폰에 현재 **실광고 로컬 빌드** 설치됨(캡처용). 원래 테스트광고 빌드로 되돌릴지 대기 중(어차피 출시빌드도 실광고라 "탭 안 하기"로 둬도 무방).
+
+### 2026-08-02 (Mac 세션) — 출시 전 4대 리스크 정리: #2 완료확인·#3 완료, #1 종료·#4만 대시보드 대기
+사장님 "오늘 출시, 다 수정" 지시로 4개 리스크 처리:
+- **#2 Apple 로그인 revoke(5.1.1v/TN3194) — ✅ 완료 확인**: 백엔드 코드(`AppleOAuthService`/`AuthService.deleteAccount`/`AuthController:45`)는 이미 완결·정상(로그인 시 authCode→refresh_token 교환저장, 삭제 시 revoke, ES256 client_secret). Railway env도 **이미 설정+배포됨**(스크린샷 확인): `APPLE_TEAM_ID=328BF833XS`, `APPLE_SIGNIN_KEY_ID=G9K6W76R5C`(=Apple 개발자포털 "PACE Sign in with Apple" 키, CPH9NXAP8X는 JLPT Master용이라 무관), `APPLE_SIGNIN_PRIVATE_KEY`(PEM). 즉 감사의 "미설정"은 이미 해소돼 있었음. → 조치 불필요.
+- **#3 진단로그 — ✅ 완료**: (a) domlog(YouTubeShortsPlayer.ios.tsx)은 `send()`가 `!window.__PACE_DIAG__`면 미전송 → 프로덕션 이미 OFF(무변경). (b) `modules/pace-gesture/ios/PaceGestureModule.swift` NSLog 26곳 → 파일스코프 `paceGLog` 헬퍼(#if DEBUG=NSLogv 동일출력, Release=no-op)로 치환. **손짓/오디오/카메라 로직 무변경**, Release 빌드 컴파일 통과(0 errors) 확인, 실기기 설치(93ed49a). ⚠️ 안드는 해당 없음(iOS 전용 모듈).
+- **#1 AdMob iOS 해시 — 종료**: os_log `<private>` 마스킹으로 이 환경선 추출 불가. 출시 블로커 아님, OTA 후속(위 bf12ef1 참고).
+- **#4 구독 상품 — 대시보드 확인 남음(사장님)**: ASC/Google Play/RevenueCat Offering 등록 여부. 코드가 기대하는 product ID/entitlement/offering 대조 필요.
+**결론: 코드/서버 출시 블로커 없음. #4 대시보드만 확인하면 제출 가능.** 폰엔 깨끗한(테스트광고) 빌드 설치돼 있음 — 사장님 손짓 스모크테스트 권장.

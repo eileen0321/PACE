@@ -361,6 +361,10 @@ object PaceHandWaveDetector {
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
     if (result.landmarks().isEmpty()) {
       awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
+      // 2026-08-02 — 손이 사라졌으면 이전 접근 동작의 크기 이력도 버린다. 남겨두면 다음에 손을
+      // 다시 넣었을 때 "직전 동작의 큰 손"이 최솟값 기준에 섞여 들어가(또는 반대로 남은 작은 값이
+      // 오탐을 유발해) 판정이 흐려진다. 매 접근을 깨끗한 상태에서 새로 재기 위함.
+      sizeHistory.clear()
       return
     }
     val landmarks = result.landmarks()[0]
@@ -396,7 +400,18 @@ object PaceHandWaveDetector {
     // growthRatio=1.0을 계산하지 말고 이번 프레임은 조용히 건너뛴다(다음 프레임에서 최소 2개 이상
     // 쌓이면 그때부터 의미있는 비교가 시작됨).
     if (oldestInWindow.first == now) return
-    val growthRatio = handSize / oldestInWindow.second
+    // 2026-08-02 실기기 로그 분석("왜 첫 번째 손짓은 무조건 안 되고 5,6번 만에 되는지") — 기준을
+    // "윈도우에서 가장 오래된 샘플"에서 "가장 작았던 샘플"로 바꾼다.
+    // 로그 증거: 실패 구간은 handSize가 0.164~0.171에 붙은 채 growthRatio가 1.00 언저리에서 안
+    // 움직였고(손을 이미 카메라 앞에 든 상태로 흔듦 — 비교할 "작았던 시점"이 윈도우에 없음),
+    // 성공한 트리거는 전부 손이 멀리서 다가온 경우(1.18/1.69/2.24)였다. 오래된 샘플 기준은 손이
+    // 이미 프레임 안에 크게 들어와 있으면 기준값 자체가 커서 비율이 영영 안 오르고, 사용자가
+    // 우연히 손을 완전히 뺐다 다시 넣어야(=작은 샘플이 새로 생겨야) 겨우 걸린다 — "5,6번 만에
+    // 된다"의 정체. 최솟값 기준이면 윈도우 안에 손이 조금이라도 작았던 순간이 있으면 바로 잡히고,
+    // 손이 계속 같은 크기면 여전히 1.0 근처라 오탐도 늘지 않는다.
+    val baselineSize = sizeHistory.minOf { it.second }
+    if (baselineSize <= 0.0) return
+    val growthRatio = handSize / baselineSize
     val pastRefractory = now - lastTriggerAtMs > REFRACTORY_MS
 
     // 2026-07-26 튜닝용 — 임계값을 못 넘긴 시도도 실측값을 남겨야 다음 조정 근거가 생긴다("안 됨"만

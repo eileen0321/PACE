@@ -3531,3 +3531,13 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 - **Android 영향**: `version`은 iOS/Android 공용이라 Android versionName도 1.0이 됨 — 단 Play는 versionCode(현재 3)만 강제하고 versionName은 표시용이라 **Android 제출 블록 아님**. Android가 versionName 1.0.1을 꼭 원하면 app.config.js 플랫폼 분기 필요(별건). **당장은 iOS 출시 우선 = 1.0 유지.**
 - ⚠️ 남은 불일치: `android.runtimeVersion`이 아직 `"1.0.1"`(app.json:34) — 최상위 `runtimeVersion.policy=appVersion`(=1.0)과 안 맞음. Android OTA 담당(co-session)이 1.0으로 맞출지 판단 필요. iOS 초기 제출엔 무관.
 - **iOS 제출 전 필수**: (1) 제출용 빌드(EAS/archive)를 **version 1.0으로 새로 빌드**해야 반영됨(로컬 개발빌드는 제출과 무관). (2) `buildNumber`(현재 4)는 그 1.0에 이미 올라간 리젝 빌드보다 **높아야** 함 — ASC "빌드" 섹션에서 마지막 업로드 번호 확인 후 필요시 상향.
+
+### 2026-08-02 (Mac 세션) — 🔒 버전 합의 = 1.0 (Apple 리젝 메일이 증거) + 리젝 사유 5.1.1(v) 이미 해결 확인
+**[버전 합의 — 안드/맥 공통, 확정]** app.json `version` = **`1.0`** 으로 고정. **번복 금지.**
+근거(추측 아님, Apple 공식): 2026-07-31 리젝 메일에 **"Version reviewed: 1.0 (2)"** — 즉 ASC 버전은 1.0, 리뷰된 빌드는 (2). app.json이 1.0.1이면 문자열 불일치로 빌드가 심사에 첨부 안 됨. `a7cdfda`가 1.0.1로 올렸던 건 되돌림(`7874ba2`). **양 세션 모두 1.0 유지.** (Android는 versionName=1.0이 되지만 Play는 versionCode(3)만 강제라 무영향.)
+
+**[리젝 진짜 사유 = Guideline 5.1.1(v) 계정삭제 누락 — 현재 코드에 이미 해결됨]**
+- Apple: "app supports account creation but does not include an option to initiate account deletion." (리뷰된 빌드2엔 계정삭제 UI가 없었음)
+- **현재 코드엔 구현돼 있음**: `settings.tsx` 고급(Advanced) 섹션 → **Delete Account** 행(2026-07-31 추가, 주석에 5.1.1(v) 명시) → 확인 모달(line 591) → `useUserStore.deleteAccount()` → `DELETE /account`(백엔드 CASCADE 삭제 + Apple 토큰 revoke). `{!user?.isGuest && ...}` 게이팅이라 **로그인 계정에선 항상 노출**(게스트만 숨김 = 정상). → **리젝 사유 해결 완료.**
+- **재제출 시 남은 일(사장님/대시보드)**: (1) 제출용 **EAS 빌드 새로**(version 1.0, buildNumber는 리뷰된 (2)보다 커야 함 — 현재 app.json 4, ASC "빌드"에 이미 3·4 올라갔으면 그보다 +1). (2) ASC App Review Information의 **데모 계정은 반드시 로그인 계정**(게스트 아님)이어야 Delete Account가 보임. (3) **계정삭제 플로우 화면녹화**를 Notes 필드에 첨부(Apple이 명시 요구). (4) iPad Air로 리뷰됐었으나 지금 `supportsTablet:false`라 향후 iPhone 전용 리뷰.
+- IAP 3종(PACE premium/Monthly/Yearly)이 "Rejected"인 건 앱 리젝에 딸려 반환된 것 — 앱 재제출하면 함께 재심사됨(정상).

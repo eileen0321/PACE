@@ -37,7 +37,10 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
     // 로고는 애니메이션 없음(런치스크린과 동일 고정). 효과만 등장.
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));
-    barX.value = withRepeat(withSequence(withTiming(1, { duration: 260, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
+    // 2026-08-02 사장님 지적("스플래시 맨 밑에 빛이 지나가는 효과 줄 너무 빨라") — 260ms는 한 번
+    // 지나가는 게 눈에 안 잡힐 만큼 빨라서 깜빡이는 것처럼 보였다. 900ms로 늦춰 한 줄기 빛이
+    // 천천히 훑고 지나가는 느낌으로.
+    barX.value = withRepeat(withSequence(withTiming(1, { duration: 900, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);
 
     const timer = setTimeout(onComplete, DURATION_MS);
     return () => clearTimeout(timer);

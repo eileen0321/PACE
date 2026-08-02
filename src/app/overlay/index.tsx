@@ -113,7 +113,15 @@ export default function OverlaySessionScreen() {
   // 화면 자체는 Pace Feed 진입 전 상태를 보여줌) 건드리지 않는다.
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS === 'android' && overlayService.supportsSystemOverlay && hasSessionStartedRef.current) {
+      // 2026-08-02 사장님 지적("이런 거 안 띄우기로 했잖아", "지금 또 나오잖아" — 검은 DEV SIMULATOR
+      // 목업 화면이 계속 노출됨) — hasSessionStartedRef 조건을 제거한다. 이 조건 때문에 "이 화면에
+      // 처음 진입한 그 순간"에는 리다이렉트가 안 걸렸다(선언 순서상 이 useFocusEffect가 세션 시작
+      // 이펙트보다 먼저 실행돼 그 시점엔 항상 false). 그래서 카드 탭 → 유튜브로 나갔다가 "앱으로"로
+      // 복귀할 때처럼 이 화면이 뒤늦게 마운트되는 경로에서는 목업이 그대로 사용자에게 보였다.
+      // Android에서는 네이티브 시스템 오버레이(알약)가 세션 표시를 전담하므로 이 화면이 보일 이유가
+      // 애초에 없다 — 조건 없이 항상 Home으로 보낸다. 세션 시작 이펙트는 네비게이션과 무관하게
+      // 계속 실행되고, keepSessionAliveOnUnmountRef=true라 언마운트 cleanup이 세션을 죽이지 않는다.
+      if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) {
         keepSessionAliveOnUnmountRef.current = true;
         setRedirectingToHome(true);
         router.replace('/(tabs)/home');
@@ -162,12 +170,27 @@ export default function OverlaySessionScreen() {
     const token = autostart ?? null;
     const alreadyConsumed = token === null || token === lastConsumedAutostart;
     if (token !== null) lastConsumedAutostart = token;
-    if (alreadyConsumed) {
+    // 2026-08-02 실기기 발견("이런 거 안 띄우기로 했잖아" — 검은 DEV SIMULATOR 목업 화면에 갇힘) —
+    // 아래 두 조기 return이 hasSessionStartedRef만 세우고 끝나서, 이 화면이 그대로 남아 개발용
+    // 목업(CURATED_VIDEOS 더미 콘텐츠)이 사용자에게 보였다. 위쪽 useFocusEffect의 Home 리다이렉트는
+    // 이 화면이 포커스를 "받는 순간"에만 돌고 그때는 아직 이 ref가 false라 안 걸린다(선언 순서상
+    // useFocusEffect가 이 이펙트보다 먼저 실행됨). 세션을 시작하지 않고 빠져나가는 경로에서는
+    // 그 자리에서 직접 Home으로 보낸다 — 세션/네이티브 오버레이는 그대로 두고 화면만 전환
+    // (keepSessionAliveOnUnmountRef=true라 언마운트 cleanup이 세션을 죽이지 않는다).
+    const bailToHome = () => {
       hasSessionStartedRef.current = true;
+      if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) {
+        keepSessionAliveOnUnmountRef.current = true;
+        setRedirectingToHome(true);
+        router.replace('/(tabs)/home');
+      }
+    };
+    if (alreadyConsumed) {
+      bailToHome();
       return;
     }
     if (useSessionStore.getState().status === 'running') {
-      hasSessionStartedRef.current = true;
+      bailToHome();
       return;
     }
     (async () => {

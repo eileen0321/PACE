@@ -1012,7 +1012,12 @@ class PaceOverlayService : Service() {
         // 경로는 이 동기화를 안 태워서 배지가 "AUTO ON"에 멈춰 있었다(토스트는 정상, 배지만 거짓말).
         // 모든 호출 경로가 여길 한 번은 거치므로 여기서 통일해 동기화한다.
         it.autoNextEnabled = enable
-        it.applyAutoBadgeStyle()
+        // 2026-08-02 실기기 로그 — "toggleAutoMode failed → CalledFromWrongThreadException: Only the
+        // original thread that created a view hierarchy can touch its views". setAutoMode는 JS 브릿지
+        // (Expo 모듈 워커 스레드), 미디어세션 콜백, 타이머 Runnable 등 여러 스레드에서 불리는데
+        // applyAutoBadgeStyle()은 오버레이 View를 직접 건드린다 — 메인 스레드가 아니면 예외로 죽고,
+        // 그 결과 알약 배지가 실제 상태와 어긋난 채 남았다. 항상 메인 루퍼로 넘겨 실행한다.
+        Handler(Looper.getMainLooper()).post { it.applyAutoBadgeStyle() }
       }
       showToast(context, if (enable) "🎯 Focus Session Started (${getFocusSessionDurationMinutes(context)}m)" else "🎯 Focus Session Ended")
     }

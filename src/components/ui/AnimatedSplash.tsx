@@ -13,14 +13,14 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
 
-// 2026-08-01 사용자 지적("앱 시작할 때 아이콘은 빛나는데 그 뒤 스플래시 원 안 아이콘은 빛이 없다") —
-// iOS만 vibrant 버전을 쓰고 Android는 splash-icon.png(최대밝기 217, 모서리 #090a0c)를 쓰고 있어서,
-// Android에서 [네이티브 런치스크린(빛남)] → [이 JS 스플래시(빛바램)]로 넘어갈 때 로고가 눈에 띄게
-// 바뀌었다. 이 파일 아래 주석의 "런치스크린과 첫 프레임이 시각적으로 동일해야 한다"는 원칙 자체를
-// 어기고 있던 것. Android 네이티브 스플래시(drawable/splashscreen_logo)도 같은 날 ios-splash-icon
-// 기반으로 통일했으므로 여기도 플랫폼 분기 없이 동일 소스를 쓴다(최대밝기 255, 모서리 #060709로
-// 스플래시 배경과 정확히 일치 — 사각 경계도 안 보임).
-const ICON = require('../../../assets/ios-splash-icon.png');
+// 2026-08-02 사장님이 직접 만든 자산으로 "글로우 원 안에 로고" 복원. 예전엔 로고 이미지 배경이 불투명
+// 어두운 카드([4,5,8])라 그보다 밝은 글로우 원 위에 얹으면 사각 경계가 드러나 원을 뺐었는데(0a50b24),
+// 그때 투명 처리 시도는 글로우까지 잘려 "빛바램"이 났었다. 이번 Phone11_bgt.png는 **배경만 투명(45%)이고
+// 글로우(빛 번짐)는 반투명으로 그대로 보존 + 풀밝기(99%ile 227, 기존 222보다 오히려 밝음)** — 픽셀 실측
+// 확인. 그래서 뒤에 글로우 원을 깔아도 (1)사각 경계 없음(투명 배경) (2)빛바램 없음(글로우 보존) (3)투명
+// 사이로 원이 비쳐 오히려 더 빛남. 네이티브 런치스크린은 같은 로고의 불투명 버전(Phone11.png)을 써서
+// 로고 아트는 동일 크기로 이어지고, 원(글로우)만 JS에서 페이드인한다.
+const ICON = require('../../../assets/Phone11_bgt.png');
 const DURATION_MS = 600;
 
 // 2026-07-26 재작성(웹리서치 반영 — Apple HIG + Uber/Swiggy 방식): 앱 실행 "아이콘 번쩍" 해결.
@@ -32,11 +32,19 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
   const textOpacity = useSharedValue(0);
   const textY = useSharedValue(10);
   const barX = useSharedValue(-1);
+  // 2026-08-02 사장님 지시("고급스럽게 멋있게") — 로고 뒤 글로우 원을 "블룸"처럼 부드럽게 등장시킨다.
+  // 로고(불투명 아트)는 런치스크린과 미동 없이 이어지고, 글로우만 살짝 커지며(0.92→1) 페이드인 →
+  // 은은하게 빛이 차오르는 프리미엄 인트로. 스플래시 총길이(600ms) 안에 다 보이도록 420~520ms.
+  const glowOpacity = useSharedValue(0);
+  const glowScale = useSharedValue(0.92);
 
   useEffect(() => {
     // 로고는 애니메이션 없음(런치스크린과 동일 고정). 효과만 등장.
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));
+    // 글로우 원: 로고 뒤에서 부드럽게 차오름(블룸). ease-out으로 자연스럽게 안착.
+    glowOpacity.value = withDelay(40, withTiming(1, { duration: 440, easing: Easing.out(Easing.ease) }));
+    glowScale.value = withDelay(40, withTiming(1, { duration: 560, easing: Easing.out(Easing.cubic) }));
     // 2026-08-02 사장님 지적("스플래시 맨 밑에 빛이 지나가는 효과 줄 너무 빨라") — 260ms는 한 번
     // 지나가는 게 눈에 안 잡힐 만큼 빨라서 깜빡이는 것처럼 보였다. 900ms로 늦춰 한 줄기 빛이
     // 천천히 훑고 지나가는 느낌으로.
@@ -44,11 +52,15 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
 
     const timer = setTimeout(onComplete, DURATION_MS);
     return () => clearTimeout(timer);
-  }, [barX, onComplete, textOpacity, textY]);
+  }, [barX, glowOpacity, glowScale, onComplete, textOpacity, textY]);
 
   const textStyle = useAnimatedStyle(() => ({
     opacity: textOpacity.value,
     transform: [{ translateY: textY.value }],
+  }));
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowOpacity.value,
+    transform: [{ scale: glowScale.value }],
   }));
   const barStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: `${barX.value * 100}%` }],
@@ -87,14 +99,18 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
       // 내려 이 갭 자체를 없앤다 — 이 파일의 원칙("첫 프레임이 런치스크린과 동일해야 한다")의 원래 의도.
       onLayout={markLayoutReady}
     >
-      {/* 로고: 런치스크린과 동일 — 화면 중앙, 박스/애니메이션 없음(미동 없이 이어짐). */}
+      {/* 글로우 원(로고 뒤) — 다층 바이올렛 디스크를 겹쳐 중심이 밝고 바깥으로 부드럽게 사라지는
+          radial 느낌을 낸다(RN엔 radial-gradient가 없어 반투명 원을 크기별로 쌓아 falloff 근사).
+          Phone11_bgt는 배경이 투명이라 이 빛이 로고 사이로 비쳐 "원 안에서 빛나는 매듭"이 된다. */}
+      <Animated.View style={[StyleSheet.absoluteFill, styles.glowWrap, glowStyle]} pointerEvents="none">
+        <View style={[styles.glowCircle, styles.glow1]} />
+        <View style={[styles.glowCircle, styles.glow2]} />
+        <View style={[styles.glowCircle, styles.glow3]} />
+        <View style={[styles.glowCircle, styles.glow4]} />
+      </Animated.View>
+
+      {/* 로고: 런치스크린과 동일 아트(불투명 Phone11) — 화면 중앙, 미동 없이 이어짐. 여기선 투명 버전. */}
       <View style={styles.iconArea}>
-        {/* 2026-08-01 사용자 지시("빛이 있는 이미지를 그대로 써라") — 원래 로고 뒤에 보라색 글로우 원을
-            깔았는데, 이 로고 이미지(ios-splash-icon.png)는 배경이 불투명한 어두운 카드([4,5,8])라
-            그보다 밝은 글로우 원([16,14,36]) 위에 얹히면 카드의 사각 경계가 그대로 드러났다(실기기
-            화면녹화 프레임 픽셀로 확인). 이미지를 가공하지 않고 원본 그대로 쓰려면 이 원을 빼는 것
-            외엔 방법이 없다 — 로고 자체에 이미 빛(글로우/블룸)이 그려져 있어 별도 원이 없어도
-            충분하고, 네이티브 런치스크린(원 없음)과도 이제 완전히 동일해진다. */}
         <Image source={ICON} style={styles.icon} onLoad={markIconReady} />
       </View>
 
@@ -130,16 +146,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center', // 로고를 화면 정중앙에(런치스크린과 동일)
   },
-  // 2026-08-01 사용자 지적("네이티브 스플래시에선 크게 보이다가 JS 스플래시 원 안에선 작아진다") —
-  // 실기기 화면녹화 프레임을 픽셀로 실측해보니 매듭 폭이 네이티브 303px vs JS 194px(64%)로 실제로
-  // 확 줄어들고 있었다. 원인: 이 로고는 120dp로 고정인데(=330px @2.75x), 그 이미지 안에서 매듭이
-  // 차지하는 비율이 약 59%라 실제 매듭은 194px밖에 안 됐다. 네이티브와 같은 매듭 크기가 되도록
-  // 120 → 188dp로 키운다(303/194 = 약 1.56배). 이러면 [네이티브 스플래시]→[JS 스플래시] 전환에서
-  // 로고 크기가 안 변한다 — 이 파일의 "두 화면이 시각적으로 동일해야 한다"는 원칙 그대로.
-  iconArea: { width: 188, height: 188, alignItems: 'center', justifyContent: 'center' },
-  icon: { width: 188, height: 188 },
-  // 로고가 커진 만큼(120→188, 반지름 기준 +34) 텍스트도 같이 내려 겹치지 않게 한다.
-  textBlock: { position: 'absolute', top: '50%', marginTop: 118, alignItems: 'center' },
+  // 로고(Phone11_bgt): 투명 배경이라 매듭이 프레임을 꽉 채운다 → 뒤 글로우 원이 로고보다 확실히
+  // 커야 "원 안의 매듭"으로 읽히므로 로고는 160으로. 네이티브 런치(app.json imageWidth)도 160으로 맞춰
+  // [네이티브(원 없음)]→[JS(원 페이드인)] 전환에서 로고 아트 크기가 안 변하고 원만 차오른다.
+  iconArea: { width: 160, height: 160, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: 160, height: 160 },
+  // 글로우 원: 크기 다른 반투명 바이올렛 디스크를 중앙에 겹쳐 radial falloff 근사(중심 밝고 바깥 흐림).
+  glowWrap: { alignItems: 'center', justifyContent: 'center' },
+  glowCircle: { position: 'absolute' },
+  glow1: { width: 340, height: 340, borderRadius: 170, backgroundColor: `${colors.primary}0E` }, // 가장 넓고 옅은 후광
+  glow2: { width: 264, height: 264, borderRadius: 132, backgroundColor: `${colors.primary}16` },
+  glow3: { width: 196, height: 196, borderRadius: 98, backgroundColor: `${colors.primary}1F` },
+  glow4: { width: 150, height: 150, borderRadius: 75, backgroundColor: '#8B7CF62A' }, // 안쪽 밝은 코어(살짝 밝은 바이올렛)
+  // 로고 아래 텍스트 — 글로우 바깥으로 충분히 내려 겹침 방지.
+  textBlock: { position: 'absolute', top: '50%', marginTop: 128, alignItems: 'center' },
   title: {
     fontSize: 30,
     fontFamily: typography.bodyFontFamilyExtrabold,

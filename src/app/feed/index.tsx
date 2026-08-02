@@ -57,6 +57,18 @@ function SessionRemaining({ endsAt }: { endsAt: number }) {
   return <Text style={styles.sessionRemainingText}>{min}m</Text>;
 }
 
+// 2026-08-02 사장님 지적("한도 시간은 표시 안 하잖아") — Android 배지는 "40m left"로 하루 한도
+// 남은 시간을 보여주는데 iOS 피드엔 Focus Session 남은시간만 있고 하루 한도 잔여가 없었다. 하루
+// 한도(설정+보너스) − 오늘 사용 = 남은 분을 상단에 항상 표시한다. 스토어를 이 컴포넌트가 직접
+// 구독해 격리(부모 피드 리렌더 없음 → WebView 씹힘 방지, SessionRemaining과 동일 패턴).
+function DailyRemaining() {
+  const used = useStatsStore((s) => s.todayUsageMinutes);
+  const limit = useSettingsStore((s) => s.settings.dailyLimitMinutes);
+  const bonus = useDailyBonusStore((s) => s.extraMinutes);
+  const left = Math.max(0, limit + bonus - used);
+  return <Text style={styles.dailyRemainingText}>{left}m left</Text>;
+}
+
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -575,6 +587,12 @@ export default function PaceFeedScreen() {
           {/* 세션 시작/표시 컨트롤(사용자 지시 2026-07-26) — 예전엔 하단 배지가 OFF일 때 흐려서 "어디 있냐"
               못 찾음. 항상 보이는 상단 토글 필로 올린다: OFF는 "▶ START SESSION"(눌러서 켬), ON은 안드로이드
               알약처럼 "● SESSION ON"(눌러서 끔). P 옆 고정 위치라 늘 찾기 쉽다. */}
+          {/* 하루 한도 남은 시간 — 항상 표시(Focus Session 남은시간과 별개). Android "40m left" parity. */}
+          <View style={styles.dailyPill} pointerEvents="none">
+            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+            <Feather name="clock" size={11} color="rgba(255,255,255,0.7)" />
+            <DailyRemaining />
+          </View>
           <Pressable onPress={toggleAutoMode} hitSlop={8} style={[styles.sessionPill, isAutoMode && styles.sessionPillOn]}>
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             {isAutoMode ? <View style={styles.sessionOnDot} /> : <Feather name="play" size={12} color="rgba(255,255,255,0.92)" />}
@@ -729,6 +747,9 @@ const styles = StyleSheet.create({
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   sessionDivider: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },
   sessionRemainingText: { color: colors.success, fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.4, fontVariant: ['tabular-nums'] },
+  // 하루 한도 남은시간 필 — 세션 필과 같은 글래스 톤, 중립색(Focus 초록과 구분).
+  dailyPill: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 36, paddingHorizontal: 11, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
+  dailyRemainingText: { color: 'rgba(255,255,255,0.92)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.4, fontVariant: ['tabular-nums'] },
   // 집중모드 인디케이터 — P와 같은 36 글래스 원, 은은한 보라 링(colors.primary)으로 "지금 집중 중" 표시.
   appIconText: { color: 'rgba(255,255,255,0.95)', fontSize: 17, fontFamily: typography.displayFontFamily },
   // 시간 상태바(§1-E.3) — 상단 중앙에 살짝, WebView 재생을 가리지 않게 반투명 필.

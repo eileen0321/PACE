@@ -3397,3 +3397,47 @@ QA 스윕 커밋 시 pull로 co-session 신규 3건 유입. 검토:
 ### 2026-08-02 (자율세션, Mac) — 최신 코드(364f7a4 포함) 콜드런치 재검증 + 마이너 경고 1건
 Metro `-c` 재시작으로 최신 코드(하루한도 팝업 제거 364f7a4 포함) 반영 후 콜드런치 재검증: **홈 정상 렌더(세션 1/60min, 인사이트 배너, 플랫폼 카드, 빠른설정), 크래시 0.** 하루한도 팝업 제거된 home.tsx 실행 이상 없음.
 - **마이너(비블로커)**: Metro 로그에 `WARN InteractionManager has been deprecated and will be removed in a future release` 1건. home.tsx의 가이드→홈 버벅임 최적화(`ab0f9e0`, `InteractionManager.runAfterInteractions`)에서 나옴. RN 0.86에선 정상 동작(경고일 뿐 크래시 아님), 향후 RN 업그레이드 시 `requestIdleCallback`로 교체 권장. 출시 블로커 아님 — 실기기 검증 항목(가이드→홈 전환)과 함께 처리. 나머지 ERROR는 dev RevenueCat뿐(Release 스트립).
+
+## 2026-08-02 밤샘 (Windows/Android) — 실기기 회귀 대량 수정 + ⚠️ prebuild 함정 재발
+
+사장님이 밤새 실기기로 잡아주신 것들. 전부 **logcat으로 원인 확정 → 수정 → 실기기 재검증** 순으로 처리.
+증상만 보고 추측으로 값을 조정하는 대신 로그 증거를 먼저 확보하는 방식이 이번에 결정적이었다.
+
+### 🔴 Mac도 반드시 알아야 할 것: `npx expo prebuild`가 수동 네이티브 수정분을 조용히 날린다
+Mac의 스플래시 커밋(`427362c`)이 `app.json`의 네이티브 런치 이미지를 바꿔서 Android drawable
+재생성이 필요했고, `npx expo prebuild --platform android`를 돌렸더니 **splash 외에 아래가 전부
+초기화**됐다(문서 §3에 예견돼 있던 바로 그 함정이 실제로 재발):
+- `AndroidManifest.xml`: 광고 AdActivity 테마 지정(하단키 흰색 버그 수정분), PaceShareCaptureActivity
+  (Favorite/Capture 공유 인텐트) — **둘 다 통째로 삭제됨**
+- `MainActivity.kt`: 3버튼 내비바 색상 강제 지정 코드 삭제
+- `app/build.gradle`: **versionCode 2 → 1, versionName 1.0.1 → 1.0으로 되돌아감** (출시 직전 치명적)
+- `colors.xml`, `styles.xml` 변경
+
+→ `git checkout --`로 splash drawable만 남기고 전부 복구함. **iOS도 동일 위험**: prebuild 후에는
+반드시 `git status android ios`로 의도치 않은 변경을 확인하고 되돌릴 것.
+
+### 고친 것 (전부 원인 확정 + 커밋)
+| 증상 | 진짜 원인 | 커밋 |
+|---|---|---|
+| 검은 DEV SIMULATOR 목업 노출 | Home 리다이렉트에 `hasSessionStartedRef` 조건 — 선언 순서상 화면 진입 순간엔 항상 false라 리다이렉트 안 걸림 | `9f345dc` |
+| "앱으로" 눌러도 쇼츠로 튕김 | ConnectingOverlay 애니메이션이 백그라운드에서 멈췄다가 Pace 복귀 시 재개→`/overlay` 마운트→`launchPlatformApp` 중복 실행. "앱으로" 누른 행위가 13초 전 멈춘 라우팅의 방아쇠였음 | `2a1b249` |
+| 오버레이가 자꾸 사라짐 | **수면감지**가 시청 중 세션 종료(가속도계만 봐서, 폰 안 움직이면 자는 걸로 오판). 지시로 기능 비활성화 | `fae0ff6` |
+| BT 리모컨이 볼륨만 조절 | `accessibility_service_config.xml`에 `canRequestFilterKeyEvents` 속성 누락 → `onKeyEvent`가 **처음부터 한 번도 호출된 적 없음**. 증거: `capabilities=33`(FILTER_KEY_EVENTS=8 빠짐) → 속성 추가 후 `41` | `f467b12` |
+| 손짓 100% 실패 | 08-01 최적화(냉각기간 추론 스킵)가 프레임 간격을 벌려 비교할 과거 샘플이 매번 소실 → growthRatio 항상 정확히 1.0 | `e33e85c` |
+| 손짓 첫 시도 실패/5~6번 만에 됨 | 성장 기준이 "윈도우에서 가장 오래된 샘플" — 손을 이미 카메라 앞에 든 상태면 기준값이 커서 비율이 안 오름. **최솟값 기준으로 변경** | `4c17a17` |
+| 손짓이 3초에 한 번만 먹힘 | 재무장 크기조건(0.45=손을 아주 멀리 빼야 함)이 실사용에서 성립 불가 → 매번 3초 타임아웃 대기. 0.85 / 1.5초로 완화 | `efb0299` |
+| 3초 만에 두 번 넘어감 | `loopedBack`(이미 바뀐 걸 뒤늦게 확인하는 신호)에도 `performSwipeUp` 호출 | `e33e85c` |
+| 영상 전환 시 화면 상단 검게 | 오버레이 4초 강제 재생성이 remove→add 순서라 창이 0개인 순간 발생 | `e33e85c` |
+| 알약 배지가 실제 상태와 어긋남 | `applyAutoBadgeStyle`이 JS 브릿지 워커 스레드에서 View 접근 → `CalledFromWrongThreadException` | `9f345dc` |
+| 하루한도(60분) 팝업 | 사장님 지시로 제거. **차단 게이트도 함께 제거** — 팝업만 없애면 카드 눌러도 무반응으로 막혀 더 나쁨 | `b7b4498` |
+| 로그 스팸 | fgPoll(초당1회)·timing(500ms마다, 시간당 7200줄)·near-miss(초당6~7회)가 링버퍼를 채워 실제 디버깅을 반복 방해 | `db724e8` |
+
+### ⚠️ 남은 실기기 확인 (사장님만 가능, adb로 대체 불가)
+1. **BT 리모컨 물리 버튼** — 권한(`capabilities=41`)은 확보됐으나 실제 버튼 동작 미확인
+2. **손짓 반응성** — 재무장 완화 후 연속 손짓이 실제로 빨라졌는지
+
+### 참고 — 진단에 쓴 방법
+`dumpsys accessibility`의 `capabilities` 비트값, `dumpsys input`의 InputDevice 목록,
+`dumpsys window`의 `mCurrentFocus`, SharedPreferences 직접 덤프(`run-as ... cat`),
+그리고 JS `console.log` 추적(ReactNativeJS 태그)으로 호출 지점을 특정하는 방식이
+"추측 후 값 조정"보다 압도적으로 빨랐다. 특히 BT/손짓은 로그 증거 없이는 절대 못 찾았을 원인이었다.

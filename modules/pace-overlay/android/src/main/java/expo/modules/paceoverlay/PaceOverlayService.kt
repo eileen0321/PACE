@@ -508,7 +508,9 @@ class PaceOverlayService : Service() {
       .putBoolean(PREF_NOTIFY_REMAINING, notifyRemaining)
       .putBoolean(PREF_NOTIFY_LIMIT, notifyLimit)
       .putBoolean(PREF_NOTIFY_BREAK, notifyBreak)
-      .putBoolean(PREF_AUTO_NEXT_SESSION, autoNextEnabled)
+      // 위 restoreState 주석 참고 — 예전엔 여기서 session_auto_next_enabled에 따로 저장해서
+      // bt_auto_mode와 갈라졌다. 이제 저장은 setAutoMode() 한 곳에서만 bt_auto_mode로 한다
+      // (여기서 또 쓰면 두 값이 다시 생겨 같은 버그가 재발한다).
       .putBoolean(PREF_HARD_BLOCK_MODE, hardBlockMode)
       .putLong(PREF_LAST_MOTION_AT_MS, lastMotionAtMs)
       .putInt(PREF_SLEEP_STILLNESS_MINUTES, sleepStillnessMinutes)
@@ -526,7 +528,16 @@ class PaceOverlayService : Service() {
     notifyRemaining = prefs.getBoolean(PREF_NOTIFY_REMAINING, true)
     notifyLimit = prefs.getBoolean(PREF_NOTIFY_LIMIT, true)
     notifyBreak = prefs.getBoolean(PREF_NOTIFY_BREAK, true)
-    autoNextEnabled = prefs.getBoolean(PREF_AUTO_NEXT_SESSION, false)
+    // 2026-08-02 사장님 실기기 재현("focus on 상태인데 손짓이 하나도 안 됨") — 여기가 그 버그의
+    // 정확한 지점이었다. 같은 "핸즈프리 켜짐"을 뜻하는 값이 두 개로 갈라져 있었다:
+    //   - session_auto_next_enabled : 세션 시작 시 JS가 넘긴 값으로 채워짐 → 알약 배지가 이걸 봄
+    //   - bt_auto_mode              : 사용자가 배지를 직접 탭했을 때만 갱신 → 손짓 카메라가 이걸 봄
+    // 세션은 시작했지만 배지를 직접 탭한 적은 없으면 앞은 true, 뒤는 false로 갈라진다 → 화면엔
+    // "FOCUS ON"인데 restoreFocusSessionTimerIfNeeded()가 bt_auto_mode=false를 보고 첫 줄에서
+    // return해 카메라를 아예 안 켰다(손짓 로그 0건). iOS는 JS 상태 하나만 보고 start/stop하므로
+    // 이런 어긋남이 구조적으로 불가능하다(useFeedRemoteControl.ios.ts) — 같은 구조로 맞춘다.
+    // bt_auto_mode 하나를 유일한 진실의 원천으로 삼고, session_auto_next_enabled는 제거했다.
+    autoNextEnabled = prefs.getBoolean(PREF_AUTO_MODE, false)
     hardBlockMode = prefs.getBoolean(PREF_HARD_BLOCK_MODE, false)
     // 프로세스 재시작(kill+알람 복구)이어도 무진동 시계가 "지금부터 다시 10분"으로 리셋되지 않게
     // 마지막 움직임 시각을 복원 — 없으면(구버전 상태/최초) 안전하게 지금으로(즉시 만료 방지).
@@ -760,7 +771,10 @@ class PaceOverlayService : Service() {
     private const val PREF_NOTIFY_REMAINING = "session_notify_remaining"
     private const val PREF_NOTIFY_LIMIT = "session_notify_limit"
     private const val PREF_NOTIFY_BREAK = "session_notify_break"
-    private const val PREF_AUTO_NEXT_SESSION = "session_auto_next_enabled"
+    // 2026-08-02 제거됨 — "핸즈프리 켜짐"을 뜻하는 값이 이것과 bt_auto_mode 두 개로 갈라져
+    // "화면엔 FOCUS ON인데 손짓 카메라는 안 켜짐" 버그를 만들었다(restoreState 주석 참고).
+    // 이제 bt_auto_mode 하나만 쓴다. 키 자체를 지워 다시 읽고 쓰는 코드가 생기지 않게 한다.
+    // (기존 기기에 남아있는 session_auto_next_enabled 값은 아무도 안 읽으므로 무해하다.)
     private const val PREF_HARD_BLOCK_MODE = "session_hard_block_mode"
 
     // Bluetooth Hands-Free(2026-07-19) — MediaSession 콜백(하드웨어 리모컨)과 PaceOverlayModule의
@@ -1307,7 +1321,11 @@ class PaceOverlayService : Service() {
         notifyRemaining = intent.getBooleanExtra(EXTRA_NOTIFY_REMAINING, true)
         notifyLimit = intent.getBooleanExtra(EXTRA_NOTIFY_LIMIT, true)
         notifyBreak = intent.getBooleanExtra(EXTRA_NOTIFY_BREAK, true)
-        autoNextEnabled = intent.getBooleanExtra(EXTRA_AUTO_NEXT, false)
+        // 2026-08-02 — 예전엔 여기서 필드에만 직접 대입해서, 세션 시작으로 켜진 핸즈프리가
+        // bt_auto_mode에는 반영되지 않았다(위 restoreState 주석의 "갈라짐"이 생기는 지점).
+        // setAutoMode()를 거치면 필드/저장값/감지기 시작이 한 번에 처리된다 — 이 함수가 모든
+        // 토글 경로의 단일 진입점이라는 기존 설계(setAutoMode 주석 참고)에도 부합한다.
+        setAutoMode(applicationContext, intent.getBooleanExtra(EXTRA_AUTO_NEXT, false))
         hardBlockMode = intent.getBooleanExtra(EXTRA_HARD_BLOCK_MODE, false)
         // 2026-07-26 사장님 결정(D8) — 5~20 범위로 방어적 clamp(무료는 JS가 항상 10을 넘기지만,
         // 네이티브 쪽에서도 잘못된 값이 들어와 감지가 무력화/과민화되지 않도록 이중 방어).
@@ -1998,11 +2016,21 @@ class PaceOverlayService : Service() {
       overlayView?.visibility = View.GONE
       hidePaceMenu()
     }
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
-      // FLAG_ACTIVITY_NO_USER_ACTION — 실기기 발견(2026-07-31): 이 플래그 없이 유튜브를 백그라운드로
-      // 보내면 유튜브가 onUserLeaveHint()를 "사용자가 홈으로 나감"으로 오인해 자동으로 PIP(작은
-      // 떠있는 창)에 들어가버린다. 이 플래그는 액티비티 전환이 사용자의 직접 터치가 아님을 시스템에
-      // 알려 onUserLeaveHint 호출 자체를 막는다 — 유튜브 PIP 자동진입의 정확한 트리거를 끊는다.
+    // 2026-08-03 사장님 실기기 재현("open app 눌렀는데 Pace가 뜨고 잠시 뒤 한 번 더 뜸") — 원인은
+    // 여기서 자기 앱을 딥링크(pace://home)로 열던 것이었다. 로그 증거(23:33:11.955):
+    //   START pace://home → TaskLaunchParamsModifier: task=null activity=ActivityRecord{91d5667}
+    //   0.004초 뒤  Focused application: ActivityRecord{63339e}
+    // ActivityRecord가 두 개다 — FLAG_ACTIVITY_NEW_TASK로 던지니 시스템이 새 태스크/액티비티를
+    // 만들려 시도하고, MainActivity가 singleTask라 결국 기존 인스턴스(63339e)로 합쳐지는데 그
+    // 과정에서 화면이 한 번 더 그려진다. 이미 떠 있는 자기 태스크를 앞으로 가져오는 데 딥링크는
+    // 필요 없다 — 런처 아이콘을 누른 것과 동일한 인텐트 + REORDER_TO_FRONT면 기존 태스크가 그대로
+    // 앞으로 올라온다(유튜브 복귀에 쓰는 resumeThirdPartyApp과 같은 방식, 실기기 검증 완료).
+    // NO_USER_ACTION은 그대로 유지 — 이게 없으면 유튜브가 자동 PIP로 들어간다(2026-07-31 발견).
+    // Android는 /overlay 화면이 마운트 즉시 Home으로 리다이렉트하므로 딥링크로 라우트를 지정할
+    // 이유도 없다(overlay/index.tsx의 useFocusEffect 참고).
+    val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+      addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+    } ?: Intent(Intent.ACTION_VIEW, Uri.parse("pace://home")).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
     }
     try {

@@ -30,8 +30,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 3,
-      "runtimeVersion": "1.0.1"
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"

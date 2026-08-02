@@ -3523,3 +3523,11 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 - **#1 AdMob iOS 해시 — 종료**: os_log `<private>` 마스킹으로 이 환경선 추출 불가. 출시 블로커 아님, OTA 후속(위 bf12ef1 참고).
 - **#4 구독 상품 — 대시보드 확인 남음(사장님)**: ASC/Google Play/RevenueCat Offering 등록 여부. 코드가 기대하는 product ID/entitlement/offering 대조 필요.
 **결론: 코드/서버 출시 블로커 없음. #4 대시보드만 확인하면 제출 가능.** 폰엔 깨끗한(테스트광고) 빌드 설치돼 있음 — 사장님 손짓 스모크테스트 권장.
+
+### 2026-08-02 (Mac 세션) — ⚠️ app.json version 1.0.1 → 1.0 재고정 (ASC 실제 버전과 일치, 빌드 첨부용)
+**절대 다시 1.0.1로 올리지 말 것 — 근거: App Store Connect 실제 스크린샷에서 iOS 앱 버전 = `1.0`("1.0 심사를 통과하지 못함" 리젝 상태).** app.json이 1.0.1이면 버전 문자열 불일치로 빌드가 그 1.0 심사에 **첨부 자체가 안 됨**(사장님이 과거 반복해서 겪은 문제).
+- 경위: `14216ea`가 ASC 맞추려 1.0.1→1.0으로 내렸는데 `a7cdfda`(co-session)가 "버전 불일치 수정"이라며 1.0→1.0.1로 되돌려 **불일치 재발**. 이번에 다시 1.0으로 고정.
+- **정석**: 리젝된 1.0은 출시된 적 없으므로 버전 올릴 필요 없이 **동일 1.0으로 재제출**(ASC "심사 업데이트" 버튼). 메타데이터/설명/키워드 전부 1.0 페이지에 이미 있음.
+- **Android 영향**: `version`은 iOS/Android 공용이라 Android versionName도 1.0이 됨 — 단 Play는 versionCode(현재 3)만 강제하고 versionName은 표시용이라 **Android 제출 블록 아님**. Android가 versionName 1.0.1을 꼭 원하면 app.config.js 플랫폼 분기 필요(별건). **당장은 iOS 출시 우선 = 1.0 유지.**
+- ⚠️ 남은 불일치: `android.runtimeVersion`이 아직 `"1.0.1"`(app.json:34) — 최상위 `runtimeVersion.policy=appVersion`(=1.0)과 안 맞음. Android OTA 담당(co-session)이 1.0으로 맞출지 판단 필요. iOS 초기 제출엔 무관.
+- **iOS 제출 전 필수**: (1) 제출용 빌드(EAS/archive)를 **version 1.0으로 새로 빌드**해야 반영됨(로컬 개발빌드는 제출과 무관). (2) `buildNumber`(현재 4)는 그 1.0에 이미 올라간 리젝 빌드보다 **높아야** 함 — ASC "빌드" 섹션에서 마지막 업로드 번호 확인 후 필요시 상향.

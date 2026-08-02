@@ -76,6 +76,7 @@
       android:theme="@android:style/Theme.Translucent.NoTitleBar"
       android:noHistory="true"
       android:excludeFromRecents="true"
-      android:exported="false"/>
+      android:exported="false"
+      android:taskAffinity=""/>
   </application>
 </manifest>

@@ -3,6 +3,7 @@ package expo.modules.paceoverlay
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import com.google.android.gms.ads.AdRequest
@@ -38,7 +39,12 @@ class PaceRewardedAdActivity : Activity() {
 
     fun start(context: Context, extendMinutes: Int) {
       val intent = Intent(context, PaceRewardedAdActivity::class.java).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+        // 2026-08-02 사장님 지적("왜 앱 홈으로 가냐") — NEW_TASK만 주면 안드로이드가 이 액티비티를
+        // Pace 앱의 기존 태스크(MainActivity=홈이 들어있는)에 붙여버린다. 그 태스크가 통째로 앞으로
+        // 나오면서, 투명 액티비티 뒤로 Pace 홈 화면이 그대로 비쳤다 — "광고 누르니 앱 홈이 보인다"의
+        // 정체. 매니페스트의 taskAffinity=""(자기만의 태스크)와 MULTIPLE_TASK를 함께 써서 앱 태스크와
+        // 완전히 분리한다 → 투명 배경 뒤에는 직전 화면(유튜브)이 그대로 남는다.
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
         putExtra(EXTRA_EXTEND_MINUTES, extendMinutes)
       }
       context.startActivity(intent)
@@ -50,6 +56,19 @@ class PaceRewardedAdActivity : Activity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // 2026-08-02 사장님 실기기 지적("광고 보기 눌렀더니 앱이 보이고 하단 흰 키 나오고 다시 광고로
+    // 감") — 이 액티비티는 화면을 안 그리는 투명 껍데기인데, 투명 테마(Theme.Translucent)는 시스템
+    // 바 색을 지정하지 않아 OEM 기본값(밝은 배경 + 흰 내비게이션 키)이 그대로 적용됐다. 그래서 광고가
+    // 실제로 뜨기 전 짧은 순간 하단 키가 하얗게 번쩍이고 뒤 화면이 비쳐 "앱으로 갔다가 광고로 돌아오는"
+    // 것처럼 보였다. 앱과 동일한 어두운 시스템 바로 고정해 그 번쩍임을 없앤다(MainActivity가 쓰는
+    // 것과 같은 색 — 이 모듈에선 앱의 R.color를 못 보므로 값으로 직접 지정).
+    val systemBarColor = android.graphics.Color.parseColor("#060709")
+    window.statusBarColor = systemBarColor
+    window.navigationBarColor = systemBarColor
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      window.isNavigationBarContrastEnforced = false
+      window.isStatusBarContrastEnforced = false
+    }
     extendMinutes = intent?.getIntExtra(EXTRA_EXTEND_MINUTES, 5) ?: 5
     val prefs = getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
     val unitId = if (prefs.getBoolean(PREF_USE_REAL_ADS, false)) REAL_UNIT_ID else TEST_UNIT_ID

@@ -3585,3 +3585,48 @@ co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개
 실기기 로그의 실패 시도 실측값이 1.07/1.075/1.08/1.086/1.09/1.095로 전부 기준(1.1) 바로 아래에
 몰려 있었고 성공은 1.10~1.20뿐 → 열 번에 한두 번만 걸렸다. 가만히 든 손은 1.00 근처라
 **1.1 → 1.05**로 내려도 오탐 여유가 충분하다고 판단.
+
+### 2026-08-02 — Windows 세션: 크래시 위험 지점 전수 조사 (출시 전 감사)
+
+사장님 지시로 "크래시 날 만한 곳"을 코드 전수 조사했다. **수정은 하지 않고 조사만 함**(다른 세션이
+동시에 같은 파일을 만지고 있어 충돌 방지).
+
+**🔴 1순위 — `PaceAccessibilityService`의 폴링 루프에 예외 보호가 전혀 없음 (실제 크래시 가능)**
+
+경로: `pollRunnable.run()`(82행) → `checkPlaybackAndMaybeSwipe()`(486행) → `readCachedOrSearchTiming()`
+(595행) → `parseTiming()`(635행)
+
+- `pollRunnable`은 **try/catch가 없다**(82~89행). 이 안에서 던져진 예외는 그대로 올라가
+  **AccessibilityService 프로세스를 죽인다.**
+- `parseTiming()`은 유튜브 화면에서 읽은 문자열을 `group(n)!!.toInt()`로 파싱한다(643~650행).
+  정규식이 `(\d+)`라 자릿수 제한이 없어서, 콘텐츠 설명에 아주 긴 숫자가 들어오면
+  **`NumberFormatException`(Int 오버플로)** 이 난다. `!!` 자체는 `find()`가 참이면 4개 그룹이 모두
+  매칭된 상태라 NPE 위험은 낮지만, `toInt()`는 별개다.
+- 폴링 주기가 500ms라 유튜브를 보는 내내 이 경로가 계속 돈다 — 노출 빈도가 매우 높다.
+
+**⚠️ 이게 중요한 이유**: AccessibilityService가 예외로 죽으면 **안드로이드가 그 서비스를 자동으로
+꺼버린다.** 이 프로젝트에서 반복적으로 겪은 "접근성 서비스가 조용히 꺼져서 자동넘김/손짓/오버레이가
+멈춤"(stash에도 `accessibility service silently disabled` 항목이 남아있음)의 원인 중 하나일 수
+있다. 지금까지 "재설치 때문"으로만 설명해왔는데, 재설치 없이도 이 경로로 꺼질 수 있다.
+
+**권장 수정**(둘 다 저비용):
+1. `pollRunnable.run()` 본문을 `try { ... } catch (e: Exception) { Log.w(...) }`로 감싸기 —
+   어떤 예외가 나도 서비스가 죽지 않고 다음 폴링을 계속하게 한다.
+2. `parseTiming()`의 `.toInt()`를 `.toIntOrNull() ?: return null`로 교체.
+
+**🟢 문제 없음으로 확인된 것들**
+
+- **JS `JSON.parse` 12곳 전부 `try/catch` 보호됨** — `useDailyBonusStore`, `useLimitHitStore`,
+  `useShortsQueueStore`, `usageInsight`, `useAttendanceStore`, `useFlipStore`, `useSettingsStore`,
+  피드 WebView `onMessage` 등. 손상된 AsyncStorage 블롭으로 부팅이 깨지는 시나리오는 이미 막혀 있다
+  (`useSettingsStore.ts:61` 주석에 그 감사 이력이 남아있음).
+- **네이티브 모듈 접근은 전부 방어적 `require`** — `AdBanner`, `rewardedAd`, `adsConfig`,
+  `bluetoothService.android` 등 모두 미링크 시 조용히 no-op. 네이티브 재빌드 전 상태에서도
+  `TurboModuleRegistry.getEnforcing` 크래시가 안 난다.
+- **`PaceAccessibilityService`의 다른 트리 워크 함수들은 이미 보호됨** — `supportedAppWindowVisible`,
+  `activeAppWindowBounds` 등은 `try/catch` + 폴백이 있고, 재귀에도 `depth > 40` / `budget[0]` 상한이
+  있어 스택오버플로/무한루프가 없다.
+- **`PaceFlipModule`의 `event.values[0..2]`** — 가속도계 콜백은 항상 3축을 채워 보내므로 실질 위험 없음.
+
+**미조사 영역**: iOS 네이티브(Swift) 쪽은 이 세션(Windows)에서 파일 접근이 안 돼 확인 못 함 —
+맥 세션에서 동일 관점(폴링/파싱 루프의 예외 보호)으로 한 번 봐주면 좋겠다.

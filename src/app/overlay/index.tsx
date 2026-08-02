@@ -428,6 +428,19 @@ export default function OverlaySessionScreen() {
   const video = CURATED_VIDEOS[videoIndex];
 
   if (redirectingToHome) return null;
+
+  // 2026-08-03 사장님 지시("목업 화면 안 나오게 되어 있는 거 맞아? / 필요없는 화면 아냐") —
+  // 이 파일 33번째 줄 주석이 "아래 underlying content는 실제 프로덕션에 존재하면 안 되는 개발용
+  // 시뮬레이터"라고 명시하는데, 정작 __DEV__ 가드가 어디에도 없어 릴리즈 빌드에도 그대로 들어갔다.
+  // 지금까지는 "화면이 뜨면 곧바로 Home으로 리다이렉트"하는 타이밍 경쟁으로만 막고 있었고(위
+  // useFocusEffect / AppState / bailToHome 세 경로), 리다이렉트가 한 프레임이라도 늦으면 검은
+  // DEV SIMULATOR가 사용자에게 그대로 보였다 — 오늘만 그 조건을 세 번 고쳤지만 전부 타이밍을
+  // 앞당기는 방식이라 경쟁 자체는 남아 있었다. Android는 네이티브 시스템 오버레이(알약)가 세션
+  // 표시를 전담하므로 이 화면이 보일 이유가 애초에 없다 — 그리지 않는 것으로 경쟁을 원천 제거한다.
+  // ⚠️ 훅은 모두 위에서 이미 호출됐고(이 return은 마지막 훅보다 아래) 세션 시작 이펙트도 그대로
+  // 실행되므로, 렌더만 건너뛸 뿐 세션/오버레이/타이머 동작에는 영향이 없다.
+  // iOS는 이 화면이 실제 콘텐츠 역할을 계속 하므로 건드리지 않는다.
+  if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) return null;
   // 2026-08-02 사장님 지적("자꾸 기능 동작하다 목업 화면이 나오는데") — 오늘만 세 번(useFocusEffect
   // 조건 완화, AppState 리스너 추가, bailToHome 추가) 리다이렉트 "타이밍"을 앞당기는 방식으로
   // 고쳤지만 증상이 계속 재발했다. 구조 자체가 틀렸기 때문이다: 지금까지는 목업을 일단 그린 다음

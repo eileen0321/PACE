@@ -31,7 +31,9 @@ export default function AuthScreen() {
   // 감, 이 화면을 절대 안 거침). 그런데 로그인 성공 후 무조건 router.replace('/(tabs)/home')을 불러
   // 어디서 왔든 Home으로 강제 이동시켰다 — Settings에서 로그인했는데 Home으로 튕기고, 스택을
   // replace하는 전환이라 화면이 번쩍였다. 항상 오는 곳이 있으므로 그냥 뒤로 돌아가면 된다.
-  const goHome = () => router.back();
+  // 2026-08-02 방어(딥링크 콜드진입 대비) — pace://auth로 히스토리 없이 직접 열리면 back()이 "GO_BACK
+  // 처리 안 됨"으로 화면이 안 닫힌다. 정상 흐름(Settings/Paywall push)은 그대로 back, 그 외엔 Home으로.
+  const goHome = () => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'));
 
   const onGoogle = async () => {
     setBusy(true);

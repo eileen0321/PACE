@@ -33,7 +33,7 @@ export default function QuickControlSheetScreen() {
   const { settings, update } = useSettingsStore();
   const bluetooth = useBluetoothStore();
   const isPremium = useSubscriptionStore((s) => s.isPremium);
-  const close = () => router.back();
+  const close = () => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'));
   const offLabel = t('focus.off');
 
   const config =

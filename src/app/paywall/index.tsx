@@ -62,7 +62,7 @@ export default function PaywallScreen() {
     if (notSignedIn) {
       Alert.alert(t('auth.title'), t('paywall.signInRequiredMessage'), [
         { text: t('settings.cancel'), style: 'cancel' },
-        { text: t('auth.title'), onPress: () => { router.back(); router.push('/auth'); } },
+        { text: t('auth.title'), onPress: () => { if (router.canGoBack()) router.back(); router.push('/auth'); } },
       ]);
     }
     return notSignedIn;
@@ -127,7 +127,7 @@ export default function PaywallScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>{t('paywall.title')}</Text>
-        <Pressable onPress={() => router.back()}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}>
           <Text style={styles.close}>{t('paywall.close')}</Text>
         </Pressable>
       </View>

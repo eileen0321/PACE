@@ -1636,6 +1636,19 @@ class PaceOverlayService : Service() {
         // 보상형 광고만 띄웠다 닫히므로, 사용자에겐 "쇼츠 위에 광고가 떴다 사라지고 다시 쇼츠"로
         // 보인다 — Pace 앱 화면은 한 번도 안 보인다. 보상 획득 시 그 액티비티가 extendFocusSession을
         // 직접 호출한다(연장 + 원래 앱 복귀까지 그 안에서 처리).
+        // 2026-08-02 사장님 지적("FOCUS OFF일 때 1)접근성 권한 off 2)focus 시간 다 된 거, 너 구분
+        // 못 하는 거 아냐?") — 정확한 지적이었고, 실제로 전혀 구분하지 못하고 있었다.
+        // 화면을 실제로 넘기는 건 손짓/블루투스가 아니라 AccessibilityService.dispatchGesture()다
+        // (안드로이드에는 다른 앱 위로 제스처를 보낼 다른 방법이 없다). 즉 접근성이 죽으면 입력
+        // 수단 세 개가 아니라 "넘기기" 자체가 전멸한다. 그런데 지금까지는 접근성 상태를 보지 않고
+        // 곧장 광고를 띄워서, 접근성이 꺼진(또는 크래시로 죽은) 상태에서 FOCUS ON을 누르면 사장님
+        // 지적대로 "광고만 보고 5분을 받지만 그 5분 동안 아무것도 안 되는" 상황이 됐다 — 사용자
+        // 입장에선 광고만 뜯긴 것이다. 광고보다 먼저 접근성부터 확인하고, 죽었으면 그 사실을 알리고
+        // 설정으로 보낸다(연장도, 광고도 띄우지 않는다).
+        if (!PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAlive()) {
+          showAccessibilityRequiredOverlay()
+          return@setOnClickListener
+        }
         if (!autoNextEnabled && hasPendingFocusSessionTimeout() && !isPremium(applicationContext)) {
           showExtendChoiceOverlay()
         } else {
@@ -1723,6 +1736,99 @@ class PaceOverlayService : Service() {
   private fun hideExtendChoice() {
     extendChoiceView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
     extendChoiceView = null
+  }
+
+  // 2026-08-02 사장님 지적("FOCUS OFF일 때 1)접근성 권한 off 2)focus 시간 다 된 거, 너 구분 못 하는
+  // 거 아냐?") — 두 원인은 사용자가 해야 할 행동이 정반대다. 시간 만료는 "광고를 보거나 크레딧을
+  // 쓰면" 풀리지만, 접근성이 꺼진 건 광고를 백 번 봐도 안 풀린다(설정에서 다시 켜야만 한다).
+  // 그런데도 같은 팝업을 띄우면 사용자는 광고만 보고 아무 효과가 없는 걸 겪게 된다. 원인이 접근성일
+  // 땐 광고를 아예 띄우지 않고 실제 해결책(설정 화면)으로 보낸다.
+  private fun showAccessibilityRequiredOverlay() {
+    hideExtendChoice()
+    val ko = java.util.Locale.getDefault().language == "ko"
+    val d = resources.displayMetrics.density
+
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = 20f * d
+        setColor(Color.parseColor("#F21A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+    }
+    card.addView(TextView(this).apply {
+      text = if (ko) "접근성 권한이 꺼져 있어요" else "Accessibility is off"
+      textSize = 16f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    })
+    card.addView(TextView(this).apply {
+      // 사용자가 "손짓만 안 되는 건가?"로 오해하지 않도록, 넘기기 자체가 안 된다는 걸 분명히 적는다.
+      text = if (ko) "이 권한이 없으면 손짓·블루투스·자동 넘김이 모두 동작하지 않아요. 설정에서 Pace를 다시 켜주세요."
+             else "Without it, hand gestures, Bluetooth and auto-next all stop working. Please re-enable Pace in Settings."
+      textSize = 13f
+      setTextColor(Color.parseColor("#B3FFFFFF"))
+      setPadding(0, (6 * d).toInt(), 0, (14 * d).toInt())
+    })
+
+    fun button(label: String, bgColor: String, textColor: Int, onTap: () -> Unit): TextView =
+      TextView(this).apply {
+        text = label
+        textSize = 14f
+        gravity = Gravity.CENTER
+        setTextColor(textColor)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setPadding(0, (12 * d).toInt(), 0, (12 * d).toInt())
+        background = GradientDrawable().apply {
+          cornerRadius = 999f
+          setColor(Color.parseColor(bgColor))
+        }
+        isClickable = true
+        setOnClickListener { onTap() }
+      }
+
+    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+      .apply { topMargin = (8 * d).toInt() }
+
+    card.addView(button(if (ko) "설정 열기" else "Open settings", "#6C5CE7", Color.WHITE) {
+      hideExtendChoice()
+      try {
+        startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+      } catch (e: Exception) {
+        Log.w("PaceOverlay", "open accessibility settings failed", e)
+      }
+    }, lp)
+    card.addView(button(if (ko) "나중에" else "Not now", "#00000000", Color.parseColor("#99FFFFFF")) {
+      hideExtendChoice()
+    }, lp)
+
+    val container = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setPadding((24 * d).toInt(), 0, (24 * d).toInt(), 0)
+      setBackgroundColor(Color.parseColor("#B3000000"))
+      isClickable = true
+      setOnClickListener { hideExtendChoice() }
+      addView(card, LinearLayout.LayoutParams((320 * d).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      0,
+      android.graphics.PixelFormat.TRANSLUCENT
+    )
+    try {
+      windowManager?.addView(container, params)
+      extendChoiceView = container // hideExtendChoice()가 그대로 재사용된다(같은 슬롯, 동시 노출 불가)
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "showAccessibilityRequiredOverlay failed", e)
+    }
   }
 
   private fun showExtendChoiceOverlay() {
@@ -2816,19 +2922,43 @@ class PaceOverlayService : Service() {
       // 의미를 고정하고, 이 배지가 Focus Session 잔여를 카운트다운한다("FOCUS 5m" → 4m → …).
       // 0이 되면 자동으로 "FOCUS OFF"가 되어 상태 전환도 한눈에 보인다. 공간을 새로 안 쓰고
       // 기존 "FOCUS ON" 글자 자리를 그대로 활용.
-      text = if (autoNextEnabled) {
-        val remain = focusSessionRemainingMinutes(applicationContext)
-        if (remain != null && remain > 0) "FOCUS ${remain}m" else "FOCUS ON"
-      } else "FOCUS OFF"
+      // 2026-08-02 사장님 지적 — 접근성이 꺼지거나 크래시로 죽으면 실제로는 넘기기가 전혀 안 되는데,
+      // autoNextEnabled는 그와 무관한 별개 플래그라 배지가 "FOCUS ON"(초록)으로 남아 정상인 척한다.
+      // 사용자는 기능이 켜져 있다고 믿고 손짓을 계속 하게 되고, 우리도 원인을 못 본다. 실제로 오늘
+      // MediaPipe 크래시로 서비스가 죽은 동안 정확히 이 상태였다. 상태를 있는 그대로 표시한다.
+      val accessibilityBroken =
+        !PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAlive()
+      val active = autoNextEnabled && !accessibilityBroken
+      text = when {
+        accessibilityBroken -> if (java.util.Locale.getDefault().language == "ko") "권한 필요" else "NEEDS PERMISSION"
+        autoNextEnabled -> {
+          val remain = focusSessionRemainingMinutes(applicationContext)
+          if (remain != null && remain > 0) "FOCUS ${remain}m" else "FOCUS ON"
+        }
+        else -> "FOCUS OFF"
+      }
       val d = resources.displayMetrics.density
       setPadding((10 * d).toInt(), (7 * d).toInt(), (10 * d).toInt(), (7 * d).toInt())
-      setTextColor(if (autoNextEnabled) Color.parseColor("#0B0C0F") else Color.parseColor("#9CA3AF"))
+      // 권한 문제는 회색(비활성)이 아니라 주의를 끄는 앰버로 — "그냥 꺼둔 상태"와 명확히 구분돼야 한다.
+      setTextColor(
+        when {
+          accessibilityBroken -> Color.parseColor("#0B0C0F")
+          active -> Color.parseColor("#0B0C0F")
+          else -> Color.parseColor("#9CA3AF")
+        }
+      )
       background = GradientDrawable().apply {
         cornerRadius = 999f
-        setColor(if (autoNextEnabled) Color.parseColor("#30D158") else Color.parseColor("#1FFFFFFF"))
+        setColor(
+          when {
+            accessibilityBroken -> Color.parseColor("#F5A524")
+            active -> Color.parseColor("#30D158")
+            else -> Color.parseColor("#1FFFFFFF")
+          }
+        )
       }
+      zapBadge?.visibility = if (active) View.VISIBLE else View.GONE
     }
-    zapBadge?.visibility = if (autoNextEnabled) View.VISIBLE else View.GONE
   }
 
   private fun setRemainingText(remainingMinutes: Int) {

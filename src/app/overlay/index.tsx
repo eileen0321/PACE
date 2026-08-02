@@ -424,6 +424,16 @@ export default function OverlaySessionScreen() {
   const video = CURATED_VIDEOS[videoIndex];
 
   if (redirectingToHome) return null;
+  // 2026-08-02 사장님 지적("자꾸 기능 동작하다 목업 화면이 나오는데") — 오늘만 세 번(useFocusEffect
+  // 조건 완화, AppState 리스너 추가, bailToHome 추가) 리다이렉트 "타이밍"을 앞당기는 방식으로
+  // 고쳤지만 증상이 계속 재발했다. 구조 자체가 틀렸기 때문이다: 지금까지는 목업을 일단 그린 다음
+  // 마운트 후 실행되는 이펙트가 뒤늦게 지우는 방식이라, 렌더와 리다이렉트 사이에 항상 최소 한
+  // 프레임의 창이 남고 그 순간이 사용자 눈에 그대로 보인다 — 타이밍 조율로는 원천적으로 못 없앤다.
+  // 이 화면 상단의 주석대로 "underlying content"(CURATED_VIDEOS 더미)는 네이티브 오버레이가 붙기
+  // 전까지의 개발용 시뮬레이터이고, Android는 이미 실제 시스템 오버레이(알약)가 세션 표시를
+  // 전담하므로 이 화면이 보일 이유가 아예 없다. 조건부로 지우지 말고 처음부터 그리지 않는다.
+  // (iOS는 Live Activity가 오버레이를 대신하되 이 화면 자체는 실제 역할을 하므로 그대로 둔다.)
+  if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) return null;
 
   return (
     <View style={styles.container}>

@@ -274,8 +274,14 @@ class PaceOverlayModule : Module() {
     // (PACE_ARCHITECTURE.md 참고): "사용자 대신 스와이프"는 AccessibilityService 심사에서 "접근성
     // 목적이 아닌 남용"으로 리젝될 수 있다. 사용자 결정(2026-07-18): 코드는 완성해두되 스토어 제출
     // 시 활성화 여부는 EXPO_PUBLIC_ENABLE_AUTO_NEXT 빌드 플래그로 별도 결정(autoNextService.android.ts).
+    // 2026-08-02 — "설정에 켜져 있음"과 "실제로 동작함"은 다르다. 프로세스가 죽으면 시스템이 서비스를
+    // 다시 바인딩하지 않는데 설정 문자열은 그대로 남아, 그동안 앱은 이 상태를 정상으로 오판했다
+    // (PaceAccessibilityService.isAlive 주석 참고). 두 조건을 모두 만족해야 true — 그래야 홈의
+    // 접근성 경고 배너가 실제 고장 상태에서 떠서 사용자가 다시 켤 수 있다.
     Function("hasAccessibilityPermission") {
-      appContext.reactContext?.let { context -> PaceAccessibilityService.isEnabled(context) } ?: false
+      appContext.reactContext?.let { context ->
+        PaceAccessibilityService.isEnabled(context) && PaceAccessibilityService.isAlive()
+      } ?: false
     }
 
     // 2026-07-19: 사용자 지시 — "설정 → 접근성 → 설치된 앱 → PACE" 3단 네비게이션 없이 PACE

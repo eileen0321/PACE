@@ -81,8 +81,19 @@ class PaceAccessibilityService : AccessibilityService() {
   // checkPlaybackAndMaybeSwipe 내부에서 isWatching으로 별도 게이팅한다.
   private val pollRunnable = object : Runnable {
     override fun run() {
-      if ((isWatching || isTrackingPlayback) && SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
-        checkPlaybackAndMaybeSwipe()
+      // 2026-08-02 감사 지적 반영 — 이 루프는 500ms마다 유튜브 접근성 트리를 순회하며 화면에서 읽은
+      // 임의의 문자열을 파싱한다(readCachedOrSearchTiming → parseTiming). 여기서 던져진 예외는
+      // 메인 스레드로 그대로 올라가고, 안드로이드는 예외가 난 AccessibilityService를 죽인 뒤 다시
+      // 바인딩해주지 않는다 — 오늘 tombstone으로 확인한 MediaPipe SIGSEGV와 결과가 완전히 동일하다
+      // ("설정엔 켜져 있는데 손짓/자동넘김/블루투스가 전부 조용히 멈춤"). 유튜브 UI 문구는 앱 버전·
+      // 로케일마다 바뀌는 우리 통제 밖의 입력이므로, 파싱 한 번 실패했다고 기능 전체가 영구 정지되면
+      // 안 된다. 이번 틱만 버리고 다음 폴링을 계속 돌린다.
+      try {
+        if ((isWatching || isTrackingPlayback) && SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+          checkPlaybackAndMaybeSwipe()
+        }
+      } catch (e: Throwable) {
+        Log.e("PaceAccessibility", "poll tick failed — skipping this tick, service stays alive", e)
       }
       handler.postDelayed(this, POLL_INTERVAL_MS)
     }
@@ -137,6 +148,15 @@ class PaceAccessibilityService : AccessibilityService() {
       val expected = "${context.packageName}/${PaceAccessibilityService::class.java.name}"
       return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
     }
+
+    // 2026-08-02 실기기 근본원인 — isEnabled()는 "시스템 설정 목록에 등록돼 있나"만 본다. 그런데
+    // 앱 프로세스가 죽으면(당일 확인된 MediaPipe SIGSEGV, 또는 향후 OOM/다른 크래시) 같은 프로세스에
+    // 있는 이 서비스도 함께 죽고, 시스템은 이를 "Crashed services"로 표시한 채 다시 바인딩해주지
+    // 않는다 — 그런데도 Settings.Secure 문자열에는 그대로 남아 있어 isEnabled()는 계속 true를 반환한다.
+    // 그 결과 손짓·볼륨키·자동넘김이 전부 죽은 상태인데 앱은 "권한 정상"으로 판단해 경고 배너조차
+    // 띄우지 않았고(사용자 지적 "손짓 토글되어 있는데 하나도 안 되"), 사용자는 원인을 알 방법이 없었다.
+    // 실제로 살아 있는지는 onServiceConnected에서 세팅되는 instance로만 알 수 있다.
+    fun isAlive(): Boolean = instance != null
 
     // intervalMs 파라미터는 예전엔 "고정 스와이프 간격"이었지만 이제 "안전 타임아웃"으로 의미가
     // 바뀌었다 — JS↔네이티브 브릿지 시그니처(PaceOverlayModule.startAutoNextWatching)는 그대로 두고
@@ -631,15 +651,30 @@ class PaceAccessibilityService : AccessibilityService() {
       // 연속 덤프해서 확인: 앞쪽 숫자(5초)는 고정, 뒤쪽 숫자만 0→2→0→3→1로 계속 바뀌었다(영상이
       // 반복 재생되며 0으로 되돌아가는 것까지 포함). 순서를 반대로 두면 "현재>=전체-1"이 거의 항상
       // 참이 돼 폴링마다 즉시 스와이프하는, 예전 8초 버그보다 더 심한 회귀가 될 뻔했다.
-      val totalSec = korean.group(1)!!.toInt() * 60 + korean.group(2)!!.toInt()
-      val currentSec = korean.group(3)!!.toInt() * 60 + korean.group(4)!!.toInt()
-      return currentSec to totalSec
+      // 2026-08-02 감사 지적 반영 — 정규식의 (\d+)에는 자릿수 상한이 없어서, 유튜브 화면의 어떤
+      // 노드가 아주 긴 숫자를 담고 있으면 toInt()가 NumberFormatException을 던진다. 이 함수는
+      // 500ms 폴링 루프 안에서 불리므로 한 번만 터져도 서비스가 죽는다(위 pollRunnable 주석 참고).
+      // toIntOrNull로 바꿔 "파싱 실패 = 이 문자열은 재생시간이 아니다"로 조용히 처리한다 — 실제로
+      // 그게 맞는 해석이다(우리가 찾는 건 분/초라 int 범위를 넘길 리 없다).
+      val tm = korean.group(1)?.toIntOrNull()
+      val ts = korean.group(2)?.toIntOrNull()
+      val cm = korean.group(3)?.toIntOrNull()
+      val cs = korean.group(4)?.toIntOrNull()
+      if (tm != null && ts != null && cm != null && cs != null) {
+        return (cm * 60 + cs) to (tm * 60 + ts)
+      }
+      return null
     }
     val colon = COLON_TIME_PATTERN.matcher(text)
     if (colon.find()) {
-      val currentSec = colon.group(1)!!.toInt() * 60 + colon.group(2)!!.toInt()
-      val totalSec = colon.group(3)!!.toInt() * 60 + colon.group(4)!!.toInt()
-      return currentSec to totalSec
+      val cm = colon.group(1)?.toIntOrNull()
+      val cs = colon.group(2)?.toIntOrNull()
+      val tm = colon.group(3)?.toIntOrNull()
+      val ts = colon.group(4)?.toIntOrNull()
+      if (tm != null && ts != null && cm != null && cs != null) {
+        return (cm * 60 + cs) to (tm * 60 + ts)
+      }
+      return null
     }
     return null
   }

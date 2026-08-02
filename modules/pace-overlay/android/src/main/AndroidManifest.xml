@@ -96,5 +96,21 @@
         <data android:mimeType="text/plain" />
       </intent-filter>
     </activity>
+
+    <!-- 2026-08-02 — FOCUS OFF 배지를 눌렀을 때 "앱으로 가지 않고" 쇼츠 위에 보상형 광고만 띄우기
+         위한 투명 껍데기 액티비티(PaceRewardedAdActivity.kt 참고 — 광고 SDK는 Activity 컨텍스트가
+         있어야만 전면 광고를 띄울 수 있어서 Service/오버레이 창에서는 불가능하다).
+         원래 android/app/src/main/AndroidManifest.xml에 있었는데 그쪽은 prebuild가 재생성하며 날리는
+         파일이라 모듈로 옮겼다(res/values/styles.xml의 같은 취지 주석 참고 — 중복 선언 시 매니페스트
+         병합이 테마 속성 충돌로 실패하므로 앱 매니페스트 쪽 선언은 제거했다).
+         taskAffinity="" — 이게 없으면 안드로이드가 이 액티비티를 Pace 앱의 기존 태스크(홈 화면이
+         들어있는)에 붙여버려, 투명 배경 뒤로 Pace 홈이 그대로 비친다("왜 앱 홈으로 가냐"의 정체). -->
+    <activity
+      android:name="expo.modules.paceoverlay.PaceRewardedAdActivity"
+      android:exported="false"
+      android:theme="@style/Theme.Pace.TransparentAd"
+      android:noHistory="true"
+      android:excludeFromRecents="true"
+      android:taskAffinity="" />
   </application>
 </manifest>

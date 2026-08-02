@@ -73,7 +73,31 @@ object PaceHandWaveDetector {
   // 1.10~1.20뿐이었다. 즉 실제 사용자의 "미는" 동작이 만들어내는 값이 1.07~1.10 구간인데 기준이
   // 그 위에 걸쳐 있어 열 번에 한두 번만 걸렸다. 가만히 든 손은 1.00 근처(기존 로그로 확인)라
   // 1.05로 내려도 오탐 여유가 충분하다.
-  private const val GROWTH_RATIO_THRESHOLD = 1.05
+  // 2026-08-02 밤 — 위 "1.05로 내려도 오탐 여유가 충분하다"는 판단이 실기기에서 틀렸음이 증명됐다.
+  // 사장님이 손짓을 전혀 하지 않은 25초 구간에서 WAVE가 8번 발생했고(22:05:31~55), 그 실측값이
+  // 1.053/1.054/1.057/1.059/1.063/1.069/1.077/1.164였다 — 즉 아무 동작 없이도 노이즈만으로 1.16까지
+  // 올라간다. 원인은 기준값을 "윈도우 내 최솟값"으로 바꾼 것과 윈도우가 2.5초로 길어진 것이 겹쳐,
+  // 손 인식이 살짝 흔들린 순간의 작은 값이 기준으로 박히면서 비율이 쉽게 부풀려지기 때문이다.
+  // 그동안 "안 잡힌다"는 보고에 임계값만 계속 내린 결과(1.5→1.2→1.1→1.05) 이 지경이 됐는데,
+  // 진짜 원인은 감지 축이 하나뿐이었던 것이었다(SWEEP_RATIO_THRESHOLD 주석 참고).
+  // 이제 좌우 흔들기는 스윕 축이 담당하므로, 성장 축은 "의도적으로 손을 카메라 쪽으로 확 미는"
+  // 동작만 잡도록 관측된 노이즈 상한(1.164)보다 확실히 위로 올린다.
+  private const val GROWTH_RATIO_THRESHOLD = 1.3
+  // 2026-08-02 실기기 로그로 확인된 진짜 결함(사장님: "동일하게 손짓해도 판단을 못 하는 거겠지" —
+  // 정확한 지적이었다) — 위 임계값들은 전부 handSize "성장률"만 조정한 것이라, 감지할 수 있는 동작이
+  // 사실상 "손을 카메라 쪽으로 미는 것" 하나뿐이었다. 사용자가 실제로 하는 좌우로 흔드는 동작은
+  // 손과 카메라의 거리가 그대로여서 handSize가 안 변한다 → growthRatio가 영원히 1.02 근처에 머문다.
+  // 로그 증거(22:03:20~27, 8초간): 손이 매 프레임 정상 인식되는데 handSize가 0.1380~0.1401에 붙어
+  // 있고 near-miss만 계속 찍힘 — 임계값을 아무리 낮춰도 안 잡히는 게 당연했다(축이 틀렸으므로).
+  // 그래서 손목 x좌표의 이동폭(손 크기로 정규화)을 별도 축으로 본다. 0.9 = "손 너비의 0.9배만큼
+  // 가로로 움직였다" — 가만히 든 손의 미세한 흔들림은 0.1~0.35 수준(같은 로그 구간 실측)이라
+  // 오탐 여유가 충분하고, 의도적인 흔들기는 이 값을 넉넉히 넘긴다.
+  // 2026-08-02 실기기 실측으로 재조정 — 사장님이 흔드시는 동안의 sweep 실측이 0.66/0.70/0.71/0.72/
+  // 0.73/0.76/0.77/0.78/0.80로 전부 0.9 바로 아래에 몰려 단 한 번도 안 걸렸다(같은 구간의 growth는
+  // 1.0~1.08로 1.3에도 한참 못 미침 — 즉 두 축 모두 문턱 아래라 "하나도 안 되는" 상태였다).
+  // 실제 동작이 만들어내는 값 아래로 내린다. 손을 가만히 든 상태는 sweep이 0.2~0.3 수준이므로
+  // (WAVE by=growth 로그의 동시 sweep 값: 0.23/0.31/0.60) 0.75와는 여유가 있다.
+  private const val SWEEP_RATIO_THRESHOLD = 0.75
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
@@ -115,6 +139,23 @@ object PaceHandWaveDetector {
   @Volatile private var startGeneration = 0
   private var cameraProvider: ProcessCameraProvider? = null
   private var handLandmarker: HandLandmarker? = null
+  // 2026-08-02 실기기 tombstone으로 근본원인 확정 — SIGSEGV(fault addr 0x1a0)가 detectAsync →
+  // sendLiveStreamData → PacketCreator.createProto 네이티브 경로에서 두 번 발생했고, 그때마다 앱
+  // 프로세스가 통째로 죽었다. 죽으면 같은 프로세스에 있는 PaceAccessibilityService까지 함께 죽고,
+  // 시스템은 그 서비스를 "Crashed services"로 표시한 뒤 다시 바인딩해주지 않는다(설정 화면엔 계속
+  // "켜짐"으로 보이므로 사용자도 우리도 알아챌 수 없었다) → 손짓·블루투스·자동넘김이 한꺼번에
+  // 영구 정지. 즉 이 크래시 하나가 그동안의 "갑자기 아무것도 안 됨" 증상의 정체다.
+  //
+  // 레이스의 구조: analyzeFrame()은 CameraX 분석 워커 스레드에서 돌고, cleanupResources()는 메인
+  // 스레드에서 handLandmarker.close()를 부른다. 프레임 하나가 detectAsync 안(JNI 패킷 생성 중)에
+  // 들어가 있는 사이에 네이티브 그래프가 파괴되면 널 역참조로 즉사한다. shutdownNow()는 인터럽트만
+  // 걸 뿐 진행 중인 분석을 기다려주지 않아 창이 그대로 열려 있었다. 또한 SIGSEGV는 JVM 예외가
+  // 아니라 try/catch로는 원천적으로 막을 수 없다 — 애초에 겹치지 않게 하는 것이 유일한 해법이다.
+  // detectAsync(LIVE_STREAM)는 패킷만 큐에 넣고 즉시 반환하므로 이 락을 메인 스레드가 잠깐 기다려도
+  // 추론 시간만큼 블록되지 않는다(ANR 위험 없음).
+  private val landmarkerLock = Any()
+  // clearAnalyzer()로 새 프레임 유입 자체를 먼저 끊기 위해 참조를 들고 있는다(위 락과 함께 2중 방어).
+  private var imageAnalysis: ImageAnalysis? = null
   private var analysisExecutor: ExecutorService? = null
   private var fakeLifecycleOwner: FakeLifecycleOwner? = null
   private var lastProcessedAtMs = 0L
@@ -129,6 +170,8 @@ object PaceHandWaveDetector {
   private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
   private val sizeHistory = ArrayDeque<Pair<Long, Double>>()
+  // (timestamp, wrist.x) 짧은 이력 — 좌우 흔들기(스윕) 판정용. sizeHistory와 같은 윈도우/원리.
+  private val xHistory = ArrayDeque<Pair<Long, Double>>()
   // (timestamp, averageLuma) 짧은 이력 — occlusion(가려짐) 안전망용, sizeHistory와 동일한 원리.
   private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
 
@@ -165,6 +208,7 @@ object PaceHandWaveDetector {
   private fun startOnMainThread(context: Context, onWave: () -> Unit, myGeneration: Int) {
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
+    xHistory.clear()
     lastTriggerAtMs = 0L
 
     try {
@@ -221,6 +265,7 @@ object PaceHandWaveDetector {
         analysisExecutor?.let { executor ->
           analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy, onWave) }
         }
+        imageAnalysis = analysis
 
         provider.unbindAll()
         @Suppress("DEPRECATION")
@@ -257,13 +302,23 @@ object PaceHandWaveDetector {
   }
 
   private fun cleanupResources() {
+    // 순서가 곧 안전장치다(위 landmarkerLock 주석의 SIGSEGV 참고).
+    // ① 분석기부터 떼어내 새 프레임이 analyzeFrame으로 더 들어오지 못하게 막고,
+    try { imageAnalysis?.clearAnalyzer() } catch (_: Exception) {}
+    imageAnalysis = null
+    // ② 카메라를 언바인드한 뒤,
     try { cameraProvider?.unbindAll() } catch (_: Exception) {}
     cameraProvider = null
     @Suppress("DEPRECATION")
     fakeLifecycleOwner?.registry?.markState(Lifecycle.State.DESTROYED)
     fakeLifecycleOwner = null
-    try { handLandmarker?.close() } catch (_: Exception) {}
-    handLandmarker = null
+    // ③ 이미 detectAsync 안에 들어가 있는 마지막 프레임이 빠져나올 때까지 락으로 기다린 다음 닫는다.
+    //    shutdownNow()를 먼저 부르면 인터럽트만 걸고 기다리지 않아 close()와 겹칠 수 있으므로,
+    //    반드시 close() 이후에 executor를 내린다.
+    synchronized(landmarkerLock) {
+      try { handLandmarker?.close() } catch (_: Exception) {}
+      handLandmarker = null
+    }
     analysisExecutor?.shutdownNow()
     analysisExecutor = null
     sizeHistory.clear()
@@ -290,7 +345,12 @@ object PaceHandWaveDetector {
       if (bitmap != null) {
         val rotated = rotateBitmap(bitmap, proxy.imageInfo.rotationDegrees)
         val mpImage = BitmapImageBuilder(rotated).build()
-        handLandmarker?.detectAsync(mpImage, now)
+        // 락 안에서 running을 한 번 더 확인한다 — 위 라인들을 도는 사이에 stop()이 걸렸을 수 있고,
+        // 그 경우 handLandmarker는 이미 닫혔거나 닫히는 중이다(널 체크만으로는 close()가 진행 중인
+        // 순간을 못 걸러낸다 — 그 틈이 정확히 SIGSEGV가 났던 창이다).
+        synchronized(landmarkerLock) {
+          if (running) handLandmarker?.detectAsync(mpImage, now)
+        }
       }
     } catch (e: Exception) {
       Log.e(TAG, "analyzeFrame failed", e)
@@ -380,6 +440,7 @@ object PaceHandWaveDetector {
       // 다시 넣었을 때 "직전 동작의 큰 손"이 최솟값 기준에 섞여 들어가(또는 반대로 남은 작은 값이
       // 오탐을 유발해) 판정이 흐려진다. 매 접근을 깨끗한 상태에서 새로 재기 위함.
       sizeHistory.clear()
+      xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
       return
     }
     val landmarks = result.landmarks()[0]
@@ -402,6 +463,25 @@ object PaceHandWaveDetector {
         return
       }
     }
+
+    // 2026-08-02 실기기 로그로 확정된 근본 결함 — 지금까지의 판정은 handSize 성장률뿐이라 사실상
+    // "손을 카메라 쪽으로 밀기"만 감지했다. 그런데 사용자가 실제로 하는 동작은 이름 그대로 손을
+    // 좌우로 흔드는 것이고, 그때는 손과 카메라의 거리가 변하지 않아 handSize가 그대로다.
+    // 로그 증거(22:03:20~27): 손이 프레임 안에 계속 잡히는데 handSize가 0.1380~0.1401에 붙어 있고
+    // growthRatio가 1.019~1.026에서만 오르내리며 near-miss만 수십 줄 — 흔드는 내내 단 한 번도
+    // 임계값(1.05)에 못 닿았다("손짓 하나도 안 돼"의 정체). 임계값을 더 낮추는 건 답이 아니다.
+    // 미세한 손떨림까지 트리거가 돼 오탐이 폭증한다. 축 자체가 틀린 것이므로 가로 이동을 따로 본다.
+    //
+    // 손목 x좌표의 윈도우 내 이동폭(최대-최소)을 손 크기로 정규화해서 쓴다 — 픽셀/정규화 좌표를
+    // 그대로 쓰면 손이 카메라에 가까울수록(=화면에서 클수록) 같은 동작이 더 큰 값으로 나와 거리에
+    // 따라 감도가 달라지지만, 손 크기로 나누면 "내 손 너비의 몇 배를 움직였나"가 되어 거리와 무관해진다.
+    xHistory.addLast(now to wrist.x().toDouble())
+    while (xHistory.isNotEmpty() && now - xHistory.first().first > GROWTH_WINDOW_MS) {
+      xHistory.removeFirst()
+    }
+    val sweepRatio = if (xHistory.size >= 2) {
+      (xHistory.maxOf { it.second } - xHistory.minOf { it.second }) / handSize
+    } else 0.0
 
     sizeHistory.addLast(now to handSize)
     while (sizeHistory.isNotEmpty() && now - sizeHistory.first().first > GROWTH_WINDOW_MS) {
@@ -438,14 +518,19 @@ object PaceHandWaveDetector {
     // 0.99 이상이면 전부 걸려, 손이 화면에 잡혀 있는 동안 사실상 매 프레임(최대 초당 6~7회) 찍혔다.
     // 오늘 실기기 조사에서 이 로그가 다른 로그를 계속 밀어냈다. 진짜 "아깝게 실패"(임계값의 97% 이상)
     // 일 때만 남기도록 좁힌다 — 튜닝 근거는 그대로 확보하면서 스팸은 사라진다.
-    if (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 && growthRatio <= GROWTH_RATIO_THRESHOLD) {
-      Log.d(TAG, "near-miss growthRatio=$growthRatio handSize=$handSize threshold=$GROWTH_RATIO_THRESHOLD")
+    val grew = growthRatio > GROWTH_RATIO_THRESHOLD
+    val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
+
+    if (!grew && !swept && (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7)) {
+      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) handSize=$handSize")
     }
 
-    if (growthRatio > GROWTH_RATIO_THRESHOLD && pastRefractory) {
-      Log.i(TAG, "WAVE detected growthRatio=$growthRatio handSize=$handSize")
+    // 접근(밀기)과 스윕(좌우 흔들기)은 OR — 둘 중 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
+    if ((grew || swept) && pastRefractory) {
+      Log.i(TAG, "WAVE detected by=${if (swept) "sweep" else "growth"} growth=$growthRatio sweep=$sweepRatio handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
+      xHistory.clear()
       awaitingRearm = true
       rearmBelowSize = handSize * REARM_SIZE_RATIO
       // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드

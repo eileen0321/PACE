@@ -1,9 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.INTERNET"/>
-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
+  <!-- 2026-08-02 출시 전 감사 — 저장소 권한 제거. 앱/모듈 코드 전체에 사용처가 0건이고
+       (expo-media-library·image-picker 미사용, MediaStore/getExternalStorage 호출 없음),
+       expo-file-system이 자기 매니페스트에서 자동으로 넣던 것이 병합돼 올라오고 있었다.
+       Play Console은 업로드 시 민감 권한의 사용 사유를 요구하는데 정당화할 근거가 없고,
+       권한 목록에 뜨는 것만으로 설치 전환율에도 불리하다. maxSdkVersion=32로 제한돼 있어
+       실질 위험은 낮았지만 "쓰지 않는 권한은 선언하지 않는다"가 원칙이라 병합 단계에서 제거한다.
+       expo-file-system이 실제로 외부 저장소를 쓰게 되면 이 두 줄을 지워 되살릴 것. -->
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>

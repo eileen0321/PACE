@@ -112,10 +112,15 @@ export default function PaywallScreen() {
   // 2026-07-27 사용자 지시로 핸즈프리 컨트롤(손짓/블루투스 리모컨) 게이팅을 다시 무료로 풀면서
   // benefitRemoteControl 삭제 — 이제 실제로 무료 혜택이라 페이월에 남겨두면 "안 되는 걸 된다고
   // 광고"의 반대(되는 걸 유료라고 광고)로 또 다른 허위광고 문제가 된다.
+  // 2026-08-02 출시 전 감사 — 🔴 benefitAdvancedSleepMode("고급 취침모드 — 무진동 감지 민감도 직접
+  // 설정") 제거. 사장님 지시로 수면감지 판정 자체를 껐는데(PaceOverlayService의 sleepDetected=false,
+  // "수면감지 삭제해") 이 항목만 남아 동작하지 않는 기능을 구독 혜택으로 광고하고 있었다 — 위 주석의
+  // benefitRemoteControl 사례와 정확히 같은 부류의 허위광고이고, Apple 3.1.2 / Google 결제 정책의
+  // "구독 혜택 정확 고지" 요구에 걸려 심사 반려·환불 분쟁으로 이어질 수 있다.
+  // 수면감지를 되살리기로 결정하면 이 항목과 Settings의 조절 행, sleepDetected 한 줄을 함께 되돌린다.
   const benefits = [
     t('paywall.benefitNoAds'),
     t('paywall.benefitUnlimitedAutoNext'),
-    t('paywall.benefitAdvancedSleepMode'),
   ];
 
   return (

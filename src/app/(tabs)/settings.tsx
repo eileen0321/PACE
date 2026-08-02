@@ -322,6 +322,14 @@ export default function SettingsScreen() {
                 }
               }}
             />
+            {/* 2026-08-02 출시 전 감사 — 🔴 죽은 기능을 프리미엄으로 팔던 문제. 사장님 지시로 수면감지
+                판정 자체를 비활성화했는데(PaceOverlayService의 sleepDetected=false, "수면감지 삭제해")
+                이 프리미엄 전용 조절 항목만 그대로 남아 "무료는 10분 고정, 프리미엄은 자유 설정"이라고
+                광고하고 있었다. 동작하지 않는 기능을 구독 혜택으로 고지하는 셈이라 Apple 3.1.2 /
+                Google 결제 정책의 "구독 혜택 정확 고지" 위반 소지 + 환불 분쟁 위험이 있다.
+                기능을 되살리는 게 아니라 지시대로 끈 상태를 유지하되, 파는 것을 멈춘다 — 항목 자체를
+                렌더하지 않는다. 되살릴 땐 sleepDetected 한 줄과 이 블록을 함께 되돌리면 된다. */}
+            {false && (
             <DefaultRow
               title={t('settings.sleepStillness')}
               desc={isPremium ? t('settings.sleepStillnessDesc') : t('settings.sleepStillnessDescFree')}
@@ -344,6 +352,7 @@ export default function SettingsScreen() {
                 if (Platform.OS === 'android') bluetoothService.setSleepStillnessMinutes(nextStillness).catch(() => {});
               }}
             />
+            )}
           </GlassSurface>
         </View>
 

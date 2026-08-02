@@ -13,7 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
 
-const ICON = require('../../../assets/Phone11.png');
+const ICON = require('../../../assets/Phone11_bgt.png');
 // 2026-08-01 사장님 지시 — 로고 위 "빛 지나가는(shine sweep)" 효과가 600ms + 12% 흰색이라 실질적으로
 // 안 보였다. 스플래시를 950ms로 살짝 늘려 스윕 1회가 온전히 보이게 하고, 빛 바를 그라데이션+밝기 상향.
 const DURATION_MS = 950;
@@ -116,7 +116,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center', // 로고를 화면 정중앙에(런치스크린과 동일)
   },
-  iconArea: { width: 120, height: 120, alignItems: 'center', justifyContent: 'center' },
+  // 2026-08-02 사장님 지적("원 안에 아이콘 보이게 하라고") — 글로우 원(220)이 부모 iconArea(120)보다
+  // 커서 원의 바깥쪽이 부모 경계에서 잘려 나가고 있었다(안드로이드는 부모 밖 자식을 그리지 않는다).
+  // 부모를 원과 같은 220으로만 키운다 — 로고 크기/위치는 아래 iconClip(120)이 잡으므로 그대로다.
+  iconArea: { width: 220, height: 220, alignItems: 'center', justifyContent: 'center' },
   glow: {
     position: 'absolute',
     width: 220,

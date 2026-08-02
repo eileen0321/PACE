@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import Animated, {
   Easing,
   FadeOut,
@@ -22,6 +23,8 @@ import { colors, radius, typography } from '../../constants/theme';
 // 로고 아트는 동일 크기로 이어지고, 원(글로우)만 JS에서 페이드인한다.
 const ICON = require('../../../assets/Phone11_bgt.png');
 const DURATION_MS = 600;
+const ICON_SIZE = 160;      // 로고(매듭)
+const GLOW_SIZE = 300;      // 빛나는 보라 원(로고보다 커서 "원 안의 아이콘")
 
 // 2026-07-26 재작성(웹리서치 반영 — Apple HIG + Uber/Swiggy 방식): 앱 실행 "아이콘 번쩍" 해결.
 // 상용앱 규칙: 네이티브 런치스크린과 애니메이션 스플래시의 "첫 프레임"이 시각적으로 동일해야 한다.
@@ -99,14 +102,21 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
       // 내려 이 갭 자체를 없앤다 — 이 파일의 원칙("첫 프레임이 런치스크린과 동일해야 한다")의 원래 의도.
       onLayout={markLayoutReady}
     >
-      {/* 글로우 원(로고 뒤) — 다층 바이올렛 디스크를 겹쳐 중심이 밝고 바깥으로 부드럽게 사라지는
-          radial 느낌을 낸다(RN엔 radial-gradient가 없어 반투명 원을 크기별로 쌓아 falloff 근사).
-          Phone11_bgt는 배경이 투명이라 이 빛이 로고 사이로 비쳐 "원 안에서 빛나는 매듭"이 된다. */}
+      {/* 보라색 원형 + 빛효과 — SVG RadialGradient로 중심이 밝고 가장자리로 부드럽게 사라지는 진짜
+          "빛나는 원"(밴딩/뭉개짐 없는 매끈한 그라데이션). Phone11_bgt는 배경 투명이라 이 빛이 로고
+          사이로 비쳐 "보라색 원 안에서 빛나는 아이콘"이 된다. 원은 살짝 커지며(블룸) 페이드인. */}
       <Animated.View style={[StyleSheet.absoluteFill, styles.glowWrap, glowStyle]} pointerEvents="none">
-        <View style={[styles.glowCircle, styles.glow1]} />
-        <View style={[styles.glowCircle, styles.glow2]} />
-        <View style={[styles.glowCircle, styles.glow3]} />
-        <View style={[styles.glowCircle, styles.glow4]} />
+        <Svg width={GLOW_SIZE} height={GLOW_SIZE}>
+          <Defs>
+            <RadialGradient id="paceGlow" cx="50%" cy="50%" r="50%">
+              <Stop offset="0%" stopColor={colors.primary} stopOpacity={0.6} />
+              <Stop offset="38%" stopColor={colors.primary} stopOpacity={0.32} />
+              <Stop offset="70%" stopColor={colors.primary} stopOpacity={0.1} />
+              <Stop offset="100%" stopColor={colors.primary} stopOpacity={0} />
+            </RadialGradient>
+          </Defs>
+          <Circle cx={GLOW_SIZE / 2} cy={GLOW_SIZE / 2} r={GLOW_SIZE / 2} fill="url(#paceGlow)" />
+        </Svg>
       </Animated.View>
 
       {/* 로고: 런치스크린과 동일 아트(불투명 Phone11) — 화면 중앙, 미동 없이 이어짐. 여기선 투명 버전. */}
@@ -149,16 +159,11 @@ const styles = StyleSheet.create({
   // 로고(Phone11_bgt): 투명 배경이라 매듭이 프레임을 꽉 채운다 → 뒤 글로우 원이 로고보다 확실히
   // 커야 "원 안의 매듭"으로 읽히므로 로고는 160으로. 네이티브 런치(app.json imageWidth)도 160으로 맞춰
   // [네이티브(원 없음)]→[JS(원 페이드인)] 전환에서 로고 아트 크기가 안 변하고 원만 차오른다.
-  iconArea: { width: 160, height: 160, alignItems: 'center', justifyContent: 'center' },
-  icon: { width: 160, height: 160 },
-  // 글로우 원: 크기 다른 반투명 바이올렛 디스크를 중앙에 겹쳐 radial falloff 근사(중심 밝고 바깥 흐림).
+  iconArea: { width: ICON_SIZE, height: ICON_SIZE, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: ICON_SIZE, height: ICON_SIZE },
+  // 빛나는 원(SVG radial)을 화면 중앙에 정렬.
   glowWrap: { alignItems: 'center', justifyContent: 'center' },
-  glowCircle: { position: 'absolute' },
-  glow1: { width: 340, height: 340, borderRadius: 170, backgroundColor: `${colors.primary}0E` }, // 가장 넓고 옅은 후광
-  glow2: { width: 264, height: 264, borderRadius: 132, backgroundColor: `${colors.primary}16` },
-  glow3: { width: 196, height: 196, borderRadius: 98, backgroundColor: `${colors.primary}1F` },
-  glow4: { width: 150, height: 150, borderRadius: 75, backgroundColor: '#8B7CF62A' }, // 안쪽 밝은 코어(살짝 밝은 바이올렛)
-  // 로고 아래 텍스트 — 글로우 바깥으로 충분히 내려 겹침 방지.
+  // 로고 아래 텍스트 — 빛나는 원 바깥으로 충분히 내려 겹침 방지.
   textBlock: { position: 'absolute', top: '50%', marginTop: 128, alignItems: 'center' },
   title: {
     fontSize: 30,

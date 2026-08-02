@@ -59,5 +59,16 @@
         <data android:mimeType="text/plain"/>
       </intent-filter>
     </activity>
+    <!-- 2026-08-02 사장님 지시("쇼츠 오버레이 상태 focus off일 때 누르면 광고 창 띄우는 걸로 해,
+         앱으로 가는 시나리오 만들지 말고") — 보상형 광고는 SDK 특성상 Activity가 있어야만 띄울 수
+         있어(Service/오버레이 창에서 직접 불가), 화면을 그리지 않는 투명 껍데기 액티비티를 두고
+         그 위에 광고만 띄운다. 광고가 닫히면 즉시 finish → 사용자는 "쇼츠 위에 광고가 떴다 사라짐"
+         으로만 느끼고 Pace 앱 화면은 보이지 않는다(PaceRewardedAdActivity.kt 참고). -->
+    <activity
+      android:name="expo.modules.paceoverlay.PaceRewardedAdActivity"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar"
+      android:noHistory="true"
+      android:excludeFromRecents="true"
+      android:exported="false"/>
   </application>
 </manifest>

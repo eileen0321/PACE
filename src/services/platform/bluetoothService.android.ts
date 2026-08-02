@@ -22,6 +22,8 @@ let PaceOverlay: {
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
   setIsPremium(isPremium: boolean): void;
+  setAvailableCredits(credits: number): void;
+  consumePendingCreditSpend(): number;
   setSleepStillnessMinutes(minutes: number): void;
   consumeFocusSessionTimedOut(): boolean;
   extendFocusSession(extraMinutes: number): void;
@@ -135,6 +137,25 @@ export const bluetoothService: BluetoothService = {
       PaceOverlay?.setIsPremium(isPremium);
     } catch (e) {
       console.warn('[bluetoothService.android] setIsPremium failed', e);
+    }
+  },
+
+  // 2026-08-02 — 쇼츠 위 FOCUS OFF 선택 팝업(광고/크레딧)이 크레딧 버튼을 보여줄지 판단하려면
+  // 네이티브가 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재) — 잔액이 바뀔 때마다 밀어준다.
+  async setAvailableCredits(credits: number) {
+    try {
+      PaceOverlay?.setAvailableCredits(Math.max(0, Math.floor(credits)));
+    } catch (e) {
+      console.warn('[bluetoothService.android] setAvailableCredits failed', e);
+    }
+  },
+
+  // 네이티브 팝업에서 크레딧으로 연장한 분량을 1회성으로 회수(읽으면 즉시 리셋) — 실제 차감은 JS.
+  async consumePendingCreditSpend() {
+    try {
+      return PaceOverlay?.consumePendingCreditSpend() ?? 0;
+    } catch (e) {
+      return 0;
     }
   },
 

@@ -172,6 +172,17 @@ export interface BluetoothService {
   /** 네이티브 "FOCUS OFF" 배지 탭 시 광고 게이트 여부 판단용 구독 상태 동기화(Android만 실제 동작, iOS는 no-op). */
   setIsPremium(isPremium: boolean): Promise<void>;
   /**
+   * 2026-08-02 — 쇼츠 위 FOCUS OFF 선택 팝업(광고/크레딧, Android 네이티브 오버레이)이 크레딧
+   * 버튼 노출 여부를 판단하려면 네이티브가 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재).
+   * iOS는 이 네이티브 팝업 자체가 없어 no-op.
+   */
+  setAvailableCredits(credits: number): Promise<void>;
+  /**
+   * 네이티브 팝업에서 크레딧으로 연장한 분량을 1회성으로 회수(읽으면 즉시 리셋). 실제 잔액 차감은
+   * JS 스토어(진실원천)가 이 값을 받아서 수행한다. iOS는 항상 0.
+   */
+  consumePendingCreditSpend(): Promise<number>;
+  /**
    * 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 이미 도는 중인 세션의 무진동 수면감지
    * 임계값(sleepStillnessMinutes)을 즉시 무료 기본값으로 되돌린다(focusSessionDurationMinutes와
    * 달리 이건 라이브 값이라 다음 세션까지 안 기다리고 바로 반영됨). Android만 실제 동작, iOS는 no-op.

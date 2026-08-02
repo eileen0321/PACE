@@ -718,6 +718,9 @@ class PaceOverlayService : Service() {
     // 구독 상태를 모르므로 JS가 isPremium이 바뀔 때마다 이 값을 여기로 밀어준다
     // (PaceOverlayModule.setIsPremium, _layout.tsx).
     private const val PREF_IS_PREMIUM = "is_premium"
+    // 2026-08-02 — 위 setAvailableCredits/consumePendingCreditSpend 참고(FOCUS OFF 선택 팝업용).
+    private const val PREF_AVAILABLE_CREDITS = "available_credits"
+    private const val PREF_PENDING_CREDIT_SPEND = "pending_credit_spend"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
     private const val PREF_SESSION_ACTIVE = "session_active"
@@ -852,6 +855,27 @@ class PaceOverlayService : Service() {
 
     // JS(useSubscriptionStore)가 구독 상태 바뀔 때마다 밀어주는 값 — 네이티브는 자체적으로
     // 구독 상태를 모른다.
+    // 2026-08-02 사장님 지시("focus off 누르면 광고 볼래/크레딧 쓸래 팝업 뜨고 광고 고르면 광고") —
+    // 그 선택 팝업을 쇼츠 위 네이티브 오버레이로 띄우려면 네이티브가 "지금 크레딧이 몇 개인지"를
+    // 알아야 하는데, 크레딧은 JS 스토어(useFlipStore + useAttendanceStore)에만 있다. isPremium과
+    // 똑같은 방식으로 JS가 값이 바뀔 때마다 여기로 밀어준다.
+    fun setAvailableCredits(context: Context, credits: Int) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(PREF_AVAILABLE_CREDITS, credits).apply()
+    }
+
+    private fun availableCredits(context: Context): Int =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(PREF_AVAILABLE_CREDITS, 0)
+
+    // 네이티브에서 크레딧으로 연장했을 때, 실제 잔액 차감은 JS 스토어가 진실원천이므로 여기서
+    // "얼마를 썼는지"만 누적해두고 JS가 다음 포그라운드 때 1회성으로 소비해 차감한다
+    // (consumeExpired/consumeFocusSessionTimedOut과 동일한 1회성 소비 패턴).
+    fun consumePendingCreditSpend(context: Context): Int {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      val pending = prefs.getInt(PREF_PENDING_CREDIT_SPEND, 0)
+      if (pending > 0) prefs.edit().putInt(PREF_PENDING_CREDIT_SPEND, 0).apply()
+      return pending
+    }
+
     fun setIsPremium(context: Context, isPremium: Boolean) {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PREMIUM, isPremium).apply()
     }
@@ -1103,6 +1127,14 @@ class PaceOverlayService : Service() {
     private fun bumpBluetoothCounter(context: Context, key: String) {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
+    }
+
+    // 2026-08-02 — 오버레이에서 직접 띄우는 보상형 광고(PaceRewardedAdActivity)가 로드/표시에
+    // 실패했을 때 사용자에게 알리는 용도. 광고가 안 뜨는 건 사용자 잘못이 아니므로 벌주지 않고
+    // (연장은 주지 않되) 다시 시도할 수 있다는 것만 알린다.
+    fun showAdFailedToast(context: Context) {
+      val ko = java.util.Locale.getDefault().language == "ko"
+      showToast(context, if (ko) "광고를 불러오지 못했어요 — 잠시 후 다시 시도해 주세요" else "Couldn't load the ad — please try again in a moment")
     }
 
     private fun showToast(context: Context, text: String) {
@@ -1582,8 +1614,15 @@ class PaceOverlayService : Service() {
         // (FocusSessionExtendModal)로 보낸다 — 실제 소비(consumeFocusSessionTimedOut)는 JS가
         // 포그라운드 시 담당하므로 여기선 peek만 한다. 프리미엄이거나 수동으로 껐던 경우는
         // 기존처럼 바로 재활성화(광고 게이트 불필요).
+        // 2026-08-02 사장님 지시("쇼츠 오버레이 상태 focus off일 때 누르면 광고 창 띄우는 걸로 해,
+        // 앱으로 가는 시나리오 만들지 말고") — openApp()으로 Pace 홈에 데려가 RN 모달을 띄우던 방식을
+        // 폐기한다. 쇼츠를 보다가 다른 앱으로 튕겨나가는 흐름 자체가 나빴고, 실제로 홈에 도착해도
+        // 모달이 안 뜨는 회귀까지 겹쳤다(실기기 재현). 이제 투명 액티비티(PaceRewardedAdActivity)가
+        // 보상형 광고만 띄웠다 닫히므로, 사용자에겐 "쇼츠 위에 광고가 떴다 사라지고 다시 쇼츠"로
+        // 보인다 — Pace 앱 화면은 한 번도 안 보인다. 보상 획득 시 그 액티비티가 extendFocusSession을
+        // 직접 호출한다(연장 + 원래 앱 복귀까지 그 안에서 처리).
         if (!autoNextEnabled && hasPendingFocusSessionTimeout() && !isPremium(applicationContext)) {
-          openApp()
+          showExtendChoiceOverlay()
         } else {
           // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해
           // 일괄 처리한다(위 companion setAutoMode 참고) — 여기서 중복으로 안 건드림.
@@ -1660,6 +1699,117 @@ class PaceOverlayService : Service() {
   private fun hidePaceMenu() {
     paceMenuView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
     paceMenuView = null
+  }
+
+  // 2026-08-02 사장님 지시("쇼츠 보다 focus off 누르면 광고 볼래 크레딧 쓸래 팝업 뜨고, 광고 보겠다고
+  // 하면 광고 보여주는 거 아냐?") — 그 선택 팝업. 앱으로 나가지 않고 쇼츠 위에 그대로 띄운다.
+  // [광고 보고 5분 더] / [크레딧 5개로 5분 더](잔액 충분할 때만) / [나중에] 3지선다.
+  private var extendChoiceView: LinearLayout? = null
+  private fun hideExtendChoice() {
+    extendChoiceView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
+    extendChoiceView = null
+  }
+
+  private fun showExtendChoiceOverlay() {
+    hideExtendChoice()
+    val ko = java.util.Locale.getDefault().language == "ko"
+    val d = resources.displayMetrics.density
+    val credits = availableCredits(applicationContext)
+
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = 20f * d
+        setColor(Color.parseColor("#F21A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+    }
+    card.addView(TextView(this).apply {
+      text = if (ko) "Focus Session이 끝났어요" else "Focus Session ended"
+      textSize = 16f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    })
+    card.addView(TextView(this).apply {
+      text = if (ko) "광고를 보거나 크레딧을 쓰면 ${EXTEND_MINUTES}분 더 이어갈 수 있어요"
+             else "Watch an ad or use credits for ${EXTEND_MINUTES} more minutes"
+      textSize = 13f
+      setTextColor(Color.parseColor("#B3FFFFFF"))
+      setPadding(0, (6 * d).toInt(), 0, (14 * d).toInt())
+    })
+
+    fun button(label: String, bgColor: String, textColor: Int, onTap: () -> Unit): TextView =
+      TextView(this).apply {
+        text = label
+        textSize = 14f
+        gravity = Gravity.CENTER
+        setTextColor(textColor)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setPadding(0, (12 * d).toInt(), 0, (12 * d).toInt())
+        background = GradientDrawable().apply {
+          cornerRadius = 999f
+          setColor(Color.parseColor(bgColor))
+        }
+        isClickable = true
+        setOnClickListener { onTap() }
+      }
+
+    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+      .apply { topMargin = (8 * d).toInt() }
+
+    card.addView(button(if (ko) "광고 보고 ${EXTEND_MINUTES}분 더" else "Watch ad for ${EXTEND_MINUTES} min", "#6C5CE7", Color.WHITE) {
+      hideExtendChoice()
+      consumeFocusSessionTimedOut() // 이 경로로 처리하므로 앱 쪽 중복 모달 방지
+      PaceRewardedAdActivity.start(applicationContext, EXTEND_MINUTES)
+    }, lp)
+
+    if (credits >= EXTEND_MINUTES) {
+      card.addView(button(
+        if (ko) "크레딧 ${EXTEND_MINUTES}개로 ${EXTEND_MINUTES}분 더 (보유 $credits)" else "Use $EXTEND_MINUTES credits (you have $credits)",
+        "#1F3A2E", Color.parseColor("#4ADE80")
+      ) {
+        hideExtendChoice()
+        consumeFocusSessionTimedOut()
+        // 실제 잔액 차감은 JS 스토어가 진실원천 — 여기선 "얼마 썼는지"만 남기고 즉시 연장해준다
+        // (JS가 다음 포그라운드에 consumePendingCreditSpend로 1회성 소비해 차감).
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+          .putInt(PREF_PENDING_CREDIT_SPEND, prefs.getInt(PREF_PENDING_CREDIT_SPEND, 0) + EXTEND_MINUTES)
+          .putInt(PREF_AVAILABLE_CREDITS, (credits - EXTEND_MINUTES).coerceAtLeast(0))
+          .apply()
+        extendFocusSession(applicationContext, EXTEND_MINUTES)
+      }, lp)
+    }
+
+    card.addView(button(if (ko) "나중에" else "Not now", "#00000000", Color.parseColor("#99FFFFFF")) {
+      hideExtendChoice()
+    }, lp)
+
+    val container = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setPadding((24 * d).toInt(), 0, (24 * d).toInt(), 0)
+      setBackgroundColor(Color.parseColor("#B3000000"))
+      isClickable = true
+      setOnClickListener { hideExtendChoice() } // 바깥 탭으로 닫기
+      addView(card, LinearLayout.LayoutParams((320 * d).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      0, // 포커스 가능해야 버튼 탭이 먹는다
+      android.graphics.PixelFormat.TRANSLUCENT
+    )
+    try {
+      windowManager?.addView(container, params)
+      extendChoiceView = container
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "showExtendChoiceOverlay failed", e)
+    }
   }
 
   // 2026-07-31 실기기 발견("쇼츠 보다 P에서 Open App하면 앱 갔다가 바로 쇼츠 시작") —

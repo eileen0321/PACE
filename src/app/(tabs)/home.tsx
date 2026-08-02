@@ -145,20 +145,14 @@ export default function HomeScreen() {
   // (overlay/index.tsx의 consumeExpired/consumeAccessibilityRevoked와 동일 패턴). 프리미엄은 free
   // duration 고정 자체가 적용 안 되므로(enforceFreeFocusSessionDuration) 이 신호가 발생할 일이 없지만
   // 방어적으로 한 번 더 확인한다.
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const checkTimedOut = () => {
-      if (useSubscriptionStore.getState().isPremium) return;
-      bluetoothService.consumeFocusSessionTimedOut().then((timedOut) => {
-        if (timedOut) setShowFocusSessionExtend(true);
-      }).catch(() => {});
-    };
-    checkTimedOut();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkTimedOut();
-    });
-    return () => sub.remove();
-  }, []);
+  // 2026-08-02 사장님 지시("앱으로 가는 시나리오 만들지 말고", "정리 좀 해") — Focus Session 연장은
+  // 이제 쇼츠 위 네이티브 선택 팝업(광고/크레딧, PaceOverlayService.showExtendChoiceOverlay) 하나로
+  // 일원화됐다. 여기 있던 "앱이 포그라운드로 오면 타임아웃 신호를 소비해 RN 모달을 띄우는" 경로를
+  // 제거한다 — 남겨두면 사용자가 팝업에서 "나중에"를 고른 뒤 나중에 앱을 직접 열었을 때 난데없이
+  // 앱 안에서 광고 모달이 뜬다(없애라고 한 바로 그 시나리오). 신호 자체는 네이티브가 들고 있다가
+  // 배지를 다시 탭할 때 그 자리에서 팝업으로 쓴다.
+  // ※ showFocusSessionExtend 상태와 아래 FocusSessionExtendModal 렌더는 iOS(피드 내 연장)에서
+  //   계속 쓰이므로 남겨둔다 — 이 Android 전용 자동 트리거만 없앤 것.
 
   // 2026-08-01 실기기 사고 대응 — 접근성 꺼짐은 시스템 설정에서 언제든 조용히 일어날 수 있으므로
   // (재설치/재빌드뿐 아니라 OEM 배터리 관리·OS 업데이트로도 회수될 수 있음) Home 탭 포커스마다는

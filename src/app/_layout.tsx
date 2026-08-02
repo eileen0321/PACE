@@ -18,6 +18,7 @@ import { backfillSleepFromHistory } from '../services/sleepBackfill';
 import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
 import { useSessionStore } from '../store/useSessionStore';
 import { useTimerStore } from '../store/useTimerStore';
+import { useFlipStore } from '../store/useFlipStore';
 import type { ShortFormApp } from '../constants/apps';
 import { useFonts } from 'expo-font';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold } from '@expo-google-fonts/plus-jakarta-sans';
@@ -248,6 +249,34 @@ export default function RootLayout() {
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
+
+  // 2026-08-02 사장님 지시("쇼츠 보다 focus off 누르면 광고 볼래 크레딧 쓸래 팝업 뜨고, 광고 보겠다고
+  // 하면 광고") — 그 선택 팝업은 쇼츠 위 네이티브 오버레이라 크레딧 잔액을 스스로 모른다(크레딧은 JS
+  // 스토어에만 존재). 잔액이 바뀔 때마다 네이티브로 밀어주고, 반대로 네이티브 팝업에서 크레딧으로
+  // 연장한 분량은 여기서 1회성으로 회수해 실제 스토어에서 차감한다(잔액의 진실원천은 JS).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const pushCredits = () => {
+      const total = useFlipStore.getState().credits + useAttendanceStore.getState().bonusCredits;
+      bluetoothService.setAvailableCredits(total).catch(() => {});
+    };
+    const reconcile = () => {
+      bluetoothService.consumePendingCreditSpend().then((spent) => {
+        if (spent > 0) {
+          // 네이티브가 이미 연장은 해줬으므로 여기선 차감만. 휴식 크레딧 먼저, 모자라면 출석 보너스.
+          const fromRest = useFlipStore.getState().spendCredits(Math.min(spent, useFlipStore.getState().credits));
+          const remain = spent - fromRest;
+          if (remain > 0) useAttendanceStore.getState().spendBonusCredits(remain);
+        }
+        pushCredits();
+      }).catch(() => {});
+    };
+    reconcile();
+    const unsubFlip = useFlipStore.subscribe(pushCredits);
+    const unsubAttendance = useAttendanceStore.subscribe(pushCredits);
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') reconcile(); });
+    return () => { unsubFlip(); unsubAttendance(); sub.remove(); };
+  }, []);
 
   // iOS 백그라운드 수면 감지(방법 B, 2026-07-28 사장님 결정 — 리서치로 백그라운드-오디오 방식이 iOS26
   // 불안정+배터리↑+심사리스크라 전환). CMMotionManager 실시간(useSleepGuard)은 "화면 켜고 조는" 포그라운드만

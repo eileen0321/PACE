@@ -427,6 +427,19 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.setIsPremium(context, isPremium) }
     }
 
+    // 2026-08-02 사장님 지시("focus off 누르면 광고 볼래/크레딧 쓸래 팝업") — 그 팝업을 쇼츠 위
+    // 네이티브 오버레이로 띄우려면 네이티브가 크레딧 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재).
+    // isPremium과 동일한 JS→네이티브 푸시.
+    Function("setAvailableCredits") { credits: Int ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setAvailableCredits(context, credits) }
+    }
+
+    // 네이티브 팝업에서 크레딧으로 연장했을 때 "얼마 썼는지"를 JS가 1회성으로 회수해 실제 스토어
+    // 잔액을 차감한다(잔액의 진실원천은 JS) — consumeExpired류와 같은 소비-once 패턴.
+    Function("consumePendingCreditSpend") {
+      appContext.reactContext?.let { context -> PaceOverlayService.consumePendingCreditSpend(context) } ?: 0
+    }
+
     // 2026-07-27 감사 발견 — 프리미엄→무료 다운그레이드 시 sleepStillnessMinutes(D8, 무진동
     // 수면감지 임계값)를 이미 도는 중인 세션에도 즉시 반영하기 위한 경로(setFocusSessionDurationMinutes는
     // 다음 세션부터만 반영되지만, 이건 라이브 값이라 지금 바로 반영됨 — PaceOverlayService 참고).

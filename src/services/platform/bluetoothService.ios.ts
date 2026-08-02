@@ -31,6 +31,8 @@ export const bluetoothService: BluetoothService = {
   async setFocusSessionDurationMinutes() {},
   async getFocusSessionDurationMinutes() { return 10; },
   async setIsPremium() {}, // no-op — iOS엔 이 네이티브 "FOCUS OFF" 배지/오버레이 알약 자체가 없음
+  async setAvailableCredits() {}, // no-op — iOS엔 쇼츠 위 네이티브 선택 팝업이 없음(RN 모달로 처리)
+  async consumePendingCreditSpend() { return 0; }, // no-op — 위와 동일 이유
   async setSleepStillnessMinutes() {}, // no-op — iOS는 sleepStillnessMinutes 네이티브 경로 자체가 없음
   async consumeFocusSessionTimedOut() { return false; },
   async extendFocusSession() {},

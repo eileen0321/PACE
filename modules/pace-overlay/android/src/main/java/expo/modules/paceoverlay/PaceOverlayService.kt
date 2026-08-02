@@ -876,6 +876,18 @@ class PaceOverlayService : Service() {
       return pending
     }
 
+    // 2026-08-02 — 알약 배지에 표시할 Focus Session 잔여 분(올림). 마감 시각은 프로세스 재시작에도
+    // 살아남도록 이미 저장해두고 있으므로(PREF_FOCUS_SESSION_DEADLINE_AT_MS) 그걸 그대로 쓴다.
+    // 저장된 마감이 없거나(구버전 상태) 이미 지났으면 null → 호출부가 "FOCUS ON"/"FOCUS OFF"로 폴백.
+    fun focusSessionRemainingMinutes(context: Context): Int? {
+      val deadline = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, 0L)
+      if (deadline <= 0L) return null
+      val remainMs = deadline - System.currentTimeMillis()
+      if (remainMs <= 0L) return null
+      return Math.ceil(remainMs / 60000.0).toInt()
+    }
+
     fun setIsPremium(context: Context, isPremium: Boolean) {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PREMIUM, isPremium).apply()
     }
@@ -1391,6 +1403,9 @@ class PaceOverlayService : Service() {
         }
       }
       setRemainingText(remainingMinutes)
+      // 2026-08-02 — 배지가 Focus Session 잔여를 카운트다운하므로(applyAutoBadgeStyle 참고) 매 틱마다
+      // 같이 갱신해야 5m → 4m → …로 실제로 줄어든다. 안 하면 세션 시작 시점 값에 멈춰 있게 된다.
+      applyAutoBadgeStyle()
       updateNotification(remainingMinutes)
       persistState()
       Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
@@ -2784,7 +2799,17 @@ class PaceOverlayService : Service() {
       // 2026-07-26 사장님 지시("session on은 focus on으로") — iOS(feed/index.tsx의
       // feed.focusSessionOnBadge/focusSessionStartBadge)와 라벨을 맞춤(둘 다 대칭적인 ON/OFF 쌍으로
       // 통일 — iOS는 예전에 "SESSION ON"/"START SESSION"으로 비대칭이었던 것도 같이 정리).
-      text = if (autoNextEnabled) "FOCUS ON" else "FOCUS OFF"
+      // 2026-08-02 사장님 지시("5분 더를 했을 때 오늘 한도는 40분 남았고 FOCUS 5분을 다 썼을 때
+      // 오버레이 표시를 어떻게 하면 좋을까") — 알약의 "Xm left"는 하루 한도 잔여인데, 광고로 방금
+      // 받은 Focus 5분을 기대한 사용자에겐 같은 숫자가 다른 뜻으로 읽혔다(실제로 "광고 보고 왔는데
+      // 왜 43분이야?" 혼란 발생). 두 숫자를 분리한다: 왼쪽 "Xm left"는 오늘 남은 시청 시간으로
+      // 의미를 고정하고, 이 배지가 Focus Session 잔여를 카운트다운한다("FOCUS 5m" → 4m → …).
+      // 0이 되면 자동으로 "FOCUS OFF"가 되어 상태 전환도 한눈에 보인다. 공간을 새로 안 쓰고
+      // 기존 "FOCUS ON" 글자 자리를 그대로 활용.
+      text = if (autoNextEnabled) {
+        val remain = focusSessionRemainingMinutes(applicationContext)
+        if (remain != null && remain > 0) "FOCUS ${remain}m" else "FOCUS ON"
+      } else "FOCUS OFF"
       val d = resources.displayMetrics.density
       setPadding((10 * d).toInt(), (7 * d).toInt(), (10 * d).toInt(), (7 * d).toInt())
       setTextColor(if (autoNextEnabled) Color.parseColor("#0B0C0F") else Color.parseColor("#9CA3AF"))

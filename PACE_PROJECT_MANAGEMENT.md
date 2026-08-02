@@ -3491,3 +3491,10 @@ Mac의 스플래시 커밋(`427362c`)이 `app.json`의 네이티브 런치 이�
   있어(크기 기준 재무장이 한 번도 성립 안 함) 매번 타임아웃을 기다리고 있었다. 커밋 `efb0299`.
 - ⚠️ **prebuild 함정 재발 주의**(위 섹션 참고) — Mac 스플래시 반영 때 `versionCode 2→1` 등이
   초기화됐다. prebuild 후엔 반드시 `git status android ios`로 확인하고 되돌릴 것.
+
+### 2026-08-02 (Mac 세션) — co-session Focus 연장 재설계(8e9af6f/7b5aa60/ad71a99) iOS 확인 3건 응답 — 전부 이미 충족
+Windows가 남긴 "Mac(iOS) 확인 요청 3건" 검토 결과, **iOS는 이미 동일 UX라 코드 변경 불필요**:
+1. **공용파일 iOS 영향 無**: `_layout.tsx`의 크레딧 push/consume effect는 `if (Platform.OS !== 'android') return`로 게이팅(iOS 호출 안 함), `bluetoothService.ios.ts`의 `setAvailableCredits`/`consumePendingCreditSpend`는 no-op 스텁(iOS엔 쇼츠 위 네이티브 팝업 자체가 없음), `types.ts`는 인터페이스 추가만. tsc 통과.
+2. **광고+크레딧 선택 제시 = iOS도 동일**: iOS Focus 타임아웃 연장은 피드 내 `FocusSessionExtendModal`(feed/index.tsx `showExtendModal`)이 담당하고, 그 모달이 `onWatchAd`(광고 보고 +5분) + `onUseCredits`(크레딧 5개=5분, `totalCredits>=5`일 때만) 둘 다 렌더 → Android 선택 팝업과 동일. (모달 렌더는 dc19620에서 시뮬 확인됨.) iOS는 WebView 인앱 재생이라 "앱 밖으로 나감" 개념이 없어 in-feed 모달이 자연스러움 — Windows 메모의 판단과 일치.
+3. **Focus 잔여시간 iOS 표시됨**: 피드가 `sessionEndsAt`(isAutoMode 종료시각)에 바인딩해 상단에 남은 분을 격리 컴포넌트로 노출(feed/index.tsx:582, 30초마다 갱신). Android가 이번에 배지에 넣은 것과 동일 목적 달성.
+결론: iOS는 이미 "피드 안에서 광고/크레딧 선택 연장 + 남은시간 표시, 앱 밖 이탈 없음"으로 Android 재설계와 UX 동일. 조치 없음, tsc 통과.

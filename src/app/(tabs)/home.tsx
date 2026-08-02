@@ -358,7 +358,17 @@ export default function HomeScreen() {
     // 그대로 심사에 내면 반려(2.2 데모/4.3 사칭)된다. iOS에선 실제 인앱 재생 화면(Pace Feed)으로 보낸다.
     // Android는 오버레이-어시스턴트 모델 그대로 유지.
     if (Platform.OS === 'ios') { router.push('/feed'); return; }
-    router.push({ pathname: '/overlay', params: { platform } });
+    // 2026-08-02 실기기 로그로 확정("P메뉴 앱으로 눌렀는데 쇼츠로 되돌아감", 오늘 반복 재현) —
+    // /overlay 화면의 세션 시작 이펙트가 마운트마다 돌면서 launchPlatformApp으로 유튜브를 다시
+    // 열어버렸다. 기존 가드(useSessionStore.status === 'running')는 세션이 방금 끝났거나 스토어가
+    // 아직 안 채워진 순간에 그냥 통과해버려 여러 번 샜다(로그: pace://home 진입 1.8초 뒤
+    // PaceOverlayModule.start() → youtube UrlActivity START). 상태값이 아니라 "어떻게 들어왔는지"로
+    // 막는다 — 홈 카드 탭으로 들어온 이 경로에서만 autostart를 넘기고, 딥링크/복귀 등 다른 경로로
+    // 이 화면이 다시 마운트될 때는 세션 시작도 앱 재실행도 하지 않는다.
+    // autostart는 고정값('1')이면 안 된다 — 같은 라우트가 다시 마운트될 때 파라미터가 그대로 남아
+    // 있어 재사용돼버린다(실기기 로그로 확인: '1' 가드를 넣었는데도 그대로 재현). 매 탭마다 새
+    // 토큰을 발급해 overlay 쪽에서 1회만 소비하게 한다.
+    router.push({ pathname: '/overlay', params: { platform, autostart: String(Date.now()) } });
   }, [connectingPlatform, router]);
 
 

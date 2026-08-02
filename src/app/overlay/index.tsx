@@ -34,11 +34,20 @@ const SLEEP_TIMER_OPTIONS = [0, 15, 30, 45, 60];
 // (PACE_ARCHITECTURE.md 참고). 아래 "underlying content" 영역은 실제 프로덕션에는 존재하지 않고,
 // 네이티브 오버레이/Live Activity 모듈이 붙기 전까지 개발/테스트에서 오버레이-위-콘텐츠 상호작용을
 // 눈으로 확인하기 위한 시뮬레이터일 뿐이다(healthy-shorts-assistant ShortsPlayer.tsx의 데모 콘텐츠 이식).
+// 2026-08-02 — 홈 카드 탭이 발급한 autostart 토큰 중 "이미 소비한" 마지막 값. 컴포넌트 밖(모듈
+// 스코프)에 둬야 이 화면이 다시 마운트돼도 값이 유지돼 재소비를 막을 수 있다. ref/state로는 안 된다
+// (마운트마다 초기화되므로 정확히 막아야 할 재마운트 경로에서 무력해짐).
+let lastConsumedAutostart: string | null = null;
+
 export default function OverlaySessionScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { platform } = useLocalSearchParams<{ platform?: AppShieldTarget }>();
+  // autostart: 홈에서 "Shorts with PACE" 카드를 탭해 들어온 경로에만, 매 탭마다 새 토큰으로 붙는다
+  // (home.tsx 참고). 이 화면은 아직 소비하지 않은 새 토큰이 있을 때만 세션을 시작하고 대상 앱을
+  // 실행한다 — "앱으로" 복귀 등으로 같은 라우트가 재마운트될 때는 토큰이 이미 소비된 값이라
+  // 아무 것도 하지 않는다(고정값 '1'로는 파라미터가 그대로 남아 재사용돼 막지 못했다, 실기기 확인).
+  const { platform, autostart } = useLocalSearchParams<{ platform?: AppShieldTarget; autostart?: string }>();
   const user = useUserStore((s) => s.user);
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.update);
@@ -143,6 +152,20 @@ export default function OverlaySessionScreen() {
     // 무슨 이유로든(딥링크 재진입, 네비게이션 레이스 등) 다시 마운트되면 매번 새 DB 세션 row를
     // 만들고 launchPlatformApp으로 YouTube를 다시 열어버렸다 — "앱으로"를 눌러도 곧장 쇼츠로
     // 되돌아가 보이는 증상과 정확히 일치. 이미 실행 중이면 아무 것도 다시 하지 않는다.
+    // 2026-08-02 — 상태 가드(status === 'running')만으로는 계속 샜다. 실기기 추적 로그로 확정한
+    // 실제 시퀀스: 마운트 시엔 세션이 running이라 그 가드에서 곧장 return하는데, 이때 autostart
+    // 토큰을 "소비하지 않은 채" 빠져나간다 → 나중에 "앱으로"로 Pace에 복귀해 이 화면이 다시
+    // 마운트될 때 그 미소비 토큰이 그대로 살아 있어 통과 → 새 세션 + launchPlatformApp(유튜브
+    // 재실행)이 돌아 쇼츠로 튕겼다(로그: 카드 탭 13초 뒤 overlay.effect -> launchPlatformApp).
+    // 따라서 토큰 소비를 무조건 최우선으로 한다 — 한 번의 카드 탭은 최대 한 번만 세션을 시작할 수
+    // 있고, 어떤 경로로 재마운트되든 두 번째부터는 반드시 막힌다.
+    const token = autostart ?? null;
+    const alreadyConsumed = token === null || token === lastConsumedAutostart;
+    if (token !== null) lastConsumedAutostart = token;
+    if (alreadyConsumed) {
+      hasSessionStartedRef.current = true;
+      return;
+    }
     if (useSessionStore.getState().status === 'running') {
       hasSessionStartedRef.current = true;
       return;
@@ -191,7 +214,17 @@ export default function OverlaySessionScreen() {
         sleepStillnessMinutes: settings.sleepStillnessMinutes,
         bluetoothVolumeKeySkipEnabled: settings.bluetoothVolumeKeySkipEnabled,
       }).catch(() => {});
-      launchPlatformApp(platform).catch(() => {});
+      // 2026-08-02 실기기 추적 로그로 근본원인 확정 — 여기 있던 launchPlatformApp(대상 앱 재실행)을
+      // 제거한다. 타임라인이 전부를 말해줬다:
+      //   11:01:37  home.startSession -> launchPlatformApp   (카드 탭, 유튜브 열림)
+      //   11:01:50  home.push /overlay                        (13초 뒤!)
+      //   11:01:50  overlay.effect -> launchPlatformApp       (유튜브 또 열림 → 쇼츠로 튕김)
+      // 카드를 탭하면 ConnectingOverlay 애니메이션이 시작되는데 곧바로 유튜브가 전면으로 나가면서
+      // 그 애니메이션이 멈춘다. 그러다 "앱으로"로 Pace에 복귀하는 순간 재개·완료되며 그제서야
+      // /overlay로 라우팅되고, 이 이펙트가 유튜브를 다시 열어 사용자를 쇼츠로 되돌려보냈다 —
+      // "앱으로 눌렀는데 쇼츠로 감"의 실제 정체(오늘 여러 번 재현). 앱 실행은 home.startSession이
+      // 탭 시점에 이미 했으므로(그래야 백그라운드 액티비티 시작 제한에 안 걸림) 여기서의 실행은
+      // 언제나 중복이다. 세션 시작(DB row/네이티브/타이머)은 그대로 두고 재실행만 없앤다.
     })();
 
     // 2026-07-18 실기기 검증 중 발견: useTimerStore.tickMinute()을 호출하는 곳이 코드 전체에

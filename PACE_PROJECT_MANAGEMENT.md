@@ -3649,3 +3649,11 @@ Android MediaPipe SIGSEGV 근본수정 + 오버레이 권한회수 감지 커밋
 - `rewardedAd.ts`: `RewardedAdResult` 'failed'를 `failed_unavailable/failed_no_fill/failed_error`로 3분화 + `isAdFailure()` 헬퍼. **유일 호출부 `FocusSessionExtendModal`(iOS 피드에서 사용)이 전부 갱신됨**(earned→grant 무결, unavailable→크레딧 유도, no_fill/error→재시도 안내). 다른 호출부 없음(grep 확인). tsc가 'failed' 비교 잔재를 잡았을 것이나 0건.
 - 번역키 `autoNextAdUnavailable`/`autoNextAdFailed`/`overlayPermissionRevoked`/`overlayServiceDead` 전부 ko/en 존재.
 - `types.ts`/`models.ts`: 인터페이스·타입 추가만. tsc OK. **iOS 회귀 없음.**
+
+### 2026-08-03 (Mac 세션) — 🍎 iOS 재제출: 애플 90683(마이크 purpose string) 해결 = SnapDetector 네이티브 제거
+EAS 빌드(1.0/build4)는 성공했으나 **ASC 업로드가 90683으로 거부**: "Missing NSMicrophoneUsageDescription — 코드가 마이크 API를 참조". 원인 = `PaceGestureModule.swift`의 `SnapDetector`(AVAudioEngine/installTap/AVAudioSession.playAndRecord/requestRecordPermission)가 컴파일돼 바이너리에 마이크 심볼이 들어감. build2가 통과했던 건 그 시점 차이.
+- **결정 근거(MD C6)**: 애플이 마이크 기반 핑거스냅 감지를 심사 불허 → 핑거스냅 비활성 확정. iOS는 `useFeedRemoteControl.ios.ts`가 `mod.start('wave')`만 호출 → **스냅은 죽은 코드**.
+- **조치**: 마이크 purpose string을 추가하는 대신(불허된 기능이라 오히려 위험) **SnapDetector 클래스 + startSnap() + snapDetector 프로퍼티/디스패치/stop/OnDestroy 참조를 통째 제거**(736→550줄). 바이너리에서 마이크 API 참조 자체를 없앰. `isBluetoothAudioConnected`(currentRoute만 읽음, 마이크 접근 아님)는 볼륨키 게이팅에 쓰여 유지. wave/head 감지기 무변경. 중괄호 130/130 균형, tsc OK.
+- app.json: 마이크 문자열 넣었다가 되돌림(마이크 선언 안 함), **buildNumber 4→5**(실패한 build4 재사용 회피 — TestFlight에 "1.0(4) 실패" 2건 있음).
+- ⚠️ Android: MD C6대로 PaceSnapDetector는 삭제 없이 주석 유지(향후 재활성 대비) — iOS만 App Store 심사 때문에 제거.
+- 다음: EAS 재빌드(build5, Swift 컴파일로 제거 검증) → eas submit → ASC에서 새 빌드 선택 + 데모계정(로그인) + 계정삭제 화면녹화 Notes 첨부 → 심사 업데이트.

@@ -30,7 +30,6 @@ private func paceGLog(_ format: String, _ args: CVarArg...) {
 // 호출은 런타임 가드(#available, isSupported)로 감싼다.
 
 public class PaceGestureModule: Module {
-  private var snapDetector: SnapDetector?
   private var headDetector: HeadDetector?
   private var waveDetector: WaveDetector?
 
@@ -47,7 +46,6 @@ public class PaceGestureModule: Module {
     // 남긴다(SnapDetector.begin 참고). 마이크 권한은 snap/both일 때만 요청.
     AsyncFunction("start") { (mode: String, promise: Promise) in
       DispatchQueue.main.async {
-        if mode == "snap" || mode == "both" { self.startSnap() }
         if mode == "wave" || mode == "both" { self.startWave() }
         if mode == "head" { self.startHead() }
         promise.resolve(nil)
@@ -55,8 +53,6 @@ public class PaceGestureModule: Module {
     }
 
     Function("stop") {
-      self.snapDetector?.stop()
-      self.snapDetector = nil
       self.headDetector?.stop()
       self.headDetector = nil
       self.waveDetector?.stop()
@@ -104,7 +100,6 @@ public class PaceGestureModule: Module {
     }
 
     OnDestroy {
-      self.snapDetector?.stop()
       self.headDetector?.stop()
       self.waveDetector?.stop()
     }
@@ -144,25 +139,6 @@ public class PaceGestureModule: Module {
     return connected
   }
 
-  private func startSnap() {
-    guard #available(iOS 13.0, *) else {
-      sendEvent("onError", ["kind": "snap", "message": "SoundAnalysis requires iOS 13+"])
-      return
-    }
-    if snapDetector != nil { return }
-    if isBluetoothAudioConnected() {
-      sendEvent("onError", ["kind": "snap", "message": "Bluetooth audio connected — snap detection skipped, use the remote instead"])
-      return
-    }
-    let d = SnapDetector(
-      onSnap: { [weak self] conf in self?.sendEvent("onSnap", ["confidence": conf]) },
-      onError: { [weak self] msg in self?.sendEvent("onError", ["kind": "snap", "message": msg]) },
-      onDiag: { [weak self] text in self?.sendEvent("onDiag", ["kind": "snap", "text": text]) }
-    )
-    snapDetector = d
-    d.start()
-  }
-
   private func startHead() {
     guard #available(iOS 11.0, *), ARFaceTrackingConfiguration.isSupported else {
       sendEvent("onError", ["kind": "head", "message": "Head gesture needs a TrueDepth device (not simulator)"])
@@ -178,172 +154,10 @@ public class PaceGestureModule: Module {
   }
 }
 
-// MARK: - 핑거스냅 감지 (raw 오디오 DSP — 안드로이드 PaceSnapDetector 이식, SoundAnalysis 미사용)
-// SoundAnalysis(SNClassifySoundRequest)는 iOS18+ 백그라운드 GPU 차단 등으로 Swift try/catch가 못 잡는
-// ObjC NSException/추상화 이전 크래시가 구조적이라(실기기 로그 025855/030709.ips) 폐기하고, 안드로이드
-// PaceSnapDetector와 동일한 raw DSP로 감지한다: 적응형 noiseFloor 대비 RMS 스파이크 + Goertzel 고/저역
-// 마그니튜드 비율 + ZCR + 불응(refractory). AVAudioEngine 탭으로 PCM Float 버퍼를 받아 분석.
-// AEC(VoiceProcessing)는 포맷 변형/덕킹/크래시 이슈로 끄고 .measurement 모드로 순간 스파이크를 보존한다.
-@available(iOS 13.0, *)
-private final class SnapDetector {
-  private let engine = AVAudioEngine()
-  private let queue = DispatchQueue(label: "pace.snap.dsp")
-  private let onSnap: (Double) -> Void
-  private let onError: (String) -> Void
-  private let onDiag: (String) -> Void
-
-  // 안드로이드 상수 이식. RMS 절대치는 16-bit(±32768) 기준 → Float(±1)로 ÷32768 환산, 나머지(Goertzel
-  // 비율/ZCR/스파이크 배수)는 스케일 불변이라 그대로.
-  private var noiseFloor: Float = 0.004
-  private var lastFire: TimeInterval = 0
-  // 실기기 로그로 튜닝(2026-07-26): 평소 rms~0.002, 스냅 rms~0.013~0.017(floor의 6~8배)로 아주
-  // 깨끗이 분리됨. Goertzel 고/저역·ZCR 게이트는 이 셋업(AEC OFF, 피크 윈도우)에서 안 맞아(zcr이
-  // 항상 0, hilo도 스냅에서 낮게 나옴) → RMS 스파이크 단독으로 판정. spikeMult 4배 + 절대하한 0.008.
-  private let spikeMult: Float = 4.0
-  private let minAbsRms: Float = 0.008
-  private let floorGate: Float = 3.0        // rms < floor*3.0 일 때만 floor 갱신
-  private let highHz: Float = 2500, lowHz: Float = 500
-  private let freqRatio: Float = 1.2        // high > low*1.2
-  private let zcrMin: Float = 0.08
-  private let refractory: TimeInterval = 0.45
-  private var logTick = 0
-  private var retryCount = 0
-
-  init(onSnap: @escaping (Double) -> Void, onError: @escaping (String) -> Void, onDiag: @escaping (String) -> Void) {
-    self.onSnap = onSnap; self.onError = onError; self.onDiag = onDiag
-  }
-
-  func start() {
-    paceGLog("PACESNAP start() called")
-    AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-      guard let self = self else { return }
-      paceGLog("PACESNAP mic permission granted=%@", granted ? "YES" : "NO")
-      guard granted else { self.onError("microphone permission denied"); return }
-      self.queue.async { self.begin() }
-    }
-  }
-
-  private func scheduleRetry(_ why: String) {
-    paceGLog("PACESNAP retry(%d) after: %@", retryCount, why)
-    if engine.isRunning { engine.stop() }
-    engine.inputNode.removeTap(onBus: 0)
-    guard retryCount < 5 else { onError("snap start gave up: \(why)"); return }
-    retryCount += 1
-    queue.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.begin() }
-  }
-
-  private func begin() {
-    paceGLog("PACESNAP begin() enter")
-    let session = AVAudioSession.sharedInstance()
-    do {
-      // .measurement: AGC 최소화(순간 스파이크 보존). .mixWithOthers로 유튜브 소리와 공존.
-      // ⭐ 리서치 정답(2026-07-26): 다른 오디오(WebView 영상)를 죽이지 않으려면 mode는 .default(NOT
-      // .measurement — 그건 출력 볼륨을 죽임), options는 .mixWithOthers(앱 세션을 협조적으로 만들어
-      // WebView 세션을 인터럽트 안 함) + .defaultToSpeaker(수화부 저볼륨 라우팅 회피) + .allowBluetoothA2DP.
-      try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
-      try session.setActive(true)
-    } catch {
-      scheduleRetry("session config: \(error.localizedDescription)"); return
-    }
-    paceGLog("PACESNAP session active (sr=%.0f)", session.sampleRate)
-    let input = engine.inputNode
-
-    // ⭐ 핵심: AVAudioEngine.start()/installTap은 WebView 오디오와 충돌 시 Swift가 못 잡는 ObjC
-    // NSException(-10868)을 던져 앱을 죽였다(실기기 확인) → PaceExceptionCatcher(@try/@catch)로 감싸
-    // 크래시 대신 Swift 에러로 받는다. VoiceProcessing(AEC=노이즈캔슬)로 재생음 에코를 상쇄(안드
-    // AcousticEchoCanceler 대응). 탭 포맷 nil + 샘플레이트는 버퍼에서 읽어 sr=0 이슈 회피.
-    do {
-      try PaceExceptionCatcher.catchExceptions {
-        // VoiceProcessing(AEC)은 iOS에서 입력 탭이 버퍼를 안 주는 이슈가 있어(실기기 확인, "started"는
-        // 되나 rms 콜백이 안 옴) 쓰지 않는다. 대신 적응형 noiseFloor가 영상 소리 레벨을 추적하고 스냅이
-        // 그 위로 6~8배 튀는 걸로 감지(=소프트웨어 노이즈 게이팅). .measurement 모드로 순간 스파이크 보존.
-        input.removeTap(onBus: 0)                     // 재시도 시 기존 탭 제거(중복설치 크래시 방지)
-        self.engine.prepare()
-        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
-          self?.process(buffer, sampleRate: Float(buffer.format.sampleRate))
-        }
-        do { try self.engine.start() }
-        catch { paceGLog("PACESNAP engine.start swift-err %@", error.localizedDescription) }
-      }
-    } catch {
-      // ObjC NSException을 여기서 안전하게 받음(크래시 X) → 재시도.
-      scheduleRetry("start exception: \(error.localizedDescription)"); return
-    }
-
-    if engine.isRunning {
-      retryCount = 0
-      paceGLog("[pace-snap] started (AEC) sr=%.0f", session.sampleRate)
-    } else {
-      scheduleRetry("engine not running after start")
-    }
-  }
-
-  private func process(_ buffer: AVAudioPCMBuffer, sampleRate: Float) {
-    guard sampleRate > 0, let ch = buffer.floatChannelData?[0] else { return }
-    let n = Int(buffer.frameLength)
-    guard n >= 64 else { return }
-
-    // ⭐ 핵심 수정: 스냅은 <10ms 순간 transient인데 iOS 탭 버퍼는 보통 ~100ms(4800샘플)라, 버퍼 전체
-    // RMS로 재면 스냅 에너지가 희석돼 스파이크로 안 잡힌다. 작은 윈도우(≈5ms)로 쪼개 "피크 RMS"를
-    // 잡아 순간 스파이크를 보존한다(안드로이드 20ms 프레임 대응). 주파수/ZCR도 그 피크 윈도우에서 계산.
-    let win = min(256, n)
-    var peakRms: Float = 0
-    var peakStart = 0
-    var i = 0
-    while i + win <= n {
-      var sum: Float = 0
-      for j in i..<(i + win) { let s = ch[j]; sum += s * s }
-      let r = (sum / Float(win)).squareRoot()
-      if r > peakRms { peakRms = r; peakStart = i }
-      i += win
-    }
-    let rms = peakRms
-
-    if rms < noiseFloor * floorGate { noiseFloor = noiseFloor * 0.95 + rms * 0.05 } // 스파이크 아닐 때만 갱신
-
-    logTick += 1
-    if logTick % 12 == 0 {
-      onDiag(String(format: "rms=%.4f fl=%.4f", rms, noiseFloor)) // 주기적 상태
-      paceGLog("PACESNAP rms=%.4f fl=%.4f", Double(rms), Double(noiseFloor))
-    }
-
-    guard rms > noiseFloor * spikeMult, rms > minAbsRms else { return }        // 스파이크(피크 기준)
-    let base = ch + peakStart
-    let high = goertzel(base, win, highHz, sampleRate)
-    let low = goertzel(base, win, lowHz, sampleRate)
-    let hilo = high / max(low, 1e-6)
-    var cross = 0
-    for j in 1..<win { if (base[j-1] >= 0) != (base[j] >= 0) { cross += 1 } }
-    let zcr = Float(cross) / Float(win)
-    // 스파이크가 잡히면(게이트 통과 여부와 무관) 진단으로 보여줘 임계 튜닝 근거를 만든다.
-    // hilo/zcr은 참고용으로만 로그 — 게이트로는 안 씀(이 셋업에서 신뢰 못 함, 실기기 로그로 확인).
-    onDiag(String(format: "SPIKE rms=%.3f hi/lo=%.2f", rms, hilo))
-    paceGLog("PACESNAP SPIKE rms=%.4f hilo=%.2f zcr=%.3f", Double(rms), Double(hilo), Double(zcr))
-
-    let now = CACurrentMediaTime()
-    guard now - lastFire > refractory else { return }
-    lastFire = now
-    onDiag("🫰 SNAP!")
-    paceGLog("PACESNAP 🫰 FIRED")
-    DispatchQueue.main.async { self.onSnap(Double(rms)) }
-  }
-
-  // Goertzel 단일-빈 마그니튜드(정규화 안 함) — 스케일 불변, 안드로이드와 동일.
-  private func goertzel(_ x: UnsafePointer<Float>, _ n: Int, _ targetHz: Float, _ sr: Float) -> Float {
-    let k = Int(0.5 + Float(n) * targetHz / sr)
-    let w = (2.0 * Float.pi / Float(n)) * Float(k)
-    let coeff = 2.0 * cos(w)
-    var q1: Float = 0, q2: Float = 0
-    for i in 0..<n { let q0 = coeff * q1 - q2 + x[i]; q2 = q1; q1 = q0 }
-    return (q1 * q1 + q2 * q2 - q1 * q2 * coeff).squareRoot()
-  }
-
-  func stop() {
-    engine.inputNode.removeTap(onBus: 0)
-    if engine.isRunning { engine.stop() }
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-  }
-}
+// MARK: - 핑거스냅 감지 제거 (2026-08-03) — 애플 심사 90683(NSMicrophoneUsageDescription 누락).
+// MD C6: 마이크 기반 핑거스냅은 애플 심사 불허 + 이미 비활성 결정(iOS는 useFeedRemoteControl가 'wave'만 start).
+// 마이크 API(requestRecordPermission/.playAndRecord/AVAudioEngine.installTap)를 참조하던 SnapDetector/startSnap을
+// 통째로 제거해 바이너리에서 마이크 참조 자체를 없앤다. (isBluetoothAudioConnected는 currentRoute만 읽어 유지.)
 
 // MARK: - 고개짓(턱 끄덕임) 감지 (ARKit 얼굴 트래킹, TrueDepth 기기 전용)
 @available(iOS 11.0, *)

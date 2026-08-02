@@ -319,6 +319,20 @@ export default function HomeScreen() {
       sleepStillnessMinutes: freshSettings.sleepStillnessMinutes,
       bluetoothVolumeKeySkipEnabled: freshSettings.bluetoothVolumeKeySkipEnabled,
     }).catch(() => {});
+    // 2026-08-02 사장님 실기기 재현("open앱 하는데 중간 원형 팝업 나오고 앱 두 번") — 카드를 탭하면
+    // ConnectingOverlay(원형 체크리스트 애니메이션)가 시작되는데, 바로 위 launchPlatformApp이 유튜브를
+    // 전면으로 올리면서 그 애니메이션이 백그라운드에서 멈춘다. 그러다 나중에 P메뉴 "앱으로" 등으로
+    // Pace가 다시 앞에 오면 그제서야 재개·완료되며 원형 팝업이 뜨고 /overlay 라우팅이 뒤늦게 실행됐다
+    // — 사용자 입장에선 "앱으로를 눌렀는데 난데없이 진입 화면이 뜨고 앱이 두 번 뜬다".
+    // 아침에 /overlay의 유튜브 재실행은 제거했지만 이 "뒤늦게 터지는 애니메이션" 자체는 남아 있었다.
+    // 안드로이드는 곧바로 유튜브로 나가므로 이 연결 애니메이션을 보여줄 화면 시간이 애초에 없다 —
+    // 애니메이션을 띄우지 않고 즉시 완료 처리해 나중에 터질 것을 남기지 않는다(iOS는 앱 안에 머무르며
+    // 피드로 전환하므로 기존대로 애니메이션을 보여준다).
+    if (Platform.OS === 'android') {
+      if (user?.id) refresh(user.id);
+      router.push({ pathname: '/overlay', params: { platform, autostart: String(Date.now()) } });
+      return;
+    }
     setConnectingPlatform(platform);
     // 2026-07-23 버그 수정 — 예전엔 BluetoothOnboardingSheet에서 Enable을 고른 "그 첫 세션"에만
     // Auto Mode(핑거스냅 포함)가 켜지고 10분 뒤 자동 종료된 뒤로는 다시 켤 방법이 없었다(Focus 탭

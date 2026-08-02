@@ -3498,3 +3498,11 @@ Windows가 남긴 "Mac(iOS) 확인 요청 3건" 검토 결과, **iOS는 이미 �
 2. **광고+크레딧 선택 제시 = iOS도 동일**: iOS Focus 타임아웃 연장은 피드 내 `FocusSessionExtendModal`(feed/index.tsx `showExtendModal`)이 담당하고, 그 모달이 `onWatchAd`(광고 보고 +5분) + `onUseCredits`(크레딧 5개=5분, `totalCredits>=5`일 때만) 둘 다 렌더 → Android 선택 팝업과 동일. (모달 렌더는 dc19620에서 시뮬 확인됨.) iOS는 WebView 인앱 재생이라 "앱 밖으로 나감" 개념이 없어 in-feed 모달이 자연스러움 — Windows 메모의 판단과 일치.
 3. **Focus 잔여시간 iOS 표시됨**: 피드가 `sessionEndsAt`(isAutoMode 종료시각)에 바인딩해 상단에 남은 분을 격리 컴포넌트로 노출(feed/index.tsx:582, 30초마다 갱신). Android가 이번에 배지에 넣은 것과 동일 목적 달성.
 결론: iOS는 이미 "피드 안에서 광고/크레딧 선택 연장 + 남은시간 표시, 앱 밖 이탈 없음"으로 Android 재설계와 UX 동일. 조치 없음, tsc 통과.
+
+### 2026-08-02 (Mac 세션, 자율 QA) — co-session a7cdfda 리뷰: iOS 스플래시 회귀 1건 수정, 나머지 2건 iOS 무해
+co-session `a7cdfda`(출시 전 감사 3건 + 스플래시)가 공유파일 3개를 건드려 iOS 영향 검토:
+1. **🔴 iOS 스플래시 회귀 → 수정(7c60ad5)**: a7cdfda가 공유 `AnimatedSplash`의 `ICON`을 Phone11.png(유광)→Phone11_bgt.png(투명)로 변경. iOS는 앱아이콘(icon-phone11=Phone11)과 스플래시를 유광 Phone11로 통일해 [아이콘 확대→스플래시]가 매끄럽게 이어지도록 사장님이 확정한 상태였는데, 투명본으로 바뀌면서 아이콘↔스플래시 이미지 불일치("작은거 큰거 안 맞아") 회귀. **Platform 분기로 iOS=Phone11(유광)·Android=Phone11_bgt(투명) 둘 다 살림** — Metro가 두 require를 모두 번들, 런타임이 플랫폼별 선택. Android가 투명본을 쓴 이유(불투명 유광 패널이 안드 스플래시에서 사각 판처럼 떠 글로우 원이 안 읽힘)는 존중해 Android는 그대로 둠. iconArea 120→220(글로우 원 클립 방지) 수정은 iOS에도 유익해 유지. tsc OK.
+2. **paywall `benefitAdvancedSleepMode` 제거 = iOS도 개선**: 수면감지는 iOS도 `useSleepGuard.ios.ts SLEEP_DETECTION_DISABLED=true`라 죽은 기능 → "고급 취침모드" 프리미엄 혜택을 페이월에서 빼는 게 iOS 허위광고(Apple 3.1.2)도 같이 제거. 회귀 아님.
+3. **settings 수면 민감도 조절행 `{false &&}` 게이팅 = iOS 무해**: 죽은 컨트롤 숨김만, iOS 렌더 영향 없음.
+4. AndroidManifest 저장소 권한 제거는 Android 전용 — iOS 무관.
+**남은 대기(변동 없음)**: AdMob iOS 테스트기기 해시(사장님 Console.app 캡처 대기 → adsConfig.ts TEST_DEVICE_IDS 추가), daily-remaining pill 포함 재빌드 여부 사장님 결정 대기.

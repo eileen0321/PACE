@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   Easing,
@@ -13,7 +13,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors, radius, typography } from '../../constants/theme';
 
-const ICON = require('../../../assets/Phone11_bgt.png');
+// 2026-08-02 플랫폼 분기(co-session a7cdfda가 공유 ICON을 Phone11_bgt로 바꾼 것을 iOS만 되돌림):
+//   iOS   = Phone11.png(유광) — 앱 아이콘(icon-phone11)과 동일 이미지라 [아이콘 확대]→[스플래시]가
+//           매끄럽게 이어진다. 사장님이 긴 과정 끝에 확정한 iOS 선택("빛바랜거 쓰지 말랫지"→유광).
+//   Android= Phone11_bgt.png(투명 매듭) — 불투명 유광 패널이 안드 스플래시에선 사각 판처럼 떠 보여
+//           글로우 원이 안 읽힌다. co-session이 투명본으로 바꿔 원 안에 매듭이 자연스럽게 들어간다.
+// Metro는 두 require를 모두 정적 분석해 번들에 포함하고 런타임이 플랫폼별로 고른다.
+const ICON = Platform.OS === 'ios'
+  ? require('../../../assets/Phone11.png')
+  : require('../../../assets/Phone11_bgt.png');
 // 2026-08-01 사장님 지시 — 로고 위 "빛 지나가는(shine sweep)" 효과가 600ms + 12% 흰색이라 실질적으로
 // 안 보였다. 스플래시를 950ms로 살짝 늘려 스윕 1회가 온전히 보이게 하고, 빛 바를 그라데이션+밝기 상향.
 const DURATION_MS = 950;

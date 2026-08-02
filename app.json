@@ -49,19 +49,19 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/Phone11_bgt.png",
-          "imageWidth": 160,
+          "image": "./assets/ios-icon.png",
+          "imageWidth": 168,
           "resizeMode": "contain",
           "backgroundColor": "#060709",
           "ios": {
-            "image": "./assets/Phone11_bgt.png",
-            "imageWidth": 160,
+            "image": "./assets/ios-icon.png",
+            "imageWidth": 168,
             "resizeMode": "contain",
             "backgroundColor": "#060709"
           },
           "android": {
-            "image": "./assets/Phone11_bgt.png",
-            "imageWidth": 140,
+            "image": "./assets/ios-icon.png",
+            "imageWidth": 150,
             "resizeMode": "contain",
             "backgroundColor": "#060709"
           }

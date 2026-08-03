@@ -83,6 +83,27 @@ object PaceHandWaveDetector {
   // 이제 좌우 흔들기는 스윕 축이 담당하므로, 성장 축은 "의도적으로 손을 카메라 쪽으로 확 미는"
   // 동작만 잡도록 관측된 노이즈 상한(1.164)보다 확실히 위로 올린다.
   private const val GROWTH_RATIO_THRESHOLD = 1.3
+
+  // 2026-08-03 실측 데이터 기반 추가 축(속도). 진단 모드로 모은 1,134 프레임(평소 795 / 성공 58 /
+  // 놓친 시도 35)을 분석한 결과가 근거이며, 상세 표는 PACE_PROJECT_MANAGEMENT.md에 있다.
+  //
+  // 왜 임계값 조정으로는 못 고쳤는가: growth 단독으로 기준을 내리면 회수와 오탐이 정확히 비례한다
+  // (1.30→0건 회수/오탐 5.5%, 1.25→12건/9.8%, 1.20→21건/15.3%, 1.15→29건/20.1%). 즉 어디에
+  // 선을 그어도 손해를 보는 축이다. sweep은 평소 중앙 0.321 vs 손짓 0.353으로 거의 안 갈라져
+  // 원리적으로 구분이 불가능하고, reversals는 평소에도 2가 나와 오탐 축이었다.
+  //
+  // 반면 "얼마나 빨리 커졌나"(handSize 변화율, 배/초)는 실제로 갈라진다:
+  //   평소(정지) 중앙 -0.06 / p95 0.56, 놓친 손짓 중앙 0.32, 성공 손짓 중앙 1.07
+  // growth와 AND로 걸면 오탐과 미탐을 맞바꾸지 않는다 — 실측으로
+  //   growth>1.20 AND 속도>0.3 → 놓친 35건 중 14건 회수, 평소 오탐 0.00%(0/827)
+  //   growth>1.20 단독            → 21건 회수, 오탐 15.3%
+  // 평소의 느린 손 움직임(오탐의 대부분)이 속도 조건에서 걸러지기 때문이다.
+  private const val SPEED_ASSIST_GROWTH_THRESHOLD = 1.20
+  private const val SPEED_THRESHOLD_PER_SEC = 0.3
+  // 두 피크는 시간이 어긋난다 — 손짓 초반은 빠르지만 아직 작고(속도 피크), 후반은 크지만 이미
+  // 느려진다(성장 피크). 그래서 "같은 프레임에서 둘 다 만족"으로 걸면 57 프레임 중 5개만 통과해
+  // 사실상 안 잡힌다. 속도는 최근 창 안의 최댓값으로 본다(성장 창 GROWTH_WINDOW_MS와 별개).
+  private const val SPEED_PEAK_WINDOW_MS = 700L
   // 2026-08-02 실기기 로그로 확인된 진짜 결함(사장님: "동일하게 손짓해도 판단을 못 하는 거겠지" —
   // 정확한 지적이었다) — 위 임계값들은 전부 handSize "성장률"만 조정한 것이라, 감지할 수 있는 동작이
   // 사실상 "손을 카메라 쪽으로 미는 것" 하나뿐이었다. 사용자가 실제로 하는 좌우로 흔드는 동작은
@@ -433,6 +454,34 @@ object PaceHandWaveDetector {
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
   }
 
+  /**
+   * 최근 SPEED_PEAK_WINDOW_MS 안에서 관측된 handSize 증가 속도의 최댓값(배/초).
+   *
+   * 인접한 두 샘플만 보고 (다음/이전 - 1) / 경과초로 계산한다. 손 크기 자체가 아니라 "이전 크기 대비
+   * 몇 배가 되었나"를 초로 나눈 상대 속도라, 손과 카메라의 거리가 달라도 같은 동작이면 비슷한 값이
+   * 나온다(handSize를 그대로 미분하면 가까이서 흔들 때만 커진다).
+   *
+   * 감소 구간(손을 빼는 동작)은 음수라 자연히 최댓값에서 밀려난다 — 별도 처리 불필요.
+   * 샘플이 2개 미만이면 0.0(속도 조건 미충족)으로 안전하게 떨어진다.
+   */
+  private fun peakGrowthSpeedPerSec(now: Long): Double {
+    if (sizeHistory.size < 2) return 0.0
+    val recent = sizeHistory.filter { now - it.first <= SPEED_PEAK_WINDOW_MS }
+    if (recent.size < 2) return 0.0
+    var peak = 0.0
+    for (i in 1 until recent.size) {
+      val (tPrev, sPrev) = recent[i - 1]
+      val (tCur, sCur) = recent[i]
+      val dtSec = (tCur - tPrev) / 1000.0
+      // 같은 밀리초에 두 샘플이 들어오면 0으로 나눠 Infinity가 되고, 그 한 프레임이 영원히 피크로
+      // 남아 오탐을 만든다. dt가 유의미할 때만 센다(PROCESS_INTERVAL_MS=150이라 정상 경로는 안 걸림).
+      if (dtSec < 0.02 || sPrev <= 0.0) continue
+      val speed = (sCur / sPrev - 1.0) / dtSec
+      if (speed > peak) peak = speed
+    }
+    return peak
+  }
+
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
     if (result.landmarks().isEmpty()) {
       awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
@@ -520,14 +569,33 @@ object PaceHandWaveDetector {
     // 일 때만 남기도록 좁힌다 — 튜닝 근거는 그대로 확보하면서 스팸은 사라진다.
     val grew = growthRatio > GROWTH_RATIO_THRESHOLD
     val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
+    // 속도 축(위 상수 주석의 실측 근거 참고). sizeHistory는 GROWTH_WINDOW_MS(2.5초)까지 담고 있으므로
+    // 여기서는 최근 SPEED_PEAK_WINDOW_MS 구간만 잘라 인접 샘플 간 변화율의 최댓값을 본다.
+    // 단위는 "배/초" — (다음/이전 - 1) / 경과초. 손 크기로 나눈 상대값이라 카메라와의 거리에 무관하다.
+    val peakSpeed = peakGrowthSpeedPerSec(now)
+    // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로
+    // 잡히고, 놓치던 것 중 일부만 추가로 잡힌다. 기존 축을 조이면서 새 축을 넣었다가 오히려 더
+    // 나빠졌던 2026-08-02의 실패를 반복하지 않기 위함이다.
+    val grewFast = growthRatio > SPEED_ASSIST_GROWTH_THRESHOLD && peakSpeed > SPEED_THRESHOLD_PER_SEC
 
-    if (!grew && !swept && (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7)) {
-      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) handSize=$handSize")
+    if (!grew && !swept && !grewFast &&
+      (growthRatio > SPEED_ASSIST_GROWTH_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7)
+    ) {
+      // 2026-08-03 — 게이트를 GROWTH_RATIO_THRESHOLD(1.30)가 아니라 SPEED_ASSIST_GROWTH_THRESHOLD
+      // (1.20) 기준으로 낮춘다. 새 축이 판정하는 구간이 1.20~1.30인데 기존 게이트로는 그 구간의
+      // 실패가 로그에 안 남아, 다음에 이 축을 조정할 때 또 잘린 데이터만 보게 된다(그 "검열된 데이터"가
+      // 그동안 임계값 조정이 매번 실패한 근본 원인이었다). speed도 같이 남긴다.
+      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) speed=$peakSpeed(th=$SPEED_THRESHOLD_PER_SEC) handSize=$handSize")
     }
 
     // 접근(밀기)과 스윕(좌우 흔들기)은 OR — 둘 중 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept) && pastRefractory) {
-      Log.i(TAG, "WAVE detected by=${if (swept) "sweep" else "growth"} growth=$growthRatio sweep=$sweepRatio handSize=$handSize")
+    if ((grew || swept || grewFast) && pastRefractory) {
+      val by = when {
+        swept -> "sweep"
+        grew -> "growth"
+        else -> "growth+speed"
+      }
+      Log.i(TAG, "WAVE detected by=$by growth=$growthRatio sweep=$sweepRatio speed=$peakSpeed handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
       xHistory.clear()

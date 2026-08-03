@@ -3869,3 +3869,22 @@ draw 로그가 3번 찍혀 오판할 뻔했다. dev 빌드에서 리스너/타�
 (`AppHeader.tsx`: "화면에 다시 포커스될 때마다 새로 랜덤 선택", 2026-07-22 지시). 인사이트 배너와
 달리 고정 위치·한 줄이라 레이아웃이 안 밀려서 "다시 로딩" 인상은 주지 않는다. 거슬리면 인사이트
 배너와 같은 방식으로 백그라운드 체류 시간 게이팅을 걸면 된다.
+
+### §3-0 백엔드 `ShortsHotService.java` 검증 완료 (2026-08-03, Windows)
+
+Mac 세션이 Java 미설치로 못 하던 검증을 대신 수행했다.
+
+- **(a) 컴파일** ✅ `cd backend && ./mvnw -o compile` 통과(exit 0),
+  `target/classes/.../ShortsHotService.class` 생성 확인. 커밋 `e7db712`(P0D 라이브 제외) +
+  `0d84867`(카테고리당 30→50) 둘 다 컴파일 문제 없음.
+- **(b) Railway 자동 재배포** ✅ 반영됨. 게스트 토큰(`POST /auth/guest`, body에 `deviceId` 필수 —
+  없으면 VALIDATION_ERROR)으로 `GET /shorts-hot` 호출 시 **50개** 반환. 30개가 아니라 50개라는
+  것 자체가 `0d84867`이 실배포에 올라가 있다는 증거이고, `e7db712`는 그보다 앞선 커밋이라 같은
+  빌드에 포함돼 있다.
+- **(c) 재curate** 불필요 — 이미 50개로 큐레이트된 상태라 `POST /shorts-hot/refresh` 안 돌려도 됨.
+
+참고: 응답 스키마는 `videoId/title/channel/thumbnailUrl` 4개뿐이라 duration이 안 내려온다
+(길이·라이브 필터는 전부 서버에서만 적용). 클라이언트에서 P0D 제외를 직접 검증할 방법은 없다.
+
+참고2: `GET /actuator/health`는 500을 반환하지만 `/shorts-hot`는 401(정상 인증 요구) → 앱 자체는
+살아 있다. actuator 헬스 인디케이터 설정 문제로 보이며 서비스 동작과는 무관 — 별도 확인 항목.

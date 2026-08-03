@@ -8,7 +8,9 @@
        Play Console은 업로드 시 민감 권한의 사용 사유를 요구하는데 정당화할 근거가 없고,
        권한 목록에 뜨는 것만으로 설치 전환율에도 불리하다. maxSdkVersion=32로 제한돼 있어
        실질 위험은 낮았지만 "쓰지 않는 권한은 선언하지 않는다"가 원칙이라 병합 단계에서 제거한다.
-       expo-file-system이 실제로 외부 저장소를 쓰게 되면 이 두 줄을 지워 되살릴 것. -->
+       expo-file-system이 실제로 외부 저장소를 쓰게 되면 이 두 줄을 지워 되살릴 것.
+       ⚠️ 이 주석은 `expo prebuild`(EAS 빌드가 매번 실행)가 이 파일을 재생성하면서 반복적으로
+       날아간다 — 기능은 그대로이고 주석만 사라지므로, 빌드 후 diff에 뜨면 복구할 것. -->
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove"/>
   <queries>
@@ -42,34 +44,21 @@
       </intent-filter>
     </activity>
     <!-- 2026-07-29 실기기 발견("보상광고 뜰 때 하단키가 흰색") — Google Mobile Ads SDK가 전면(보상형/
-         전면) 광고를 자체 AdActivity(별도 Activity, play-services-ads AAR 안에 있어 우리 코드에서
-         안 보임)로 띄우는데, 이 액티비티는 우리 AppTheme(systemBarColor 통일)을 안 물려받고 SDK
-         기본 테마(라이트/화이트 시스템 바)를 쓴다. tools:replace로 우리 테마를 강제 지정해 광고
-         화면에서도 상태바/내비바 색이 앱과 통일되게 한다. -->
+         전면) 광고를 자체 AdActivity로 띄우는데, 이 액티비티는 우리 AppTheme(systemBarColor 통일)을
+         안 물려받고 SDK 기본 테마(라이트/화이트 시스템 바)를 쓴다. tools:replace로 우리 테마를 강제
+         지정해 광고 화면에서도 상태바/내비바 색이 앱과 통일되게 한다. -->
     <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/AppTheme" tools:replace="android:theme" android:exported="false"/>
-    <!-- 2026-07-31 사장님 지시(오버레이 Favorite/Capture) — 유튜브 Shorts는 URL 주소창이 없는 몰입형
-         플레이어라 접근성 트리만으로는 실제 영상 링크(videoId)를 못 읽는다. 표준 해법: 우리 앱을
-         ACTION_SEND(text/plain) 대상으로 등록해두고, 접근성 서비스가 유튜브의 "동영상 공유" 버튼을
-         눌러 시스템 공유시트를 띄운 뒤 그 목록에서 "Pace"를 찾아 클릭하면, 안드로이드가 실제 공유
-         텍스트(영상 URL 포함)를 이 액티비티로 그대로 전달한다 — 유튜브 UI 내부 구조가 버전마다
-         바뀌어도 깨지지 않는 공식 Intent 계약에 기반한 방법(PaceShareCaptureActivity.kt 참고).
-         투명 테마 + noHistory로 화면 깜빡임 없이 즉시 처리 후 사라진다. -->
-    <activity
-      android:name="expo.modules.paceoverlay.PaceShareCaptureActivity"
-      android:theme="@android:style/Theme.Translucent.NoTitleBar"
-      android:noHistory="true"
-      android:excludeFromRecents="true"
-      android:exported="true">
+    <!-- 2026-07-31 오버레이 Favorite/Capture — 유튜브 Shorts는 URL 주소창이 없는 몰입형 플레이어라
+         접근성 트리만으로는 실제 영상 링크(videoId)를 못 읽는다. 우리 앱을 ACTION_SEND(text/plain)
+         대상으로 등록해두고, 접근성 서비스가 유튜브의 "공유" 버튼을 눌러 시스템 공유시트를 띄운 뒤
+         목록에서 "Pace"를 클릭하면 안드로이드가 공유 텍스트(영상 URL)를 이 액티비티로 전달한다 —
+         유튜브 UI 내부 구조가 바뀌어도 안 깨지는 공식 Intent 계약 기반(PaceShareCaptureActivity.kt). -->
+    <activity android:name="expo.modules.paceoverlay.PaceShareCaptureActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" android:excludeFromRecents="true" android:exported="true">
       <intent-filter>
         <action android:name="android.intent.action.SEND"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <data android:mimeType="text/plain"/>
       </intent-filter>
     </activity>
-    <!-- 2026-08-02 — PaceRewardedAdActivity 선언은 modules/pace-overlay/android/src/main/AndroidManifest.xml
-         로 옮겼다. 이 파일(android/)은 `npx expo prebuild`가 통째로 재생성하면서 수동 편집을 조용히
-         날리는데(오늘 실제로 versionCode·AdActivity 테마·MainActivity 시스템바 코드가 그렇게 사라졌다),
-         모듈 매니페스트는 Gradle 병합으로 합쳐져 prebuild와 무관하게 살아남는다. 여기 남겨두면 테마
-         속성이 서로 달라 매니페스트 병합이 충돌로 실패하므로 중복 선언을 제거한다. -->
   </application>
 </manifest>

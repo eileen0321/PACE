@@ -3838,3 +3838,16 @@ P메뉴 "앱으로" 같은 수 초짜리 왕복은 문구를 그대로 둬서 �
 ⚠️ 디버깅 중 알아낸 것 — **Fast Refresh는 AppState 리스너를 중복 등록한다.** 계측 중 같은 이벤트에
 draw 로그가 3번 찍혀 오판할 뻔했다. dev 빌드에서 리스너/타이머 관련을 측정할 때는 반드시
 **Dev Menu → Reload로 완전 리로드한 뒤** 측정할 것.
+
+### ⚠️ versionCode는 `android/app/build.gradle`이 진짜 소스다 (2026-08-03)
+
+`app.json`의 `android.versionCode`만 3→4로 올리고 EAS 빌드를 돌렸는데 결과물이 **또 code 3**으로
+나왔다(EAS 빌드 목록에서 확인). Play Console은 같은 versionCode를 두 번 못 받으므로 그대로 올렸으면
+거절당했을 것이다.
+
+이유: 우리는 bare workflow(=`android/` 디렉터리를 커밋해서 쓰고 `expo prebuild`를 일부러 안 돌린다)라
+`app.json`의 `android.versionCode`는 **prebuild가 build.gradle을 재생성할 때만** 쓰인다. 실제 빌드가
+읽는 값은 `android/app/build.gradle`의 `defaultConfig { versionCode }`다.
+
+→ **올릴 때는 두 곳을 같이 올릴 것**: `app.json`의 `android.versionCode`, `android/app/build.gradle`의
+`versionCode`. (`eas.json`의 `appVersionSource`는 `local`이라 EAS가 자동 증가시켜주지도 않는다.)

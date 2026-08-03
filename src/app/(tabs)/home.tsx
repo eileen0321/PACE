@@ -38,6 +38,11 @@ import type { ShortFormApp } from '../../constants/apps';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
 
+// 2026-08-03 — 홈 인사이트 배너를 다시 뽑기까지 필요한 최소 백그라운드 체류 시간. 이 값보다 짧게
+// 다녀오면(보상광고 시청, P메뉴 "앱으로" 등) 문구를 그대로 두어 복귀 화면이 전혀 안 움직인다.
+// 아래 AppState 효과의 주석 참고 — 왜 "안 바꾸는 것"이 유일한 해법인지 실측 근거가 적혀 있다.
+const INSIGHT_REDRAW_MIN_AWAY_MS = 5 * 60 * 1000;
+
 // healthy-shorts-assistant(2) App.tsx의 Home 탭(다크 리스킨)을 토씨 하나 안 틀리고 그대로 이식
 // (App.tsx:280-399, 사용자 명시적 지시). 3개 플랫폼 카드는 세로 풀와이드 스택(App.tsx:342
 // space-y-3), "CHOOSE PLATFORM" 헤더 옆 "TAP TO START" 배지 포함. 원본의
@@ -210,11 +215,32 @@ export default function HomeScreen() {
   // react-navigation의 화면 포커스(탭 전환)에만 반응한다. 홈 탭에 계속 머문 채로 홈 버튼 등으로
   // 앱만 백그라운드로 보냈다가 다시 열면 화면 포커스 자체는 안 바뀌므로 재추첨이 안 됐다. 앱이
   // 다시 active로 돌아올 때도 별도로 재추첨한다.
+  // 2026-08-03 사장님 실기기 지적("P → 앱으로 누르면 앱 홈이 한 번 더 로딩된다") — 원인이 이 효과였다.
+  // 12초 녹화를 10fps로 뜯어 확인: 홈이 '이전' 문구로 먼저 그려지고(약 0.2초) 곧바로 새 문구로
+  // 교체되는데, 배너 줄 수가 바뀌면서(2줄↔3줄) 아래 SESSION STATUS/카드들이 통째로 밀린다. 화면
+  // 진입 애니메이션과 겹쳐 "홈이 두 번 로딩된 것"처럼 보였다. 액티비티는 하나뿐이고(ActivityRecord
+  // 1개로 확인) 재마운트도 아니다 — 순전히 이 재추첨 때문이다.
+  //
+  // '나갈 때 미리 뽑기'로도 안 없어진다(실측 확인). 안드로이드는 복귀 시 앱이 나갈 때 떠 있던 화면
+  // 스냅샷을 먼저 띄우고 그 위에 새 렌더를 얹는데, 문구를 언제 바꾸든 스냅샷의 문구와 달라지는 순간
+  // 그 교체가 그대로 눈에 보인다. 즉 "값이 바뀌면 반드시 보인다"가 전제라, 짧은 왕복에서는 아예
+  // 안 바꾸는 것이 유일한 해법이다.
+  //
+  // 그래서 백그라운드에 머문 시간으로 가른다 — 광고 보고 오기/P메뉴 "앱으로"처럼 수 초짜리 왕복은
+  // 문구를 그대로 두어 화면이 미동도 안 하고(사장님이 지적한 그 케이스), 한참 뒤에 다시 열면 그때는
+  // 새로 뽑는다. 2026-08-01 지적("왜 계속 같은 것만 띄우냐, 랜덤으로 바뀌어야지")도 그대로 만족한다.
+  const backgroundedAtRef = useRef<number | null>(null);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && user?.id) {
-        getTodaysInsightMessage(user.id).then(setTodaysInsight).catch(() => {});
+      if (state !== 'active') {
+        if (backgroundedAtRef.current == null) backgroundedAtRef.current = Date.now();
+        return;
       }
+      const leftAt = backgroundedAtRef.current;
+      backgroundedAtRef.current = null;
+      if (leftAt == null) return;
+      if (Date.now() - leftAt < INSIGHT_REDRAW_MIN_AWAY_MS) return;
+      if (user?.id) getTodaysInsightMessage(user.id).then(setTodaysInsight).catch(() => {});
     });
     return () => sub.remove();
   }, [user?.id]);

@@ -4226,3 +4226,54 @@ gatherConsent({ debugGeography: AdsConsentDebugGeography.EEA, testDeviceIdentifi
 3. 위와 같은 통과율/오탐률 표를 만든 뒤에 값을 정한다.
 4. **원시 로그는 저장소 밖에 보관한다**(이번 원본: scratchpad/diag_run.txt). 이전 측정 원본을
    작업트리 정리 중 삭제해 재계산이 불가능했던 전례가 있다.
+
+### 수면감지 2단계 — 구현 완료 + 부분 검증, ⚠️ 남은 블로커 1건 (2026-08-03)
+
+**구현된 것**(`PaceOverlayService.kt`)
+- `evaluateSleepStages()` 상태기계: AWAKE → SUSPECT(무입력 10분) → 확정조건 만족 시 PROMPTED
+  → 30초 무응답이면 `sleepDetected=true`로 세션 종료.
+- 2단계 확정 조건: 밤 시간대(22~09) **AND** 보조신호 1개 이상(어두움 ≤15lux / 눕혀짐 |중력Z|≥7.5 /
+  충전 중 / BT 이어폰 빠짐). 센서가 없는 기기에서는 해당 조건만 false가 되고 나머지로 판단한다.
+- 조도(TYPE_LIGHT)·중력(TYPE_GRAVITY) 센서 등록/해제 추가. **해제를 빠뜨리지 않았다** — 예전에
+  "판정만 끄고 배선은 남겨둬" 아무도 안 쓰는 가속도계가 세션 내내 돌던 실수를 반복하지 않기 위함.
+- "아직 보고 계세요?" 팝업(`showStillWatchingPrompt`) — 기존 `extendChoiceView` 슬롯 재사용.
+  버튼·배경 어디를 눌러도 `markUserActivity()`로 단계와 무입력 시계를 함께 리셋한다.
+- `markUserActivity()`가 `lastUserInputAtMs`와 `sleepStage`를 함께 갱신.
+- 손짓 트리거 3곳에 `markUserActivity()` 연결(볼륨키는 이미 연결돼 있었음).
+- **마지막 시청 시각 = `lastUserInputAtMs` 기준**으로 변경(기존 `lastMotionAtMs`). 판정에 걸린
+  15분 30초를 빼고 기록하므로 실제 잠든 시각에 맞다.
+- 세션 시작/재개 시 무입력 시계·단계 리셋(안 하면 재개 직후 다시 수면 판정되는 무한루프).
+
+**실기기 검증 결과(임시로 임계값을 60s/30s/15s로 줄인 테스트 빌드)**
+- ✅ 1단계 진입: `SLEEP stage=SUSPECT noInputMs=157452`
+- ✅ 2단계 게이트가 **의도대로 보류**:
+  `SLEEP confirm held — window=true dark=false(lux=57.3) flat=false(gz=5.33) charging=false btGone=false`
+  → 조명 켜진 방에서 폰이 세워져 있으니 자는 게 아니라고 정확히 판단. **예전 오탐의 원흉이던
+  "거치대에 세워둠"이 여기서 구조적으로 걸러진다.**
+- ⚠️ 팝업 → 무응답 → 종료 경로는 아래 블로커 때문에 끝까지 확인 못 함.
+
+### 🔴 남은 블로커 — 유튜브 **자동 반복 재생**이 "사용자 입력"으로 오인된다
+
+검증 중 발견. 무입력 시계가 계속 리셋돼 수면 판정이 영원히 안 나는 것을 로그로 확인했다
+(`noInputMs` 118272 → 80658로 되돌아감).
+
+원인: `PaceAccessibilityService`의 loopedBack 분기가 **우리가 방금 스와이프한 직후가 아니면
+"사용자가 직접 손으로 넘긴 것"으로 간주**해 `markUserActivity()`를 부른다. 그런데 유튜브가 같은
+영상을 무한 반복할 때도 loopedBack이 뜬다:
+```
+23:36:02 looped-back total=22s
+23:36:25 looped-back total=22s
+23:36:47 looped-back total=22s   ← 같은 22초 영상이 계속 반복
+```
+그 코드는 원래 **예전 수면감지의 오탐**(거치대에서 손가락만 스와이프 → 폰이 안 움직임 → 강제 종료)을
+막으려고 넣은 것이라 당시엔 맞았는데, 새 설계에서는 정반대로 작용한다. 그리고 하필 **사장님이
+커버를 지시한 시나리오(자동넘김 OFF + 무한 루프)에서 정확히 터진다.**
+
+즉 "우리가 넘긴 것 / 사람이 넘긴 것" 2분법으로는 부족하고 **제3의 주체(유튜브의 자동 반복)**가 있다.
+
+**해결 방향**: 로그에 답이 있다 — `total`(영상 길이)이 그대로면 같은 영상 반복, 바뀌면 사용자가
+넘긴 것. loopedBack 시 직전 `total`과 비교해 같으면 `markUserActivity()`를 부르지 않는다.
+
+⚠️ 이 수정 지점은 다른 세션이 편집 중인 `PaceAccessibilityService.kt`(Tier 2 삭제 작업) 안이라,
+그쪽이 커밋된 뒤에 얹어야 충돌이 없다. **이 블로커가 해결되기 전까지 수면감지는 실사용에서
+동작하지 않는다** — code 5에 넣기 전에 반드시 처리할 것.

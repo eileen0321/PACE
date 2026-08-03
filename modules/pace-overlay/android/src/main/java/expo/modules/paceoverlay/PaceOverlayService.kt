@@ -242,6 +242,30 @@ class PaceOverlayService : Service() {
   private var sensorManager: SensorManager? = null
   private var stillnessListener: SensorEventListener? = null
   private var lastMotionAtMs = 0L // elapsedRealtime 기준 — 마지막으로 유의미한 움직임이 감지된 시각
+
+  // ───────── 2026-08-03 수면감지 재설계(2단계) ─────────
+  // 설계 근거와 조사 결과는 PACE_PROJECT_MANAGEMENT.md "수면감지 재설계" 절 참고.
+  // 요약: 기존의 "폰이 안 움직임"(가속도계) 축은 거치대/책상 사용에서 구조적으로 오탐이 나서 폐기하고,
+  // "사용자 입력 부재"를 주 축으로 삼는다(markUserActivity 주석 참고). Google Sleep API는 분류 주기가
+  // 10분이고 확정 구간이 깬 뒤에야 나오며 화면 꺼짐을 전제해 우리 용도(화면 켜진 채 영상 재생 중)에
+  // 안 맞아 채택하지 않았다.
+  //
+  // 마지막으로 사람이 뭔가 한 시각. **"마지막으로 본 시각"의 최선 추정치이기도 하다** — 수면으로
+  // 세션을 끝낼 때 기록할 시각은 판정이 끝난 시각이 아니라 이 값이다(그 뒤 무입력 대기·조도 확인·
+  // 팝업 시간은 전부 판정에 걸린 시간이지 시청한 시간이 아니다).
+  private var lastUserInputAtMs = 0L
+  // 현재 수면 판정 단계. AWAKE → SUSPECT(무입력 지속) → 확정 시 팝업 → 무응답이면 종료.
+  private var sleepStage = SLEEP_STAGE_AWAKE
+  // SUSPECT로 들어간 시각 — 2단계 확정 조건을 여기서부터 관찰한다.
+  private var sleepSuspectSinceMs = 0L
+  // "아직 보고 계세요?" 팝업을 띄운 시각 — 여기서부터 SLEEP_PROMPT_TIMEOUT_MS를 센다.
+  private var sleepPromptedAtMs = 0L
+  // 조도 센서(2단계 보조 신호). 기기에 없을 수도 있으므로 null 허용 — 없으면 "어둡다" 조건은
+  // 판정에서 빠지고 나머지 조건만으로 확정한다(센서 부재로 기능이 죽으면 안 됨).
+  private var lightListener: SensorEventListener? = null
+  private var lastLuxAvg = -1.0 // -1 = 아직 측정 없음(=조건 판정에서 제외)
+  // 중력 방향으로 본 기기 자세. "움직임"이 아니라 "눕혀졌는가"를 보므로 거치대 오탐과 무관하다.
+  private var lastGravityZ = 0.0
   // 블루투스 이어폰 탈착은 스펙에서 "보조 신호(타이머 단축)로만, 단독 트리거로는 안 씀"이라 명시—
   // 통화 중 잠깐 빼는 경우와 "진짜로 자면서 빠짐"을 구분 못 하기 때문. 탈착이 감지되면 이번 무진동
   // 구간에 한해 더 짧은 임계값을 적용(단, 여전히 그 짧은 시간만큼은 실제로 안 움직여야 함 — 탈착
@@ -325,13 +349,133 @@ class PaceOverlayService : Service() {
     sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL, STILLNESS_REPORT_LATENCY_US)
     sensorManager = sm
     stillnessListener = listener
+    registerSleepSensors(sm)
+  }
+
+  /**
+   * 2026-08-03 수면감지 재설계 — 2단계 확정에 쓰는 보조 신호 두 개를 등록한다.
+   *
+   * ① 조도(TYPE_LIGHT): "주변이 어둡다". Google Sleep API도 같은 신호(주변 밝기)를 쓴다.
+   * ② 중력(TYPE_GRAVITY): "기기가 눕혀졌다". 위 무진동 감지가 **움직임의 크기**를 보는 것과 달리
+   *    이건 **방향**을 본다 — 그래서 "책상/거치대에 세워두고 안 만짐"(기존 오탐의 원흉)과
+   *    "누워서 폰을 얼굴 위에 들고 있다가 잠듦"을 구조적으로 구분한다.
+   *
+   * 둘 다 없는 기기가 있을 수 있으므로 실패해도 조용히 넘어간다 — 센서가 없으면 그 조건은
+   * 판정에서 빠지고 나머지 조건만으로 확정한다(센서 부재로 기능이 죽으면 안 된다).
+   * 배칭 지연은 무진동 감지와 동일(5초) — 분 단위 판정이라 초 단위 정밀도가 필요 없다.
+   */
+  /**
+   * 2026-08-03 수면감지 2단계 상태기계. 매 틱(60초)마다 호출되고, **확정됐을 때만** true를 돌려준다.
+   *
+   * 설계 근거 전문은 PACE_PROJECT_MANAGEMENT.md "수면감지 재설계" 절. 요약:
+   * - 기존 구현은 "폰이 안 움직임"(가속도계) 하나로 판정해서, 폰을 책상·거치대에 두고 손가락만
+   *   스와이프하는 가장 흔한 패턴에서 멀쩡히 보는 중에 세션을 끊었다. 그래서 축을 **사용자 입력
+   *   부재**로 바꿨다(markUserActivity 주석 참고) — 깨어 있으면 사람은 반드시 뭔가 한다.
+   * - Google Sleep API는 분류 주기 10분, 확정은 깬 뒤에야 나오고 화면 꺼짐을 전제해 우리 용도
+   *   (화면 켜진 채 영상 재생 중)에 안 맞아 채택하지 않았다. 다만 그 API가 쓰는 신호 조합
+   *   (움직임 + 주변 밝기)은 차용했다.
+   * - 넷플릭스처럼 **조용히 끄지 않고 묻는다** — 오탐 비용을 거의 0으로 만든다.
+   *
+   * 1단계(의심): 사용자 입력이 SLEEP_NO_INPUT_ENTER_MS 동안 없음 + 실제 재생 중.
+   * 2단계(확정): 의심이 SLEEP_CONFIRM_AFTER_MS 더 지속 + 밤 시간대 + 보조 신호 1개 이상
+   *              (어둡다 / 눕혀졌다 / 충전 중 / BT 이어폰 빠짐).
+   * 확정 후: 팝업을 띄우고 SLEEP_PROMPT_TIMEOUT_MS 안에 반응이 없어야 비로소 true.
+   */
+  private fun evaluateSleepStages(isPlaying: Boolean?): Boolean {
+    // 재생이 실제로 멈춘 것이 확인되면 수면 판정 자체를 하지 않는다 — 안 보고 있는데 끌 세션이 없다.
+    // (isPlaying == null은 "신호 없음/불확실"이라 계속 진행 — remainingMinutes 차감과 동일한 규칙.)
+    if (isPlaying == false) {
+      sleepStage = SLEEP_STAGE_AWAKE
+      return false
+    }
+    val now = SystemClock.elapsedRealtime()
+    if (lastUserInputAtMs == 0L) lastUserInputAtMs = now // 세션 시작 직후 기준점
+    val noInputMs = now - lastUserInputAtMs
+
+    if (noInputMs < SLEEP_NO_INPUT_ENTER_MS) {
+      sleepStage = SLEEP_STAGE_AWAKE
+      return false
+    }
+
+    if (sleepStage == SLEEP_STAGE_AWAKE) {
+      sleepStage = SLEEP_STAGE_SUSPECT
+      sleepSuspectSinceMs = now
+      Log.d("PaceOverlay", "SLEEP stage=SUSPECT noInputMs=$noInputMs")
+      return false
+    }
+
+    if (sleepStage == SLEEP_STAGE_SUSPECT) {
+      if (now - sleepSuspectSinceMs < SLEEP_CONFIRM_AFTER_MS) return false
+      // 보조 신호 — 하나라도 맞아야 확정한다. 센서가 없는 기기에서는 해당 조건이 그냥 false가 되고
+      // 나머지로 판단하므로 기능이 죽지 않는다.
+      val dark = lastLuxAvg in 0.0..SLEEP_DARK_LUX
+      val laidFlat = kotlin.math.abs(lastGravityZ) >= SLEEP_FLAT_GRAVITY_Z
+      val charging = isCharging()
+      val btGone = btDisconnectedDuringStillness
+      val supporting = dark || laidFlat || charging || btGone
+      if (!isWithinSleepDetectionWindow() || !supporting) {
+        Log.d("PaceOverlay", "SLEEP confirm held — window=${isWithinSleepDetectionWindow()} dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone")
+        return false
+      }
+      sleepStage = SLEEP_STAGE_PROMPTED
+      sleepPromptedAtMs = now
+      Log.d("PaceOverlay", "SLEEP stage=PROMPTED — asking '아직 보고 계세요?'")
+      showStillWatchingPrompt()
+      return false
+    }
+
+    // PROMPTED — 반응이 있었으면 markUserActivity()가 이미 AWAKE로 되돌렸다. 여기까지 왔다는 건
+    // 아직 무반응이라는 뜻이므로, 유예시간이 지나면 확정한다.
+    if (now - sleepPromptedAtMs >= SLEEP_PROMPT_TIMEOUT_MS) {
+      Log.d("PaceOverlay", "SLEEP CONFIRMED — no response for ${now - sleepPromptedAtMs}ms")
+      hideStillWatchingPrompt()
+      sleepStage = SLEEP_STAGE_AWAKE
+      return true
+    }
+    return false
+  }
+
+  private fun isCharging(): Boolean = try {
+    val bm = getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+    bm?.isCharging == true
+  } catch (e: Exception) {
+    false
+  }
+
+  private fun registerSleepSensors(sm: SensorManager) {
+    val light = sm.getDefaultSensor(Sensor.TYPE_LIGHT)
+    val gravity = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
+    if (light == null && gravity == null) return
+    val listener = object : SensorEventListener {
+      override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor?.type) {
+          Sensor.TYPE_LIGHT -> {
+            val lux = event.values[0].toDouble()
+            // 지수이동평균 — 순간적으로 화면 밝기/그림자에 튀는 값 하나로 판정이 뒤집히지 않게.
+            lastLuxAvg = if (lastLuxAvg < 0) lux else lastLuxAvg * 0.8 + lux * 0.2
+          }
+          Sensor.TYPE_GRAVITY -> lastGravityZ = event.values[2].toDouble()
+        }
+      }
+      override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+    light?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_NORMAL, STILLNESS_REPORT_LATENCY_US) }
+    gravity?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_NORMAL, STILLNESS_REPORT_LATENCY_US) }
+    lightListener = listener
   }
 
   private fun unregisterStillnessSensor() {
     val sm = sensorManager ?: return
     stillnessListener?.let { sm.unregisterListener(it) }
+    // 2026-08-03 — 수면감지 보조 센서(조도/중력)도 반드시 같이 뗀다. 안 떼면 세션이 끝난 뒤에도
+    // 리스너가 남아 배터리를 계속 먹는다(이전에 "판정만 끄고 배선은 남겨둔" 탓에 아무도 안 쓰는
+    // 가속도계가 세션 내내 돌던 것과 같은 실수를 반복하지 않기 위함).
+    lightListener?.let { sm.unregisterListener(it) }
     sensorManager = null
     stillnessListener = null
+    lightListener = null
+    lastLuxAvg = -1.0
+    lastGravityZ = 0.0
   }
 
   // 2026-07-19: Bluetooth Hands-Free Control — 사용자 지시(Copilot 스펙 정리) 반영. 새 네이티브
@@ -459,8 +603,19 @@ class PaceOverlayService : Service() {
     // 부팅 후 경과시간이라 그 자체로는 JS에 의미가 없으므로, 지금(currentTimeMillis)에서 무진동 경과분을
     // 빼 "그 순간의 실제 시각"으로 변환한다.
     if (reason == "sleep_detected") {
-      val stillnessElapsedMs = SystemClock.elapsedRealtime() - lastMotionAtMs
-      editor.putLong(PREF_SLEEP_ONSET_AT_MS, System.currentTimeMillis() - stillnessElapsedMs)
+      // 2026-08-03 사장님 지적("마지막으로 본 시간은 1)에서 판단한 시간이 되겠네") — 맞다. 기준을
+      // lastMotionAtMs(마지막 물리적 움직임)에서 **lastUserInputAtMs(마지막 사용자 입력)**로 바꾼다.
+      //
+      // 왜: 새 판정에서 잠든 시각의 최선 추정치는 "마지막으로 터치·손짓·볼륨키를 쓴 순간"이다.
+      // 그 뒤의 무입력 대기(10분) + 확정 대기(5분) + 팝업 무응답(30초)은 전부 *판정에 걸린 시간*이지
+      // 시청한 시간이 아니다. 판정 시각을 그대로 기록하면 실제보다 15분 이상 늦게 잔 것으로 남는다.
+      // (기존 주석에도 "markExpired() 호출 시각은 실제 잠든 시각에 더 가깝지 않냐"는 같은 우려가
+      // 적혀 있었는데, 2단계 설계에서 이렇게 해소된다.)
+      // elapsedRealtime은 부팅 후 경과시간이라 그 자체로는 JS에 의미가 없으므로, 지금
+      // (currentTimeMillis)에서 무입력 경과분을 빼 "그 순간의 실제 시각"으로 환산한다.
+      val base = if (lastUserInputAtMs > 0L) lastUserInputAtMs else lastMotionAtMs
+      val elapsedSinceInputMs = SystemClock.elapsedRealtime() - base
+      editor.putLong(PREF_SLEEP_ONSET_AT_MS, System.currentTimeMillis() - elapsedSinceInputMs)
     }
     editor.apply()
   }
@@ -690,6 +845,25 @@ class PaceOverlayService : Service() {
     // 자체를 적용하는 2차 게이트를 추가한다 — useFlipStore.ts의 QUIET_HOURS(00~06시, 크레딧 제외용)
     // 보다 넓게 잡음: 이건 "혹시 수면 중일 수도 있는 시간"을 판정 대상으로 아예 좁히는 것이라, 너무
     // 좁히면 늦게 자거나 늦잠 자는 사용자를 놓친다 — 밤 10시~아침 9시로 넉넉히 잡아 자정을 걸친다.
+    // ───────── 2026-08-03 수면감지 재설계(2단계) 상수 ─────────
+    // 설계 근거는 PACE_PROJECT_MANAGEMENT.md "수면감지 재설계" 절.
+    // 1단계: 사용자 입력(터치·손짓·볼륨키)이 이만큼 없으면 "수면 의심"으로 올린다. 기존 무진동
+    // 임계값과 같은 10분에서 출발 — 넷플릭스가 90분/3편으로 훨씬 느슨하게 잡는 것과 비교하면
+    // 공격적이지만, 우리는 확정 시 바로 끄지 않고 물어보므로(2단계) 오탐 비용이 낮다.
+    private const val SLEEP_NO_INPUT_ENTER_MS = 10 * 60 * 1000L
+    // 2단계: 의심 상태가 이만큼 더 이어지고 보조 신호(어두움/자세/충전 등)가 맞으면 확정한다.
+    private const val SLEEP_CONFIRM_AFTER_MS = 5 * 60 * 1000L
+    // "어둡다"의 기준(lux). 일반 실내 조명이 100~300lux, 취침등이 5~20lux 수준이라 그 사이로 잡는다.
+    private const val SLEEP_DARK_LUX = 15.0
+    // 기기가 눕혀졌다고 볼 중력 Z축 비율 — 화면이 위/아래를 향할수록 |z|가 g(9.8)에 가까워진다.
+    // 세워서 보는 자세(거치대·손에 듦)는 |z|가 작아 자연히 제외된다.
+    private const val SLEEP_FLAT_GRAVITY_Z = 7.5
+    // "아직 보고 계세요?" 팝업을 띄운 뒤 이 시간 안에 반응이 없으면 종료한다.
+    private const val SLEEP_PROMPT_TIMEOUT_MS = 30 * 1000L
+    private const val SLEEP_STAGE_AWAKE = 0
+    private const val SLEEP_STAGE_SUSPECT = 1
+    private const val SLEEP_STAGE_PROMPTED = 2
+
     private const val SLEEP_WINDOW_START_HOUR = 22 // 22:00
     private const val SLEEP_WINDOW_END_HOUR = 9 // 09:00 (다음날)
     // Flip Mode의 LINEAR_ACCEL_EPSILON(1.2)보다 살짝 낮게 — 여긴 "완전히 멈췄다"를 원하므로
@@ -768,6 +942,13 @@ class PaceOverlayService : Service() {
     private const val PREF_IS_PREMIUM = "is_premium"
     // 2026-08-02 — 위 setAvailableCredits/consumePendingCreditSpend 참고(FOCUS OFF 선택 팝업용).
     private const val PREF_AVAILABLE_CREDITS = "available_credits"
+    // 2026-08-03 — "실제로 재생 중이었던 시간"의 누적(초). 통계를 알약과 같은 기준으로 맞추기 위함
+    // (ACTION_START / performTick 주석 참고). 세션 시작 시 0으로 리셋된다.
+    private const val PREF_WATCHED_SECONDS = "watched_seconds"
+
+    // JS가 세션을 닫거나 통계를 계산할 때 이 값을 가져가 벽시계 대신 쓴다. 세션이 없으면 0.
+    fun watchedSeconds(context: Context): Int =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(PREF_WATCHED_SECONDS, 0)
     private const val PREF_PENDING_CREDIT_SPEND = "pending_credit_spend"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
@@ -800,8 +981,30 @@ class PaceOverlayService : Service() {
     // 전혀 없어 "깨어있음" 증거가 될 수 없지만, 사람이 직접 낸 신호(핑거스냅/손짓/블루투스 리모컨
     // 버튼)는 진짜 의식적 행동이므로 이걸 감지하면 무진동 시계를 리셋한다 — swipeOnce(핑거스냅/손짓/
     // 블루투스 미디어버튼 공용 경로)와 볼륨키 리모컨 경로 양쪽에서 호출(PaceAccessibilityService 참고).
+    /**
+     * "사람이 방금 뭔가 했다"를 기록한다. 반드시 **사람이 한 행동**에서만 부를 것.
+     *
+     * 2026-08-03 수면감지 재설계 — 이 함수가 새 판정의 핵심 축이다. 기존 수면감지가 실패한 이유는
+     * "폰이 안 움직임"(가속도계)을 봤기 때문인데, 폰을 책상·거치대에 두고 손가락만 스와이프하는
+     * 가장 흔한 패턴에서 폰은 원래 안 움직여서 멀쩡히 보는 중에도 세션이 끊겼다. 그래서 축을
+     * "사용자 입력 부재"로 바꿨다 — 깨어 있으면 사람은 반드시 뭔가 한다(터치·손짓·볼륨키).
+     *
+     * ⚠️ **우리가 대신 넘긴 것은 절대 여기에 넣지 말 것**(near-end 자동넘김, 알약 갱신 등).
+     * 그걸 활동으로 세면 자동넘김 ON일 때 사용자가 자고 있어도 화면이 계속 바뀌어 수면 판정이
+     * 영원히 안 난다. 반대로 손짓을 빼먹으면 핸즈프리로 잘 보는 중에 강제 종료된다 — 예전 실패의 재현.
+     *
+     * 현재 호출되는 곳(전부 사람 행동): 사용자가 직접 손으로 넘김(PaceAccessibilityService의
+     * loopedBack + 우리 스와이프 직후가 아님), 볼륨키, 손짓 트리거.
+     */
     fun markUserActivity() {
-      instance?.lastMotionAtMs = SystemClock.elapsedRealtime()
+      val now = SystemClock.elapsedRealtime()
+      instance?.let {
+        it.lastMotionAtMs = now
+        it.lastUserInputAtMs = now
+        // 사람이 반응했으므로 진행 중이던 수면 판정을 처음부터 다시 센다. "아직 보고 계세요?"
+        // 팝업이 떠 있었다면 그것도 이 시점에 닫아야 하지만, 그 처리는 팝업 쪽에서 한다.
+        it.sleepStage = SLEEP_STAGE_AWAKE
+      }
     }
 
     // 2026-08-01 사용자 실기기 지적("숏츠 보는 중도 아닌데 왜 Next Short 토스트가 뜨냐") — 원래
@@ -900,7 +1103,7 @@ class PaceOverlayService : Service() {
       // 안 남음). setAutoMode(true)의 감지기 시작 부분과 동일하게 여기서도 다시 켠다.
       PaceAccessibilityService.startWatching(45_000L)
       if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, false)) {
-        PaceHandWaveDetector.start(context) { triggerNext(context) }
+        PaceHandWaveDetector.start(context) { markUserActivity(); triggerNext(context) }
       }
     }
 
@@ -1087,7 +1290,7 @@ class PaceOverlayService : Service() {
         // 채로 시작되고 있었다 — false로 정정해 플랫폼 간 기본값을 통일한다. 이미 명시적으로
         // true를 저장해둔 기존 사용자는(실제 키가 존재하므로) 이 변경의 영향을 받지 않는다.
         if (context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, false)) {
-          PaceHandWaveDetector.start(context) { triggerNext(context) }
+          PaceHandWaveDetector.start(context) { markUserActivity(); triggerNext(context) }
         }
         val durationMs = getFocusSessionDurationMinutes(context) * 60 * 1000L
         focusSessionHandler.postDelayed(focusSessionAutoStop, durationMs)
@@ -1130,7 +1333,7 @@ class PaceOverlayService : Service() {
       prefs.edit().putBoolean(PREF_HANDSFREE_GESTURE_ENABLED, enabled).apply()
       val masterOn = prefs.getBoolean(PREF_AUTO_MODE, false)
       if (masterOn) {
-        if (enabled) PaceHandWaveDetector.start(context) { triggerNext(context) } else PaceHandWaveDetector.stop()
+        if (enabled) PaceHandWaveDetector.start(context) { markUserActivity(); triggerNext(context) } else PaceHandWaveDetector.stop()
       }
     }
 
@@ -1331,7 +1534,17 @@ class PaceOverlayService : Service() {
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
       ACTION_START -> {
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_EXPIRED, false).apply()
+        // 2026-08-03 사장님 결정("알약 기준이 맞지 않아?") — 알약의 남은 시간은 실제 재생 중일 때만
+        // 깎는데(performTick의 isLikelyPlaying 가드), 통계 화면의 "오늘 사용 시간"은 세션 시작~현재의
+        // 순수 벽시계였다(statsRepository.getTodayUsageMinutes, endSession의 durationSeconds 둘 다).
+        // 그래서 세션만 켜두고 30분을 안 보면 알약은 그대로인데 통계엔 30분이 쌓이는 모순이 있었다.
+        // 사용자가 이해하는 "사용 시간"은 실제로 본 시간이므로 알약 기준으로 통일한다 — 그러려면
+        // "실제로 재생 중이었던 시간"을 누적해줄 주체가 필요한데, 그걸 아는 건 네이티브뿐이다.
+        // 세션 시작마다 0으로 리셋하고, performTick이 실제로 차감할 때만 60초씩 더한다.
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .putBoolean(PREF_EXPIRED, false)
+          .putInt(PREF_WATCHED_SECONDS, 0)
+          .apply()
         remainingMinutes = intent.getIntExtra(EXTRA_REMAINING, 0)
         val sleepTimerMinutes = intent.getIntExtra(EXTRA_SLEEP_TIMER_MINUTES, 0)
         sleepTimerRemainingMinutes = if (sleepTimerMinutes > 0) sleepTimerMinutes else -1
@@ -1352,6 +1565,11 @@ class PaceOverlayService : Service() {
         bluetoothVolumeKeySkipEnabled = intent.getBooleanExtra(EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED, true)
         PaceAccessibilityService.bluetoothVolumeKeySkipEnabled = bluetoothVolumeKeySkipEnabled
         lastMotionAtMs = SystemClock.elapsedRealtime() // 신규 세션 — 수면감지 무진동 시계를 지금부터 시작
+        // 2026-08-03 — 무입력 시계도 함께 시작한다. 세션을 켠 것 자체가 사용자의 행동이므로 여기가
+        // 기준점이다. 안 하면 이전 세션의 마지막 입력 시각이 남아 새 세션이 시작하자마자 의심 단계로
+        // 들어갈 수 있다.
+        lastUserInputAtMs = SystemClock.elapsedRealtime()
+        sleepStage = SLEEP_STAGE_AWAKE
         loadDailyLimitHitState() // 날짜 바뀌었으면 한도 히트카운트 리셋(자정 롤오버)
         if (dailyLimitOriginalMinutes <= 0) {
           // 오늘 첫 세션(또는 리셋 직후) — 지금 넘겨받은 값이 "오늘의 원래 한도"다.
@@ -1459,6 +1677,11 @@ class PaceOverlayService : Service() {
       val isPlaying = PaceAccessibilityService.isLikelyPlaying()
       if (isPlaying != false) {
         remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+        // 2026-08-03 — 통계를 알약과 같은 기준으로 맞추기 위한 "실제 시청 시간" 누적(위 ACTION_START
+        // 주석 참고). 차감이 실제로 일어난 틱에서만 더하므로 알약이 보는 시간과 정확히 일치한다.
+        // 프로세스가 죽어도 이어지도록 prefs에 쌓는다(메모리 필드로 두면 복구 경로에서 초기화된다).
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(PREF_WATCHED_SECONDS, prefs.getInt(PREF_WATCHED_SECONDS, 0) + 60).apply()
       } else {
         Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
       }
@@ -1528,7 +1751,9 @@ class PaceOverlayService : Service() {
       // 판정만 끄고 나머지 배선(센서 등록/임계값/프리미엄 설정값)은 그대로 남겨둔다 — 되살릴 때
       // 이 한 줄만 되돌리면 되고, lastMotionAtMs는 다른 곳에서도 참조하기 때문.
       @Suppress("UNUSED_EXPRESSION") (stillnessElapsedMs >= stillnessThresholdMs && isWithinSleepDetectionWindow())
-      val sleepDetected = false
+      // 2026-08-03 수면감지 재설계 — 위의 옛 무진동 단독 판정 대신 2단계 상태기계를 돌린다.
+      // 이 함수는 확정 시에만 true를 돌려주고, 그 전에 "아직 보고 계세요?" 팝업을 띄운다.
+      val sleepDetected = evaluateSleepStages(isPlaying)
 
       // sleepTimerRemainingMinutes==0은 "원래 -1(꺼짐)이었는데 우연히 0"이 아니라 반드시
       // ">0에서 감소해서 도달한 0"만 가능(위에서 >0일 때만 감소시키므로) — 별도 플래그 없이 안전하게
@@ -1837,6 +2062,94 @@ class PaceOverlayService : Service() {
   // 쓰면" 풀리지만, 접근성이 꺼진 건 광고를 백 번 봐도 안 풀린다(설정에서 다시 켜야만 한다).
   // 그런데도 같은 팝업을 띄우면 사용자는 광고만 보고 아무 효과가 없는 걸 겪게 된다. 원인이 접근성일
   // 땐 광고를 아예 띄우지 않고 실제 해결책(설정 화면)으로 보낸다.
+  /**
+   * "아직 보고 계세요?" — 수면 확정 직전에 띄우는 확인 팝업.
+   *
+   * 넷플릭스의 "Are you still watching?"과 같은 역할이다. 조용히 끄지 않고 묻는 이유는 **오탐 비용을
+   * 거의 0으로 만들기 위해서**다. 이전 수면감지가 폐기된 결정적 이유가 "멀쩡히 보고 있는데 세션이
+   * 강제 종료됨"이었는데, 물어보는 구조에서는 깨어 있는 사용자가 탭 한 번으로 즉시 되돌린다.
+   *
+   * 어떤 반응이든(버튼·배경 탭) markUserActivity()를 태워 무입력 시계와 단계를 함께 리셋한다 —
+   * 사람이 반응했다는 것 자체가 가장 확실한 "깨어있음" 증거이기 때문이다.
+   * 무반응으로 SLEEP_PROMPT_TIMEOUT_MS가 지나면 다음 틱에서 evaluateSleepStages()가 확정한다.
+   */
+  private fun showStillWatchingPrompt() {
+    hideExtendChoice()
+    val ko = isKoreanLocale()
+    val d = resources.displayMetrics.density
+
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = 20f * d
+        setColor(Color.parseColor("#F21A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+    }
+    card.addView(TextView(this).apply {
+      text = if (ko) "아직 보고 계세요?" else "Are you still watching?"
+      textSize = 16f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    })
+    card.addView(TextView(this).apply {
+      text = if (ko) "한동안 아무 조작이 없어서 여쭤봐요. 반응이 없으면 잠시 후 자동으로 종료할게요."
+             else "No activity for a while. If there's no response, this session will end shortly."
+      textSize = 13f
+      setTextColor(Color.parseColor("#B3FFFFFF"))
+      setPadding(0, (6 * d).toInt(), 0, (14 * d).toInt())
+    })
+
+    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+      .apply { topMargin = (8 * d).toInt() }
+    card.addView(TextView(this).apply {
+      text = if (ko) "계속 볼게요" else "Keep watching"
+      textSize = 14f
+      gravity = Gravity.CENTER
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      setPadding(0, (12 * d).toInt(), 0, (12 * d).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = 999f
+        setColor(Color.parseColor("#6C5CE7"))
+      }
+      isClickable = true
+      setOnClickListener {
+        hideStillWatchingPrompt()
+        markUserActivity() // 단계·무입력 시계 동시 리셋
+      }
+    }, lp)
+
+    val container = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setPadding((24 * d).toInt(), 0, (24 * d).toInt(), 0)
+      setBackgroundColor(Color.parseColor("#B3000000"))
+      isClickable = true
+      // 배경을 눌러도 "사람이 반응한 것"이므로 동일하게 리셋한다.
+      setOnClickListener { hideStillWatchingPrompt(); markUserActivity() }
+      addView(card, LinearLayout.LayoutParams((320 * d).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      0,
+      android.graphics.PixelFormat.TRANSLUCENT
+    )
+    try {
+      windowManager?.addView(container, params)
+      extendChoiceView = container // 기존 슬롯 재사용 — 동시에 두 팝업이 뜨지 않는다.
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "showStillWatchingPrompt failed", e)
+    }
+  }
+
+  private fun hideStillWatchingPrompt() = hideExtendChoice()
+
   private fun showAccessibilityRequiredOverlay() {
     hideExtendChoice()
     val ko = java.util.Locale.getDefault().language == "ko"
@@ -2983,6 +3296,11 @@ class PaceOverlayService : Service() {
     // 수면감지로 왔더라도(이론상 이 버튼 자체가 그 화면엔 없지만 방어적으로) 무진동 시계를 재시작 —
     // 안 그러면 재개 직후 다음 틱에서 곧바로 다시 만료된다(위 Sleep Timer와 같은 부류의 무한루프).
     lastMotionAtMs = SystemClock.elapsedRealtime()
+    // 재개 버튼을 누른 것도 사용자의 행동이다 — 무입력 시계와 수면 단계를 함께 리셋한다.
+    // 안 하면 재개 직후 다음 틱에서 곧바로 다시 수면 판정으로 들어가는 무한루프가 된다.
+    lastUserInputAtMs = SystemClock.elapsedRealtime()
+    sleepStage = SLEEP_STAGE_AWAKE
+    hideStillWatchingPrompt()
     persistState() // PREF_SESSION_ACTIVE를 다시 true로 되돌림(만료 시 clearSessionActive됐던 것)
     showOverlay(remainingMinutes) // 작은 알약 복귀
     startForegroundAppPolling()

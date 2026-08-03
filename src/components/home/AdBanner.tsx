@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { colors } from '../../constants/theme';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
+import { useAdsConsentStore } from '../../store/useAdsConsentStore';
 
 // 2026-07-25 — react-native-google-mobile-ads는 네이티브 코드가 있는 모듈이라 네이티브 재빌드
 // 전에는(예: 지금처럼 AdMob 라이브러리와 Kotlin 버전 충돌로 빌드가 아직 안 끝난 경우) 설치된 APK에
@@ -37,7 +38,12 @@ export function AdBanner() {
   const attemptRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setHeight = useAdBannerStore((s) => s.setHeight);
-  const visible = adModuleAvailable && !failed;
+  // 2026-08-03 — EEA/영국 GDPR: 동의를 받기 전에 광고를 "요청"하면 안 된다(SDK 초기화는 무방,
+  // 로드가 문제다). 동의 흐름은 스플래시가 끝난 뒤 시작되므로 그때까지는 배너를 아예 안 붙인다.
+  // EEA 밖에서는 동의가 불필요해 즉시 resolved=true가 되므로 한국 사용자 체감 지연은 사실상 없다
+  // (store/useAdsConsentStore.ts, services/ads/adsConsent.ts 참고).
+  const canRequestAds = useAdsConsentStore((s) => s.canRequestAds);
+  const visible = adModuleAvailable && !failed && canRequestAds;
 
   // 2026-07-28 리서치(광고 2.4) — 예전엔 첫 로드 실패에 failed=true로 박아 세션 내내 배너가 영영 안 떴다
   // (일시적 no-fill 하나로 수익 0). 구글 권고대로 지수 백오프+지터로 재시도(5→10→20→40s 상한 60s) —

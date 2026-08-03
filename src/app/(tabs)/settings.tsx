@@ -17,6 +17,8 @@ import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
+import { useAdsConsentStore } from '../../store/useAdsConsentStore';
+import { showAdsPrivacyOptions } from '../../services/ads/adsConsent';
 import { useToastStore } from '../../store/useToastStore';
 import { DAILY_LIMIT_OPTIONS, FOCUS_SESSION_DURATION_OPTIONS } from '../../constants/limits';
 import { clearUserHistory } from '../../database/repositories/sessionsRepository';
@@ -83,6 +85,10 @@ export default function SettingsScreen() {
   const { settings, update } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showHelpCenter, setShowHelpCenter] = useState(false);
+  // 2026-08-03 — TCF 요구사항인 "광고 개인정보 설정" 재진입 항목. EEA/영국처럼 SDK가 REQUIRED로
+  // 답한 경우에만 노출한다(services/ads/adsConsent.ts 참고) — 그 외 지역에 띄우면 눌러도 아무 일이
+  // 안 일어나 고장난 메뉴처럼 보인다. 값은 앱 시작 시 동의 흐름이 끝나며 채워진다(_layout.tsx).
+  const adsPrivacyOptionsRequired = useAdsConsentStore((s) => s.privacyOptionsRequired);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const bluetooth = useBluetoothStore();
@@ -450,6 +456,13 @@ export default function SettingsScreen() {
             <ChevronRow title={t('settings.helpCenter')} bordered onPress={() => setShowHelpCenter(true)} />
             {/* App Store Guideline 5.1.1(i) — 계정 생성 앱은 개인정보처리방침 링크가 앱 내에 있어야 한다. */}
             <ChevronRow title={t('settings.privacyPolicy')} bordered onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => {})} />
+            {/* 2026-08-03 — IAB TCF v2.2 요구사항: EEA/영국 사용자는 한 번 동의한 뒤에도 언제든 다시
+                열어 바꿀 수 있는 진입점이 있어야 한다. 다만 EEA 밖 사용자에게는 눌러도 아무 일이
+                안 일어나 고장난 메뉴처럼 보이므로, SDK가 REQUIRED로 답할 때만 노출한다
+                (services/ads/adsConsent.ts 참고). */}
+            {adsPrivacyOptionsRequired && (
+              <ChevronRow title={t('settings.adsPrivacyOptions')} bordered onPress={() => { showAdsPrivacyOptions().catch(() => {}); }} />
+            )}
             <ChevronRow title={t('settings.rateApp')} bordered onPress={handleRateApp} />
             <View style={[styles.row, styles.rowLast]}>
               <Text style={styles.versionLabel}>{t('settings.version')}</Text>

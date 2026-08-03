@@ -269,6 +269,9 @@ export const translations = {
       helpCenter: 'Help Center & Docs',
       rateApp: 'Rate Pace App',
       privacyPolicy: 'Privacy Policy',
+      // 2026-08-03 — IAB TCF v2.2가 요구하는 광고 동의 재설정 진입점. EEA/영국에서만 노출된다
+      // (settings.tsx의 adsPrivacyOptionsRequired 참고).
+      adsPrivacyOptions: 'Ad Privacy Settings',
       logout: 'Log Out',
       // 2026-07-31 App Store 심사 반려(Guideline 5.1.1(v)) 대응 — 계정 삭제 옵션 신설.
       deleteAccount: 'Delete Account',
@@ -747,6 +750,7 @@ export const translations = {
       helpCenter: '도움말 및 가이드 문서',
       rateApp: 'Pace 앱 평가하기',
       privacyPolicy: '개인정보처리방침',
+      adsPrivacyOptions: '광고 개인정보 설정',
       logout: '로그아웃',
       // 2026-07-31 App Store 심사 반려(Guideline 5.1.1(v)) 대응 — 계정 삭제 옵션 신설.
       deleteAccount: '계정 삭제',

@@ -3984,3 +3984,43 @@ MD에 기록해둔 실측 데이터(1,134 프레임: 평소 795 / 성공 58 / �
 ⚠️ 이번 분석의 원시 로그(`scr_wave_raw.txt` 등)는 작업트리 정리 중 삭제됐다. 결과표는 위 로그에
 남아 있지만 다른 파라미터로 오프라인 재계산은 불가능하다 — **다음 측정 데이터는 반드시 저장소 밖
 (scratchpad 등)에 보관할 것.**
+
+### EEA/영국 광고 동의(UMP/GDPR) 배선 — 신규 구현 (2026-08-03)
+
+사장님 확인("유럽 광고 때문에 SDK 올려야 해?" → AdMob 콘솔 설정 완료). **SDK는 올릴 필요 없었다** —
+`react-native-google-mobile-ads@16.0.3`이 이미 `com.google.android.ump:user-messaging-platform`을
+번들하고 `AdsConsent`를 노출한다. 앱에 없던 것은 **호출뿐**이었다(`AdsConsent` 사용처 0건이었음).
+
+**왜 필요한가**: 구글은 2024-01-16부터 EEA·영국 사용자에게 광고를 서빙하려면 인증 CMP를 통한 동의를
+요구한다. ⚠️ `requestNonPersonalizedAdsOnly: true`는 **면제 사유가 아니다** — 비개인화 광고도 동의가
+필요하다. `rewardedAd.ts`에 있던 "EEA UMP 동의 요건 회피" 주석은 틀린 전제였고 이번에 정정했다.
+
+**구현(구글 공식 문서 순서 그대로)**:
+`requestInfoUpdate` → `loadAndShowConsentFormIfRequired` → `canRequestAds` 확인 → 그 뒤에 광고 요청.
+앞의 두 단계는 공식 헬퍼 `AdsConsent.gatherConsent()`가 그대로 감싸므로 그걸 쓴다.
+
+| 파일 | 역할 |
+|---|---|
+| `services/ads/adsConsent.ts` (신규) | `ensureAdsConsent()` → `{canRequestAds, privacyOptionsRequired}`, `showAdsPrivacyOptions()` |
+| `store/useAdsConsentStore.ts` (신규) | 두 값을 전역 공유 |
+| `app/_layout.tsx` | **스플래시가 끝난 뒤**에만 동의 흐름 시작 |
+| `components/home/AdBanner.tsx` | `canRequestAds`가 true일 때만 배너 렌더(=로드) |
+| `services/ads/rewardedAd.ts` | 로드 전 동의 보장, 미동의면 요청 자체를 안 함 |
+| `app/(tabs)/settings.tsx` | "광고 개인정보 설정" 행 — `privacyOptionsRequired`일 때만 노출 |
+
+**설계 판단 두 가지(문서 근거)**:
+- `mobileAds().initialize()`는 **동의 전에 불러도 정책상 문제없다**(개인정보를 처리하지 않음).
+  막아야 하는 건 초기화가 아니라 광고의 **로드**다. 그래서 초기화는 예전처럼 앱 시작 즉시 두고
+  로드만 게이팅했다 — 초기화까지 미루면 EEA 밖 사용자의 배너 표시가 괜히 늦어진다.
+- 폼을 띄우는 시점은 **스플래시 종료 후**(사장님 지시 "앱 다 뜨기 전에 하지 말고"). 구글 UX 권고
+  ("Activity/View 컨텍스트가 준비된 뒤 시작해야 첫 실행에 깜빡임이 없다")와도 일치한다.
+- `canRequestAds()`는 `requestInfoUpdate` 전에는 **항상 false**다. 그래서 스토어 초기값 false는
+  "거부"가 아니라 "아직 안 물어봄"을 뜻하며, 이 값이 true가 되기 전엔 광고를 요청하지 않는다.
+- `requestInfoUpdate`는 **매 앱 실행마다** 부르는 것이 구글 권장(서버 쪽에서 재동의 요구가 생길 수
+  있음) — 스플래시 종료 효과가 콜드 스타트마다 한 번 돈다.
+
+**한국만 배포 중이면 체감 변화 없다** — EEA 밖에서는 폼이 안 뜨고 `canRequestAds`가 즉시 true가 된다.
+지역 판정은 SDK가 하므로 우리가 국가 분기를 하지 않는다.
+
+⚠️ **실기기 미검증**. EEA 사용자 시뮬레이션은 `AdsConsentDebugGeography.EEA` + 테스트 기기 등록으로
+가능하다(`AdsConsentInfoOptions`). 실제 폼이 뜨는지·설정 행이 나타나는지 확인 필요.

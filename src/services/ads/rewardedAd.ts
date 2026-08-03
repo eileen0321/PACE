@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { ensureAdsConsent } from './adsConsent';
+import { useAdsConsentStore } from '../../store/useAdsConsentStore';
 
 // 2026-07-26 사용자 지시 — 무료 사용자의 Focus Session 자동넘김이 한도(기본 30회)에 도달하면
 // 보상형 광고를 보여주고, 시청 완료 시 20회를 더 준다. AdBanner.tsx와 동일한 방어적 require
@@ -55,8 +57,22 @@ export function isAdFailure(result: RewardedAdResult): boolean {
 
 // 매 호출마다 새 인스턴스를 만든다 — RewardedAd는 1회성(보여준 뒤 재사용 불가)이라, 세션 중 여러 번
 // 한도에 도달하면(연속으로 광고를 봐서 계속 이어가는 경우) 그때마다 새로 로드해야 한다.
-export function showRewardedAd(): Promise<RewardedAdResult> {
-  if (!rewardedAdAvailable) return Promise.resolve('failed_unavailable');
+export async function showRewardedAd(): Promise<RewardedAdResult> {
+  if (!rewardedAdAvailable) return 'failed_unavailable';
+
+  // 2026-08-03 — EEA/영국 GDPR: 광고를 "요청"하기 전에 동의가 끝나 있어야 한다. 아래 요청은
+  // requestNonPersonalizedAdsOnly로 나가지만 **비개인화 광고도 면제 대상이 아니다** — 구글은
+  // 2024-01-16부터 EEA/영국 사용자에게 광고를 서빙하려면 개인화 여부와 무관하게 인증 CMP를 통한
+  // 동의를 요구한다. 아래 코드의 옛 주석("EEA UMP 동의 요건 회피")은 그 점에서 틀린 전제였다.
+  // 실제로는 스플래시 직후 동의 흐름이 이미 끝나 있어(_layout.tsx) 이 대기는 즉시 통과하지만,
+  // 사용자가 아주 빠르게 광고 버튼에 도달한 경우를 대비해 여기서도 한 번 보장한다.
+  if (!useAdsConsentStore.getState().canRequestAds) {
+    const result = await ensureAdsConsent();
+    useAdsConsentStore.getState().setConsent(result);
+    // 동의를 못 받았으면(EEA에서 사용자가 거부했거나 폼 로딩 실패) 광고를 요청하지 않는다 —
+    // 요청해봐야 no-fill로 돌아오고, 무엇보다 동의 없이 요청하는 것 자체가 정책 위반이다.
+    if (!result.canRequestAds) return 'failed_unavailable';
+  }
 
   return new Promise((resolve) => {
     let settled = false;

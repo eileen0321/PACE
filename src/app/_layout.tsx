@@ -39,6 +39,8 @@ import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
+import { ensureAdsConsent } from '../services/ads/adsConsent';
+import { useAdsConsentStore } from '../store/useAdsConsentStore';
 import { useTranslation } from '../services/i18n';
 import { colors, typography } from '../constants/theme';
 
@@ -157,6 +159,28 @@ export default function RootLayout() {
       if (__DEV__) console.warn('[ads] initialize 스킵(네이티브 미링크):', String(e));
     }
   }, []);
+
+  // 2026-08-03 — EEA/영국 GDPR 동의(UMP). 구글 문서 기준으로 두 가지를 지킨다:
+  // (1) 초기화 순서: `mobileAds().initialize()`는 개인정보를 처리하지 않으므로 동의 전에 불러도
+  //     정책상 문제없다. 막아야 하는 건 초기화가 아니라 광고의 **로드**다 — 그건 useAdsConsentStore로
+  //     게이팅한다(AdBanner/rewardedAd 참고). 그래서 위 초기화는 예전 그대로 즉시 실행한다.
+  // (2) 폼을 띄우는 시점: 사장님 지시("앱 가동하고 앱 다 뜨기 전에 하지 말고")대로 스플래시가 끝난
+  //     뒤에만 시작한다. 구글의 UX 권고("Activity/View 컨텍스트가 준비된 뒤 시작해야 첫 실행에서
+  //     깜빡임 없이 뜬다")와도 일치한다. 부팅 중에 띄우면 스플래시 위로 폼이 겹쳐 보인다.
+  // requestInfoUpdate는 매 앱 실행마다 호출하는 것이 구글 권장이다(동의 상태·재동의 필요 여부가
+  // 서버에서 바뀔 수 있음) — 이 효과는 스플래시가 끝날 때마다, 즉 콜드 스타트마다 한 번 돈다.
+  const setAdsConsent = useAdsConsentStore((s) => s.setConsent);
+  useEffect(() => {
+    if (showAnimatedSplash) return;
+    let cancelled = false;
+    (async () => {
+      const result = await ensureAdsConsent(); // throw 안 함 — 실패 시 canRequestAds=false로 온다
+      if (!cancelled) setAdsConsent(result);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAnimatedSplash, setAdsConsent]);
 
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_600SemiBold,

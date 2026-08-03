@@ -3920,3 +3920,30 @@ code 2를 받고 있었다. Play Developer API로 code 4를 `completed`로 승�
 
 ⚠️ 같은 versionCode를 다시 `eas submit` 할 수는 없다(Play가 중복 버전코드를 거부). 이미 올라간
 초안을 살릴 때는 재제출이 아니라 **트랙 승격**(edits → tracks PUT → commit)으로 처리할 것.
+
+### ⚠️ D11 정정 — Play 구독 상품은 **이미 등록·활성** 상태다 (2026-08-03 확인)
+
+§2-A의 D11("Play Store에 구독 상품이 하나도 등록 안 돼 있음", "Google Payments 판매자 계정 미완으로
+정기 결제 페이지 접근 불가")은 **낡은 정보다.** Play Developer API로 직접 조회한 결과:
+
+```
+[com.strides7.pace] 구독 상품 2개
+  - pace_premium_monthly  [monthly:ACTIVE]
+  - pace_premium_yearly   [yearly:ACTIVE]
+```
+
+두 상품 다 기본 요금제가 **ACTIVE**다. 즉 판매자 계정도, 상품 생성도 그 사이에 완료됐다.
+
+**따라서 "구독을 설정하려면 프로덕션에 올려야 한다"는 전제는 틀렸다.** 구독 상품 생성·활성화는
+프로덕션 출시와 무관하고, 실제로 지금 프로덕션 트랙에는 릴리즈가 하나도 없는 상태에서 이미
+활성이다. 결제 테스트도 비공개 테스트(alpha) 트랙 + 라이선스 테스터로 가능하다.
+
+**남은 것은 RevenueCat 쪽 배선 하나뿐이다.** 앱은 `useSubscriptionStore.ts:114`에서
+`Purchases.getOfferings()`의 **`offerings.current`**만 읽는다(`offerings.current?.availablePackages`).
+따라서 RC 대시보드에서 ① 위 두 Play 상품을 RC Product로 import → ② "current"로 지정된 Offering의
+Package에 연결 → ③ entitlement에 매핑까지 돼 있어야 페이월에 상품이 뜬다. 하나라도 비면 페이월이
+빈 목록이 된다(기존 D11 증상과 동일하게 보이므로 혼동 주의).
+
+RC는 Secret API Key가 있어야 REST로 조회 가능한데 `.env`에는 Public SDK 키
+(`EXPO_PUBLIC_RC_ANDROID_KEY`/`EXPO_PUBLIC_RC_IOS_KEY`)만 있어 이 세션에서는 확인 불가 —
+**RC 대시보드에서 육안 확인 필요**. 확인 후 실기기에서 페이월 열어 상품 2개가 뜨는지 검증할 것.

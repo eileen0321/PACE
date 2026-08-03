@@ -4058,3 +4058,9 @@ gatherConsent({ debugGeography: AdsConsentDebugGeography.EEA, testDeviceIdentifi
 (엔트리는 `expo-router/entry`라 `/index.bundle`로 찌르면 404가 정상이다 — 이것도 오판 요인이었다.)
 
 ⚠️ 또한 이 검증 과정에서 force-stop을 써서 접근성이 꺼졌고, 설정 UI로 복구했다(§ 앞 절의 함정 1 참고).
+
+### 2026-08-03 (Mac 세션) — co-session UMP/GDPR 동의 배선(f2d089a/5696598) iOS 회귀검토 + 출석팝업 타이밍 수정
+- **UMP 동의(adsConsent/useAdsConsentStore) iOS 무해 확인**: 크로스플랫폼 배선, `_layout.tsx`가 `showAnimatedSplash`(스플래시 종료) 후 `ensureAdsConsent()` 1회 호출. EEA/영국만 폼 노출, **비-EEA(한국)는 `canRequestAds` 즉시 true**라 광고 정상. AdBanner `visible=...&&canRequestAds`, rewardedAd `!canRequestAds`면 ensureAdsConsent 후 진행 — 한국 정상 서빙. iOS ATT 불필요(비개인화+NSPrivacyTracking=false). tsc OK.
+- **출석 축하팝업 타이밍 수정(00dd2c3)**: pathname='/home' 순간엔 JS 스플래시가 아직 화면을 덮어 팝업이 먼저 떠 보였음 → (1)`showAnimatedSplash=false` 게이팅 + (2)`InteractionManager.runAfterInteractions`로 홈 렌더 후 발동. co-session UMP 효과와 동일 신호(showAnimatedSplash) 사용 — 병합 후 둘 다 정상 공존.
+- **⚠️ 심사 중 build 5는 UMP 코드 없음**(build5 = UMP 커밋 이전). Apple 심사 블로커 아님(UMP는 구글 요건). EEA 광고만 미노출, 한국 등 정상. → build5 그대로 통과시키고 **UMP는 다음 업데이트에 포함** 권장(심사 중인 것 뒤엎지 말 것).
+- ade1365 손짓 속도축 = Android Kotlin만, iOS Swift 무변경.

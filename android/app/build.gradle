@@ -92,7 +92,11 @@ android {
         applicationId 'com.strides7.pace'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
+        // 2026-08-03 — bare workflow에서는 이 값이 진짜 versionCode다. app.json의
+        // android.versionCode는 `expo prebuild`가 이 파일을 재생성할 때만 쓰이는데 우리는
+        // prebuild를 안 돌리므로 무시된다(app.json만 4로 올렸다가 빌드가 또 code 3으로
+        // 나온 것을 EAS 빌드 목록에서 확인). 올릴 때 두 곳을 같이 올릴 것.
+        versionCode 4
         versionName "1.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

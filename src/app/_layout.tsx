@@ -258,6 +258,15 @@ export default function RootLayout() {
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
+    // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — 쇼츠 위 FOCUS 연장 보상광고는
+    // 네이티브 액티비티(PaceRewardedAdActivity)가 띄우는데, 실광고 유닛/테스트 유닛 선택을 prefs의
+    // use_real_ads로 하고 기본값이 false다. 그런데 그 값을 쓰는 코드가 앱 전체에 한 줄도 없어서,
+    // 출시 빌드에서도 이 앱의 주 수익 경로가 영원히 구글 테스트 광고만 띄우는 상태였다(수익 0이고,
+    // 실사용자에게 테스트 광고를 서빙하는 것 자체가 AdMob 정책 위반이다). 네이티브는 JS 빌드
+    // 플래그를 스스로 알 수 없으므로 위 syncAutoNextBuildFlag와 같은 이유로 부팅 시 1회 밀어준다.
+    if (Platform.OS === 'android') {
+      bluetoothService.setUseRealAds(process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true').catch(() => {});
+    }
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
 
   // 2026-08-02 사장님 지시("쇼츠 보다 focus off 누르면 광고 볼래 크레딧 쓸래 팝업 뜨고, 광고 보겠다고

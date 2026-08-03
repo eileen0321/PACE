@@ -22,6 +22,7 @@ let PaceOverlay: {
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
   setIsPremium(isPremium: boolean): void;
+  setUseRealAds(useRealAds: boolean): void;
   setAvailableCredits(credits: number): void;
   consumePendingCreditSpend(): number;
   setSleepStillnessMinutes(minutes: number): void;
@@ -142,6 +143,17 @@ export const bluetoothService: BluetoothService = {
 
   // 2026-08-02 — 쇼츠 위 FOCUS OFF 선택 팝업(광고/크레딧)이 크레딧 버튼을 보여줄지 판단하려면
   // 네이티브가 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재) — 잔액이 바뀔 때마다 밀어준다.
+  // 2026-08-03 출시 전 검증에서 발견 — 쇼츠 위 보상광고는 네이티브 액티비티가 띄우는데, 실광고 유닛을
+  // 쓸지 테스트 유닛을 쓸지는 JS 빌드 플래그로만 알 수 있다. 안 밀어주면 출시 빌드에서도 테스트 광고만
+  // 나간다(수익 0 + AdMob 정책 위반). 부팅 시 1회 밀어준다.
+  async setUseRealAds(useRealAds: boolean) {
+    try {
+      PaceOverlay?.setUseRealAds(useRealAds);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setUseRealAds failed', e);
+    }
+  },
+
   async setAvailableCredits(credits: number) {
     try {
       PaceOverlay?.setAvailableCredits(Math.max(0, Math.floor(credits)));

@@ -3735,3 +3735,69 @@ handSize 변화율(배/초)을 계산해보니:
 ⚠️ **이 파일의 임계값을 근거 없이 바꾸지 말 것.** 오늘까지 GROWTH 1.5→1.2→1.1→1.05→1.3,
 SWEEP 0.9→0.75→0.85→0.75로 아홉 번 바뀌었고 전부 실패했다. 바꾸려면 진단 모드로 데이터를 먼저
 모으고 위와 같은 트레이드오프 표를 만든 뒤에 정할 것.
+
+---
+
+## 2026-08-03 (Windows 세션) — 실기기 검증 완료: 세션 종료 후 자동 스와이프 / 앱으로 두 번 열림
+
+두 건 다 **로그와 화면 녹화로 재현·수정 확인**했다. 추측이 아니라 실측이다.
+
+### 검증 1 — "손짓 안 했는데 지 맘대로 넘어감" = 세션 종료 후에도 살아 있던 워처 ✅ 해결
+
+원인: `stopWatching()`이 `onDestroy()`에서만 불렸다. 한도 도달로 세션이 끝나도 서비스 자체는
+차단 오버레이/알약을 계속 띄워야 해서 `onDestroy`가 안 불리고, 자동넘김 워처가 고아 상태로 계속
+돌면서 45초마다 유튜브 화면을 임의로 넘겼다.
+
+수정: `PaceOverlayService.kt`의 SESSION END 블록(`markExpired` 직후)에서 직접 정리한다 —
+`PaceAccessibilityService.stopWatching()` / `PaceSnapDetector.stop()` / `PaceHandWaveDetector.stop()`.
+
+실측 타임라인(08-03, 유튜브 Shorts 전경 유지):
+
+| 시각 | 이벤트 |
+|---|---|
+| 10:00:30 | VIDEO_ADVANCE looped-back (세션 중, 정상) |
+| 10:01:04 | VIDEO_ADVANCE near-end + dispatchGesture accepted |
+| 10:01:49 | **SWIPE tier=2 safety-timeout** (45.4초 경과, 세션 중 정상) |
+| 10:02:09 | **SESSION END** reason=daily_limit_reached tier=2 |
+| 10:02:09 ~ 10:08 | **스와이프 0건** — 유튜브가 계속 전경인데도 아무 동작 없음 |
+
+수정 전에는 같은 조건에서 종료 후에도 45초 간격으로 계속 나갔다(07:21:07 종료 → 07:21:47 /
+07:22:33 / 07:23:18 / 07:24:04). 6분간 0건이면 재발 없음으로 판정.
+
+### 검증 2 — "P → 앱으로 누르면 앱이 두 번 열림" ✅ 해결
+
+원인: 자기 앱을 딥링크(`pace://home`)로 열어서 시스템이 새 태스크/액티비티를 만들려다 singleTask
+때문에 기존 인스턴스로 합쳐지는 과정에서 화면이 한 번 더 그려졌다.
+
+수정: `getLaunchIntentForPackage()` + `FLAG_ACTIVITY_REORDER_TO_FRONT`(런처 아이콘과 동일한
+인텐트). `NO_USER_ACTION`은 유지(없으면 유튜브가 자동 PIP로 들어감).
+
+실측:
+- 누르기 전/후 모두 고유 `ActivityRecord` **1개**(`114d787`) — 태스크도 #1829 하나뿐.
+- 로그의 `TaskLaunchParamsModifier: task=null activity=ActivityRecord{8f22a53}`는 후보 레코드일
+  뿐이고 바로 다음 줄에서 기존 `Task{8f516b4 #1829}`로 해소된다. 최종 포커스도 `114d787`.
+- 12초 화면 녹화 프레임 분석: Shorts → (크로스페이드 1회) → Pace 화면. **두 번 그려지거나
+  Shorts로 다시 튕기는 프레임 없음.**
+
+남은 사소한 잔상: 앱으로 전환한 뒤 알약이 Pace 자기 화면 위에 **2~3초** 더 겹쳐 보인다
+(`openApp()`에서 즉시 `visibility=GONE` 하지만 1초 주기 전경 폴링이 한 번 되살렸다가 다음 폴에서
+다시 숨김). 기능 문제는 아니고 시각적 잔상 — 우선순위 낮음.
+
+### ⚠️ 이번 세션에서 확인한 함정 두 가지
+
+1. **`adb shell am force-stop com.strides7.pace`는 `enabled_accessibility_services`를 통째로
+   비운다.** force-stop 직후 실측으로 목록이 빈 문자열이 됐다. 그동안 "왜 갑자기 손짓/오버레이가
+   안 되냐"가 반복된 진짜 원인이 이것 — 앱 버그가 아니라 내(디버깅) 쪽 force-stop이었다.
+   **재설치·force-stop 뒤에는 반드시 접근성을 다시 켤 것.**
+2. **일일 한도 3회차부터는 세션이 안 끝난다**(설계 의도). `dailyLimitHitCount >= 3`이면
+   tier=3+ 비차단 모드로 `EXTEND_MINUTES`를 조용히 더하며 카운트다운을 이어간다. 종료 경로를
+   테스트하려면 prefs의 `daily_limit_hit_date`를 하루 뒤로 돌려 카운트를 0으로 리셋해야 한다.
+
+### 출시 빌드 상태 — ⛔ 기존 AAB(versionCode 3) 업로드 금지
+
+EAS 빌드 `3d6a7e4e`(FINISHED, 1.0/code 3)는 **아래 두 수정이 들어가기 전에 만들어졌다**:
+- 위 세션 종료 워처 정리
+- `setUseRealAds` 배선 — 이게 없으면 **출시 빌드에서도 구글 테스트 광고만 나간다**
+  (수익 0 + AdMob 정책 위반). prefs 기본값이 false인데 그 값을 밀어주는 코드가 없었다.
+
+→ `versionCode`를 **4**로 올리고 재빌드해서 그 결과물을 비공개 테스트에 올릴 것.

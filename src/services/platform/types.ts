@@ -189,6 +189,12 @@ export interface BluetoothService {
    * 버튼 노출 여부를 판단하려면 네이티브가 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재).
    * iOS는 이 네이티브 팝업 자체가 없어 no-op.
    */
+  /**
+   * 2026-08-03 — 쇼츠 위 보상광고(Android 네이티브 액티비티)가 실광고 유닛을 쓸지 구글 테스트 유닛을
+   * 쓸지는 JS 빌드 플래그(EXPO_PUBLIC_USE_REAL_ADS)로만 알 수 있는데 네이티브는 그 값을 모른다.
+   * 안 밀어주면 출시 빌드에서도 테스트 광고만 나간다(수익 0 + AdMob 정책 위반). iOS는 no-op.
+   */
+  setUseRealAds(useRealAds: boolean): Promise<void>;
   setAvailableCredits(credits: number): Promise<void>;
   /**
    * 네이티브 팝업에서 크레딧으로 연장한 분량을 1회성으로 회수(읽으면 즉시 리셋). 실제 잔액 차감은

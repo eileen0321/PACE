@@ -446,6 +446,13 @@ class PaceOverlayModule : Module() {
     // 2026-08-02 사장님 지시("focus off 누르면 광고 볼래/크레딧 쓸래 팝업") — 그 팝업을 쇼츠 위
     // 네이티브 오버레이로 띄우려면 네이티브가 크레딧 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재).
     // isPremium과 동일한 JS→네이티브 푸시.
+    // 2026-08-03 — 쇼츠 위 보상광고(PaceRewardedAdActivity)가 실광고 유닛을 쓸지 테스트 유닛을 쓸지는
+    // JS 빌드 플래그(EXPO_PUBLIC_USE_REAL_ADS)로 정해지는데 네이티브는 그 값을 모른다. 이 값을 안 밀면
+    // 기본값 false로 출시 빌드에서도 테스트 광고만 나간다(출시 전 검증에서 실제로 그 상태였음).
+    Function("setUseRealAds") { useRealAds: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setUseRealAds(context, useRealAds) }
+    }
+
     Function("setAvailableCredits") { credits: Int ->
       appContext.reactContext?.let { context -> PaceOverlayService.setAvailableCredits(context, credits) }
     }

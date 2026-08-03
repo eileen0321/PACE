@@ -906,6 +906,17 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(PREF_AVAILABLE_CREDITS, credits).apply()
     }
 
+    // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — PaceRewardedAdActivity는 실광고/테스트
+    // 광고 선택을 prefs의 use_real_ads로 하는데(기본값 false), 그 값을 쓰는 코드가 앱 전체에 단 한 줄도
+    // 없었다. 즉 출시 빌드에서도 FOCUS 연장 보상광고가 영원히 구글 테스트 유닛을 띄운다 — 이 앱의 주
+    // 수익 경로인데 수익이 0이고, 실사용자에게 테스트 광고를 서빙하는 것 자체가 AdMob 정책 위반이다.
+    // 네이티브는 EXPO_PUBLIC_USE_REAL_ADS 같은 JS 빌드 플래그를 스스로 알 방법이 없으므로, 기존
+    // is_premium/available_credits와 똑같이 JS가 부팅 시 한 번 밀어준다(_layout.tsx 참고).
+    fun setUseRealAds(context: Context, useRealAds: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PaceRewardedAdActivity.PREF_USE_REAL_ADS, useRealAds).apply()
+    }
+
     private fun availableCredits(context: Context): Int =
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(PREF_AVAILABLE_CREDITS, 0)
 
@@ -1541,6 +1552,16 @@ class PaceOverlayService : Service() {
         Log.d("PaceOverlay", "SESSION END reason=$reason tier=${if (isDailyLimit) dailyLimitHitCount else 0} stillnessElapsedMs=$stillnessElapsedMs thresholdMs=$stillnessThresholdMs btDisconnectedDuringStillness=$btDisconnectedDuringStillness")
         markExpired(reason)
         clearSessionActive()
+        // 2026-08-03 사장님 실기기 재현("손짓 안 했는데 지 맘대로 넘어감") — 이게 그 정체였다.
+        // 로그 증거: 07:21:07 SESSION END(daily_limit_reached) 이후에도 07:21:47 / 07:22:33 /
+        // 07:23:18 / 07:24:04 로 45초마다 SWIPE tier=2(safety-timeout)가 계속 나갔다.
+        // 원인: stopWatching()이 onDestroy()에서만 불리는데, 한도 도달로 세션이 끝나도 서비스 자체는
+        // 알약/차단 오버레이를 계속 띄워야 하므로 onDestroy가 안 불린다 → 자동넘김 워처가 고아
+        // 상태로 계속 돌면서 유튜브 화면을 임의로 넘겼다. 세션이 끝나는 이 시점에 직접 끈다.
+        // (감지기들도 같이 정리 — 세션이 끝났는데 카메라가 계속 돌 이유가 없다: 배터리도 낭비.)
+        PaceAccessibilityService.stopWatching()
+        PaceSnapDetector.stop()
+        PaceHandWaveDetector.stop()
         if (notifyLimit && reason != "sleep_detected") {
           // 수면감지는 "자고 있는데 알림 소리/진동으로 깨우는" 모순을 피하려 알림을 안 보낸다 —
           // 화면 자체를 잠그므로(아래 showBlockOverlay/lockScreen) 어차피 알림을 봐도 소용없다.

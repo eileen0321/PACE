@@ -97,23 +97,7 @@ object PaceHandWaveDetector {
   // 1.0~1.08로 1.3에도 한참 못 미침 — 즉 두 축 모두 문턱 아래라 "하나도 안 되는" 상태였다).
   // 실제 동작이 만들어내는 값 아래로 내린다. 손을 가만히 든 상태는 sweep이 0.2~0.3 수준이므로
   // (WAVE by=growth 로그의 동시 sweep 값: 0.23/0.31/0.60) 0.75와는 여유가 있다.
-  // 2026-08-02 밤 재조정 — 아래 진동 축(countDirectionReversals)이 좌우 흔들기를 전담하게 됐으므로,
-  // 이 스윕 축은 "한 번에 크게 훑는" 동작 전용으로 되돌린다. 실측상 확실히 안전한 값만 남긴다
-  // (성공 실측 0.86/1.01 vs 가만히 든 손이 growth로 잡힐 때 동시 sweep 0.52까지 관측됨) — 0.75는
-  // 실패 구간(0.62~0.74)과 너무 가까워 경계에 걸쳐 있었다.
-  // ⚠️ 2026-08-02 밤 — 진동 축을 넣으면서 이 값을 0.75→0.85로 올렸는데, 그 진동 축에 버그가 있어
-  // 한 번도 발화하지 않는 바람에(reversals 항상 0) 결과적으로 감지가 이전보다 더 안 되게 만들었다.
-  // 새 축을 추가할 때 기존 축을 같이 조이면 새 축이 실패했을 때 곧장 회귀가 된다 — 원래 값으로
-  // 되돌린다. 진동 축이 실측으로 검증된 뒤에 필요하면 그때 다시 판단한다.
   private const val SWEEP_RATIO_THRESHOLD = 0.75
-
-  // 진동 축 — 방향 전환 1회로 인정하려면 직전 극점에서 이만큼(손 너비 대비)은 되돌아와야 한다.
-  // 이 게이팅이 없으면 미세한 손떨림이 매 프레임 방향을 뒤집어 즉시 오탐이 된다. 실측 근거:
-  // 실패한 흔들기의 전체 이동폭이 0.62~0.74(=편도 스윙 약 0.3 이상)였고, 가만히 든 손은 창 전체를
-  // 합쳐도 0.2~0.3이라 개별 스윙은 이보다 훨씬 작다 — 0.25면 진짜 흔들기만 통과한다.
-  private const val MIN_SWING_RATIO = 0.25
-  // 왕복 1회(좌→우→좌)를 요구한다. 1회로 두면 손을 한쪽으로 치우는 단순 이동도 걸린다.
-  private const val MIN_REVERSALS = 2
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
@@ -449,44 +433,6 @@ object PaceHandWaveDetector {
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
   }
 
-  // 진동 축 — xHistory(손목 x좌표 이력) 안에서 "충분히 큰 방향 전환"이 몇 번 일어났는지 센다.
-  // 극점(peak) 검출 + 히스테리시스: 한쪽으로 가던 중 직전 극점에서 minSwing 이상 되돌아왔을 때만
-  // 1회로 인정하고 방향을 뒤집는다. minSwing 미만의 흔들림은 극점만 갱신하고 카운트되지 않으므로
-  // (=히스테리시스 밴드), 손을 가만히 들고 있을 때의 미세 떨림은 아무리 자주 반전돼도 0으로 남는다.
-  // 손 크기로 정규화하기 때문에 카메라와의 거리가 달라져도 같은 동작이면 같은 값이 나온다.
-  private fun countDirectionReversals(handSize: Double): Int {
-    if (xHistory.size < 3 || handSize <= 0.0) return 0
-    val minSwing = handSize * MIN_SWING_RATIO
-    var reversals = 0
-    var dir = 0 // 0 = 아직 방향 미확정, +1 = 오른쪽으로 진행 중, -1 = 왼쪽
-    var extreme = xHistory.first().second
-    for (i in 1 until xHistory.size) {
-      val x = xHistory[i].second
-      if (dir == 0) {
-        // ⚠️ 2026-08-02 밤 실기기 로그로 발견한 버그 — 여기를 dir>=0 / dir<=0 두 조건으로 처리했더니
-        // dir==0일 때 두 조건이 동시에 참이라 손이 어느 쪽으로 움직이든 극점(extreme)이 x를 그대로
-        // 따라가 버렸다. 그래서 스윙이 전혀 쌓이지 못해 dir이 영원히 0에 머물고 reversals가 항상 0 —
-        // 손을 확실히 흔드는 구간(sweep 0.60~0.80)에서도 reversals=0만 찍혔다. 방향이 정해지기 전에는
-        // 극점을 고정해두고, 거기서 minSwing 이상 벌어진 쪽으로 최초 방향만 확정한다(전환으로 세지 않음).
-        if (x - extreme >= minSwing) { dir = 1; extreme = x }
-        else if (extreme - x >= minSwing) { dir = -1; extreme = x }
-        continue
-      }
-      if (dir > 0) {
-        if (x > extreme) extreme = x                       // 오른쪽으로 더 감 — 극점만 갱신
-        else if (extreme - x >= minSwing) {                 // 극점에서 충분히 되돌아옴 = 전환
-          reversals++; dir = -1; extreme = x
-        }
-      } else {
-        if (x < extreme) extreme = x
-        else if (x - extreme >= minSwing) {
-          reversals++; dir = 1; extreme = x
-        }
-      }
-    }
-    return reversals
-  }
-
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
     if (result.landmarks().isEmpty()) {
       awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
@@ -572,36 +518,16 @@ object PaceHandWaveDetector {
     // 0.99 이상이면 전부 걸려, 손이 화면에 잡혀 있는 동안 사실상 매 프레임(최대 초당 6~7회) 찍혔다.
     // 오늘 실기기 조사에서 이 로그가 다른 로그를 계속 밀어냈다. 진짜 "아깝게 실패"(임계값의 97% 이상)
     // 일 때만 남기도록 좁힌다 — 튜닝 근거는 그대로 확보하면서 스팸은 사라진다.
-    // 2026-08-02 밤 — 세 번째 축: 방향 전환 횟수(진동). 앞선 두 축을 임계값만 계속 조정해온
-    // 이력(GROWTH 1.5→1.2→1.1→1.05→1.3, SWEEP 0.9→0.75)이 전부 같은 함정에 빠져 있었다.
-    //
-    // 실측 데이터(사장님 시도 구간 로그):
-    //   성공: sweep 0.86/1.01, growth 1.31/1.33/1.36/1.37/1.40
-    //   실패(near-miss) 11회: sweep 0.62~0.74, growth 1.03~1.14  ← 전부 문턱 바로 아래
-    //   그중 한 번은 sweep=0.7442 — 기준 0.75를 0.006 차이로 놓쳤다.
-    // 즉 동작은 매번 비슷한데 "얼마나 멀리 갔나"라는 크기 하나로 자르니 경계에 걸쳐 6번에 1번만
-    // 걸렸다. 여기서 임계값을 또 내리면 오탐이 터진다 — 실제로 1.05까지 내렸을 때 가만히 있어도
-    // 노이즈만으로 1.16이 나와 되돌린 이력이 있다. 크기 축은 이미 한계에 도달했다.
-    //
-    // 그래서 "흔들기"의 정의 자체를 바꾼다. 손 흔들기를 다른 동작과 구분하는 건 이동 거리가 아니라
-    // **방향을 반복해서 바꾼다는 것**이다(가만히 든 손도, 손을 한쪽으로 치우는 동작도 방향 전환이
-    // 없다). 신호처리에서 진동을 세는 표준 기법(zero-crossing/극점 검출 + 진폭 게이팅)을 그대로
-    // 쓴다 — 최소 진폭(MIN_SWING_RATIO)을 넘긴 방향 전환만 1회로 세므로 미세한 손떨림은 아무리
-    // 많이 반전돼도 카운트되지 않는다. 크기 축과 달리 "오탐↔미탐"을 맞바꾸지 않고 둘 다 좋아진다.
-    val reversals = countDirectionReversals(handSize)
-    val oscillated = reversals >= MIN_REVERSALS
-
     val grew = growthRatio > GROWTH_RATIO_THRESHOLD
     val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
 
-    if (!grew && !swept && !oscillated && (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7 || reversals >= 1)) {
-      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) reversals=$reversals(th=$MIN_REVERSALS) handSize=$handSize")
+    if (!grew && !swept && (growthRatio > GROWTH_RATIO_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7)) {
+      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) handSize=$handSize")
     }
 
-    // 접근(밀기)/스윕(한 번에 크게 훑기)/진동(좌우 흔들기)은 OR — 뭘 하든 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept || oscillated) && pastRefractory) {
-      val by = when { oscillated -> "oscillation"; swept -> "sweep"; else -> "growth" }
-      Log.i(TAG, "WAVE detected by=$by growth=$growthRatio sweep=$sweepRatio reversals=$reversals handSize=$handSize")
+    // 접근(밀기)과 스윕(좌우 흔들기)은 OR — 둘 중 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
+    if ((grew || swept) && pastRefractory) {
+      Log.i(TAG, "WAVE detected by=${if (swept) "sweep" else "growth"} growth=$growthRatio sweep=$sweepRatio handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
       xHistory.clear()

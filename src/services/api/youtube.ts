@@ -18,7 +18,15 @@ export function hasYouTubeProxy(): boolean {
   return YOUTUBE_PROXY_URL.length > 0;
 }
 
-export const YOUTUBE_API_KEY = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY || '';
+// 2026-08-03 출시 전 검증에서 실제 유출 확인 — 위 주석의 "프로덕션 번들에 실려도 무해하다
+// (어차피 __DEV__ 분기라 실행 안 됨)"는 판단이 틀렸다. 실행 여부와 무관하게 문자열 리터럴 자체가
+// 번들에 박히고, 그 번들은 APK에 그대로 들어가 디컴파일하면 평문으로 나온다. 실제로 릴리즈 번들
+// (android/app/build/generated/assets/react/release/index.android.bundle)을 검사해 키가 평문으로
+// 들어있는 것을 확인했다 — 바로 위 문단이 경고한 "남이 우리 쿼터를 훔쳐 쓸 수 있는 리스크"가
+// 프로덕션 빌드에 그대로 남아 있던 것이다.
+// __DEV__를 값 자체에 걸면 Metro가 프로덕션 빌드에서 __DEV__를 false로 치환하며 상수 폴딩해
+// 키 리터럴이 번들에서 완전히 사라진다(개발 편의는 그대로 유지). 사용처가 아니라 값에 걸어야 한다.
+export const YOUTUBE_API_KEY = __DEV__ ? (process.env.EXPO_PUBLIC_YOUTUBE_API_KEY || '') : '';
 export function hasYouTubeKey(): boolean {
   return YOUTUBE_API_KEY.length > 0;
 }

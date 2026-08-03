@@ -151,7 +151,15 @@ class PaceOverlayService : Service() {
         // 이 문제 자체가 없다(같은 API로 도는 재생시간 폴링이 이 기간 내내 안 끊기고 정상 작동한 걸로
         // 이미 확인됨) — 최후 순위로 덧붙여 위 두 신호가 놓쳐도 알약이 계속 보이게 한다.
         val windowVisible = PaceAccessibilityService.isSupportedAppWindowVisible()
-        val shouldShow = (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible
+        // 2026-08-03 실기기 녹화로 확인 — P메뉴 "앱으로"로 Pace를 띄운 뒤에도 알약이 Pace 자기 화면
+        // 위에 2~3초 더 겹쳐 보였다. openApp()에서 즉시 visibility=GONE 하는데도 그런 이유는, 전환
+        // 직후 잠깐 유튜브 창이 아직 getWindows()에 남아 windowVisible=true가 되고 UsageStats도
+        // 아직 유튜브를 가리켜서 다음 폴(1초)이 알약을 곧바로 되살리기 때문이다. "우리 앱이 전경이면
+        // 알약은 어떤 신호가 뭐라 하든 띄우지 않는다"가 예외 없는 규칙이라 여기서 잘라낸다(사용자가
+        // 직접 Pace로 전환한 경우도 같이 해결된다).
+        val selfForeground = usageStatsForeground == packageName || accessibilityForeground == packageName
+        val shouldShow = !selfForeground &&
+          ((foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
         // 밀려나 디버깅을 방해했다(실기기 조사 중 반복 확인). 오버레이 표시 로직 자체는 무변경.

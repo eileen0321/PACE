@@ -4335,3 +4335,54 @@ gatherConsent({ debugGeography: AdsConsentDebugGeography.EEA, testDeviceIdentifi
 
 **미검증으로 남긴 것**: 45초 폴백 삭제 후 "손 대지 않고 45초 이상 두면 안 넘어간다"는 실사용 확인,
 그리고 §2-B **B4 수면감지 블로커**(위 참고).
+
+### ✅ 수면감지 2단계 — 전 구간 실기기/에뮬 검증 완료 (2026-08-04)
+
+블로커(유튜브 자동 반복을 사용자 입력으로 오인, 커밋 `1917234`)를 고친 뒤 **끝까지 도달 확인**.
+
+```
+23:37:29  SLEEP stage=SUSPECT noInputMs=630389        ← 1단계(무입력 10분)
+23:42:44  SLEEP stage=PROMPTED — "아직 보고 계세요?"   ← 2단계 확정 + 팝업(화면 확인)
+23:44:29  SESSION END reason=sleep_detected           ← 30초 무응답 → 종료
+```
+
+| 항목 | 결과 | 확인 환경 |
+|---|---|---|
+| 1단계 진입(무입력) | ✅ | 실기기 + 에뮬 |
+| 2단계 확정(밤+어두움+눕힘) | ✅ | 에뮬(센서 주입) |
+| 2단계 **보류**(조명 켜짐+세워둠) | ✅ | 실기기 |
+| 팝업 표시 | ✅ | 화면 캡처 |
+| 무응답 → 종료 | ✅ `reason=sleep_detected` | 에뮬 |
+| loop-back 오인 수정 | ✅ 반복 재생 중에도 판정 진행 | 에뮬 |
+
+**"2단계 보류"가 특히 중요하다** — 조명 켜진 방에서 폰이 세워져 있을 때
+(`dark=false(lux=57.3) flat=false(gz=5.33)`) 정확히 확정을 거부했다. 예전 수면감지가 폐기된
+결정적 이유("거치대에 세워두고 보는데 강제 종료")가 구조적으로 재발할 수 없다는 증거다.
+
+### 🛠 에뮬레이터 검증 파이프라인 (이번에 구축, 앞으로 재사용할 것)
+
+기기를 사장님이 쓰실 때도 검증을 이어갈 수 있다. 오히려 **센서를 직접 주입할 수 있어 실기기보다
+낫다** — "어두운 방에 폰을 눕혀둔" 같은 조건을 실기기에서는 만들기 어렵다.
+
+```bash
+# 1) Metro 없이 도는 릴리즈 APK(번들 내장). release도 debug 키로 서명돼 있어 바로 빌드된다.
+cd android && ./gradlew :app:assembleRelease
+adb -s emulator-5554 install -r app/build/outputs/apk/release/app-release.apk
+
+# 2) 권한(에뮬에서는 adb로 바로 부여된다 — 실기기는 UI로 켜야 함)
+adb -s emulator-5554 shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService
+adb -s emulator-5554 shell settings put secure accessibility_enabled 1
+adb -s emulator-5554 shell appops set com.strides7.pace SYSTEM_ALERT_WINDOW allow
+adb -s emulator-5554 shell appops set com.strides7.pace GET_USAGE_STATS allow
+
+# 3) 센서 주입
+adb -s emulator-5554 emu sensor set light 3            # 조도 3 lux = 어두움
+adb -s emulator-5554 emu sensor set acceleration 0:0:9.8  # 중력 Z 9.8 = 눕혀짐
+```
+
+⚠️ **에뮬에서 Metro(디버그 빌드)는 쓰지 말 것** — 번들 전송이
+`java.net.ProtocolException: Expected leading [0-9a-fA-F] character` 로 계속 깨진다(프록시 없음,
+adb reverse 정상, 물리기기 분리해도 동일). 릴리즈 APK 경로가 빠르고 확실하며 출시 조건과도 같다.
+
+⚠️ MSYS 경로 변환 때문에 `adb shell screencap -p /sdcard/x.png`가
+`C:/Program Files/Git/sdcard/...`로 바뀐다 — **`//sdcard/...`(이중 슬래시)**로 쓸 것.

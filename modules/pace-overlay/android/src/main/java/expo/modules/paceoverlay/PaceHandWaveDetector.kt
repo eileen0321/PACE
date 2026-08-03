@@ -99,11 +99,22 @@ object PaceHandWaveDetector {
   //   growth>1.20 단독            → 21건 회수, 오탐 15.3%
   // 평소의 느린 손 움직임(오탐의 대부분)이 속도 조건에서 걸러지기 때문이다.
   private const val SPEED_ASSIST_GROWTH_THRESHOLD = 1.20
-  private const val SPEED_THRESHOLD_PER_SEC = 0.3
+  // 2026-08-03 실기기 재측정으로 0.3 → 0.25. 근거: 사장님 실사용 로그에서 growth는 1.20을 넘겼는데
+  // 속도만 미달해 놓친 4건이 **전부 정확히 0.278**이었다(0.3 바로 아래에 몰림). 0.25면 그 4건이 전부
+  // 회수되고, 그 아래로 더 내려도 추가 회수가 없다(0.20/0.15에서도 회수 4건으로 동일) — 즉 0.25가
+  // 이 분포에서 회수를 다 가져가는 최소값이다.
+  // 이 값은 growth>1.20과 **AND**로만 쓰이므로 단독으로 오탐을 만들 수 없다. 평소(정지) 프레임은
+  // growth가 1.0 근처라 애초에 이 분기에 도달하지 않는다.
+  private const val SPEED_THRESHOLD_PER_SEC = 0.25
   // 두 피크는 시간이 어긋난다 — 손짓 초반은 빠르지만 아직 작고(속도 피크), 후반은 크지만 이미
   // 느려진다(성장 피크). 그래서 "같은 프레임에서 둘 다 만족"으로 걸면 57 프레임 중 5개만 통과해
   // 사실상 안 잡힌다. 속도는 최근 창 안의 최댓값으로 본다(성장 창 GROWTH_WINDOW_MS와 별개).
   private const val SPEED_PEAK_WINDOW_MS = 700L
+
+  // 진단 모드 — 디버그 빌드에서만 자동 ON(start() 시 applicationInfo의 FLAG_DEBUGGABLE로 판단).
+  // 릴리즈 빌드에서는 항상 false라 로그가 한 줄도 안 나간다.
+  @Volatile private var diagEnabled = false
+  private var lastDiagAtMs = 0L
   // 2026-08-02 실기기 로그로 확인된 진짜 결함(사장님: "동일하게 손짓해도 판단을 못 하는 거겠지" —
   // 정확한 지적이었다) — 위 임계값들은 전부 handSize "성장률"만 조정한 것이라, 감지할 수 있는 동작이
   // 사실상 "손을 카메라 쪽으로 미는 것" 하나뿐이었다. 사용자가 실제로 하는 좌우로 흔드는 동작은
@@ -118,7 +129,30 @@ object PaceHandWaveDetector {
   // 1.0~1.08로 1.3에도 한참 못 미침 — 즉 두 축 모두 문턱 아래라 "하나도 안 되는" 상태였다).
   // 실제 동작이 만들어내는 값 아래로 내린다. 손을 가만히 든 상태는 sweep이 0.2~0.3 수준이므로
   // (WAVE by=growth 로그의 동시 sweep 값: 0.23/0.31/0.60) 0.75와는 여유가 있다.
-  private const val SWEEP_RATIO_THRESHOLD = 0.75
+  // 2026-08-03 — 0.75 → 0.22. **그동안의 전제가 틀렸다는 것이 무검열 측정으로 확정됐다.**
+  //
+  // 기존 기록에는 "평소(가만히) sweep 중앙 0.321, 손짓 0.353 — 거의 안 갈라져 원리적으로 구분 불가"로
+  // 남아 있었고, 그 숫자 때문에 기준을 0.75로 높게 묶어둔 채 다른 축만 아홉 번 조정했다. 그런데 그
+  // 0.321은 **검열된 데이터에서 나온 허수**였다 — near-miss 로그가 "임계값 근처"에서만 찍히도록 걸려
+  // 있어서, 실제 정지 상태의 낮은 값들이 표본에 한 번도 안 들어왔다.
+  //
+  // 매 프레임 무조건 기록하는 진단 모드(diagEnabled)로 실기기에서 다시 재니 분포가 완전히 달랐다:
+  //   가만히(390프레임): 중앙 0.030  p95 0.092  최대 0.185
+  //   손짓  (307프레임): 중앙 0.274  p90 0.448  최대 0.561
+  // 즉 두 분포는 거의 겹치지 않는다(가만히 최댓값 0.185 < 손짓 중앙값 0.274). 실제 값은 기록된
+  // 0.321보다 10배 작았다.
+  //
+  // 임계값별 실측 트레이드오프(손짓 프레임 통과율 / 가만히 오탐률):
+  //   0.75 → 0.3% / 0%   ← 기존값. sweep 축이 사실상 꺼져 있던 것과 같다(발동 73건 중 sweep 4건)
+  //   0.30 → 42.0% / 0%
+  //   0.25 → 54.7% / 0%
+  //   0.22 → 62.9% / 0%   ← 채택. 오탐 0%를 유지하는 구간에서 회수가 가장 큰 값
+  //   0.18 → 71.3% / 1.03%  ← 여기서부터 오탐 발생
+  // 0.22는 관측된 가만히 최댓값(0.185)보다 확실히 위라 안전마진도 있다.
+  //
+  // ⚠️ 다음에 이 값을 만지려면 반드시 diagEnabled 로그로 "가만히" 구간을 함께 재서 위와 같은 표를
+  // 만든 뒤에 정할 것. 손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다.
+  private const val SWEEP_RATIO_THRESHOLD = 0.22
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
@@ -222,6 +256,9 @@ object PaceHandWaveDetector {
       return
     }
     running = true
+    // 디버그 빌드에서만 매 프레임 진단 로그(위 diagEnabled 주석 참고). 릴리즈에서는 항상 false.
+    diagEnabled = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    lastDiagAtMs = 0L
     val myGeneration = ++startGeneration
     Handler(Looper.getMainLooper()).post { startOnMainThread(context, onWave, myGeneration) }
   }
@@ -567,12 +604,31 @@ object PaceHandWaveDetector {
     // 0.99 이상이면 전부 걸려, 손이 화면에 잡혀 있는 동안 사실상 매 프레임(최대 초당 6~7회) 찍혔다.
     // 오늘 실기기 조사에서 이 로그가 다른 로그를 계속 밀어냈다. 진짜 "아깝게 실패"(임계값의 97% 이상)
     // 일 때만 남기도록 좁힌다 — 튜닝 근거는 그대로 확보하면서 스팸은 사라진다.
-    val grew = growthRatio > GROWTH_RATIO_THRESHOLD
-    val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
+    // 2026-08-03 사장님 실기기 보고("10번에 1번 되는 케이스도 있음") — 진단 모드. 디버그 빌드에서만
+    // **매 프레임 전 축을 무조건** 남긴다(near-miss 게이트를 타지 않는다).
+    //
+    // 왜 무검열이어야 하나: 지금까지 아홉 번의 임계값 조정이 전부 실패한 근본 원인이 "임계값 근처만
+    // 로그에 남는" 검열된 데이터였다. 그 데이터로는 "손은 보이는데 아무 동작도 안 할 때"의 분포
+    // (=오탐 하한선)를 알 수 없어서, 매번 "실패가 문턱 바로 아래 몰려 있다"는 착시를 보고 문턱을
+    // 내렸다가 오탐 폭증으로 되돌리기를 반복했다.
+    //
+    // dt(직전 처리 프레임과의 간격)를 같이 남기는 이유: sweep 성공값(0.75~0.81)과 실패값(0.14~0.23)이
+    // 같은 동작인데 4배씩 벌어지는 것이 관측됐다. 손 흔들기는 보통 2~4Hz인데 처리 간격이 그에 근접하면
+    // 샘플링이 극점을 놓쳐(에일리어싱) 이동폭이 실제보다 훨씬 작게 측정된다 — "될 때만 되는" 증상의
+    // 유력한 설명이다. 실제 처리율을 알아야 이 가설을 확인할 수 있다.
     // 속도 축(위 상수 주석의 실측 근거 참고). sizeHistory는 GROWTH_WINDOW_MS(2.5초)까지 담고 있으므로
     // 여기서는 최근 SPEED_PEAK_WINDOW_MS 구간만 잘라 인접 샘플 간 변화율의 최댓값을 본다.
     // 단위는 "배/초" — (다음/이전 - 1) / 경과초. 손 크기로 나눈 상대값이라 카메라와의 거리에 무관하다.
     val peakSpeed = peakGrowthSpeedPerSec(now)
+
+    if (diagEnabled) {
+      val dt = if (lastDiagAtMs > 0) now - lastDiagAtMs else 0
+      lastDiagAtMs = now
+      Log.d(TAG, "DIAG dt=$dt g=$growthRatio s=$sweepRatio v=$peakSpeed size=$handSize n=${sizeHistory.size}")
+    }
+
+    val grew = growthRatio > GROWTH_RATIO_THRESHOLD
+    val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로
     // 잡히고, 놓치던 것 중 일부만 추가로 잡힌다. 기존 축을 조이면서 새 축을 넣었다가 오히려 더
     // 나빠졌던 2026-08-02의 실패를 반복하지 않기 위함이다.

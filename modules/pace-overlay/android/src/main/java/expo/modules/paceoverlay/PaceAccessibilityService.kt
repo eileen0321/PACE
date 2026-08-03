@@ -42,7 +42,6 @@ class PaceAccessibilityService : AccessibilityService() {
 
   private val handler = Handler(Looper.getMainLooper())
   private var isWatching = false
-  private var safetyTimeoutMs = DEFAULT_SAFETY_TIMEOUT_MS
   private var currentForegroundPackage: String? = null
   // 2026-07-25 실기기 지적("앱 껐는데 왜 오버레이가 홈 화면에 떠있어") — 이 값은
   // accessibility_service_config.xml의 packageNames 필터 때문에 유튜브/인스타/틱톡 창일 때만
@@ -117,10 +116,6 @@ class PaceAccessibilityService : AccessibilityService() {
     // 재생 위치를 얼마나 자주 확인할지(스와이프 자체의 간격이 아니라 폴링 주기) — 초 단위 텍스트라
     // 이보다 훨씬 잦은 폴링은 정확도 이득이 없다.
     private const val POLL_INTERVAL_MS = 500L
-    // Tier 2(안전 타임아웃): 재생 위치 신호를 못 찾을 때만 쓰는 최후 폴백. 예전 "고정 간격"의
-    // 후신이지만 이제 주 로직이 아니다. 8초는 대부분의 숏폼을 중간에 잘라먹는 값이라 45초로 올림 —
-    // 실시간 감지가 정상 동작하는 한 이 값이 실제로 발동하는 일은 드물다.
-    private const val DEFAULT_SAFETY_TIMEOUT_MS = 45_000L
     // 물리 볼륨 버튼 1회 입력의 반복 ACTION_DOWN을 하나로 묶는 불응 구간(onKeyEvent 참고).
     private const val VOLUME_KEY_DEBOUNCE_MS = 500L
     // 2026-08-02 — "우리가 방금 스와이프한 결과"와 "사용자가 직접 손으로 넘긴 것"을 가르는 최소 간격.
@@ -172,13 +167,12 @@ class PaceAccessibilityService : AccessibilityService() {
         Log.w("PaceAccessibility", "startWatching() called but instance is null — accessibility not bound yet, silently ignored")
         return
       }
-      service.safetyTimeoutMs = intervalMs
       if (!service.isWatching) {
         service.isWatching = true
         service.lastKnownCurrentSec = -1
         service.lastSwipeAtMs = SystemClock.elapsedRealtime()
         service.ensurePollingScheduled()
-        Log.d("PaceAccessibility", "startWatching() -> polling started, safetyTimeoutMs=$intervalMs")
+        Log.d("PaceAccessibility", "startWatching() -> polling started (intervalMs=$intervalMs, 안전 타임아웃 폴백은 2026-08-03에 삭제돼 더 이상 쓰이지 않음)")
       }
     }
 
@@ -546,17 +540,19 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       lastKnownCurrentSec = currentSec
     }
-    if (!isWatching) return
-    // Tier 2: 재생 위치 신호를 아예 못 찾았거나(광고, 노드 구조 변경, 다른 로케일), 신호는 있지만
-    // 비정상적으로 오래 안 끝나는 경우 — 둘 다 이 안전 타임아웃 하나로 커버된다. isWatching이 꺼져
-    // 있으면 위에서 이미 return했으므로 여긴 항상 자동넘김이 실제로 스와이프하는 경로.
-    if (now - lastSwipeAtMs >= safetyTimeoutMs) {
-      videoAdvanceCount++
-      Log.d("PaceAccessibility", "SWIPE tier=2 reason=safety-timeout foundTiming=${timing != null} elapsedMs=${now - lastSwipeAtMs} count=$videoAdvanceCount")
-      performSwipeUp()
-      lastSwipeAtMs = now
-      lastKnownCurrentSec = -1
-    }
+    // 2026-08-03 사장님 지시("1번 없애고") — Tier 2(재생 위치 신호를 못 찾으면 safetyTimeoutMs마다
+    // 무조건 강제 스와이프)를 삭제한다.
+    //
+    // 원래 의도는 "광고 화면·노드 구조 변경·다른 로케일 때문에 재생 위치를 못 읽어도 자동넘김이
+    // 멈추지 않게" 하는 안전망이었다. 그런데 실기기에서 확인된 실제 동작은 정반대였다: 유튜브에서
+    // foundTiming=false가 상시로 나와(Tier 1이 사실상 죽어 있음) "영상이 끝나면 넘긴다"는 기능은
+    // 한 번도 작동하지 않고, 45초 타이머만 계속 돌며 사장님이 보고 계신 영상을 중간에 끊었다
+    // ("지금 나 손짓 안 하는데 왜 넘어가는데" — 실측 count=16까지 누적).
+    //
+    // 즉 이 폴백은 안전망이 아니라 오작동의 유일한 원인이었다. 넘김 수단은 손짓·블루투스·직접
+    // 스와이프가 이미 있고, 그 어느 것도 이 타이머에 의존하지 않는다. iOS에는 애초에 자동넘김
+    // 자체가 없어(autoNextService.ios.ts는 빈 스텁) 이 삭제로 플랫폼 동작도 오히려 일치한다.
+    // 재생 위치를 읽었을 때의 정상 경로(nearEnd → performSwipeUp)는 위에 그대로 살아 있다.
   }
 
   // 2026-07-21 밤 감사 발견 — rootInActiveWindow는 "지금 입력 포커스를 가진 창"만 반환한다.

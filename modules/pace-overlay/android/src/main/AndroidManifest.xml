@@ -57,6 +57,13 @@
       <intent-filter>
         <action android:name="android.intent.action.BOOT_COMPLETED" />
       </intent-filter>
+      <!-- 2026-08-03 — 플레이스토어 업데이트도 재부팅과 똑같이 프로세스와 포그라운드 서비스를 죽인다.
+           세션 중에 업데이트되면 알약이 조용히 사라지고 세션만 prefs에 활성으로 남는다(PaceBootReceiver.kt
+           상단 주석 참고). 재부팅과 성격이 동일하므로 같은 복구 루트를 태운다. MY_PACKAGE_REPLACED는
+           우리 앱에만 배달되는 브로드캐스트라 data 스킴 필터가 필요 없다(PACKAGE_REPLACED와 다름). -->
+      <intent-filter>
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
     </receiver>
 
     <!-- Auto Next 실제 스와이프(2026-07-18, PaceAccessibilityService.kt 주석 참고) — exported="true"는

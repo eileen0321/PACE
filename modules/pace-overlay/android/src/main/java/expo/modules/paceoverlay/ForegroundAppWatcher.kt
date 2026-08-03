@@ -6,6 +6,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
 import android.os.Process
+import android.util.Log
 
 // 지원 앱 목록. src/constants/supportedApps.ts와 반드시 동기화 — Kotlin이 JS 상수를 읽을 방법이
 // 없어 양쪽에 각각 하드코딩한다(PACE_ARCHITECTURE.md "제품 전략 피벗" 참고). 2026-07-18: 사용자
@@ -143,4 +144,49 @@ object ForegroundAppWatcher {
 
   private const val RECENCY_WINDOW_MS = 4_000L
   private const val STALENESS_MS = 300_000L
+
+  // 2026-08-03 사장님 지시 — "유튜브 앱으로 열면 시간 측정이 안 되는데 그걸 알려줘야 하지 않냐".
+  // Pace의 모든 추적은 세션(startSession)에 묶여 있어서, 사용자가 런처에서 유튜브를 직접 열면
+  // 아무것도 기록되지 않고 그 사실조차 알 수 없었다(사용자 눈엔 앱이 고장 난 것과 구분이 안 됨).
+  // 상시 감시 서비스를 새로 띄우는 대신, 이미 보유한 PACKAGE_USAGE_STATS로 "오늘 지원 앱들을
+  // 얼마나 켜뒀는지"를 사후에 조회해 분석 화면에서 Pace 기록 시간과 나란히 보여준다 — 신규 권한도,
+  // 배터리를 쓰는 백그라운드 루프도 필요 없다.
+  //
+  // ⚠️ 의미를 정확히 알고 써야 한다: totalTimeInForeground는 "앱을 화면에 띄워둔 시간"이지
+  // "영상을 재생한 시간"이 아니다. Pace의 기록(PaceOverlayService의 실시청 누적)과는 자가 다르므로,
+  // UI 문구에서 반드시 "켜둔 시간"으로 표현해야 한다("본 시간"이라고 쓰면 거짓말이 된다).
+  // 또한 앱 단위라 Shorts만 따로 분리할 수 없다(일반 영상·구독 탭도 합산된다).
+  //
+  // iOS에는 이에 대응하는 API가 없다 — Screen Time의 사용량 데이터는 DeviceActivityReport 확장의
+  // 샌드박스를 절대 벗어날 수 없다는 게 애플의 명시적 설계라(웹 확인, 2026-08-03) 앱이 숫자를
+  // 읽어올 방법이 원천적으로 없다. 따라서 이 기능은 Android 전용이다.
+  fun supportedAppForegroundSecondsToday(context: Context): Int {
+    return try {
+      val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+      val now = System.currentTimeMillis()
+      // "오늘"의 기준은 사용자의 로컬 자정 — 통계 화면의 date('now','localtime')와 같은 경계를 쓴다.
+      val startOfDay = java.util.Calendar.getInstance().apply {
+        timeInMillis = now
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+      }.timeInMillis
+      val stats = usageStatsManager.queryUsageStats(
+        UsageStatsManager.INTERVAL_DAILY, startOfDay, now
+      ) ?: return 0
+      // 같은 패키지가 여러 버킷으로 쪼개져 나올 수 있어 패키지별로 합산한다(덮어쓰면 과소집계된다).
+      var totalMs = 0L
+      for (stat in stats) {
+        if (stat.packageName !in SupportedApps.PACKAGES) continue
+        totalMs += stat.totalTimeInForeground
+      }
+      (totalMs / 1000L).toInt().coerceAtLeast(0)
+    } catch (e: Exception) {
+      // 권한이 없거나 OEM이 거부하는 경우 — 이 화면 하나 때문에 앱이 죽으면 안 되므로 0으로 폴백한다
+      // (호출부는 0을 "표시할 데이터 없음"으로 해석해 이 섹션 자체를 숨긴다).
+      Log.w("ForegroundAppWatcher", "supportedAppForegroundSecondsToday failed", e)
+      0
+    }
+  }
 }

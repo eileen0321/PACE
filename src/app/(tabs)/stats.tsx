@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,8 +9,9 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
-import { capabilities } from '../../services/platform';
+import { capabilities, overlayService } from '../../services/platform';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
+import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -58,6 +59,14 @@ export default function StatsScreen() {
   const putDownSeconds = useFlipStore((s) => s.putDownSeconds);
   const flipCredits = useFlipStore((s) => s.credits);
   const loadFlip = useFlipStore((s) => s.load);
+  // 2026-08-03 사장님 지시("유튜브 앱으로 열면 시간 측정이 안 되는데 그걸 알려줘야 하지 않냐",
+  // "팝업으로 띄우지 말고 분석에 표시") — Pace의 추적은 전부 세션에 묶여 있어서, 사용자가 런처에서
+  // 유튜브를 직접 열면 아무것도 기록되지 않고 그 사실조차 알 수 없었다(사용자 눈엔 앱이 고장 난
+  // 것과 구분이 안 됨). 이미 보유한 사용정보 접근 권한으로 "오늘 유튜브를 켜둔 시간"을 사후 조회해
+  // Pace 기록과 나란히 보여준다 — 방해되는 팝업 대신, 어차피 사용량을 보러 오는 이 화면에 둔다.
+  // Android 전용(iOS는 null → 섹션 자체를 렌더하지 않음, overlayService.ios.ts 주석 참고).
+  const [appOpenSecondsToday, setAppOpenSecondsToday] = useState<number | null>(null);
+  const [paceTrackedMinutesToday, setPaceTrackedMinutesToday] = useState(0);
 
   // 2026-07-18: home.tsx와 동일한 이유로 useFocusEffect로 교체(마운트 1회만 refresh하면 세션 종료 후
   // 이 탭으로 돌아와도 방금 끝난 세션이 반영 안 됨 — 실기기 검증 중 Home에서 먼저 발견한 버그를
@@ -70,6 +79,12 @@ export default function StatsScreen() {
       pushUnsyncedSessions(user.id).catch(() => {});
       bluetooth.refresh();
       loadFlip(); // 오늘 내려놓은 시간(Flip Mode) 최신값 반영
+      // 유튜브 앱을 켜둔 시간 vs Pace가 기록한 시간 (위 상태 선언부 주석 참고).
+      // 둘 다 실패해도 화면 나머지는 그대로 보여야 하므로 개별적으로 삼킨다.
+      overlayService.getSupportedAppForegroundSecondsToday()
+        .then(setAppOpenSecondsToday)
+        .catch(() => setAppOpenSecondsToday(null));
+      getTodayUsageMinutes(user.id).then(setPaceTrackedMinutesToday).catch(() => {});
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id, refresh])
   );
@@ -178,6 +193,40 @@ export default function StatsScreen() {
               <BehaviorRow title={t('stats.restTimeToday')} subtitle={t('stats.restTimeSub')} value={formatMinSec(putDownSeconds)} valueColor={colors.successLight} />
               <BehaviorRow title={t('stats.restCredits')} subtitle={t('stats.restCreditsSub')} value={`${flipCredits}`} valueColor={colors.primary} last />
             </GlassSurface>
+          </View>
+        )}
+
+        {/* 4-B. 기록 범위 — "유튜브 앱 켠 시간" vs "Pace가 기록한 시간" (2026-08-03 사장님 지시)
+            Pace의 추적은 전부 세션에 묶여 있어서, 런처에서 유튜브를 직접 열면 아무것도 기록되지 않고
+            사용자는 그 사실조차 알 수 없었다("앱이 고장 났나?"와 구분 불가). 두 숫자를 나란히 보여줘
+            차이가 왜 생기는지 스스로 알게 한다.
+            ⚠️ 두 값은 자가 다르다: 위는 앱을 화면에 띄워둔 시간(UsageStats), 아래는 실제 재생 중이던
+            시간(Pace). 그래서 문구도 "본 시간"이 아니라 "켠 시간"으로 쓴다 — 같은 자인 척하면 거짓말이
+            된다. Android 전용이라 iOS에서는 null이 와서 이 블록 자체가 렌더되지 않는다(애플은 다른 앱의
+            사용 시간을 읽는 공개 API가 없음). 0이면(권한 없음/조회 실패/오늘 사용 없음) 숨긴다. */}
+        {appOpenSecondsToday !== null && appOpenSecondsToday > 0 && (
+          <View>
+            <Text style={styles.sectionTitle}>{t('stats.trackingGap')}</Text>
+            <GlassSurface style={styles.divideCard}>
+              <BehaviorRow
+                title={t('stats.appOpenTime')}
+                subtitle={t('stats.appOpenTimeSub')}
+                value={`${Math.floor(appOpenSecondsToday / 60)}m`}
+                valueColor={colors.textPrimary}
+              />
+              <BehaviorRow
+                title={t('stats.paceTracked')}
+                subtitle={t('stats.paceTrackedSub')}
+                value={`${paceTrackedMinutesToday}m`}
+                valueColor={colors.primary}
+                last
+              />
+            </GlassSurface>
+            {/* 차이가 의미 있을 때만 안내한다 — 1~2분 오차(세션 시작 직전/직후 몇 초)까지 지적하면
+                잔소리로 느껴지고, 애초에 두 값은 측정 자가 달라 완전히 같아질 수 없다. */}
+            {Math.floor(appOpenSecondsToday / 60) - paceTrackedMinutesToday >= 5 && (
+              <Text style={styles.trackingGapHint}>{t('stats.trackingGapHint')}</Text>
+            )}
           </View>
         )}
 
@@ -340,6 +389,7 @@ const styles = StyleSheet.create({
   streakValue: { fontSize: 20, fontFamily: typography.displayFontFamily, color: colors.primary, lineHeight: 22 },
 
   sectionTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
+  trackingGapHint: { fontSize: 12, color: colors.textSecondary, paddingHorizontal: 4, marginTop: 8, lineHeight: 17 },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 20 },
 
   divideCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, paddingHorizontal: 20 },

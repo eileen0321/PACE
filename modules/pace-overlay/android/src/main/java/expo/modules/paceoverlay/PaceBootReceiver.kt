@@ -32,7 +32,18 @@ import android.util.Log
 // stopSelf()하므로 이 리시버는 사실상 아무 부작용이 없다 — action을 아예 지정하지 않는다(null).
 class PaceBootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
-    if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+    // 2026-08-03 사장님 지적("지금 기기 오버레이 없어")에서 확인한 누락 — 이번엔 크래시가 아니라
+    // APK 재설치로 프로세스가 죽으면서 PaceOverlayService(알약을 그리는 포그라운드 서비스)가 사라진
+    // 것이었다(접근성 서비스는 살아있는데 오버레이 서비스만 0개). 문제는 이게 개발 환경만의 일이
+    // 아니라는 점이다: 플레이스토어 앱 업데이트도 똑같이 패키지를 교체하며 프로세스와 포그라운드
+    // 서비스를 죽인다. 즉 실사용자가 세션 중에 Pace를 업데이트하면 알약이 조용히 사라지고, 세션은
+    // prefs에 활성으로 남은 채 Pace를 다시 열기 전까지 아무 표시도 없는 상태가 된다.
+    // 재부팅 복구 경로(BOOT_COMPLETED)는 이미 있었는데 업데이트 경로만 빠져 있었다 — 두 경우 모두
+    // "프로세스가 죽었지만 세션은 살아있음"으로 성격이 완전히 같으므로 같은 복구 루트를 태운다.
+    // (ACTION_MY_PACKAGE_REPLACED는 자기 앱이 업데이트됐을 때 시스템이 보내주는 표준 브로드캐스트로,
+    //  BOOT_COMPLETED와 마찬가지로 백그라운드 서비스 시작 제한의 예외로 허용된다.)
+    val action = intent.action
+    if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
     // ⚠️ 권한 방어(사용자 지시 — "권한 없이 뭔가 시작하려다 조용히 실패/크래시하는 게 지금 gap보다
     // 나쁘다"): 세션이 활성이었어도, 그 사이 사용자가 "다른 앱 위에 표시" 권한을 껐으면 오버레이
@@ -47,7 +58,7 @@ class PaceBootReceiver : BroadcastReceiver() {
       true
     }
     if (!hasOverlayPermission) {
-      Log.i("PaceBootReceiver", "BOOT_COMPLETED: overlay permission not granted, skipping session resume")
+      Log.i("PaceBootReceiver", "$action: overlay permission not granted, skipping session resume")
       return
     }
 
@@ -57,7 +68,7 @@ class PaceBootReceiver : BroadcastReceiver() {
     val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Pace:BootWakeLock")
     wakeLock.acquire(10_000L)
     try {
-      Log.i("PaceBootReceiver", "BOOT_COMPLETED received, attempting session resume via PaceOverlayService")
+      Log.i("PaceBootReceiver", "$action received, attempting session resume via PaceOverlayService")
       // action을 지정하지 않음(null) — onStartCommand의 null 분기(=프로세스 부활 복구 경로)를 그대로 탄다.
       // BOOT_COMPLETED는 Android의 백그라운드 서비스 시작 제한에서 명시적으로 예외로 허용되는
       // 브로드캐스트라 startForegroundService()를 여기서 바로 불러도 안전하다 — 다만 이 코드베이스의
@@ -69,7 +80,7 @@ class PaceBootReceiver : BroadcastReceiver() {
       // 날 일은 거의 없지만, OEM 스킨의 백그라운드 시작 제한 등으로 던질 가능성을 기존 코드 전반의
       // 방어적 스타일(예: foregroundPollRunnable, requestAccessibilityPermission)과 동일하게 삼킨다 —
       // 리시버가 죽으면 재부팅마다 로그에 크래시가 쌓이는 게 지금 gap보다 나쁘다.
-      Log.w("PaceBootReceiver", "startService failed on BOOT_COMPLETED", e)
+      Log.w("PaceBootReceiver", "startService failed on $action", e)
     } finally {
       if (wakeLock.isHeld) wakeLock.release()
     }

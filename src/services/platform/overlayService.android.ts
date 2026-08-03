@@ -27,6 +27,8 @@ let PaceOverlay: {
   stop(): Promise<void>;
   consumeExpired(): { reason: string; sleepOnsetAtMs: number } | null;
   getVideoWatchCount(): number;
+  getWatchedSeconds(): number;
+  getSupportedAppForegroundSecondsToday(): number;
   hasBatteryOptimizationExemption(): boolean;
   requestBatteryOptimizationExemption(): void;
   consumeAccessibilityRevoked(): boolean;
@@ -134,6 +136,18 @@ export const overlayService: OverlayService = {
 
   async getVideoWatchCount() {
     return PaceOverlay?.getVideoWatchCount() ?? 0;
+  },
+
+  // 2026-08-03 — 네이티브가 누적한 "실제 재생 중이었던 시간"(초). 통계의 오늘 사용 시간을 알약과
+  // 같은 기준으로 맞추는 데 쓴다(PaceOverlayService.watchedSeconds 주석 참고).
+  async getWatchedSeconds() {
+    return PaceOverlay?.getWatchedSeconds() ?? null;
+  },
+
+  // 2026-08-03 — 오늘 지원 앱(유튜브 등)을 화면에 띄워둔 시간(초). "본 시간"이 아니라 "켠 시간"이다
+  // (ForegroundAppWatcher.supportedAppForegroundSecondsToday 주석 참고).
+  async getSupportedAppForegroundSecondsToday() {
+    return PaceOverlay?.getSupportedAppForegroundSecondsToday() ?? null;
   },
 
   async hasBatteryOptimizationExemption() {

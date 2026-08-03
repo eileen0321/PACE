@@ -338,7 +338,20 @@ export default function OverlaySessionScreen() {
           const effectiveEndedAtMs = endReason === 'sleep_detected' && sleepOnsetAtMsRef.current != null
             ? sleepOnsetAtMsRef.current
             : Date.now();
-          const durationSeconds = startedAtMs ? Math.max(0, Math.round((effectiveEndedAtMs - startedAtMs) / 1000)) : 0;
+          // 2026-08-03 사장님 결정("알약 기준이 맞지 않아?") — 예전엔 여기서 벽시계(종료-시작)만 썼다.
+          // 그런데 알약의 남은 시간은 실제 재생 중일 때만 깎이므로(performTick의 isLikelyPlaying 가드),
+          // 세션만 켜두고 안 보면 알약은 그대로인데 통계엔 그 시간이 통째로 쌓이는 모순이 있었다.
+          // 사용자가 이해하는 "사용 시간"은 실제로 본 시간이므로 네이티브가 누적한 실시청 시간을 쓴다.
+          // iOS는 서드파티 앱 재생 상태를 관찰할 수단이 OS에 없어 null → 기존 벽시계로 폴백한다.
+          // ⚠️ getWatchedSeconds()는 endSession()(네이티브 stop)보다 먼저 읽어야 한다 — 아래
+          //    videosWatched와 같은 이유(세션이 닫히면 값이 리셋된다).
+          const wallClockSeconds = startedAtMs ? Math.max(0, Math.round((effectiveEndedAtMs - startedAtMs) / 1000)) : 0;
+          const watchedSeconds = await overlayService.getWatchedSeconds().catch(() => null);
+          // 벽시계를 상한으로 둔다 — 네이티브 누적값이 어떤 이유로든(복구 경로 중복 가산 등) 실제
+          // 경과 시간을 넘어서는 건 정의상 불가능하므로, 넘으면 신뢰하지 않고 벽시계로 자른다.
+          const durationSeconds = watchedSeconds != null
+            ? Math.min(wallClockSeconds, Math.max(0, watchedSeconds))
+            : wallClockSeconds;
           // 2026-07-26 — PaceAccessibilityService가 실제 재생위치 신호(끝남/되감김 감지)로 센 진짜
           // 시청 편수를 읽는다(자동넘김이든 사용자가 직접 넘겼든 다 포함). iOS/접근성 꺼짐은 항상 0 —
           // 예전엔 개발용 시뮬레이터의 videoIndex를 가짜로 흘려보내다 고쳐서 정직하게 0을 기록했는데
@@ -440,16 +453,8 @@ export default function OverlaySessionScreen() {
   // ⚠️ 훅은 모두 위에서 이미 호출됐고(이 return은 마지막 훅보다 아래) 세션 시작 이펙트도 그대로
   // 실행되므로, 렌더만 건너뛸 뿐 세션/오버레이/타이머 동작에는 영향이 없다.
   // iOS는 이 화면이 실제 콘텐츠 역할을 계속 하므로 건드리지 않는다.
-  if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) return null;
-  // 2026-08-02 사장님 지적("자꾸 기능 동작하다 목업 화면이 나오는데") — 오늘만 세 번(useFocusEffect
-  // 조건 완화, AppState 리스너 추가, bailToHome 추가) 리다이렉트 "타이밍"을 앞당기는 방식으로
-  // 고쳤지만 증상이 계속 재발했다. 구조 자체가 틀렸기 때문이다: 지금까지는 목업을 일단 그린 다음
-  // 마운트 후 실행되는 이펙트가 뒤늦게 지우는 방식이라, 렌더와 리다이렉트 사이에 항상 최소 한
-  // 프레임의 창이 남고 그 순간이 사용자 눈에 그대로 보인다 — 타이밍 조율로는 원천적으로 못 없앤다.
-  // 이 화면 상단의 주석대로 "underlying content"(CURATED_VIDEOS 더미)는 네이티브 오버레이가 붙기
-  // 전까지의 개발용 시뮬레이터이고, Android는 이미 실제 시스템 오버레이(알약)가 세션 표시를
-  // 전담하므로 이 화면이 보일 이유가 아예 없다. 조건부로 지우지 말고 처음부터 그리지 않는다.
-  // (iOS는 Live Activity가 오버레이를 대신하되 이 화면 자체는 실제 역할을 하므로 그대로 둔다.)
+  // 2026-08-03 — 같은 가드가 두 벌 들어가 있었다(다른 세션과 이 수정이 동시에 같은 결론에 도달).
+  // 위 return이 먼저 걸리므로 아래쪽은 도달 불가능한 죽은 코드였다. 하나만 남긴다.
   if (Platform.OS === 'android' && overlayService.supportsSystemOverlay) return null;
 
   return (

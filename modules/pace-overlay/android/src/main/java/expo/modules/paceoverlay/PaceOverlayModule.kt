@@ -449,6 +449,21 @@ class PaceOverlayModule : Module() {
     // 2026-08-03 — 쇼츠 위 보상광고(PaceRewardedAdActivity)가 실광고 유닛을 쓸지 테스트 유닛을 쓸지는
     // JS 빌드 플래그(EXPO_PUBLIC_USE_REAL_ADS)로 정해지는데 네이티브는 그 값을 모른다. 이 값을 안 밀면
     // 기본값 false로 출시 빌드에서도 테스트 광고만 나간다(출시 전 검증에서 실제로 그 상태였음).
+    // 2026-08-03 — 통계 화면의 "오늘 사용 시간"을 알약과 같은 기준(실제 재생 중이었던 시간)으로
+    // 맞추기 위해 네이티브가 누적한 값을 JS로 넘긴다(PaceOverlayService.watchedSeconds 주석 참고).
+    // 2026-08-03 사장님 지시 — 분석 화면에서 "유튜브 앱을 켜둔 시간"과 "Pace가 기록한 시간"을
+    // 나란히 보여주기 위한 값(ForegroundAppWatcher.supportedAppForegroundSecondsToday 주석 참고).
+    // 권한이 없거나 조회 실패면 0 → 호출부가 해당 섹션을 아예 숨긴다.
+    Function("getSupportedAppForegroundSecondsToday") {
+      appContext.reactContext?.let { context ->
+        ForegroundAppWatcher.supportedAppForegroundSecondsToday(context)
+      } ?: 0
+    }
+
+    Function("getWatchedSeconds") {
+      appContext.reactContext?.let { context -> PaceOverlayService.watchedSeconds(context) } ?: 0
+    }
+
     Function("setUseRealAds") { useRealAds: Boolean ->
       appContext.reactContext?.let { context -> PaceOverlayService.setUseRealAds(context, useRealAds) }
     }

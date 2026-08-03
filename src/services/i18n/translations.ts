@@ -91,6 +91,15 @@ export const translations = {
       restTime: 'Rest Time',
       restTimeToday: 'Face-down today',
       restTimeSub: 'Time your phone rested face-down',
+      // 2026-08-03 — 유튜브를 Pace를 거치지 않고 열면 아무것도 기록되지 않는데 그 사실을 알 방법이
+      // 없었다. "본 시간"이 아니라 "앱을 켜둔 시간"임을 문구에서 분명히 해야 한다(측정 기준이 Pace
+      // 기록과 다르다 — ForegroundAppWatcher.supportedAppForegroundSecondsToday 주석 참고).
+      trackingGap: 'TRACKING COVERAGE',
+      appOpenTime: 'YouTube app open',
+      appOpenTimeSub: 'Time the app was on screen today',
+      paceTracked: 'Tracked by Pace',
+      paceTrackedSub: 'Only sessions started from Pace are measured',
+      trackingGapHint: 'Open Shorts from Pace to have the rest counted too.',
       restCredits: 'Credits earned',
       restCreditsSub: '+5 credits per 10 minutes of rest',
       // 2026-07-26 감사 발견 — WeeklyGraphCard.tsx가 t() 없이 통째로 하드코딩돼 있었음(요일 라벨도
@@ -593,6 +602,12 @@ export const translations = {
       restTime: '쉬는 시간',
       restTimeToday: '오늘 내려놓은 시간',
       restTimeSub: '폰을 엎어둔 채 쉰 시간',
+      trackingGap: '기록 범위',
+      appOpenTime: '유튜브 앱 켠 시간',
+      appOpenTimeSub: '오늘 앱이 화면에 떠 있던 시간',
+      paceTracked: 'Pace가 기록한 시간',
+      paceTrackedSub: 'Pace에서 시작한 세션만 측정됩니다',
+      trackingGapHint: 'Pace에서 쇼츠를 열면 나머지 시간도 함께 기록돼요.',
       restCredits: '적립 크레딧',
       restCreditsSub: '휴식 10분마다 +5 크레딧',
       weeklyGraphTitle: '주간 사용 그래프',

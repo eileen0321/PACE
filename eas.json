@@ -35,7 +35,7 @@
       },
       "android": {
         "track": "alpha",
-        "releaseStatus": "draft",
+        "releaseStatus": "completed",
         "serviceAccountKeyPath": "C:/MyData/개인Data/jlpt-master_json/project-615a442a-a560-405a-ba6-929475b725df.json"
       }
     }

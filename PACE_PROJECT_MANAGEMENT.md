@@ -3910,3 +3910,13 @@ API로 `com.strides7.pace`의 트랙을 직접 조회한 결과 **production / b
 
 참고: `serviceAccountKeyPath`가 Windows 절대경로라 Mac 세션에서는 이 설정으로 제출 불가 —
 맥은 iOS(`ascAppId`)만 쓰므로 실사용엔 문제없다.
+
+**함정 3 — `releaseStatus: "draft"`면 업로드돼도 테스터에게 안 보인다.** jlpt-master 설정을 그대로
+복사해서 draft로 올렸더니 제출은 성공했는데 사장님이 "비공개 버전 안 보인다". Play API로 확인:
+`alpha → draft code=4 / completed code=2` — 즉 code 4는 초안으로만 얹혀 있고 테스터는 여전히
+code 2를 받고 있었다. Play Developer API로 code 4를 `completed`로 승격 + 한국어 릴리즈 노트 추가 후
+커밋 → `alpha → completed code=4` 확인. `eas.json`도 `"releaseStatus": "completed"`로 바꿔
+다음부터는 제출 한 번으로 바로 테스터에게 나가게 했다.
+
+⚠️ 같은 versionCode를 다시 `eas submit` 할 수는 없다(Play가 중복 버전코드를 거부). 이미 올라간
+초안을 살릴 때는 재제출이 아니라 **트랙 승격**(edits → tracks PUT → commit)으로 처리할 것.

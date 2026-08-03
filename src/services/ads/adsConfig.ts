@@ -13,7 +13,7 @@ try {
 // adb logcat(태그 "Ads")에서 "Use RequestConfiguration.Builder().setTestDeviceIds(...)" 메시지로
 // 확인한 실제 개발/테스트 기기 ID들. 새 기기로 테스트할 땐 그 기기의 로그에서 같은 메시지를 찾아
 // 여기 추가할 것 — 등록 안 된 기기는 실제 광고가 그대로 나가니 광고를 절대 직접 탭하지 말 것.
-const TEST_DEVICE_IDS = [
+export const TEST_DEVICE_IDS = [
   '2C52B7069678FD3FAD58A503E0369A3D', // Galaxy Note20 (R3CN80S5GWW) — 2026-07-26 확인
 ];
 

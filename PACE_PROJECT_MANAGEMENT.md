@@ -4024,3 +4024,37 @@ MD에 기록해둔 실측 데이터(1,134 프레임: 평소 795 / 성공 58 / �
 
 ⚠️ **실기기 미검증**. EEA 사용자 시뮬레이션은 `AdsConsentDebugGeography.EEA` + 테스트 기기 등록으로
 가능하다(`AdsConsentInfoOptions`). 실제 폼이 뜨는지·설정 행이 나타나는지 확인 필요.
+
+### ✅ UMP 동의 흐름 실기기 검증 완료 (2026-08-03) — 전 세계 대상이므로 필수
+
+사장님 확인: **배포 대상이 전 세계**라 EEA/영국 동의는 출시 블로커였다. AdMob 콘솔의 GDPR 메시지도
+사장님이 생성 완료.
+
+**테스트 방법**(구글/invertase 공식): 한국에서 개발하면 SDK가 정상적으로 "동의 불필요"로 답해버려
+유럽 경로를 한 번도 못 보고 출시하게 된다. `AdsConsent.gatherConsent()`에 디버그 옵션을 넘겨
+"EEA 사용자인 척" 강제한다:
+
+```js
+gatherConsent({ debugGeography: AdsConsentDebugGeography.EEA, testDeviceIdentifiers: [...] })
+```
+- 실기기는 `testDeviceIdentifiers`에 등록돼 있어야 디버그 지역이 먹는다(에뮬레이터는 자동 허용).
+  기기 해시 ID는 `adsConfig.ts`의 `TEST_DEVICE_IDS`를 그대로 재사용한다(광고 테스트기기와 동일 값).
+- `__DEV__` 게이트라 릴리즈 번들에서는 이 분기가 상수 폴딩으로 사라진다.
+
+**실측 결과(실기기 Note20)**
+
+| 항목 | 결과 |
+|---|---|
+| 앱 시작 시 폼 | ✅ 스플래시 종료 후 표시(부팅 중 아님) |
+| 동의 결과 로그 | `status=OBTAINED formAvailable=true canRequestAds=true privacyOptions=REQUIRED` |
+| TCF 저장 | ✅ `IABTCF_TCString` 기록, `IABTCF_gdprApplies=1`, `PublisherCC=KR` |
+| 동의 후 배너 | ✅ `canRequestAds=true`가 되자 배너 로드 재개 |
+| 설정 재진입 항목 | ✅ "광고 개인정보 설정"이 개인정보처리방침 아래 노출 |
+| 재진입 탭 | ✅ 폼 재표시(`action=load_complete status:ok`) |
+
+⚠️ **삽질 기록** — 폼이 안 떠서 한참 헤맸는데 원인은 코드가 아니라 **Metro가 죽어 있었던 것**이었다.
+앱이 번들을 못 받아 검은 화면이었고 이를 동의 흐름 실패로 오해할 뻔했다. dev 빌드로 무언가를
+검증할 때는 **먼저 `curl http://localhost:8081/status`로 Metro 생존을 확인**할 것.
+(엔트리는 `expo-router/entry`라 `/index.bundle`로 찌르면 404가 정상이다 — 이것도 오판 요인이었다.)
+
+⚠️ 또한 이 검증 과정에서 force-stop을 써서 접근성이 꺼졌고, 설정 UI로 복구했다(§ 앞 절의 함정 1 참고).

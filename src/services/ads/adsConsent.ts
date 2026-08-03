@@ -21,16 +21,39 @@
 // 우리가 직접 할 필요가 없다(지역 판정은 SDK가 한다).
 //
 // 다른 광고 파일들과 동일한 방어적 require — 네이티브 미링크(재빌드 전) 상태에서도 앱이 안 죽어야 한다.
+import { TEST_DEVICE_IDS } from './adsConfig';
+
 type ConsentModule = typeof import('react-native-google-mobile-ads');
 
 let AdsConsent: ConsentModule['AdsConsent'] | null = null;
 let PrivacyOptionsStatus: ConsentModule['AdsConsentPrivacyOptionsRequirementStatus'] | null = null;
+let DebugGeography: ConsentModule['AdsConsentDebugGeography'] | null = null;
 try {
   const mod = require('react-native-google-mobile-ads');
   AdsConsent = mod.AdsConsent ?? null;
   PrivacyOptionsStatus = mod.AdsConsentPrivacyOptionsRequirementStatus ?? null;
+  DebugGeography = mod.AdsConsentDebugGeography ?? null;
 } catch (e) {
   console.warn('[adsConsent] 네이티브 모듈 미링크 — 동의 흐름 스킵:', e);
+}
+
+// 2026-08-03 — 개발 빌드에서만 "EEA 사용자인 척" 강제해 동의 폼을 실제로 띄워 검증한다. 한국에서
+// 개발하면 SDK가 정상적으로 "동의 불필요"로 답해버려서, 이 옵션 없이는 유럽 사용자 경로를 한 번도
+// 못 보고 출시하게 된다(전 세계 대상이므로 반드시 검증해야 하는 경로).
+//
+// 실기기는 testDeviceIdentifiers에 등록돼 있어야 디버그 지역이 먹는다(에뮬레이터는 자동 허용).
+// 기기 해시 ID는 adsConfig.ts의 TEST_DEVICE_IDS를 그대로 쓴다 — 광고 테스트기기와 같은 값이다.
+// 새 기기는 logcat 태그 "Ads"의 "Use RequestConfiguration.Builder().setTestDeviceIds(...)" 메시지에서
+// 찾아 그쪽에 추가하면 여기도 같이 적용된다.
+//
+// __DEV__ 게이트라 릴리즈 번들에는 이 분기 자체가 상수 폴딩으로 사라진다 — 실제 사용자에게 잘못된
+// 지역이 적용될 위험이 없다.
+function debugOptions() {
+  if (!__DEV__ || !DebugGeography) return undefined;
+  return {
+    debugGeography: DebugGeography.EEA,
+    testDeviceIdentifiers: TEST_DEVICE_IDS,
+  };
 }
 
 export type AdsConsentResult = {
@@ -60,13 +83,25 @@ export async function ensureAdsConsent(): Promise<AdsConsentResult> {
   try {
     // requestInfoUpdate + loadAndShowConsentFormIfRequired를 합친 공식 헬퍼.
     // 동의가 필요 없는 지역이면 폼 없이 즉시 반환된다.
-    const info = await AdsConsent.gatherConsent();
-    return {
+    const info = await AdsConsent.gatherConsent(debugOptions());
+    const result = {
       canRequestAds: info.canRequestAds === true,
       privacyOptionsRequired:
         PrivacyOptionsStatus != null &&
         info.privacyOptionsRequirementStatus === PrivacyOptionsStatus.REQUIRED,
     };
+    if (__DEV__) {
+      // 검증용 — 폼이 안 떴을 때 "동의가 불필요한 지역으로 판정됐는지" vs "폼 자체가 없는지"를
+      // 구분해야 원인을 찾을 수 있다(라이브러리 이슈 #807: 디버그 지역이 EEA인데도 폼이 없다고
+      // 나오는 사례 — 대부분 AdMob 콘솔에 GDPR 메시지가 게시 안 됐거나 기기 미등록이 원인).
+      console.log(
+        '[adsConsent] status=' + info.status +
+        ' formAvailable=' + info.isConsentFormAvailable +
+        ' canRequestAds=' + info.canRequestAds +
+        ' privacyOptions=' + info.privacyOptionsRequirementStatus
+      );
+    }
+    return result;
   } catch (e) {
     console.warn('[adsConsent] 동의 흐름 실패(광고만 영향, 앱은 계속):', e);
     return { canRequestAds: false, privacyOptionsRequired: false };

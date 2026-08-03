@@ -3888,3 +3888,25 @@ Mac 세션이 Java 미설치로 못 하던 검증을 대신 수행했다.
 
 참고2: `GET /actuator/health`는 500을 반환하지만 `/shorts-hot`는 401(정상 인증 요구) → 앱 자체는
 살아 있다. actuator 헬스 인디케이터 설정 문제로 보이며 서비스 동작과는 무관 — 별도 확인 항목.
+
+### Android 자동 제출(eas submit) 배선 — 트랙명 확정, 권한 1건 남음 (2026-08-03)
+
+jlpt-master처럼 `eas submit`으로 Play에 자동 업로드되게 `eas.json`에 android submit 블록을 추가했다.
+서비스 계정 키는 jlpt-master가 쓰던 것을 그대로 재사용
+(`revenuecat-access-android@project-615a442a-a560-405a-ba6.iam.gserviceaccount.com`).
+
+**함정 1 — 트랙 이름은 앱마다 다르다.** jlpt-master의 `"track": "closed-testing"`을 그대로 복사했더니
+`Google Api Error: Invalid request - Track not found: closed-testing`으로 실패했다. Play Developer
+API로 `com.strides7.pace`의 트랙을 직접 조회한 결과 **production / beta / alpha / internal 네 개뿐**
+이고(커스텀 트랙 없음), 비공개 테스트에 해당하는 것은 **`alpha`**(현재 versionCode 2가 completed로
+올라가 있음). jlpt-master는 커스텀 트랙을 만들어 쓴 것이라 이름이 달랐다. → `"track": "alpha"`.
+
+**함정 2 — 서비스 계정에 Pace 출시 권한이 없다(미해결).** 트랙 조회(edits 생성/tracks GET)는 되는데
+실제 제출에서 "The service account is missing the necessary permissions"로 실패한다. 즉 앱 정보
+읽기 권한은 있고 **출시 권한만 없다**.
+→ **사장님 조치 필요**: Play Console → 사용자 및 권한 → 위 서비스 계정 이메일 → 앱 권한에 **Pace 추가**
+→ "테스트 트랙에 출시"(Release to testing tracks) + "앱 버전 관리" 체크 → 저장. 반영 후
+`npx eas-cli submit --platform android --latest` 한 줄이면 끝난다.
+
+참고: `serviceAccountKeyPath`가 Windows 절대경로라 Mac 세션에서는 이 설정으로 제출 불가 —
+맥은 iOS(`ascAppId`)만 쓰므로 실사용엔 문제없다.

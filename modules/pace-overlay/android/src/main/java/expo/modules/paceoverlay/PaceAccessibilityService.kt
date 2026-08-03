@@ -50,6 +50,9 @@ class PaceAccessibilityService : AccessibilityService() {
   // 너무 오래된 값은 "모른다"로 취급하고 폴백(UsageStatsManager)을 타게 한다.
   private var currentForegroundPackageAtMs = 0L
   private var lastKnownCurrentSec = -1
+  // 2026-08-04 — 직전 영상 전환 시점의 영상 길이(초). "유튜브가 같은 영상을 반복 재생하는 것"과
+  // "사용자가 다음 영상으로 넘긴 것"을 가르는 데 쓴다(아래 loopedBack 분기 주석 참고).
+  private var lastAdvanceTotalSec = -1
   // 2026-07-26 추가 — currentSec가 이전 폴링보다 실제로 늘어난(=재생 중이라는 강한 증거) 마지막
   // 시각. companion의 isLikelyPlaying()이 이 값의 신선도로 "지금 실제로 재생 중인가"를 판단해
   // PaceOverlayService.performTick()의 사용시간 차감을 게이팅한다.
@@ -524,7 +527,19 @@ class PaceAccessibilityService : AccessibilityService() {
         if (nearEnd && isWatching) {
           performSwipeUp()
           lastSwipeAtMs = now
-        } else if (loopedBack && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+        } else if (loopedBack && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS && totalSec != lastAdvanceTotalSec) {
+          // 2026-08-04 실기기 검증 중 발견 — 여기에 **제3의 주체**가 있었다: 유튜브가 스스로 같은
+          // 영상을 무한 반복하는 경우다. 그때도 재생 위치가 0으로 떨어져 loopedBack이 뜨는데, 예전
+          // 조건("우리가 방금 스와이프한 게 아니면 사용자가 넘긴 것")은 그걸 전부 "사용자가 직접
+          // 넘김"으로 오인했다. 그 결과 새 수면감지의 무입력 시계가 22초마다 리셋돼 수면 판정이
+          // 영원히 나지 않았다(실측 로그: noInputMs 118272 → 80658로 되돌아감).
+          //   23:36:02 looped-back total=22s / 23:36:25 total=22s / 23:36:47 total=22s  ← 같은 영상
+          // 하필 "자동넘김 OFF + 무한 루프"가 수면감지가 반드시 커버해야 하는 시나리오라 치명적이었다.
+          //
+          // 구분 기준은 **영상 길이(totalSec)**다 — 같은 영상이 반복되면 그대로고, 사용자가 다음
+          // 영상으로 넘기면 대개 달라진다. 완벽한 식별자는 아니지만(길이가 같은 다른 영상이 연달아
+          // 올 수 있음) 그 경우는 "사용자 입력으로 한 번 더 인정"하는 안전한 방향의 오차라, 자던
+          // 사람을 깨우지 않는다.
           // 2026-08-02 실기기 근본원인("오버레이가 자꾸 사라짐" — prefs에 expire_reason=sleep_detected,
           // expired=true로 확인). 수면감지는 가속도계(폰의 물리적 움직임)만 보고, 깨어있음 증거로는
           // markUserActivity()(손짓/핑거스냅/BT 리모컨 경로)만 인정했다. 그런데 폰을 거치대나 책상에
@@ -535,6 +550,9 @@ class PaceAccessibilityService : AccessibilityService() {
           // 무진동 시계를 리셋한다.
           PaceOverlayService.markUserActivity()
         }
+        // 다음 loopedBack에서 "같은 영상 반복인지"를 비교할 기준. nearEnd(우리가 넘긴 경우)에도
+        // 갱신해야, 우리가 넘긴 직후의 첫 loopedBack이 길이 비교로 잘못 걸리지 않는다.
+        lastAdvanceTotalSec = totalSec
         lastKnownCurrentSec = -1
         return
       }

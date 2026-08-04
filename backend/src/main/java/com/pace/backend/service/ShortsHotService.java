@@ -64,6 +64,17 @@ public class ShortsHotService {
     // KEEP_COUNT를 50으로 올린 것에 맞춰 후보 풀도 search.list 최대치(50)로 키움(비용 증가 없음).
     private static final int SEARCH_FALLBACK_RESULTS = 50;
 
+    // 2026-08-04 사장님 지적("인기 쇼츠를 전체로 봐서 그런 거 아냐? 매일 그날 인기 쇼츠 맞아?") —
+    // 정확한 지적이었다. 주 경로가 chart=mostPopular였는데 그건 **"그날 인기"가 아니라 유튜브
+    // 인기급상승 차트(누적 트렌드)**라 며칠씩 거의 안 바뀐다. 게다가 쇼츠 전용도 아니라 일반 영상이
+    // 섞이고(카테고리로만 나눔), 아래 폴백의 order=viewCount도 기간 조건이 없어 **역대 조회수** 순이라
+    // 몇 년 된 영상이 계속 1등이었다. 그래서 어제와 같은 목록이 나왔다.
+    //
+    // → 주 경로를 "최근 N시간 안에 올라온 것 중 조회수 높은 순"으로 바꾼다(publishedAfter + order=viewCount
+    //   + videoDuration=short). 그래야 매일 실제로 갱신되는 "그날 인기 쇼츠"가 된다.
+    // 24시간은 카테고리에 따라 후보가 모자랄 수 있어 48시간으로 둔다(하루 4회 갱신이라 충분히 신선).
+    private static final int RECENT_HOURS = 48;
+
     // 카테고리 코드(앱/DB에서 쓰는 값) → YouTube videoCategoryId. "all"은 categoryId 없이
     // chart=mostPopular 전체 순위(카테고리 무관)를 그대로 쓴다.
     private static final Map<String, String> CATEGORIES = new LinkedHashMap<>();
@@ -78,7 +89,10 @@ public class ShortsHotService {
 
     // search.list는 chart처럼 카테고리ID만으로 못 걸러서 검색어가 필요하다 — 카테고리를 그대로
     // 대표하는 한국어 키워드.
+    // 2026-08-04 — "all"을 추가한다. 예전엔 chart=mostPopular가 주 경로라 all은 검색어가 필요 없었지만,
+    // 이제 search가 주 경로가 되면서 all에도 대표 검색어가 있어야 한다.
     private static final Map<String, String> SEARCH_FALLBACK_QUERY = Map.of(
+            "all", "쇼츠",
             "music", "인기 음악",
             "gaming", "게임",
             "comedy", "웃긴 영상",
@@ -163,6 +177,19 @@ public class ShortsHotService {
         LocalDateTime now = LocalDateTime.now();
         String pageToken = null;
 
+        // 2026-08-04 사장님 지적("인기 쇼츠를 전체로 봐서 그런 거 아냐? 매일 그날 인기 쇼츠 맞아?")으로
+        // 순서를 뒤집었다 — "최근 RECENT_HOURS 안에 올라온 것 중 조회수 높은 순"을 **주 경로**로 쓴다.
+        // chart=mostPopular는 그날 인기가 아니라 누적 인기급상승 차트라 며칠씩 그대로였고, 쇼츠 전용도
+        // 아니라 일반 영상이 섞였다(카테고리로만 나눔). 이제 chart는 개수가 모자랄 때의 보충용이다.
+        if (SEARCH_FALLBACK_QUERY.containsKey(category)) {
+            try {
+                searchFallback(category, rows, now);
+            } catch (Exception e) {
+                // 실패해도 아래 chart 경로로 계속 — 목록이 통째로 비는 것보다 낫다.
+                log.warn("[ShortsHot] 최근 인기 검색 실패, chart로 폴백: category={}", category, e);
+            }
+        }
+
         for (int page = 0; page < MAX_PAGES && rows.size() < KEEP_COUNT; page++) {
             StringBuilder url = new StringBuilder(VIDEOS_API)
                     .append("?part=snippet,contentDetails")
@@ -204,14 +231,8 @@ public class ShortsHotService {
             if (pageToken == null) break; // 더 넘길 페이지가 없음
         }
 
-        if (rows.size() < KEEP_COUNT && SEARCH_FALLBACK_QUERY.containsKey(category)) {
-            try {
-                searchFallback(category, rows, now);
-            } catch (Exception e) {
-                // 보충 실패해도 chart 기반으로 이미 모은 건 그대로 저장 — 전체를 막지 않는다.
-                log.warn("[ShortsHot] search fallback 실패: category={}", category, e);
-            }
-        }
+        // 2026-08-04 — 예전엔 여기서 searchFallback을 불렀는데, 위에서 주 경로로 이미 돌리므로 제거한다
+        // (남겨두면 같은 카테고리에 search.list가 두 번 나가 쿼터만 두 배로 쓴다).
 
         repository.deleteByCategory(category);
         repository.saveAll(rows);
@@ -227,11 +248,19 @@ public class ShortsHotService {
         for (ShortsHotVideo row : rows) seenVideoIds.add(row.getVideoId());
 
         String query = SEARCH_FALLBACK_QUERY.get(category);
+        // 2026-08-04 — publishedAfter를 붙인다. 이게 없으면 order=viewCount가 **역대 조회수** 순이라
+        // 몇 년 된 영상이 계속 1등이고 목록이 매일 그대로다(사장님 지적 "매일 그날 인기 쇼츠 맞아?").
+        // YouTube API는 RFC3339 UTC 형식을 요구한다.
+        String publishedAfter = java.time.Instant.now()
+                .minus(java.time.Duration.ofHours(RECENT_HOURS))
+                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                .toString();
         String searchUrl = SEARCH_API
                 + "?part=snippet"
                 + "&type=video"
                 + "&videoDuration=short"
                 + "&order=viewCount"
+                + "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
                 + "&regionCode=KR"
                 + "&relevanceLanguage=ko"
                 + "&maxResults=" + SEARCH_FALLBACK_RESULTS

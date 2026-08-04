@@ -340,9 +340,13 @@ export default function RootLayout() {
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
     // 2026-08-04 사장님 지시("앱 시작하면서 가져왔다 사용자가 누르면 연결") — "Shorts with PACE"
-    // 폴백용 시작 영상 ID를 미리 받아둔다. 탭하는 순간 네트워크를 기다리면 그게 곧 체감 지연이 된다
+    // 진입 정책을 미리 받아둔다. 탭하는 순간 네트워크를 기다리면 그게 곧 체감 지연이 된다
     // (services/shortsEntry.ts 주석에 근거·검증 상세).
-    prefetchShortsEntryPolicy();
+    // ⚠️ Android 전용이다 — 이 정책은 "유튜브 앱을 어떻게 열지"를 정하는 것이고, iOS는 애초에
+    // 외부 앱을 열지 않는다(앱 안의 Pace Feed가 IFrame 플레이어로 직접 재생). iOS에서 부르면
+    // openShortsFeed()가 어차피 false로 즉시 반환하므로 결과는 같지만, 부팅마다 쓰이지도 않을
+    // 네트워크 요청이 한 번씩 나간다 — 게이팅해서 그 낭비를 없앤다.
+    if (Platform.OS === 'android') prefetchShortsEntryPolicy();
     // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — 쇼츠 위 FOCUS 연장 보상광고는
     // 네이티브 액티비티(PaceRewardedAdActivity)가 띄우는데, 실광고 유닛/테스트 유닛 선택을 prefs의
     // use_real_ads로 하고 기본값이 false다. 그런데 그 값을 쓰는 코드가 앱 전체에 한 줄도 없어서,

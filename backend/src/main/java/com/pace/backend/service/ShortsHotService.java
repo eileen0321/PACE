@@ -106,6 +106,46 @@ public class ShortsHotService {
             "pets", "반려동물"
     );
 
+    // 2026-08-04 사장님 결정 — 쇼츠 HOT을 국가별로 나눈다. 아무 국가나 동적으로 만들면 VPN/봇 요청
+    // 한 번에 YouTube 쿼터가 날아가므로(search.list 100 units/회) **지원 국가를 화이트리스트로 고정**한다.
+    // 목록에 없는 국가는 US(영어)로 폴백한다 — 목록이 비어 보이는 것보다 낫다.
+    // 쿼터: 3국 × 6카테고리 × 100 units × 2회/일 = 3,600 units/일(무료 10,000의 36%).
+    // 국가를 하나 늘릴 때마다 +1,200 units/일.
+    private static final List<String> SUPPORTED_COUNTRIES = List.of("KR", "JP", "US");
+    private static final String FALLBACK_COUNTRY = "US";
+
+    // ⚠️ regionCode만 바꾸고 검색어가 한국어면 일본/미국에서 엉뚱한 결과가 나온다 —
+    // 국가별 검색어 세트가 반드시 함께 있어야 한다(Vercel 쪽 CATEGORIES_BY_LANG와 같은 이유).
+    private static final Map<String, Map<String, String>> QUERY_BY_COUNTRY = Map.of(
+            "KR", SEARCH_FALLBACK_QUERY,
+            "JP", Map.of(
+                    "all", "ショート",
+                    "music", "人気 音楽",
+                    "gaming", "ゲーム",
+                    "comedy", "面白い動画",
+                    "entertainment", "バラエティ",
+                    "pets", "ペット"
+            ),
+            "US", Map.of(
+                    "all", "shorts",
+                    "music", "popular music",
+                    "gaming", "gaming",
+                    "comedy", "funny",
+                    "entertainment", "entertainment",
+                    "pets", "pets"
+            )
+    );
+
+    // 국가 → YouTube relevanceLanguage. 없으면 영어로.
+    private static final Map<String, String> LANG_BY_COUNTRY = Map.of("KR", "ko", "JP", "ja", "US", "en");
+
+    /** 지원 목록에 있으면 그대로, 없으면 US로 폴백. null/빈값도 안전하게 처리. */
+    public static String normalizeCountry(String country) {
+        if (country == null) return FALLBACK_COUNTRY;
+        String upper = country.trim().toUpperCase();
+        return SUPPORTED_COUNTRIES.contains(upper) ? upper : FALLBACK_COUNTRY;
+    }
+
     private final ShortsHotVideoRepository repository;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
@@ -117,9 +157,10 @@ public class ShortsHotService {
         return List.copyOf(CATEGORIES.keySet());
     }
 
-    public List<ShortsHotVideoResponse> get(String category) {
+    public List<ShortsHotVideoResponse> get(String country, String category) {
+        String normalizedCountry = normalizeCountry(country);
         String normalized = CATEGORIES.containsKey(category) ? category : "all";
-        return repository.findByCategoryOrderByRankAsc(normalized).stream()
+        return repository.findByCountryAndCategoryOrderByRankAsc(normalizedCountry, normalized).stream()
                 .map(ShortsHotVideoResponse::of)
                 .toList();
     }
@@ -128,7 +169,10 @@ public class ShortsHotService {
     // 카테고리당 최악(search fallback 필요) 105 units × 5개 = 525 units/회, 하루 4회면 최악 약
     // 2,100 units(일일 쿼터 10,000의 ~21%) — 이 키는 클라이언트 Shorts 피드용 키와 별개 전용
     // 키라 다른 기능과 쿼터를 나눠쓰지 않음, 여유 충분.
-    @Scheduled(cron = "0 0 0,6,12,18 * * *")
+    // 2026-08-04 — 국가가 3개(KR/JP/US)로 늘면서 하루 4회면 7,200 units(무료 10,000의 72%)로 빡빡해진다.
+    // 쇼츠 트렌드가 6시간마다 뒤집히지는 않으므로 2회/일로 줄여 3,600 units(36%)로 맞춘다 —
+    // 남는 여유로 나중에 국가를 더 늘릴 수 있다(국가당 +1,200 units/일).
+    @Scheduled(cron = "0 0 0,12 * * *")
     public void refreshAll() {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("[ShortsHot] YOUTUBE_API_KEY 미설정 — 갱신 스킵");
@@ -136,25 +180,28 @@ public class ShortsHotService {
         }
         // "all"은 여기서 직접 API를 부르지 않고, 아래에서 카테고리별 결과를 합쳐 따로 만든다
         // (refreshAllTab 참고) — categoryId==null인 항목이 "all" 하나뿐이라 이걸로 구분한다.
-        List<List<ShortsHotVideo>> perCategory = new ArrayList<>();
-        CATEGORIES.forEach((category, categoryId) -> {
-            if (categoryId == null) return;
-            try {
-                perCategory.add(refreshCategory(category, categoryId));
-            } catch (Exception e) {
-                // 카테고리 하나가 실패해도(쿼터 초과, 일시적 네트워크 오류 등) 나머지는 계속 갱신 —
-                // 부분 실패가 전체 갱신을 막으면 안 됨. 실패한 카테고리는 기존 캐시가 그대로 유지된다.
-                log.error("[ShortsHot] 카테고리 갱신 실패: category={}", category, e);
-            }
-        });
-        refreshAllTab(perCategory);
+        // 2026-08-04 — 지원 국가마다 따로 채운다. 한 국가가 통째로 실패해도 나머지는 계속 간다.
+        for (String country : SUPPORTED_COUNTRIES) {
+            List<List<ShortsHotVideo>> perCategory = new ArrayList<>();
+            CATEGORIES.forEach((category, categoryId) -> {
+                if (categoryId == null) return;
+                try {
+                    perCategory.add(refreshCategory(country, category, categoryId));
+                } catch (Exception e) {
+                    // 카테고리 하나가 실패해도(쿼터 초과, 일시적 네트워크 오류 등) 나머지는 계속 갱신 —
+                    // 부분 실패가 전체 갱신을 막으면 안 됨. 실패한 카테고리는 기존 캐시가 그대로 유지된다.
+                    log.error("[ShortsHot] 카테고리 갱신 실패: country={} category={}", country, category, e);
+                }
+            });
+            refreshAllTab(country, perCategory);
+        }
     }
 
     // "all" 탭은 별도 API 호출(카테고리 무관 전체 인기차트) 대신, 방금 갱신한 카테고리별 결과를
     // 라운드로빈으로 섞어 만든다 — 2026-08-01 발견: KR 전체 인기차트 상위 50개 중 60초 이하가
     // 하나도 없는 날이 있어(뮤직비디오/방송 클립 등 긴 영상 위주) "all" 탭 전체가 비어 보이는
     // 문제가 있었다. 카테고리별 결과를 합치면 어느 한 카테고리라도 결과가 있는 한 "all"도 채워진다.
-    private void refreshAllTab(List<List<ShortsHotVideo>> perCategory) {
+    private void refreshAllTab(String country, List<List<ShortsHotVideo>> perCategory) {
         List<ShortsHotVideo> merged = new ArrayList<>();
         Set<String> seenVideoIds = new HashSet<>();
         LocalDateTime now = LocalDateTime.now();
@@ -165,7 +212,7 @@ public class ShortsHotService {
                 if (index >= categoryRows.size()) continue;
                 ShortsHotVideo source = categoryRows.get(index);
                 if (!seenVideoIds.add(source.getVideoId())) continue;
-                merged.add(new ShortsHotVideo("all", rank, source.getVideoId(), source.getTitle(),
+                merged.add(new ShortsHotVideo(country, "all", rank, source.getVideoId(), source.getTitle(),
                         source.getChannel(), source.getThumbnailUrl(), now));
                 rank++;
                 addedAny = true;
@@ -173,12 +220,12 @@ public class ShortsHotService {
             }
             if (!addedAny) break;
         }
-        repository.deleteByCategory("all");
+        repository.deleteByCountryAndCategory(country, "all");
         repository.saveAll(merged);
         log.info("[ShortsHot] category=all(카테고리 집계) 갱신 완료: {}건", merged.size());
     }
 
-    private List<ShortsHotVideo> refreshCategory(String category, String categoryId) throws Exception {
+    private List<ShortsHotVideo> refreshCategory(String country, String category, String categoryId) throws Exception {
         List<ShortsHotVideo> rows = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
         String pageToken = null;
@@ -189,7 +236,7 @@ public class ShortsHotService {
         // 아니라 일반 영상이 섞였다(카테고리로만 나눔). 이제 chart는 개수가 모자랄 때의 보충용이다.
         if (SEARCH_FALLBACK_QUERY.containsKey(category)) {
             try {
-                searchFallback(category, rows, now);
+                searchFallback(country, category, rows, now);
             } catch (Exception e) {
                 // 실패해도 아래 chart 경로로 계속 — 목록이 통째로 비는 것보다 낫다.
                 log.warn("[ShortsHot] 최근 인기 검색 실패, chart로 폴백: category={}", category, e);
@@ -200,7 +247,7 @@ public class ShortsHotService {
             StringBuilder url = new StringBuilder(VIDEOS_API)
                     .append("?part=snippet,contentDetails")
                     .append("&chart=mostPopular")
-                    .append("&regionCode=KR")
+                    .append("&regionCode=" + country)
                     .append("&maxResults=").append(FETCH_COUNT)
                     .append("&key=").append(URLEncoder.encode(apiKey, StandardCharsets.UTF_8));
             if (categoryId != null) {
@@ -229,7 +276,7 @@ public class ShortsHotService {
                 String channel = snippet.path("channelTitle").asText(null);
                 String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
-                rows.add(new ShortsHotVideo(category, rows.size(), videoId, title, channel, thumbnailUrl, now));
+                rows.add(new ShortsHotVideo(country, category, rows.size(), videoId, title, channel, thumbnailUrl, now));
                 if (rows.size() >= KEEP_COUNT) break;
             }
 
@@ -240,7 +287,7 @@ public class ShortsHotService {
         // 2026-08-04 — 예전엔 여기서 searchFallback을 불렀는데, 위에서 주 경로로 이미 돌리므로 제거한다
         // (남겨두면 같은 카테고리에 search.list가 두 번 나가 쿼터만 두 배로 쓴다).
 
-        repository.deleteByCategory(category);
+        repository.deleteByCountryAndCategory(country, category);
         repository.saveAll(rows);
         log.info("[ShortsHot] category={} 갱신 완료: {}건", category, rows.size());
         return rows;
@@ -249,11 +296,11 @@ public class ShortsHotService {
     // chart=mostPopular로 KEEP_COUNT를 못 채운 카테고리를 search.list(videoDuration=short)로
     // 보충한다 — search.list는 정확한 초 단위 duration을 안 주므로(<4분만 보장) videos.list로
     // 한 번 더 조회해 60초 이하만 최종 채택한다.
-    private void searchFallback(String category, List<ShortsHotVideo> rows, LocalDateTime now) throws Exception {
+    private void searchFallback(String country, String category, List<ShortsHotVideo> rows, LocalDateTime now) throws Exception {
         Set<String> seenVideoIds = new HashSet<>();
         for (ShortsHotVideo row : rows) seenVideoIds.add(row.getVideoId());
 
-        String query = SEARCH_FALLBACK_QUERY.get(category);
+        String query = QUERY_BY_COUNTRY.getOrDefault(country, SEARCH_FALLBACK_QUERY).get(category);
         // 2026-08-04 — publishedAfter를 붙인다. 이게 없으면 order=viewCount가 **역대 조회수** 순이라
         // 몇 년 된 영상이 계속 1등이고 목록이 매일 그대로다(사장님 지적 "매일 그날 인기 쇼츠 맞아?").
         // YouTube API는 RFC3339 UTC 형식을 요구한다.
@@ -267,8 +314,8 @@ public class ShortsHotService {
                 + "&videoDuration=short"
                 + "&order=viewCount"
                 + "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
-                + "&regionCode=KR"
-                + "&relevanceLanguage=ko"
+                + "&regionCode=" + country
+                + "&relevanceLanguage=" + LANG_BY_COUNTRY.getOrDefault(country, "en")
                 + "&maxResults=" + SEARCH_FALLBACK_RESULTS
                 + "&q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
                 + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
@@ -307,7 +354,7 @@ public class ShortsHotService {
 
             String channel = snippet.path("channelTitle").asText(null);
             String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
-            rows.add(new ShortsHotVideo(category, rows.size(), videoId, title, channel, thumbnailUrl, now));
+            rows.add(new ShortsHotVideo(country, category, rows.size(), videoId, title, channel, thumbnailUrl, now));
         }
     }
 

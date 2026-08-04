@@ -5367,3 +5367,35 @@ adb shell settings put secure accessibility_enabled 1
 
 ⚠️ **이미 출시된 v1.0(versionCode 5) 사용자는 앱을 업데이트해야 고쳐진다** — ①②가 모두 클라이언트
 쪽이라 서버만 고쳐서는 해결되지 않는다. 이번 1.0.1에 포함.
+
+#### (이어서) 안드로이드는 **네이티브 오버레이**가 따로 부른다 — JS만 고치면 안 고쳐진다
+
+client.ts를 고친 뒤에도 실기기 HOT은 그대로 영어였다. 원인: 안드로이드에서 사용자가 실제로 보는
+HOT 패널은 유튜브 위에 뜨는 **네이티브 오버레이**이고, 그건 `PaceOverlayService.kt`의
+`ShortsHotStore.fetch()`가 Kotlin에서 직접 `/shorts-hot?category=…`를 호출한다(여기에도 country 없음).
+→ 같은 규칙(언어 기준 ko→KR / ja→JP / 그 외 폰 지역)으로 네이티브에도 `country`를 붙였다.
+
+**⚠️ 교훈** — 안드로이드는 같은 데이터를 **JS와 네이티브 두 곳**에서 가져온다. 백엔드 API 파라미터를
+바꿀 땐 두 곳 다 확인할 것. (네이티브가 부르는 백엔드 엔드포인트는 현재 `/shorts-hot` 하나뿐임을 확인.)
+
+**백엔드 실측 비교 (게스트 토큰으로 직접 호출)**
+| 요청 | 결과 |
+|---|---|
+| `country=KR` | 한국어 ✅ (카라차 / 랭킹 TOP5 웃긴영상 / 유세윤 예능 / 트로트) |
+| `country=JP` | 일본어 ✅ (ラップバトル / ちょこぱ) |
+| `country=US` | 영어+베트남어 |
+| **country 없음** | **US 목록 — 앱에 나오던 것과 완전 일치** |
+
+→ 백엔드·스케줄러는 정상이었다(로그: 오늘 00:21 KST 3개국 × 6카테고리 전부 25건 갱신).
+**아무도 KR을 요청하지 않았을 뿐이다.**
+
+✅ 수정 후 실기기 재확인: HOT 패널이 위 `country=KR` 응답과 정확히 일치하는 한국어 목록으로 바뀜.
+
+#### 작업 메모 — Metro 번들을 grep으로 확인할 때
+`/node_modules/expo-router/entry.bundle`은 **앱 코드가 안 들어있는 껍데기**다(6.6MB, "Shorts with PACE" 0건).
+실제 앱 번들은 `/.expo/.virtual-metro-entry.bundle?platform=android&dev=true&minify=false`(13MB).
+전자를 보고 "Metro 캐시가 stale하다"고 잘못 판단할 뻔했다.
+
+#### 작업 메모 — 앱 준비 완료 판정
+스크린샷 크기로 판정할 때 **유튜브 PIP 창이 떠 있으면 스플래시도 400KB를 넘겨** 오판한다.
+PIP를 먼저 닫고 판정할 것(스플래시 ≈190KB, 홈 ≈640KB+).

@@ -3693,7 +3693,23 @@ private object ShortsHotStore {
     val token = authToken(context) ?: return emptyList()
     var conn: java.net.HttpURLConnection? = null
     return try {
-      val url = java.net.URL("$base/shorts-hot?category=${java.net.URLEncoder.encode(category, "UTF-8")}")
+      // ⚠️ 2026-08-05 사장님 실기기 확인 — HOT 리스트가 전부 영어(+베트남어)였다. 백엔드
+      //   ShortsHotController는 `country`가 없으면 Accept-Language 폴백을 쓰는데 여기선 둘 다 안 보내서
+      //   국가를 못 정하고 FALLBACK_COUNTRY="US"로 떨어졌다. 실측 비교로 확정:
+      //     country=KR → 한국어 목록 / country 없음 → US 목록(앱에 나오던 그 목록과 완전 일치)
+      //   ⭐ 안드로이드에서 사용자가 실제로 보는 HOT 패널은 **이 네이티브 오버레이**다(유튜브 위에 뜬다).
+      //   JS(client.ts)만 고쳐서는 이 화면이 안 고쳐진다 — 양쪽 다 보내야 한다.
+      //   국가는 스토어 지역이 아니라 **언어** 기준(isKoreanLocale과 같은 근거 — 폰 지역이 US여도
+      //   한국어 사용자는 한국 콘텐츠를 원한다). 백엔드 화이트리스트는 KR/JP/US, 그 외는 US 폴백.
+      val loc = context.resources.configuration.locales[0]
+      val country = when (loc.language) {
+        "ko" -> "KR"
+        "ja" -> "JP"
+        else -> loc.country.uppercase()
+      }
+      val q = StringBuilder("category=${java.net.URLEncoder.encode(category, "UTF-8")}")
+      if (country.isNotBlank()) q.append("&country=").append(java.net.URLEncoder.encode(country, "UTF-8"))
+      val url = java.net.URL("$base/shorts-hot?$q")
       conn = (url.openConnection() as java.net.HttpURLConnection).apply {
         connectTimeout = 8000
         readTimeout = 8000

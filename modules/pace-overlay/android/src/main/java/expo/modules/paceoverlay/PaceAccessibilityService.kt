@@ -154,7 +154,41 @@ class PaceAccessibilityService : AccessibilityService() {
     // 그 결과 손짓·볼륨키·자동넘김이 전부 죽은 상태인데 앱은 "권한 정상"으로 판단해 경고 배너조차
     // 띄우지 않았고(사용자 지적 "손짓 토글되어 있는데 하나도 안 되"), 사용자는 원인을 알 방법이 없었다.
     // 실제로 살아 있는지는 onServiceConnected에서 세팅되는 instance로만 알 수 있다.
-    fun isAlive(): Boolean = instance != null
+    //
+    // ⚠️ 이 함수는 "지금 이 순간 붙어 있나"라는 **엄격한** 질문이다. 실제로 제스처를 쏘거나 창을
+    // 조회해야 하는 내부 코드는 이 값을 써야 한다. 반대로 사용자에게 "권한이 없다"고 말하거나
+    // 기능을 막을지 판단할 때는 아래 isAliveOrRebinding()을 써야 한다(그 주석 참고).
+    fun isAlive(): Boolean {
+      if (instance == null) return false
+      lastAliveAtMs = System.currentTimeMillis()
+      return true
+    }
+
+    // 마지막으로 "살아 있음"이 확인된 시각. isAlive()가 true를 반환할 때마다 갱신된다 —
+    // 알약 배지 갱신(applyAutoBadgeStyle)이 1초마다 이 경로를 타므로 서비스가 붙어 있는 동안은
+    // 계속 최신값이 된다. onDestroy에서도 한 번 찍어 "방금 전까지는 살아 있었다"를 남긴다.
+    @Volatile private var lastAliveAtMs = 0L
+
+    // 2026-08-04 사장님 실기기 지적("권한 설정되어 있는데 블루투스 켜려고 하면 권한 설정하라고 설정으로
+    // 가고, 이미 켜져 있어서 안 켜짐") — 접근성 서비스는 **정상 상황에서도 끊겼다 붙는다**(앱 업데이트,
+    // 설정 재적용, OEM의 a11y 상태 갱신 등). 실기기에서 삼성(com.samsung.accessibility)이 설정을
+    // 반복 재적용하며 4~7초마다 언바인드/리바인드하는 것을 확인했다(dumpsys accessibility →
+    // Bound services:{} 인데 Enabled services에는 우리 서비스가 그대로, Crashed services는 비어 있음).
+    // 그런데 권한 판정이 isAlive() 하나에 걸려 있어서, 그 짧은 공백에 걸리면:
+    //   - 블루투스/손짓 토글이 "권한 없음"으로 막히고 사용자를 접근성 설정 화면으로 끌고 간다
+    //     (가보면 이미 켜져 있어서 사용자는 할 수 있는 게 없다 — 무한 반복)
+    //   - 알약 배지가 "권한 필요"로 깜빡인다
+    // 재바인딩 공백을 고장으로 단정하지 않는다: 마지막으로 살아 있던 시각이 유예시간 안이면 정상으로
+    // 본다. 이 체크를 넣은 원래 목적(프로세스가 죽어 서비스가 영영 안 붙는데 설정 문자열만 남은 상태를
+    // 잡아내는 것)은 그대로 지켜진다 — 진짜로 죽었으면 유예시간이 지나는 순간 정확히 고장으로 잡힌다.
+    private const val REBIND_GRACE_MS = 30_000L
+
+    fun isAliveOrRebinding(): Boolean {
+      if (isAlive()) return true
+      // 한 번도 붙은 적이 없으면(=사용자가 애초에 안 켰다) 유예를 주지 않는다.
+      if (lastAliveAtMs == 0L) return false
+      return System.currentTimeMillis() - lastAliveAtMs < REBIND_GRACE_MS
+    }
 
     // intervalMs 파라미터는 예전엔 "고정 스와이프 간격"이었지만 이제 "안전 타임아웃"으로 의미가
     // 바뀌었다 — JS↔네이티브 브릿지 시그니처(PaceOverlayModule.startAutoNextWatching)는 그대로 두고
@@ -453,6 +487,23 @@ class PaceAccessibilityService : AccessibilityService() {
     if (device == null || !device.isExternal || (device.vendorId == 0 && device.productId == 0)) {
       return false
     }
+    // 2026-08-05 사장님 지시("에어팟 켜면 핸즈프리 블루투스가 켜져 있어도 에어팟으로 볼륨 조절되게")
+    // — 맥 세션이 iOS에 넣은 "리모컨 입력 vs 이어폰 볼륨 입력" 구분을 Android에도 맞춘다.
+    //
+    // 위까지의 조건(isExternal + vendorId/productId)은 "외부 기기에서 온 신호인가"만 가른다. 그래서
+    // 에어팟/버즈처럼 **소리를 듣는 기기**의 볼륨 조작까지 전부 넘김으로 삼켜, 이어폰을 끼고 있으면
+    // 음량을 아예 못 바꿨다. 리모컨(다이소 BT 셔터 등)은 오디오를 스트리밍하지 않는 순수 HID 입력
+    // 장치이고, 에어팟/버즈는 A2DP/SCO로 실제 오디오가 나가는 출력 장치다 — 이 차이로 가른다.
+    //
+    // 블루투스 오디오 출력이 연결돼 있으면 = 사용자가 그걸로 소리를 듣고 있다는 뜻이므로 볼륨키는
+    // 볼륨 그대로 두고 통과시킨다(그때 넘김은 손짓/직접 스와이프로 하면 된다). 리모컨만 연결된
+    // 경우에는 예전처럼 넘김 신호로 쓴다.
+    // ⚠️ 이 판정은 "지금 이 순간" 오디오 기기가 붙어 있는지를 본다 — 이어폰을 빼면 곧바로 다시
+    // 리모컨 모드로 돌아간다(연결 상태를 캐시하지 않는 이유).
+    if (isBluetoothAudioOutputConnected()) {
+      Log.i("PaceAccessibility", "volume-key passthrough — BT 오디오 기기 연결됨(에어팟/버즈 등), 볼륨 조절 우선")
+      return false
+    }
     // ACTION_DOWN에서만 처리 — ACTION_UP까지 같이 소비하면 한 번의 물리 입력이 두 번 카운트될 위험.
     if (event.action != KeyEvent.ACTION_DOWN) {
       return true // DOWN에서 이미 소비하기로 했으니 대응하는 UP도 시스템에 전달되지 않게 계속 삼킴.
@@ -476,6 +527,25 @@ class PaceAccessibilityService : AccessibilityService() {
     return true
   }
 
+  // 2026-08-05 — 블루투스 "오디오 출력"이 지금 연결돼 있는지. 에어팟/버즈/BT 스피커는 A2DP(음악) 또는
+  // SCO(통화)로 잡히고, 순수 리모컨(HID)은 오디오 출력이 아니라 여기 안 잡힌다 — 이 차이가 곧
+  // "소리를 듣는 기기 vs 조작만 하는 기기"의 구분이다(위 onKeyEvent 주석 참고).
+  // BLUETOOTH_CONNECT 런타임 권한이 필요한 건 BluetoothAdapter 쪽 API이고, AudioManager로 출력
+  // 라우팅만 보는 이 경로는 별도 권한 없이 동작한다(PaceOverlayModule의 같은 헬퍼와 동일한 방식).
+  private fun isBluetoothAudioOutputConnected(): Boolean {
+    return try {
+      val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return false
+      audioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).any {
+        it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+          it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+      }
+    } catch (e: Exception) {
+      // 조회 실패 시 false — 예전 동작(넘김)을 유지해 리모컨 사용자가 갑자기 못 넘기게 되는 회귀를 막는다.
+      Log.w("PaceAccessibility", "isBluetoothAudioOutputConnected 실패", e)
+      false
+    }
+  }
+
   override fun onInterrupt() {}
 
   override fun onDestroy() {
@@ -483,7 +553,8 @@ class PaceAccessibilityService : AccessibilityService() {
     isTrackingPlayback = false
     pollingScheduled = false
     handler.removeCallbacks(pollRunnable)
-    if (instance === this) instance = null
+    // 죽는 시각을 남긴다 — 재바인딩 유예(isAliveOrRebinding)의 기준점이 된다.
+    if (instance === this) { lastAliveAtMs = System.currentTimeMillis(); instance = null }
     super.onDestroy()
   }
 

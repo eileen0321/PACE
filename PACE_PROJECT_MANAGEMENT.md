@@ -5252,3 +5252,72 @@ iOS `getShortsSeedVideoId()`엔 `dfd4fb7`로 "seedPool 비었으면 프리페치
 **🍎 Mac 확인 방법(싸게 판별됨)** — dev 빌드에서 `__PACE_DIAG__`가 켜지므로, 전환마다
 `AUDIO audible-blocked`가 찍히면 위 추정이 맞다. `audible-ok`만 찍히면 다른 원인이니 더 파야 한다.
 Windows에선 iOS 빌드가 안 돼 여기서 더 못 좁힌다.
+
+### 2026-08-05 — Windows 세션 (🔴🔴 진짜 원인 발견: 세션이 running이면 쇼츠 진입 코드가 **한 번도 실행되지 않았다**)
+
+사장님 실기기 재현: "또 유튜브 앱이야", "첫 영상이 계속 같다".
+**두 증상이 같은 원인이었고, 그 앞의 내 수정들(ab27560 시드 3건)은 이 게이트에 막혀 실행조차 안 됐다.**
+
+#### 원인
+
+`src/app/(tabs)/home.tsx` onSelectPlatform:
+
+```ts
+if (useSessionStore.getState().status === 'running') {
+  resumePlatformApp(platform).catch(() => {});
+  return;                      // ← openShortsFeed()에 영원히 도달 못 함
+}
+```
+
+`resumePlatformApp` → 네이티브 `resumeThirdPartyApp` → `getLaunchIntentForPackage` + `REORDER_TO_FRONT`.
+이건 "유튜브 태스크가 살아 있을 때 그 상태 그대로 복원"하는 용도인데(2026-08-01 사장님 "작아진 화면
+다시 키워야지"), **태스크가 이미 홈에 있거나 죽었으면 같은 인텐트가 새 태스크를 홈 탭으로 열어버린다.**
+
+즉 세션이 한 번 running이 된 뒤로는 카드를 눌러도 유튜브 홈만 떴고, 시드를 뽑는 코드 자체가 안 돌았다.
+
+**실기기 logcat 증거 (수정 전)**
+```
+START u0 {act=android.intent.action.MAIN cat=[LAUNCHER] flg=0x10020000
+          cmp=com.google.android.youtube/.app.honeycomb.Shell$HomeActivity} from uid 10741
+```
+`flg=0x10020000` = `NEW_TASK|REORDER_TO_FRONT` → resumeThirdPartyApp과 플래그까지 일치. uid 10741 = Pace.
+
+#### 수정
+
+**판별 기준 = "PIP 창이 실제로 남아 있는가"** (추측 아님, 실제 창 상태를 읽는다).
+PIP 창이 Pace 전환 후에도 `windows` 목록에 남는다는 건 이미 실기기로 확인된 사실이다
+(`supportedAppWindowVisible` 주석 — 거기선 그게 문제라 제외했고, 여기선 그게 신호다).
+
+- `PaceAccessibilityService.isPackageInPictureInPicture(pkg)` 신설 (`AccessibilityWindowInfo.isInPictureInPictureMode`, API 26+)
+- `PaceOverlayModule`에 `isThirdPartyAppInPip` 노출
+- `resumePlatformApp`이 `Promise<boolean>` 반환 — PIP 없으면 재개하지 않고 false
+- `home.tsx`: false면 `launchPlatformApp`(=openShortsFeed)으로 새 쇼츠.
+  ⚠️ **`startSession`을 부르면 안 된다** — viewing_sessions 행이 하나 더 생겨 이중집계(감사 HIGH2).
+- **회귀 방지**: 구버전 네이티브엔 이 함수가 없어 `undefined` → 기존 동작(항상 재개) 유지. `false`일 때만 새 분기.
+- **iOS 부수 수정**: 같은 게이트 때문에 iOS는 세션 중 카드 탭이 **아무 일도 안 일어났다**(재개 함수가
+  즉시 return, `/feed` 라우팅은 running이 아닐 때만 있었다). `running`이면 `/feed`로 보내준다.
+
+#### ✅ 실기기 검증 완료 (Note20 SM-N986N, Android 13)
+
+| 상황 | 인텐트 | 결과 |
+|---|---|---|
+| 세션 시작(첫 탭) | `act=VIEW dat=https://www.youtube.com/… → UrlActivity` | 쇼츠 진입 ✅ |
+| 유튜브가 PIP로 살아있음 | `MAIN/LAUNCHER + REORDER_TO_FRONT` | 보던 쇼츠 그대로 복원 ✅ (기존 동작 보존) |
+| **유튜브가 홈 탭에 있음** | `act=VIEW → UrlActivity` | **새 쇼츠로 진입 ✅ (이게 이번 수정)** |
+
+- 4회 연속 진입 시 화면 md5 전부 다름 = 매번 다른 영상.
+- 화면 확인: 유튜브 하단 네비 **Shorts 탭 선택 상태**, 한국 콘텐츠(댄스/케이팝, "계란 마술"),
+  Pace 오버레이 알약 정상 표시(`59m left / FOCUS 7m`) = 접근성 서비스도 살아있음.
+- 새 카테고리(재미) 반영 확인 — "계란 마술"은 이번에 넣은 `마술` 카테고리다.
+
+#### ⚠️ 재설치할 때마다 접근성이 죽는다 (작업 메모)
+
+`adb install -r`과 `am force-stop` 둘 다 접근성 서비스를 죽인다. 시스템이 다시 안 붙는 경우가 있어
+매번 아래로 강제 재바인딩해야 한다(`settings put ... ""`는 `Bad arguments`로 실패하므로 `delete`를 써야 함):
+
+```bash
+adb shell settings put secure accessibility_enabled 0
+adb shell settings delete secure enabled_accessibility_services
+adb shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService
+adb shell settings put secure accessibility_enabled 1
+```

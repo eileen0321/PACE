@@ -586,6 +586,14 @@ class PaceOverlayModule : Module() {
     // resumePlatformApp 주석 참고). 딥링크가 아니라 getLaunchIntentForPackage+REORDER_TO_FRONT로
     // "런처 아이콘을 다시 탭한 것"과 동일하게 기존 태스크를 그 상태 그대로 앞으로 가져온다 — 이건
     // openApp()의 기존 폴백 경로와 같은 패턴(그쪽은 Pace 자신, 이건 YouTube 등 제3자 앱 대상).
+    // 2026-08-05 — 위 resumeThirdPartyApp을 "쓸지 말지"를 JS가 가르기 위한 판별.
+    // true면 사용자가 PIP로 줄여둔 창이 실제로 남아 있다는 뜻 = 복원이 옳다.
+    // false면 복원할 게 없어 런처 인텐트가 유튜브 홈을 새로 열게 되므로, JS가 정상 진입
+    // (openShortsFeed)으로 돌려야 한다. 근거는 PaceAccessibilityService.isPackageInPictureInPicture 주석.
+    Function("isThirdPartyAppInPip") { packageName: String ->
+      PaceAccessibilityService.isPackageInPictureInPicture(packageName)
+    }
+
     Function("resumeThirdPartyApp") { packageName: String ->
       // 2026-08-02 진단 로그 — 사용자가 "Open App 누르면 다시 쇼츠로 튕긴다"고 보고했는데, 실기기
       // 로그로 튕기는 시점의 시그니처(REORDER_TO_FRONT, 새 START 없음)가 이 함수와 정확히 일치하는

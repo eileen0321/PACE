@@ -4386,3 +4386,86 @@ adb reverse 정상, 물리기기 분리해도 동일). 릴리즈 APK 경로가 �
 
 ⚠️ MSYS 경로 변환 때문에 `adb shell screencap -p /sdcard/x.png`가
 `C:/Program Files/Git/sdcard/...`로 바뀐다 — **`//sdcard/...`(이중 슬래시)**로 쓸 것.
+
+---
+
+## 2026-08-04 — 🔴 사장님 보고 2건: 출시버전 블루투스 전무 + app-ads.txt 미등록
+
+### 🔴 A. 출시버전(code 4)에서 블루투스가 하나도 안 됨 — Mac도 확인 요망
+
+사장님 보고. **Android/iOS 양쪽 다 점검 필요**하며 원인이 서로 다를 가능성이 높다.
+
+**Android 쪽 조사 결과 — 코드/설정은 정상이다**
+
+| 확인 항목 | 결과 |
+|---|---|
+| `accessibility_service_config.xml` | `flagRequestFilterKeyEvents` + `canRequestFilterKeyEvents="true"` **둘 다 선언됨** |
+| 실기기 실제 capability | `capabilities=41` = 1(WINDOW_CONTENT) + **8(FILTER_KEY_EVENTS)** + 32(GESTURES) ✅ |
+| `bluetooth_volume_key_skip_enabled` | `true` ✅ |
+| `onKeyEvent ENTRY` 로그 | **0건** — 이 세션 동안 볼륨키가 눌린 적이 없어서(BT 기기 미페어링) 판정 불가 |
+| 페어링된 BT 기기 | **없음**(`Bonded devices:` 비어 있음) → 이 개발 기기로는 재현 자체가 불가 |
+
+**가장 유력한 원인 — 접근성 재활성화 누락**
+
+2026-08-02 로그에 이미 경고가 적혀 있다:
+> ⚠️ 이 속성 추가로 접근성 권한을 **새로 다시 켜야** capability가 반영된다(기존 바인딩엔 소급 안 됨).
+
+`canRequestFilterKeyEvents`는 **서비스가 바인딩되는 시점에** 시스템이 부여하는 권한이다. 앱을
+업데이트만 하고 접근성을 껐다 켜지 않으면 **예전 capability(33, FILTER_KEY_EVENTS 없음)가 그대로
+유지**되고, 그러면 `onKeyEvent()`가 아예 호출되지 않아 볼륨키가 그냥 음량만 조절한다 — 사장님이
+겪으신 증상과 정확히 일치한다.
+
+→ **먼저 이것부터 확인**: 설정 > 접근성 > 설치된 앱 > Pace를 **껐다가 다시 켠 뒤** 재시도.
+   그래도 안 되면 아래 진단 로그로 어느 지점에서 끊기는지 확정한다.
+
+**진단 방법(이미 코드에 들어 있음)** — BT 리모컨 버튼을 누르면서:
+```
+adb logcat -s PaceAccessibility:V | grep onKeyEvent
+```
+- `onKeyEvent ENTRY`가 **안 찍히면** → OS가 콜백을 안 준다 = capability 문제(위 재활성화로 해결)
+- 찍히는데 스와이프가 없으면 → 우리 게이트에서 걸림. ENTRY 로그에 `fg=`, `winVisible=`,
+  `btSkip=`이 함께 나오므로 어느 조건인지 바로 보인다.
+- `isExternal()` 판정도 의심 대상 — 폰 내장 버튼은 통과시키고 외부 기기만 소비하는데, 일부 BT
+  리모컨이 external로 안 잡힐 수 있다(ENTRY 로그의 `deviceId`로 확인 가능).
+
+**iOS(Mac 세션 확인 요망)** — §2-C C5에 이미 기록된 대로 전역 `bluetoothService.ios.ts`는
+**100% no-op 스텁**이다("Enable"을 눌러도 토스트만 뜨고 실제로 아무것도 안 켜짐). Pace Feed 안의
+볼륨키 리모컨(`useFeedRemoteControl.ios.ts`)만 실동작한다. 즉 iOS는 "안 되는 게 정상"인 상태라,
+사장님이 보신 증상이 이것이라면 **버그가 아니라 미구현**이다 — 정직성 이슈이므로 UI를 숨기든
+구현하든 결정이 필요하다.
+
+### 🔴 B. app-ads.txt 미등록 — 내 사전 감사 누락
+
+사장님 지적("왜 광고 실을 때 app-ads.txt 등록 필요하다고 안 했어"). **맞다, 출시 전 감사에서 놓쳤다.**
+
+**정책**: 구글은 2025년 1월부터 AdMob에 새로 추가되는 앱에 app-ads.txt 검증을 요구한다. 없으면
+"승인되지 않은 인벤토리"로 분류돼 다수 광고 구매자가 입찰에서 제외한다 — 광고가 아예 안 나가는
+건 아니지만 **수익이 크게 깎인다.**
+
+**필요한 것 3가지**
+1. **개발자 웹사이트** — AdMob은 스토어 등록정보의 웹사이트 URL에서 호스트명을 뽑아 크롤링한다.
+2. 그 도메인 **루트**에 `app-ads.txt` 배치 (`https://도메인/app-ads.txt`).
+3. Play Console 스토어 등록정보에 그 URL 입력.
+
+**현재 상태 — 1번부터 비어 있다.** Play Developer API로 조회한 결과:
+```
+[com.strides7.pace]   { defaultLanguage: ko-KR, contactEmail: comfortstride7@gmail.com }
+[com.jlptmaster.app]  { defaultLanguage: ko-KR, contactEmail: comfortstride7@gmail.com }
+```
+**두 앱 모두 `contactWebsite`가 없다** — jlpt-master도 마찬가지라 그쪽도 같은 손해를 보고 있다.
+
+**파일은 만들어뒀다** — 저장소 루트 `app-ads.txt`:
+```
+google.com, pub-3201481146134957, DIRECT, f08c47fec0942fa0
+```
+(퍼블리셔 ID는 `app.json`의 androidAppId `ca-app-pub-3201481146134957~4795871538`에서 추출.
+`f08c47fec0942fa0`은 구글의 인증기관 ID로 IAB 규격상 고정값.)
+
+**남은 작업(사장님 계정/도메인 필요)**
+- 웹사이트 호스팅 결정 — GitHub Pages(`eileen0321.github.io`, 무료·이미 GitHub 사용 중) 또는
+  Firebase Hosting. ⚠️ 반드시 **도메인 루트**에서 서빙돼야 한다(하위 경로 불가).
+- 그 URL을 Play Console > 스토어 설정 > 연락처 정보에 입력(App Store Connect도 동일 필요).
+- 크롤링·검증까지 **최대 24시간** 소요. AdMob > 앱 > 모든 앱 보기 > app-ads.txt에서 상태 확인.
+
+⚠️ iOS도 같은 파일 하나로 커버된다(같은 퍼블리셔 ID, 같은 도메인) — 다만 App Store Connect의
+마케팅 URL에도 같은 도메인을 넣어야 한다. **Mac 세션 확인 요망.**

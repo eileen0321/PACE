@@ -173,9 +173,12 @@
 3. D7/D8/D9(사장님 결정 대기) 중 하나라도 정리되면 그에 맞춰 마저 구현.
 4. Home/온보딩/스플래시 WIP 스모크 테스트(이전부터 밀려있던 항목, 아직 미완).
 
-**Mac 세션(다음 작업)** → 기기 연결되면 C3(실기기 검증) 최우선. 기기 없으면 C1(Sleep Timer
-네이티브) 먼저 진행. **신규로 C5(전역 Bluetooth Hands-Free가 iOS에서도 가짜 UI) 발견됨 — 위
-2-C 참고, 우선순위 판단해서 큐에 반영할 것.**
+**Mac 세션(다음 작업)** → **🔴 신규(2026-08-04 오후)**: app-ads.txt 호스팅이 완료됐다
+(`https://eileen0321.github.io/app-ads.txt`, 실제 접속 검증됨). **App Store Connect의 마케팅 URL에
+같은 도메인(`https://eileen0321.github.io`)을 넣어야** AdMob이 iOS 쪽도 크롤링한다 — 안 넣으면
+iOS 인벤토리가 계속 "승인되지 않음"으로 남아 수익이 깎인다. 그 다음: 기기 연결되면 C3(실기기 검증)
+최우선. 기기 없으면 C1(Sleep Timer 네이티브) 먼저 진행. **신규로 C5(전역 Bluetooth Hands-Free가
+iOS에서도 가짜 UI) 발견됨 — 위 2-C 참고, 우선순위 판단해서 큐에 반영할 것.**
 
 **사장님 결정 대기 중** → D1/D2/D3/D4/D5/D10 전부 2026-07-26 해결됨. 남은 건 D6~D9뿐:
 D7(Google OAuth 클라이언트 발급 — 이제 백엔드도 살아있어서 이것만 받으면 구글 로그인이
@@ -4469,3 +4472,176 @@ google.com, pub-3201481146134957, DIRECT, f08c47fec0942fa0
 
 ⚠️ iOS도 같은 파일 하나로 커버된다(같은 퍼블리셔 ID, 같은 도메인) — 다만 App Store Connect의
 마케팅 URL에도 같은 도메인을 넣어야 한다. **Mac 세션 확인 요망.**
+
+---
+
+## 2026-08-04 오후 — Windows 세션: "출시앱 광고 전무" 원인 규명 + 수정 2건 (실기기 검증 완료)
+
+### ✅ app-ads.txt 호스팅 — 사장님이 완료하심, 검증됨
+
+`https://eileen0321.github.io/app-ads.txt` 실제 접속해서 확인:
+- 내용이 저장소 루트 `app-ads.txt`와 **완전 일치**, 퍼블리셔 ID도 `app.json`과 대조 확인.
+- `github.io`는 Public Suffix라 `eileen0321.github.io`가 **독립 루트 도메인**으로 인정된다(하위 경로 문제 없음).
+- 루트에 Strides7/Pace 랜딩 페이지 + 개인정보처리방침·이용약관 링크까지 있음.
+
+**남은 것**: Play Console 스토어 등록정보의 **웹사이트 필드**에 이 URL 입력(AdMob은 파일 URL을
+직접 아는 게 아니라 스토어 등록정보에서 도메인을 뽑아 크롤링한다). App Store Connect 마케팅
+URL도 동일 — **Mac 세션 확인 요망.**
+
+### 🔴 원인 규명 — 내 1차 진단은 틀렸다, 정정한다
+
+처음엔 "Play 스토어 공개 등록정보 없음(`play.google.com/.../com.strides7.pace` → 404) → AdMob 앱
+미승인 → 실광고 서빙 불가"로 진단했다. **실기기 검증 결과 틀렸다** — 릴리즈 빌드에서 실광고 단위가
+정상적으로 채워진다("테스트 광고" 라벨 없는 한국어 실광고 표시 확인). **AdMob 계정·광고 단위는
+문제 없다.** app-ads.txt는 여전히 필요하지만(미검증 인벤토리 = 수익 하락) 광고가 아예 안 뜨던
+원인은 아니었다.
+
+진짜 원인은 아래 수정①이 고친 것으로 보인다 — 오프라인 재현으로 **완전 동일한 증상(배너 자리
+완전 공백)을 만들어냈고**, 수정 후 자동 복구됐다.
+
+### 수정① 동의 실패 시 재시도 — `src/app/_layout.tsx`
+
+`ensureAdsConsent()`는 절대 throw하지 않는 대신 실패를 `canRequestAds=false`로 돌려주는데, 이걸
+부르는 효과가 **스플래시 종료 시 딱 한 번만** 돌았다. 부팅 순간의 일시적 네트워크 실패 하나로
+그 세션 내내 배너가 안 뜬다(= 광고 수익 0). 5→10→20→40s 백오프 4회 + **포그라운드 복귀 시
+백오프 리셋 후 재시도**로 바꿨다. 성공하면 즉시 중단, `inFlight` 가드로 중복 호출 방지.
+
+재시도가 사용자를 귀찮게 하지 않는 근거: `gatherConsent()`는 동의 상태가 이미 정해진 사용자에게
+폼을 다시 띄우지 않는다(`loadAndShowConsentFormIfRequired`가 "필요할 때만" 띄움).
+
+### 수정② 출시빌드에서 테스트기기 등록 해제 — `src/services/ads/adsConfig.ts`
+
+`configureAdsForTesting()`이 `__DEV__`와 무관하게 무조건 실행되고 있었다 → **출시빌드에서도**
+`TEST_DEVICE_IDS`의 기기(사장님 Note20)는 영원히 테스트 광고만 받는다. 실수 클릭 방지가 목적이었지만
+출시 후에는 (a) 그 기기에서 실수익이 0이고 (b) "출시앱 광고가 제대로 나오는지" 검증 자체가 불가능하다.
+
+→ `if (!__DEV__ && !FORCE_TEST_DEVICES) return;`. 개발 빌드는 예전처럼 항상 보호.
+**`EXPO_PUBLIC_AD_TEST_DEVICES=true`로 빌드하면 출시와 동일한 빌드에서도 보호가 살아난다**
+(실 단위 ID + 테스트 광고) — 사장님 폰으로 안전하게 확인할 때 이 경로를 쓸 것.
+⚠️ **eas.json production 프로필에는 절대 넣지 말 것** — 넣는 순간 실사용자 수익이 0이 된다.
+
+### 수정③ 광고 로드 실패 사유 로깅 — `src/components/home/AdBanner.tsx`
+
+`onAdFailedToLoad`가 아무것도 로깅하지 않아 **출시빌드에서 원인을 알아낼 방법이 전혀 없었다**
+(배너는 조용히 언마운트되고 `__DEV__` 로그는 릴리즈 번들에서 사라진다). AdMob 에러 코드가 원인을
+바로 가른다: `1 INVALID_REQUEST`(광고 단위/앱 설정) vs `3 NO_FILL`(신규 앱·미승인에서 흔함).
+**`__DEV__` 게이트를 일부러 걸지 않았다** — 출시빌드에서 진단이 안 되는 게 이번 문제의 핵심이었다.
+
+### 실기기/에뮬 검증 결과 (전부 통과)
+
+| 검증 | 결과 | 증거 |
+|---|---|---|
+| `tsc --noEmit` | ✅ 0건 | 2회 |
+| `assembleRelease` | ✅ | 4m04s / 1m31s |
+| 수정② 출시빌드 실광고 | ✅ | Note20에서 `Ads: This request is sent from a test device.` **사라짐** + 실광고 표시 |
+| 수정② 탈출구(`AD_TEST_DEVICES=true`) | ✅ | 같은 로그가 **다시 나타남** |
+| 수정① 백오프 | ✅ | 오프라인 강제 → `14:45:22 → :27(+5s) → :37(+10s)` |
+| 수정① 복구 | ✅ | 네트워크 복구 후 **pid 30579 그대로**(앱 재시작 없음) 배너가 새 실광고로 부활 |
+| 릴리즈 빌드 부팅 | ✅ | 에뮬/실기기 둘 다 크래시 없음 |
+
+**재현 절차(오프라인 강제)** — 앞으로 광고/동의 회귀 테스트에 재사용할 것:
+```bash
+adb -s <기기> shell svc wifi disable && adb -s <기기> shell svc data disable
+adb -s <기기> shell monkey -p com.strides7.pace -c android.intent.category.LAUNCHER 1
+adb -s <기기> logcat -d | grep 'adsConsent\|AdBanner'   # 백오프 간격 확인
+adb -s <기기> shell svc wifi enable && adb -s <기기> shell svc data enable
+# pidof로 프로세스가 그대로인지 확인 → 재시작 없이 배너가 살아나야 정상
+```
+
+### ⚠️ 이 세션에서 같이 확인/처리된 것
+
+- **폰 접근성이 꺼져 있었다**(`accessibility_enabled=0`, 서비스는 목록에 있는데 마스터 토글 off).
+  홈의 "사용시간 추적이 꺼져 있어요" 경고가 그것 때문이었고, **§A 블루투스 볼륨키 안 되던 것의
+  유력 원인과 정확히 일치한다**(`FILTER_KEY_EVENTS` capability는 바인딩 시점에만 부여됨).
+  재활성화 완료 — `capabilities=41`, `Crashed services:{}`. APK 재설치마다 다시 꺼지므로 매번 확인할 것.
+- **동시 세션 충돌 주의** — 같은 시각 다른 세션이 광고 파일 11개를 수정 중이었다(배너/보상형의
+  `requestNonPersonalizedAdsOnly: true` 하드코딩 때문에 개인화에 동의한 사용자에게도 비개인화만
+  나가던 수익 손실 수정 + 네이티브 보상형에 동의 전달). 덮지 않고 그 위에 얹었으며, 현재
+  **양쪽 작업이 함께 미커밋 상태**다 — 커밋할 때 섞여 올라간다는 점 인지할 것.
+
+---
+
+## 🍎 2026-08-04 — OS별 구현 분기 (Windows 세션 → Mac 세션 인계)
+
+오늘 Android에 들어간 변경들을 iOS 관점에서 전수 분류했다. **"iOS에도 필요한데 아직 없는 것"**과
+**"iOS에서는 구조적으로 불가능해 안 하는 게 맞는 것"**을 섞으면 맥 세션이 헛수고를 하므로 나눠 적는다.
+
+### 🟢 이미 양쪽에 적용됨 — Mac이 할 일 없음
+
+| 항목 | 비고 |
+|---|---|
+| HOT/피드 리스트 지역·언어 자동 분기 | `/api/youtube-shorts`를 iOS Pace Feed도 공유(`useShortsQueueStore → fetchShortsPage`). 백엔드만 고쳤으므로 **iOS 앱 수정 없이 이미 적용 중** |
+| 언어별 검색어(ko/ja/es/pt) | 위와 동일. iOS Pace Feed도 한국어 영상이 나온다 |
+| 시간 시드 로테이션 / 캐시 15분 | 위와 동일 |
+
+### 🔴 iOS에 확인·구현이 필요한 것
+
+**1. 광고 개인화 분기가 iOS에도 적용됐다 — ATT 관점 검증 필요 (우선순위 높음)**
+`requestNonPersonalizedAdsOnly` 하드코딩을 제거하고 UMP 동의 기반으로 바꿨는데, 이 코드는
+`AdBanner.tsx`/`rewardedAd.ts`로 **양 플랫폼 공용**이다. 즉 iOS도 이제 GDPR 비대상 지역에서는
+개인화 광고를 요청한다. 그런데 iOS는 `app.json`에 `NSPrivacyTracking=false`이고 ATT(App Tracking
+Transparency) 프롬프트가 없다. **ATT 미동의 상태에서 개인화 광고 요청이 애플 심사/정책상 문제가
+없는지 Mac이 확인할 것.** 문제가 있으면 iOS만 NPA로 되돌리는 분기가 필요하다.
+
+**2. 사용 시간 "실시청" 기준 — iOS는 오히려 더 정확히 만들 수 있다**
+Android는 접근성으로 재생 여부를 추정해 실제 재생 중일 때만 차감하도록 바꿨다(`watched_seconds`).
+iOS는 `getWatchedSeconds()`가 `null`이라 **기존 벽시계로 폴백**한다 — 회귀는 없지만 두 OS의 통계
+기준이 다르다. **iOS Pace Feed는 우리 앱 안의 IFrame 플레이어라 재생/일시정지를 정확히 안다** —
+추정이 아니라 정확한 값을 만들 수 있는 유리한 위치다. 플레이어의 재생 상태로 실시청 초를 누적해
+`getWatchedSeconds()`가 실제 값을 반환하게 하면 양쪽 기준이 통일된다.
+
+**3. 앱 업데이트 후 세션 표시 복구 — iOS도 같은 구멍이 있는지 확인 필요**
+Android에서 발견: 스토어 업데이트가 패키지를 교체하며 포그라운드 서비스를 죽여, 세션 중에
+업데이트하면 알약이 조용히 사라졌다(`PaceBootReceiver`에 `ACTION_MY_PACKAGE_REPLACED` 추가로 해결).
+**iOS도 앱 업데이트 시 Live Activity가 어떻게 되는지 확인 필요** — 세션은 살아있는데 Live Activity만
+사라지면 Android와 똑같은 증상이다.
+
+### ⛔ iOS에서는 불가능 — 구현 시도하지 말 것 (근거 포함)
+
+**1. 쇼츠 진입 정책(`api/shorts-entry.ts`, `services/shortsEntry.ts`)**
+Android 전용이다. 이 정책은 "**유튜브 앱을 어떻게 열지**"를 정하는 것인데 iOS는 애초에 외부 앱을
+열지 않는다(앱 안의 Pace Feed가 직접 재생). `launchPlatformApp`/`openShortsFeed` 모두 iOS에서
+즉시 반환한다. 프리페치도 Android로 게이팅해뒀다(94a22de).
+
+> ⚠️ 다만 **제품 관점의 비대칭**은 짚어둔다: Android 사용자는 이제 **자기 유튜브 계정의 개인
+> 알고리즘 피드**로 들어가는데, iOS 사용자는 **우리가 큐레이션한 목록**만 본다. "개인 알고리즘"이라는
+> 가치는 현재 Android 전용이다. 이걸 iOS에도 줄지는 제품 결정 사항이다(iOS에서 유튜브 앱을 열면
+> Screen Time 기반 추적이 불가능해지므로 트레이드오프가 있다).
+
+**2. 유튜브 앱 사용 시간 조회(분석 화면 "기록 범위")**
+`getSupportedAppForegroundSecondsToday()`가 iOS에서 `null`이고, 그래서 그 섹션 자체가 렌더되지
+않는다. 이건 우리가 못 만든 게 아니라 **애플이 막았다**: Screen Time 사용량 데이터는
+`DeviceActivityReport` 확장의 샌드박스를 절대 벗어날 수 없다(확장은 네트워크 요청도 저장도 불가,
+토큰조차 앱으로 전달 불가). 웹으로 확인함(2026-08-04). **우회로 없음.**
+→ 스토어 설명에서 "사용 시간 추적"을 두 플랫폼 공통 기능처럼 쓰면 안 된다.
+
+**3. 광고 동의의 네이티브 전달(`setAdsConsent`)**
+Android는 쇼츠 위에 네이티브 액티비티로 보상형 광고를 띄우기 때문에 네이티브가 동의를 알아야 했다.
+iOS는 그 경로 자체가 없고 RN이 직접 광고를 띄우므로 no-op이 맞다.
+
+### 📋 정책을 바꿀 때의 검증 절차 (Android, 필수)
+
+쇼츠 진입 정책(`api/shorts-entry.ts`)은 서버만 고쳐도 즉시 반영되는 만큼, 잘못 넣으면 전 사용자가
+바로 영향을 받는다. 앱은 **"열기 실패"는 감지하지만 "잘못된 화면이 열렸다"는 감지하지 못한다**
+(화면 판정은 접근성 트리를 읽어야 하는데, Play에 선언한 용도(자동 넘김)를 벗어나 쓰면 안 된다).
+그래서 배포 전 실기기 확인이 유일한 안전장치다:
+
+```
+adb shell am force-stop com.google.android.youtube
+adb shell am start -a <새 액션> -p com.google.android.youtube      # 또는 -a VIEW -d "<새 URL>"
+adb exec-out screencap -p > check.png
+```
+→ **하단 네비게이션에서 "Shorts"가 선택 상태**여야 성공. "홈"이 선택돼 있으면 실패다(그 경우
+Shorts 탭이 아니라 홈 탭 컨텍스트에서 영상 하나만 트는 것 — 출시본의 기존 결함과 같은 상태).
+
+실측 판정표(2026-08-04):
+| 후보 | 결과 |
+|---|---|
+| 인텐트 액션 `com.google.android.youtube.action.open.shorts` | Shorts 탭 ✅ |
+| `https://www.youtube.com/shorts/<영상ID>` | Shorts 탭 ✅ (스와이프하면 개인 피드로 이어짐) |
+| `https://m.youtube.com/shorts/<영상ID>` | 홈 탭 ❌ (www와 m이 다르게 라우팅) |
+| `https://www.youtube.com/shorts` (ID 없음) | 홈 탭 ❌ (출시본 기존 동작) |
+| `vnd.youtube://shorts` | 홈 탭 ❌ |
+
+※ 유튜브가 등록한 `open` 계열 액션은 기기 매니페스트 전수 덤프 결과 `open.shorts` /
+`open.search` / `open.subscriptions` **셋뿐**이다 — 현재 1순위보다 나은 후보는 존재하지 않는다.

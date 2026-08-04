@@ -346,7 +346,9 @@ export default function RootLayout() {
     // 외부 앱을 열지 않는다(앱 안의 Pace Feed가 IFrame 플레이어로 직접 재생). iOS에서 부르면
     // openShortsFeed()가 어차피 false로 즉시 반환하므로 결과는 같지만, 부팅마다 쓰이지도 않을
     // 네트워크 요청이 한 번씩 나간다 — 게이팅해서 그 낭비를 없앤다.
-    if (Platform.OS === 'android') prefetchShortsEntryPolicy();
+    // §4-1(2026-08-04) — iOS Pace Feed도 이 정책의 seedPool로 시드(첫 영상)를 뽑으므로 iOS도 프리페치한다
+    // (예전엔 iOS 미사용이라 Android 게이팅했었음 — 94a22de). 부팅 때 받아둬 피드 탭 순간엔 캐시만 쓴다.
+    prefetchShortsEntryPolicy();
     // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — 쇼츠 위 FOCUS 연장 보상광고는
     // 네이티브 액티비티(PaceRewardedAdActivity)가 띄우는데, 실광고 유닛/테스트 유닛 선택을 prefs의
     // use_real_ads로 하고 기본값이 false다. 그런데 그 값을 쓰는 코드가 앱 전체에 한 줄도 없어서,

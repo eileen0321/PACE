@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { YouTubeShort } from '../types/models';
 import { fetchShortsPage } from '../services/api/youtube';
+import { getShortsSeedVideoId } from '../services/shortsEntry';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생" 큐(2026-07-18 사용자 지시).
 // PACE_ARCHITECTURE.md "iOS Pace Feed 재정의" 참고.
@@ -92,6 +93,24 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       // 영속된 watched 복원(재실행 시에도 이미 본 Shorts 제외).
       const rawWatched = await AsyncStorage.getItem(WATCHED_KEY).catch(() => null);
       const watchedIds: string[] = rawWatched ? JSON.parse(rawWatched) : [];
+
+      // §4-1 (2026-08-04 사장님 설계 "양쪽 다 시작 주소만 다르고 다음 영상은 유튜브 알고리즘") —
+      // 시드(첫 영상)를 기기가 스스로 고른다(userSaved→서버 seedPool 무작위). 공유 큐(fetchShortsPage=
+      // Vercel CDN 캐시)를 시드로 쓰면 같은 캐시 창의 전원이 같은 영상에서 시작(+IP추정 실패 시 외국)했다.
+      // 시드는 로컬(저장영상 DB + 부팅 때 캐시된 seedPool)이라 네트워크 대기 없음. 매 진입 새로 골라
+      // 기기마다 다른 시작점 → 이후 feed의 SWIPE 모드가 유튜브 페이지에 스와이프를 주입해 유튜브 알고리즘이
+      // 각자 다르게 이어간다(큐 advance 안 씀). null(신규+seedPool 빈 경우)이면 아래 기존 공유 큐로 폴백.
+      const seedId = await getShortsSeedVideoId().catch(() => null);
+      if (seedId && !watchedIds.includes(seedId)) {
+        set({
+          queue: [{ videoId: seedId, title: 'Short', channelTitle: '', thumbnailUrl: null }],
+          watchedIds,
+          nextPageToken: null,
+          hasMore: false, // SWIPE 모드가 유튜브 알고리즘으로 이어가므로 큐 refill 불필요
+          isLoading: false,
+        });
+        return;
+      }
 
       // ⚡ 캐시된 큐 먼저 복원 → 콜드 네트워크 대기 없이 즉시 첫 영상. 그 뒤 백그라운드로 더 받아 append.
       // (이미 본 것은 제외. 캐시가 비었거나 없으면 아래 기존 블로킹 fetch 경로로.)

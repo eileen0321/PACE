@@ -42,7 +42,9 @@ type Strategy =
   | { kind: 'nativeAction'; action: string; packageName: string }
   | { kind: 'url'; url: string; videoIdSource?: VideoIdSource[] };
 
-type EntryPolicy = { strategies: Strategy[]; seedPool: string[] };
+// 2026-08-04 §4-1(Mac) — 서버가 iOS용 시작 정책도 내려준다(`ios.videoIdSource`). iOS Pace Feed는
+// 이걸로 시드(첫 영상)를 기기가 고른다 — 공유 큐(전원 동일·외국) 대신. 이후는 WebView SWIPE로 유튜브 알고리즘.
+type EntryPolicy = { strategies: Strategy[]; seedPool: string[]; ios?: { videoIdSource: VideoIdSource[] } };
 
 const DEFAULT_POLICY: EntryPolicy = {
   strategies: [
@@ -78,7 +80,17 @@ function sanitize(raw: unknown): EntryPolicy | null {
   const seedPool = Array.isArray(obj.seedPool)
     ? obj.seedPool.filter((v): v is string => typeof v === 'string' && VIDEO_ID_RE.test(v))
     : [];
-  return { strategies, seedPool };
+  // iOS 시작 정책(선택) — videoIdSource만 검증해 쓴다(startUrl은 앱이 www.youtube.com/shorts/{id}로 고정).
+  const iosRaw = (obj as { ios?: unknown }).ios;
+  let ios: EntryPolicy['ios'];
+  if (iosRaw && typeof iosRaw === 'object') {
+    const src = (iosRaw as { videoIdSource?: unknown }).videoIdSource;
+    const vids = Array.isArray(src)
+      ? src.filter((s): s is VideoIdSource => s === 'userSaved' || s === 'serverPool')
+      : [];
+    if (vids.length) ios = { videoIdSource: vids };
+  }
+  return { strategies, seedPool, ios };
 }
 
 /** 앱 시작 시 1회. 실패해도 조용히 무시한다 — 내장 기본 정책으로 계속 동작한다. */
@@ -143,6 +155,15 @@ async function resolveVideoId(sources: VideoIdSource[]): Promise<string | null> 
     }
   }
   return null;
+}
+
+/**
+ * iOS Pace Feed의 시작 시드 videoId — 기기가 스스로 고른다(userSaved→serverPool 무작위, §4-1).
+ * 매 진입마다 새로 고르므로 같은 사용자도 열 때마다 다른 시작점(=유튜브 알고리즘이 각자 다르게 이어감).
+ * null이면(신규 사용자 + 서버 seedPool 빈 경우) 호출부가 기존 공유 큐로 폴백한다.
+ */
+export async function getShortsSeedVideoId(): Promise<string | null> {
+  return resolveVideoId(cached.ios?.videoIdSource ?? ['userSaved', 'serverPool']);
 }
 
 /**

@@ -60,7 +60,7 @@ const DEFAULT_POLICY: EntryPolicy = {
   seedPool: [],
 };
 
-const STORAGE_KEY = 'pace.shortsEntryPolicy.v2';
+const STORAGE_KEY = 'pace.shortsEntryPolicy.v3';
 const VIDEO_ID_RE = /^[\w-]{11}$/;
 let cached: EntryPolicy = DEFAULT_POLICY;
 
@@ -110,14 +110,19 @@ export async function prefetchShortsEntryPolicy(): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      // 2026-08-04 사장님 지적("iOS는 아직 외국") — 프록시는 gl/hl이 없으면 접속 IP(x-vercel-ip-country)로
-      // 지역을 추정하는데, iOS 요청 IP가 KR로 안 잡히면 US seedPool을 줘 외국 시드가 나왔다(안드는 Railway
-      // 하드코딩 KR이라 무관). 기기 로케일(지역/언어)을 명시적으로 넘겨 seedPool을 기기 나라에 맞춘다
-      // (하드코딩 아님 — 한국 기기=KR, 미국 기기=US). 프록시가 gl/hl 파라미터를 우선한다.
+      // 2026-08-04 사장님 지적("iOS는 아직 외국" + "안드 확인해") — 서버(api/shorts-entry)는 seedPool을
+      // 만들 때 앱이 넘긴 gl을 쓰는데, gl이 없으면 서버-투-서버 호출이라 IP추정도 안 돼 US로 떨어진다.
+      // 그래서 앱이 gl을 넘겨야 한다. ⭐ 안드로이드는 지역(스토어)이 아니라 **언어**로 판단한다
+      // (PaceOverlayService.isKoreanLocale() = configuration.locales[0].language == "ko"). 폰 스토어 지역이
+      // US여도 한국어 사용자는 한국 콘텐츠를 원하기 때문. iOS도 동일하게 "언어" 기준으로 gl을 정한다
+      // (하드코딩 아님 — 한국어=KR, 일본어=JP, 그 외는 폰 지역). hl은 그대로 언어.
       const loc = Localization.getLocales()[0];
+      const lang = (loc?.languageCode || '').toLowerCase();
+      const LANG_TO_GL: Record<string, string> = { ko: 'KR', ja: 'JP' };
+      const gl = LANG_TO_GL[lang] || (loc?.regionCode || '').toUpperCase();
       const qp = new URLSearchParams();
-      if (loc?.regionCode) qp.set('gl', loc.regionCode);
-      if (loc?.languageCode) qp.set('hl', loc.languageCode);
+      if (gl) qp.set('gl', gl);
+      if (lang) qp.set('hl', lang);
       const entryUrl = `${YOUTUBE_PROXY_URL}/api/shorts-entry${qp.toString() ? `?${qp}` : ''}`;
       const res = await fetch(entryUrl, { signal: controller.signal });
       if (!res.ok) return;

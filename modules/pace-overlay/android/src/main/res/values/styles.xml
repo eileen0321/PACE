@@ -31,4 +31,39 @@
     <item name="android:windowIsTranslucent">true</item>
     <item name="android:windowAnimationStyle">@null</item>
   </style>
+
+  <!-- 2026-08-04 사장님 지적("광고 보면 화면이 까매진다") 전수 조사에서 확정한 원인 —
+       구글 광고 SDK는 자기 매니페스트에서 AdActivity를 **투명 테마**로 선언한다
+       (play-services-ads-lite AAR에서 직접 확인: android:theme="@android:style/Theme.Translucent").
+       그런데 앱 매니페스트가 tools:replace로 이걸 @style/AppTheme(불투명, windowBackground=#060709)로
+       바꿔놓고 있었다. 하단키 흰색을 잡으려던 수정이었는데 부작용이 정확히 "까만 화면"이다:
+         1. 광고 콘텐츠가 아직/이미 안 그려진 순간(로드·전환·엔드카드 사이)에 뒤가 비치는 대신
+            앱 배경색(#060709 ≈ 검정)이 화면을 꽉 채운다 — 사장님이 보시는 그 검은 화면.
+         2. 투명 액티비티는 뒤 액티비티를 paused-but-visible로 남기는데(구글이 투명을 쓰는 이유),
+            불투명으로 바꾸면 유튜브가 onStop까지 내려가 비디오 서피스가 파괴된다 → 광고를 닫고
+            돌아오면 재생 UI·진행바는 정상인데 영상만 검게 나온다("유튜브를 죽이면 복구"의 정체).
+         3. PaceRewardedAdActivity는 noHistory=true다. noHistory는 "안 보이게 되면 finish"라
+            광고가 투명일 때는 안 걸리지만 불투명이 되는 순간 광고 재생 중에 껍데기가 finish된다
+            → 광고가 닫힐 때 빈 태스크가 잠깐 검게 뜨고 복귀 전환과 겹친다.
+       그래서 테마를 SDK 원래대로 투명으로 되돌리되, 원래 고치려던 시스템 바 문제는 위
+       Theme.Pace.TransparentAd와 동일한 방식(테마에 색을 박아 첫 프레임부터 적용)으로 해결한다.
+
+       ⚠️ 이 스타일을 앱이 아니라 모듈 res에 두는 이유는 위 Theme.Pace.TransparentAd와 같다 —
+       android/는 prebuild가 재생성하며 수동 편집을 날린다. 설령 앱 매니페스트의 tools:replace 한
+       줄이 그렇게 날아가더라도 이제는 안전하다: 그러면 SDK 기본값(=투명)으로 돌아갈 뿐이고,
+       되돌아오는 건 흰 하단키라는 외관 문제뿐 검은 화면이 아니다. -->
+  <style name="Theme.Pace.AdActivity" parent="@android:style/Theme.Translucent">
+    <!-- 2026-08-04 실기기 확인 — 이 한 줄이 없으면 아래 statusBarColor/navigationBarColor가 **무시된다.**
+         @android:style/Theme.Translucent는 머티리얼 이전 테마라 windowDrawsSystemBarBackgrounds가
+         기본 false인데, 그 플래그가 꺼져 있으면 창이 시스템 바 영역을 그리지 않아 색 지정이 효력이 없다
+         (실기기에서 광고 엔드카드 위 하단키가 흰색으로 나오는 걸로 확인). 투명도와는 무관한 플래그라
+         켜도 windowIsTranslucent=true는 그대로 유지된다. -->
+    <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    <item name="android:statusBarColor">#060709</item>
+    <item name="android:navigationBarColor">#060709</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+    <item name="android:enforceNavigationBarContrast">false</item>
+    <item name="android:enforceStatusBarContrast">false</item>
+  </style>
 </resources>

@@ -54,6 +54,9 @@ class PaceRewardedAdActivity : Activity() {
     // 구글 보상형 광고는 로드 후 약 1시간이면 만료된다 — 만료 직전 것을 쓰면 show가 실패하므로
     // 넉넉히 앞당겨 폐기하고 새로 받는다.
     private const val PRELOAD_TTL_MS = 45 * 60 * 1000L
+    // 온디맨드 로드가 이 시간 안에 끝나지 않으면 투명 창을 닫는다(loadWatchdog 주석 참고).
+    // JS 경로(rewardedAd.ts)의 로드 타임아웃과 같은 값으로 맞춘다.
+    private const val LOAD_TIMEOUT_MS = 20_000L
 
     private fun adUnitId(context: Context): String {
       val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
@@ -133,6 +136,20 @@ class PaceRewardedAdActivity : Activity() {
 
   private var extendMinutes = 5
   private var finished = false
+  // 보상을 실제로 받았는지 — 광고가 닫힐 때 원래 보던 앱으로 복귀할지 판단한다(showAd 주석 참고).
+  private var earnedReward = false
+
+  // 2026-08-04 전수 조사 발견 — 이 액티비티는 "투명한 전체화면 창"이다. 투명해서 눈에는 유튜브가
+  // 그대로 보이지만 **터치는 전부 이 창이 먹는다**. 그런데 로드 콜백이 끝내 안 오는 경우
+  // (네트워크가 물린 채 끊기지 않는 상황)를 끊어줄 장치가 없어서, 그럴 때 사용자는 "유튜브가 보이는데
+  // 아무것도 눌리지 않는" 상태에 갇혔다. JS 쪽 경로에는 이미 같은 취지의 로드 타임아웃이 있다
+  // (services/ads/rewardedAd.ts) — 네이티브에도 동일하게 건다.
+  private val watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val loadWatchdog = Runnable {
+    Log.w(TAG, "rewarded ad load timed out — 투명 창이 터치를 먹지 않도록 닫는다")
+    PaceOverlayService.showAdFailedToast(applicationContext)
+    finishOnce()
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -169,6 +186,7 @@ class PaceRewardedAdActivity : Activity() {
       return
     }
 
+    watchdogHandler.postDelayed(loadWatchdog, LOAD_TIMEOUT_MS)
     RewardedAd.load(this, adUnitId(this), request, object : RewardedAdLoadCallback() {
       override fun onAdFailedToLoad(error: LoadAdError) {
         // 광고가 안 뜨는 건 사용자 잘못이 아니므로 벌주지 않는다 — 조용히 닫고, 사용자가 다시
@@ -183,26 +201,42 @@ class PaceRewardedAdActivity : Activity() {
   }
 
   private fun showAd(ad: RewardedAd) {
+    watchdogHandler.removeCallbacks(loadWatchdog) // 로드는 끝났다 — 시청 시간에는 제한을 두지 않는다
+    // 2026-08-04 전수 조사 — 로드가 도는 동안 이 액티비티가 이미 사라졌을 수 있다(홈키, 또는
+    // noHistory로 시스템이 finish). 그 상태에서 show()를 부르면 종료 중인 태스크 위로 광고 창을
+    // 띄우려다 아무것도 안 그려진 빈 창이 남을 수 있다. 그냥 조용히 포기한다 — 광고를 못 봤으니
+    // 연장도 없고, 사용자는 다시 누르면 된다.
+    if (isFinishing || isDestroyed) {
+      Log.w(TAG, "activity gone before show — 광고를 띄우지 않는다")
+      ad.fullScreenContentCallback = null
+      return
+    }
     ad.fullScreenContentCallback = object : FullScreenContentCallback() {
       override fun onAdDismissedFullScreenContent() {
         // 2026-08-04 사장님 실기기 지적("광고 보고 5분 받았는데 왜 쇼츠가 안 보이고 까만 화면이야") —
         // 광고 시청 직후부터 유튜브 영상만 검게 나오고(재생 UI·진행바는 정상), 다른 영상으로 넘겨도
         // 계속 검으며, **유튜브 프로세스를 죽이면 즉시 복구**되는 것을 실기기로 확인했다.
         //
-        // 원인: 하드웨어 비디오 디코더는 개수가 제한된 시스템 자원이다. androidx/media 이슈(#1825)에
-        // 플레이어 인스턴스가 2개 이상이면 ERROR_CODE_DECODING_RESOURCES_RECLAIMED가 나고, 디코더가
-        // 에러 없이 초기화되는데 **출력 서피스만 검게 남는** 사례가 문서화돼 있다(#2765) — 증상이
-        // 정확히 일치한다. AdMob 광고 후 검은 화면은 널리 보고된 문제이기도 하다(Solar2D 포럼,
-        // Google AdMob SDK 그룹의 "Black screen on interstitial ad" 등).
+        // ⚠️ 원인 정정 — 처음엔 "사전 로드가 하드웨어 디코더를 점유해서"로 진단했는데, 그건 **틀렸다.**
+        // 실기기 로그를 다시 읽어 진짜 원인을 확정했다:
+        //   21:53:48.756  reward earned → extendFocusSession → returnToLastTrackedApp() (유튜브를 앞으로)
+        //   21:53:48.963  com.android.vending(플레이스토어)이 그 위로 올라옴             (200ms 뒤)
+        //   21:53:50~14   triggerNext() aborted — isSupportedAppWindowVisible()=false ×8
+        // 보상 콜백은 **광고가 아직 화면에 떠 있는 동안** 오는데 거기서 유튜브를 끌어올려서, 곧바로
+        // 광고/스토어에 다시 덮이고 사용자가 전부 닫았을 때 유튜브가 어정쩡한 상태로 남았다
+        // (MediaSession state=NONE, 화면엔 ⏸ 아이콘 + 검은 화면). 크래시는 없었다(tombstone 없음).
+        // → 복귀를 이 시점(광고가 실제로 닫힌 뒤)으로 옮겼다. 아래 returnToLastTrackedApp 호출이 그것이다.
         //
-        // 여기서 원래 다음 광고를 미리 받아뒀는데(연속 연장 시 대기 없애려고), 그러면 **광고가 끝난
-        // 뒤에도 우리 프로세스가 광고 인스턴스를 계속 들고 있게 된다.** 그 인스턴스가 디코더를 점유하면
-        // 유튜브가 디코더를 못 받아 검게 나온다 — 즉 내가 넣은 사전 로드가 이 증상을 만들었다.
-        // 사전 로드는 "선택 팝업이 뜰 때"만 한다(showExtendChoiceOverlay) — 그 시점엔 아직 유튜브가
-        // 재생 중이 아니어도 되고, 사용자가 실제로 누를 때까지의 짧은 창이라 점유가 문제되지 않는다.
-        // 여기서는 오히려 **참조를 확실히 끊어** SDK가 자원을 반납할 수 있게 한다.
+        // 아래 preloadedAd 정리는 원인은 아니었지만 그대로 둔다 — 쓰지도 않을 광고 인스턴스를 계속
+        // 들고 있을 이유가 없고, 참조를 끊어야 SDK가 자원을 반납할 수 있다(그 자체로 옳다).
+        // 사전 로드는 "선택 팝업이 뜰 때"만 하고(showExtendChoiceOverlay), 광고를 안 보고 팝업을
+        // 닫으면 dropPreloaded()로 버린다.
         preloadedAd = null
         ad.fullScreenContentCallback = null
+        // 광고가 실제로 닫힌 지금이 원래 보던 앱으로 되돌릴 유일하게 안전한 시점이다.
+        // 보상을 못 받고 그냥 닫았으면 연장도 없었으므로 복귀도 하지 않는다 — 사용자가 스스로 닫은
+        // 것이라 화면을 마음대로 바꾸면 안 된다.
+        if (earnedReward) PaceOverlayService.returnToLastTrackedApp(applicationContext)
         finishOnce()
       }
       override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.AdError) {
@@ -212,16 +246,25 @@ class PaceRewardedAdActivity : Activity() {
       }
     }
     ad.show(this) {
-      // 보상 획득 — Focus Session을 extendMinutes만큼 연장한다. extendFocusSession이 내부에서
-      // 워처 재시작 + 마감시각 저장 + 토스트 + 원래 보던 앱으로 복귀까지 담당한다.
-      Log.i(TAG, "reward earned -> extendFocusSession($extendMinutes)")
-      PaceOverlayService.extendFocusSession(applicationContext, extendMinutes)
+      // 보상 획득 — Focus Session을 extendMinutes만큼 연장한다(워처 재시작 + 마감시각 저장 + 토스트).
+      // ⚠️ 이 콜백은 **광고가 아직 화면에 떠 있는 동안** 온다. 여기서 원래 앱으로 복귀시키면 광고와
+      // 플레이스토어가 그 위를 다시 덮어 유튜브가 어정쩡한 상태로 남는다(위 onAdDismissed 주석의
+      // 실기기 로그 참고) — 그래서 returnToApp=false로 연장만 하고, 복귀는 광고가 닫힐 때 한다.
+      Log.i(TAG, "reward earned -> extendFocusSession($extendMinutes) (복귀는 광고 닫힌 뒤)")
+      earnedReward = true
+      PaceOverlayService.extendFocusSession(applicationContext, extendMinutes, returnToApp = false)
     }
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    watchdogHandler.removeCallbacks(loadWatchdog)
   }
 
   private fun finishOnce() {
     if (finished) return
     finished = true
+    watchdogHandler.removeCallbacks(loadWatchdog)
     finish()
     // 이 액티비티는 화면을 그리지 않으므로 전환 애니메이션도 없어야 자연스럽다(쇼츠 위에 광고만
     // 떴다 사라진 것처럼 보이게).

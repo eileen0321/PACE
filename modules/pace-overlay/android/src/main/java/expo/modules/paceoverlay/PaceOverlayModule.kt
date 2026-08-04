@@ -290,7 +290,11 @@ class PaceOverlayModule : Module() {
     // 접근성 경고 배너가 실제 고장 상태에서 떠서 사용자가 다시 켤 수 있다.
     Function("hasAccessibilityPermission") {
       appContext.reactContext?.let { context ->
-        PaceAccessibilityService.isEnabled(context) && PaceAccessibilityService.isAlive()
+        // 2026-08-04 — isAlive() → isAliveOrRebinding(). 이 값이 false면 Focus 탭의 블루투스/손짓
+        // 토글이 막히고 사용자를 접근성 설정으로 보내는데, 재바인딩 공백(수 초)에 걸리면 "이미 켜져
+        // 있는데 계속 설정으로만 보내는" 상태가 된다(사장님 실기기 신고). 상세 근거는
+        // PaceAccessibilityService.isAliveOrRebinding 주석.
+        PaceAccessibilityService.isEnabled(context) && PaceAccessibilityService.isAliveOrRebinding()
       } ?: false
     }
 

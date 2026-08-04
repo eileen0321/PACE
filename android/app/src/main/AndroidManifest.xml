@@ -46,8 +46,13 @@
     <!-- 2026-07-29 실기기 발견("보상광고 뜰 때 하단키가 흰색") — Google Mobile Ads SDK가 전면(보상형/
          전면) 광고를 자체 AdActivity로 띄우는데, 이 액티비티는 우리 AppTheme(systemBarColor 통일)을
          안 물려받고 SDK 기본 테마(라이트/화이트 시스템 바)를 쓴다. tools:replace로 우리 테마를 강제
-         지정해 광고 화면에서도 상태바/내비바 색이 앱과 통일되게 한다. -->
-    <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/AppTheme" tools:replace="android:theme" android:exported="false"/>
+         지정해 광고 화면에서도 상태바/내비바 색이 앱과 통일되게 한다.
+         2026-08-04 정정 — 그때 지정한 @style/AppTheme이 **불투명**(windowBackground=#060709)이라
+         "광고 보면 화면이 까매진다"의 직접 원인이었다. SDK가 이 액티비티를 투명으로 선언하는 데는
+         이유가 있다(뒤 앱이 stop되지 않아야 유튜브 서피스가 살아있다) — 상세 근거는 모듈의
+         res/values/styles.xml Theme.Pace.AdActivity 주석 참고. 투명 부모를 유지하면서 시스템 바
+         색만 박은 그 테마로 교체한다. -->
+    <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/Theme.Pace.AdActivity" tools:replace="android:theme" android:exported="false"/>
     <!-- 2026-07-31 오버레이 Favorite/Capture — 유튜브 Shorts는 URL 주소창이 없는 몰입형 플레이어라
          접근성 트리만으로는 실제 영상 링크(videoId)를 못 읽는다. 우리 앱을 ACTION_SEND(text/plain)
          대상으로 등록해두고, 접근성 서비스가 유튜브의 "공유" 버튼을 눌러 시스템 공유시트를 띄운 뒤

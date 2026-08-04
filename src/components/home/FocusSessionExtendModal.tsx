@@ -21,10 +21,20 @@ export const FOCUS_SESSION_EXTEND_MINUTES = 5;
 // 크레딧") — 하루 한도(LimitReachedOverlay)도 같은 광고/크레딧 게이트가 필요해졌다. onExtend를
 // prop으로 받게 일반화해서 Focus Session 타이머(bluetoothService.extendFocusSession)와 하루 한도
 // (addBonusMinutes) 양쪽에서 이 모달 하나를 재사용한다 — 로직 중복 없이 동일한 규칙을 보장.
-export function FocusSessionExtendModal({ visible, onDismiss, onExtend, titleKey = 'home.focusSessionTimedOutTitle', messageKey = 'home.focusSessionTimedOutMessage' }: {
+export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisibilityChange, titleKey = 'home.focusSessionTimedOutTitle', messageKey = 'home.focusSessionTimedOutMessage' }: {
   visible: boolean;
   onDismiss: () => void;
   onExtend?: (minutes: number) => void;
+  /**
+   * 전면 광고가 화면을 덮기 직전(true)/닫힌 뒤(false) 통보 — 호출부가 자기 화면의 재생을 멈췄다
+   * 되살릴 수 있게 한다(2026-08-04 광고 전수 조사).
+   *
+   * 이게 필요한 이유: 인앱 피드(iOS)는 WebView로 유튜브를 재생하는데, 전면 광고는 앱을
+   * 백그라운드로 보내지 않아서(같은 앱 위에 얹히는 화면) AppState 기반 일시정지가 안 걸린다.
+   * 그래서 광고 뒤에서 유튜브 소리가 계속 나거나, 반대로 iOS가 영상을 멈춰버린 뒤 아무도 다시
+   * 틀어주지 않아 광고를 닫고 오면 멈춘 화면이 남았다.
+   */
+  onAdVisibilityChange?: (adVisible: boolean) => void;
   titleKey?: TranslationKey;
   messageKey?: TranslationKey;
 }) {
@@ -42,8 +52,10 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, titleKey
 
   const onWatchAd = () => {
     setWatchingAd(true);
+    onAdVisibilityChange?.(true);
     showRewardedAd().then((result) => {
       setWatchingAd(false);
+      onAdVisibilityChange?.(false);
       if (result === 'earned') {
         grant(FOCUS_SESSION_EXTEND_MINUTES);
         useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: FOCUS_SESSION_EXTEND_MINUTES }));

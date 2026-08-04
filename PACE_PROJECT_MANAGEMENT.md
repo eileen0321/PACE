@@ -4982,3 +4982,208 @@ iOS(`useSleepGuard.ios.ts`)는 8/2에 껐던 옛 가속도계 방식(`SLEEP_DETE
 API 사용법이 커뮤니티 패턴과 일치하는지 웹 리서치로 확인함(애플 공식 문서 링크 확보).
 ⚠️ **미검증** — Swift 문법은 육안 검증만 했고 실제 컴파일은 다음 Xcode 빌드 때 확인 필요. 시뮬레이터엔
 물리 볼륨버튼이 없어(모듈 최상단 주석 참고) 이 기능 자체가 실기기 검증 대상.
+
+### 2026-08-04 (이어서2) — Windows 세션 (🔬 실기기 검증 — Note20 SM-N986N, Android 13)
+
+사장님 지시 "니가 기기에서 확인해". 위 수정 5건을 debug 빌드로 실기기에 올려 직접 광고를 태워
+확인했다. **두 건은 계측값으로 확정, 한 건은 재현됐고 원인이 바뀌었다.**
+
+#### ✅ 확정 1 — AdActivity 테마 수정이 실제로 먹는다 (계측값)
+광고가 화면에 떠 있는 동안 `dumpsys activity activities`:
+```
+Hist #1 ...ads.AdActivity   state=PAUSED  occludesParent=false   ← 투명 복구됨
+Hist #0 ...pace/.MainActivity  state=PAUSED stopped=false        ← 뒤 앱이 안 죽음
+(대조군) com.jlptmaster.app   state=STOPPED stopped=true         ← 완전히 덮였을 때의 모습
+```
+`occludesParent=false`가 곧 "이 액티비티는 뒤를 가리지 않는다"이고, 그래서 MainActivity가
+`stopped=false`로 살아 있다. 고치기 전(불투명 AppTheme)이었다면 둘 다 반대값이었다.
+
+#### ✅ 확정 2 — 20초 보상 유실 버그 수정 확인
+광고를 띄운 뒤 **20초를 훨씬 넘겨(약 2분)** 엔드카드를 닫았는데 `FOCUS 5m` 배지가 켜졌다 =
+보상이 정상 지급. 고치기 전이라면 20초째에 `failed_no_fill`로 끊겨 "광고 실패" 토스트만 뜨고
+5분은 안 들어갔을 상황이다.
+
+#### ❌ 재현됨 + 원인 정정 — 까만 화면은 광고창 문제가 아니었다
+광고를 닫고 유튜브로 돌아오면 **여전히 영상만 검다**(좋아요/공유/스폰서 문구/하단탭/진행바는 정상).
+그런데 위 계측대로 광고창은 유튜브를 죽이지 않았다. 실제 트리거는 **`returnToLastTrackedApp()`으로
+유튜브 태스크를 REORDER_TO_FRONT 시킬 때 유튜브의 영상 서피스가 되살아나지 않는 것**이다.
+- 광고와 무관하게, 유튜브를 한동안 백그라운드에 두었다가 이 경로로 끌어올리기만 해도 검게 나왔다.
+- 스와이프해도 계속 검고, **유튜브 프로세스를 죽이면 즉시 정상 복구**(실기기 확인. 예전 기록의
+  "유튜브 죽이면 복구"와 동일).
+→ 다음 라운드 과제: 복귀 방식 자체를 바꿔야 한다(REORDER_TO_FRONT 대신 유튜브를 다시 재생 상태로
+  깨우는 경로, 또는 복귀 후 강제 리레이아웃/재생 트리거). 광고 테마 수정은 필요했지만 이것만으로는
+  이 증상이 안 사라진다.
+
+#### 🔴 새로 발견 — 쇼츠 오버레이의 "광고 보고 5분 더"가 광고를 안 띄운다
+FOCUS OFF 배지 → 선택 팝업까지는 정상(preload도 성공: `PaceRewardedAd: preload ready`).
+그런데 "광고 보고 5분 더"를 누르면 `consumeFocusSessionTimedOut()`은 실행되는데(다시 눌러도 팝업이
+안 뜸 = 소비됨) **`PaceRewardedAdActivity.onCreate`가 한 번도 안 돈다**(로그 0건, ActivityTaskManager
+START 기록도 없음). 사용자 입장에선 "광고 보겠다고 눌렀는데 아무 일도 없고 기회만 날아감".
+- BAL(백그라운드 액티비티 시작) 차단은 아니다 — 같은 서비스에서 P메뉴 "Open App"은 정상 동작 확인.
+- 크래시/예외 없음(프로세스 유지), 권한 거부 로그 없음.
+- 원인 미확정. 인앱 경로(JS `showRewardedAd`)는 정상 동작하므로 네이티브 액티비티 기동 경로만의 문제.
+
+#### 🔴 새로 발견 — 접근성 서비스가 4~7초마다 unbind/rebind 반복 (오버레이 "권한 필요" 깜빡임의 정체)
+사장님 질문("권한 설정되어 있는데 왜 자꾸 권한 필요라고 나옴")의 답. 배지가 틀린 게 아니라 **서비스가
+실제로 죽었다 살아나기를 반복**하고 있다:
+```
+PaceAccessibility: onServiceConnected — instance bound   ← 4~7초마다 계속 (같은 pid)
+dumpsys accessibility →  Bound services:{}   Enabled services:{Pace...}   Crashed services:{}
+                         "a11y service changed"  package: com.samsung.accessibility  (반복)
+```
+`onDestroy`에서 `instance=null`이 되는 그 틈마다 `isAlive()`가 false가 되어 배지가 "권한 필요"로
+바뀐다. 앱 프로세스는 안 죽고(pid 동일) 크래시도 없다 — 삼성 쪽(com.samsung.accessibility)이 계속
+a11y 설정을 재적용하면서 우리 서비스를 끊었다 붙인다. 재부팅으로 해소되는지 먼저 확인 필요.
+※ 이 상태에서는 자동넘김/손짓/볼륨키가 간헐적으로만 동작하므로 다른 기능 검증도 오염된다.
+
+#### 검증 환경 메모(다음 세션용)
+- debug 빌드는 Metro가 필요한데 **8081을 jlpt-master Metro가 선점**하면 Pace는 스플래시에서 조용히
+  멈춘다(메모리에 기록된 그 함정). 우회: `npx expo start --port 8082` + `adb reverse tcp:8081 tcp:8082`.
+- 검증 종료 후 기기에는 **독립 실행 release 빌드**를 설치해 두었다(Metro 없이 정상 동작).
+- 재설치(`adb install -r`)해도 접근성 권한 문자열은 남지만 서비스는 죽는다 — 매번 재활성화 필요.
+
+#### 재부팅 결과 (같은 날, 사장님 지시로 실행) — ❌ 해소 안 됨, 다만 Pace 탓은 아님이 확정
+- 재부팅 후에도 접근성 재바인딩 계속: **45초에 13~16회**(약 3초에 1번).
+- **Pace 탓이 아니다** — `am force-stop com.strides7.pace`로 앱을 완전히 죽인 상태에서도 40초 동안
+  `accessibility_enabled` 접근 36회, 짧은 셸 프로세스(app_process) 기동 12회가 계속됐다.
+- **PC 쪽 도구 탓도 아니다** — 띄워둔 Metro 2개를 모두 종료하고 재측정해도 동일.
+- 배터리 최적화 제외 O(deviceidle whitelist 등재), standby bucket=5(EXEMPTED), suspended/stopped 아님
+  → 삼성 절전이 원인도 아니다.
+- 원인 프로세스는 수명이 너무 짧아(수십 ms) /proc 폴링으로 이름을 못 잡았다. 접근성 설정과 함께
+  `accelerometer_rotation`/`user_rotation`도 같이 건드려지는 패턴 → 자동화/매크로/화면제어 계열 의심.
+- 조사 도중 `enabled_accessibility_services`가 아예 비워지는 일도 발생(다시 켜둠).
+
+**결론**: 기기 쪽 문제이고 앱 코드로는 못 없앤다. 대신 위 유예(30초) 수정으로 **Pace는 이 상황에
+면역**이 됐다(블루투스/핸즈프리 토글·배지 정상 — 실기기 검증 완료). 다만 서비스가 실제로 끊긴 그
+몇 초 동안은 스와이프/손짓이 진짜로 안 먹으므로 자동넘김이 간헐적으로 한 편을 놓칠 수 있다.
+
+**사장님 확인 요청**: 설정 > 접근성 > 설치된 서비스에 Pace 외 다른 앱이 있는지, 그리고 자동화 계열
+앱(Bixby 루틴, Good Lock 모듈, 매크로/화면제어 앱)이 최근 켜져 있는지 확인 필요.
+
+### 2026-08-05 — Windows 세션 (🔴🔴 앞선 실기기 조사 대부분이 **다른 Claude 세션의 간섭**이었음 + 깨끗한 재검증 완료)
+
+#### 진범: 같은 PC의 다른 Claude Code 세션이 같은 폰을 동시에 조종하고 있었다
+접근성이 4~7초마다 끊기던 원인을 끝까지 추적한 결과, 폰 문제도 삼성 문제도 아니었다.
+세션 `02764c6f-…`(내 세션은 `65b8a0d1-…`)가 이 스크립트를 루프로 돌리고 있었다:
+```
+adb shell am force-stop com.google.android.youtube      ← 유튜브를 계속 죽임
+adb shell am force-stop com.strides7.pace               ← Pace를 계속 죽임
+adb shell am start -n com.strides7.pace/.MainActivity
+until adb shell uiautomator dump /sdcard/u.xml ...      ← uiautomator가 접근성 시스템을 가로챔
+adb shell settings put secure accessibility_enabled 0            ← 접근성을 끔
+adb shell settings delete secure enabled_accessibility_services  ← 목록을 비움
+```
+`uiautomator dump`는 UiAutomation 연결을 잡으므로 실행될 때마다 **다른 접근성 서비스가 전부 끊긴다.**
+거기에 설정까지 직접 지우고 있었다. 재부팅해도 안 없어진 이유(PC쪽 루프가 계속 살아있었음),
+Pace를 완전히 비활성화해도 계속된 이유가 전부 이걸로 설명된다.
+→ 사장님이 세션을 멈춘 뒤에도 백그라운드 bash 루프 6개가 남아 있어 종료했다. 종료 직후 측정:
+**45초 재바인딩 0회**(직전 13~18회), 설정 유지, `Bound services:{Pace…}` 안정.
+
+#### 앞선 세션 기록 중 **정정**
+- "쇼츠 오버레이의 광고 버튼이 광고를 안 띄운다(🔴 새로 발견)" → **오진이었다.** 그 세션이 Pace를
+  force-stop 하던 중이라 액티비티가 못 떴을 뿐이다. 깨끗한 상태에서는 정상 동작한다(아래).
+- "접근성이 4~7초마다 재바인딩(🔴 새로 발견)" → 기기/삼성 문제가 아니라 위 간섭이 원인.
+- "광고 후 유튜브 까만 화면이 재현됨 / 원인은 returnToLastTrackedApp" → **재현 자체가 간섭이었다.**
+  그 세션이 유튜브를 계속 force-stop 하고 있었다. 깨끗한 상태에서는 까만 화면이 안 난다(아래).
+  ⚠️ 즉 8-04에 적은 "복귀 방식을 바꿔야 한다"는 과제는 근거가 사라졌다 — 재현 안 되면 손대지 말 것.
+
+#### ✅ 깨끗한 상태 재검증 (release 빌드, 다른 세션 종료 후, Note20/Android 13)
+쇼츠 시청 → Focus Session 10분 타임아웃 → FOCUS OFF 탭 → "광고 보고 5분 더":
+1. `PaceRewardedAdActivity` 정상 기동 → `AdActivity` RESUMED (광고 정상 재생).
+2. 광고 재생 중 계측 — 테마 수정이 의도대로 동작:
+```
+AdActivity              state=RESUMED  occludesParent=false   ← 투명
+PaceRewardedAdActivity  state=PAUSED   finishing=false        ← noHistory에 안 죽음(광고가 투명이라)
+YouTube InternalMain    state=PAUSED   stopped=false          ← 유튜브가 안 죽음
+Task#1904(YouTube)      visible=true visibleRequested=true    ← 서피스 유지
+```
+3. 광고 닫은 직후 **유튜브가 즉시 정상 렌더링**(까만 화면 없음), 3초 후·7초 후 모두 정상.
+4. 보상 지급 확인 — 배지 `FOCUS 4m`(5분 받고 1분 경과).
+5. 광고 화면 하단 내비게이션 바가 **어둡게** 나옴 — `windowDrawsSystemBarBackgrounds=true` 추가 효과
+   (이게 없으면 Theme.Translucent 계열은 statusBarColor/navigationBarColor를 무시한다).
+
+#### 교훈 (다음 세션 필수)
+**한 기기에 두 세션이 동시에 붙으면 안 된다.** 실기기 검증 전에 반드시 확인할 것:
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='adb.exe'" | Select ProcessId, CommandLine
+```
+`uiautomator`/`force-stop`/`settings put secure` 류가 돌고 있으면 그것부터 정리한 뒤 측정할 것.
+안 그러면 오늘처럼 없는 버그를 만들어내고 엉뚱한 곳을 고치게 된다.
+
+### 2026-08-05 — Windows 세션 (🍎 iOS "웹뷰 스와이프 개 버벅" 원인 규명 + 수정 / **Mac 검증 필요**)
+
+사장님 보고: **"애플 웹뷰에서 스와이프 하면 개 버벅인다. Focus OFF 때도 버벅이고 ON하면 더하다."**
+Windows라 iOS 실기기 측정은 불가 — 코드 정독으로 원인을 특정하고 수정까지 했다. **검증은 Mac 몫.**
+
+#### 원인 (추측 아님 — 전부 코드로 확인)
+
+**주원인: 스와이프 이동이 "브릿지 왕복"이었다.**
+`YouTubeShortsPlayer.ios.tsx`는 `scrollEnabled={false}`라 드래그 중 화면이 손가락을 안 따라온다
+(코드 주석도 "손가락 스와이프가 YouTube를 직접 안 움직인다"고 명시). 그래서 손을 뗀 뒤에야 아래가 돈다:
+
+```
+touchend → JSON.stringify → 브릿지 → RN onMessage → goNext()
+         → injectJavaScript(문자열 평가) → 브릿지 → doSwipe() → scrollBy + 키이벤트
+```
+
+드래그 중 피드백 0 + 손 뗀 뒤 왕복 지연 = "손 떼고 한 박자 뒤 툭". 이게 버벅임의 본질.
+
+**가산 원인**
+1. `dt > 800ms` 드래그는 통째로 버려짐 → 조금만 천천히 끌면 **무반응**("먹통" 체감).
+2. `swipe()`의 **450ms 재시도**가 손가락 스와이프에도 걸림. 이건 핸즈프리 "첫 손짓 씹힘"용 자가치유인데,
+   유튜브 릴 전환이 450ms 안에 URL을 못 바꾸면 전환 도중 한 번 더 스크롤 → 튐/두 칸 점프.
+3. `unmuteOnce`가 capture 단계 touchend라 **스와이프마다 `v.play()` + 음량 재설정** → 전환 순간 디코더 건드림.
+4. **HOT/즐겨찾기 리스트 재생 중엔 훨씬 심함** — `setForcedVideoId` → `key` 변경 → **WebView 통째 리마운트
+   = 유튜브 페이지 풀 리로드**. 이 모드는 버벅이 아니라 깜박+정지. (설계상 불가피 — 아래 미해결 참고.)
+
+**Focus ON이 더한 건 별개 원인**: `handsFreeDetectActive = isAutoMode && handsFreeGesture`로 **전면 카메라 +
+핑거스냅 오디오 분석이 상시 구동**되어 WebView 디코딩과 CPU·전력을 경합하고, 넘길 때마다
+`pauseWaveForTransition`으로 감지기를 껐다 켠다. 볼륨키 훅도 이때 붙는다.
+
+**혐의 벗은 것(조사했으나 원인 아님)** — 토스트는 `useNativeDriver: true`라 JS 스레드를 안 막는다.
+500ms progress 폴링은 `setProgress`가 이미 제거돼 있어(과거 같은 증상으로 고친 이력) 리렌더를 안 만든다.
+
+#### 수정 (이 섹션과 같은 커밋)
+
+**`src/components/feed/YouTubeShortsPlayer.ios.tsx`**
+- 손가락 스와이프의 **이동을 WebView 안에서 즉시 실행**(`doSwipe(dir)` 직접 호출). RN에는 기록용으로만
+  `userswipe`를 보낸다 → **이동 경로에서 브릿지가 빠진다.** `swipe()`가 아니라 `doSwipe()`를 부르는 게 중요:
+  `swipe()`의 450ms 재시도는 핸즈프리 전용으로 남긴다(손가락엔 안 걸림).
+- 메시지에 `moved` 플래그 추가 — true면 "WebView가 이미 넘겼다"는 뜻. `onUserSwipe`가 `(dir, moved)` 2인자로 변경.
+- `window.__paceListMode` 도입. 리스트 모드면 WebView가 이동하지 않고 부모에 위임(`moved=false`).
+  값은 `injectedJavaScriptBeforeContentLoaded`(리마운트 대응) + `useEffect`(리마운트 없는 변경) 양쪽에서 심는다.
+- 스와이프 인정 시간 `800ms → 1500ms` 완화.
+- `unmuteOnce`에 조기 반환(`__ok && !muted && !paused`) — 이미 소리내어 재생 중이면 아무것도 안 함.
+
+**`src/app/feed/index.tsx`**
+- `listMode` state 신설(`forcedListRef`를 미러링 — ref는 리렌더를 안 일으켜 prop으로 못 내려감).
+  ⚠️ **`forcedListRef.current`를 바꾸는 곳은 반드시 `setListMode`도 같이 호출**해야 한다(현재 4곳:
+  `playInFeed` 2분기, `goNext` 리스트소진, `onNotShorts`). 안 맞추면 스와이프가 리스트를 이탈한다.
+- `onUserSwipe(dir, moved)` — `moved=true`면 `goNext()`를 **부르지 않는다**(이중 이동=두 칸 방지).
+  `pauseWaveRef` + `setStatus('PLAYING')`만 수행.
+- **손가락 스와이프 토스트 제거**(moved 경로). 손짓·볼륨키는 화면 피드백이 없어 토스트가 필요하지만,
+  손가락은 본인이 한 동작이라 매번 뜨면 방해 + 전환 순간에 불필요한 렌더/애니메이션이 얹힌다.
+
+#### 검증 상태
+
+- ✅ `npx tsc --noEmit` 통과 (`moduleSuffixes`가 `.ios` 우선이라 iOS 변형이 타입체크됨).
+- ✅ 주입 JS 문법 검사 통과(문자열이라 tsc가 안 보므로 추출해 `node --check`).
+- ❌ **iOS 실기기 미검증 — Windows라 빌드 불가.**
+
+#### 🍎 Mac이 검증할 것
+
+1. 손가락 스와이프가 **손 떼는 즉시** 넘어가는가(예전의 한 박자 지연 사라짐).
+2. **두 칸 넘어가지 않는가** — `moved` 경로에서 goNext를 안 부르는 게 핵심. 이게 틀리면 바로 티난다.
+3. 천천히 끌어도(1초 내외) 먹히는가.
+4. **HOT/즐겨찾기 리스트 재생 중** 스와이프가 여전히 **리스트 순서**를 따르는가(유튜브 피드로 이탈 X).
+   리스트 소진 후엔 유튜브 피드로 이어지며 그때부턴 즉시 스와이프여야 한다.
+5. 핸즈프리 손짓 / 볼륨키 리모컨은 **그대로 동작**하는가(이 경로는 안 건드렸고 450ms 재시도도 유지).
+6. 소리: 스와이프 후에도 음소거 안 되는가(`unmuteOnce` 조기 반환이 회귀를 만들지 않았는지).
+
+#### ⚠️ 미해결 — Mac 판단 필요
+
+- **`scrollEnabled={false}`** 자체는 그대로 뒀다. 이걸 살리면 유튜브 릴이 손가락을 직접 따라와
+  근본 해결이 되지만, 예전에 끈 이유(외곽 스크롤뷰 간섭 추정)를 Windows에서 확인할 수 없다.
+  Mac이 실기기로 한번 켜보고 판단할 것. 켜진다면 합성 스와이프 자체가 불필요해진다.
+- **리스트 모드의 풀 리로드**(원인 4)는 "특정 videoId를 열어야 한다"는 요구에서 오는 구조적 비용이라
+  이번에 안 건드렸다. 개선하려면 리스트도 유튜브 피드 위에서 처리하는 다른 설계가 필요.

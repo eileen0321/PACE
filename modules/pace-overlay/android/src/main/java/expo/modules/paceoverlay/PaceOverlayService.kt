@@ -1196,7 +1196,19 @@ class PaceOverlayService : Service() {
 
     // 보상형 광고 시청 완료 후 호출 — 이미 타임아웃으로 꺼져 있으면 워처를 다시 켜고, extraMinutes
     // 뒤에 다시 자동 종료되도록 예약(원래 설정값(PREF_FOCUS_SESSION_MINUTES)이 아니라 이 값을 씀).
-    fun extendFocusSession(context: Context, extraMinutes: Int) {
+    // 2026-08-04 사장님 실기기 지적("광고 보고 5분 받았는데 왜 쇼츠 안 보이고 까만 화면이야") —
+    // 실기기 로그로 원인 확정. 보상 콜백은 **광고가 아직 화면에 떠 있는 동안** 온다:
+    //   21:53:48.756  reward earned → extendFocusSession → returnToLastTrackedApp()  (유튜브를 앞으로)
+    //   21:53:48.963  com.android.vending(플레이스토어)이 그 위로 올라옴              (200ms 뒤)
+    //   21:53:50~14   triggerNext() aborted — isSupportedAppWindowVisible()=false ×8
+    // 즉 광고가 끝나기도 전에 유튜브를 끌어올렸다가 곧바로 광고/스토어에 다시 덮이고, 사용자가 전부
+    // 닫았을 때 유튜브가 어정쩡한 상태(MediaSession state=NONE, 화면엔 ⏸ 아이콘 + 검은 화면)로 남았다.
+    //
+    // 앱 복귀는 **광고가 실제로 닫힌 뒤**(onAdDismissedFullScreenContent)에 해야 한다. 세션 연장 자체는
+    // 보상 시점에 바로 해야 하므로(광고를 끝까지 봤다는 사실은 그때 확정된다) 두 일을 분리한다.
+    // 크레딧으로 연장하는 경로는 광고가 없으므로 기본값(true) 그대로 즉시 복귀한다.
+    @JvmOverloads
+    fun extendFocusSession(context: Context, extraMinutes: Int, returnToApp: Boolean = true) {
       if (!isBuildAutoNextEnabled(context)) return
       val wasActive = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AUTO_MODE, false)
       if (!wasActive) {
@@ -1208,14 +1220,14 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         .putLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, System.currentTimeMillis() + extraMs).apply()
       showToast(context, "🎯 Focus Session +${extraMinutes}m")
-      returnToLastTrackedApp(context)
+      if (returnToApp) returnToLastTrackedApp(context)
     }
 
     // 2026-08-01 사장님 지적 — 보상형 광고/크레딧으로 연장한 목적 자체가 "쇼츠 계속 보기"인데, 연장
     // 후에도 사용자가 Pace 화면에 남겨져 직접 다시 스와이프해 돌아가야 했다. 광고를 보러 오기 전
     // 마지막으로 감시 중이던 앱(foregroundPollRunnable이 매 폴마다 저장)을 다시 전경으로 불러온다 —
     // REORDER_TO_FRONT라 기존 태스크를 그대로 살려서 보던 화면 그대로 이어진다(새로 앱 시작 아님).
-    private fun returnToLastTrackedApp(context: Context) {
+    fun returnToLastTrackedApp(context: Context) {
       val pkg = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getString(PREF_LAST_TRACKED_APP_PACKAGE, null) ?: return
       try {
@@ -1998,7 +2010,9 @@ class PaceOverlayService : Service() {
         // 지적대로 "광고만 보고 5분을 받지만 그 5분 동안 아무것도 안 되는" 상황이 됐다 — 사용자
         // 입장에선 광고만 뜯긴 것이다. 광고보다 먼저 접근성부터 확인하고, 죽었으면 그 사실을 알리고
         // 설정으로 보낸다(연장도, 광고도 띄우지 않는다).
-        if (!PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAlive()) {
+        // isAliveOrRebinding — 재바인딩 공백에 걸려 "접근성을 켜세요" 안내가 잘못 뜨면, 실제로는
+        // 권한이 멀쩡한 사용자가 연장 자체를 못 하게 된다(PaceAccessibilityService 주석 참고).
+        if (!PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAliveOrRebinding()) {
           showAccessibilityRequiredOverlay()
           return@setOnClickListener
         }
@@ -3397,8 +3411,11 @@ class PaceOverlayService : Service() {
       // autoNextEnabled는 그와 무관한 별개 플래그라 배지가 "FOCUS ON"(초록)으로 남아 정상인 척한다.
       // 사용자는 기능이 켜져 있다고 믿고 손짓을 계속 하게 되고, 우리도 원인을 못 본다. 실제로 오늘
       // MediaPipe 크래시로 서비스가 죽은 동안 정확히 이 상태였다. 상태를 있는 그대로 표시한다.
+      // 2026-08-04 — isAlive() → isAliveOrRebinding(). 이 배지는 1초마다 갱신되므로 재바인딩 공백을
+      // 그대로 반영하면 "권한 필요"가 몇 초마다 깜빡인다(사장님 실기기 신고). 진짜 고장은 유예시간이
+      // 지나면 그대로 잡힌다 — PaceAccessibilityService.isAliveOrRebinding 주석 참고.
       val accessibilityBroken =
-        !PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAlive()
+        !PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAliveOrRebinding()
       val active = autoNextEnabled && !accessibilityBroken
       text = when {
         accessibilityBroken -> if (java.util.Locale.getDefault().language == "ko") "권한 필요" else "NEEDS PERMISSION"

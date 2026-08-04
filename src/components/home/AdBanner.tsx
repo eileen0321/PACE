@@ -67,7 +67,10 @@ export function AdBanner() {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     const n = Math.min(attemptRef.current, 3); // 0,1,2,3 → 5,10,20,40s
     const base = 5000 * Math.pow(2, n);
-    const delay = Math.min(60000, base) + Math.floor(base * 0.2 * ((attemptRef.current % 5) / 5)); // 결정론적 지터
+    // 2026-08-04 — 예전엔 상한(min)을 base에만 걸고 지터를 그 **뒤에** 더해서, 주석의 "상한 60s"가
+    // 실제로는 지켜지지 않았다(그리고 상한에 닿지도 않아 최대 ~46s에서 맴돌았다). 상한은 최종값에 건다.
+    const jitter = Math.floor(base * 0.2 * ((attemptRef.current % 5) / 5)); // 결정론적 지터
+    const delay = Math.min(60000, base + jitter);
     attemptRef.current += 1;
     setFailed(true);
     retryTimerRef.current = setTimeout(() => setFailed(false), delay);

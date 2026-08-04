@@ -77,6 +77,16 @@ export async function showRewardedAd(): Promise<RewardedAdResult> {
   return new Promise((resolve) => {
     let settled = false;
     let earned = false;
+    // 2026-08-04 사장님 지시("광고 전수 확인") 발견 — 아래 타이머는 "로드 대기"를 끊으려고 넣은
+    // 것인데 LOADED에서 꺼주지 않아 **광고가 화면에 떠 있는 동안** 20초째에 그대로 터졌다.
+    // 보상형 광고는 보통 15~30초라 상당수가 여기 걸렸고, 그때마다:
+    //   - 프라미스가 failed_no_fill로 resolve → 광고 위에 "광고 실패" 토스트가 뜨고
+    //   - 아래 unsubscribers가 전부 해제 → EARNED_REWARD/CLOSED가 죽어서
+    //   → **끝까지 다 보고도 5분이 안 들어갔다.**
+    // 타이머를 단계별로 다시 건다: 로드까지는 짧게(LOAD), 광고가 뜬 뒤에는 "혹시 CLOSED가 영영
+    // 안 와서 모달 스피너가 무한 대기하는" 경우만 막는 넉넉한 감시견(SHOW)으로 교체한다.
+    const LOAD_TIMEOUT_MS = 20000;
+    const SHOW_WATCHDOG_MS = 5 * 60 * 1000; // 어떤 보상형 광고도 5분을 넘지 않는다
     // 2026-08-04 — 사용자가 실제로 준 동의를 따른다(services/ads/adsConsent.ts의
     // canRequestPersonalizedAds 주석 참고). 예전엔 비개인화가 하드코딩돼 있어, 개인화에 동의한
     // 사용자에게도 계속 비개인화 광고만 나가며 수익이 깎이고 있었다.
@@ -87,6 +97,7 @@ export async function showRewardedAd(): Promise<RewardedAdResult> {
       requestNonPersonalizedAdsOnly: Platform.OS === 'ios' ? true : !useAdsConsentStore.getState().canRequestPersonalizedAds,
     });
     const unsubscribers: Array<() => void> = [];
+    let timeoutId: ReturnType<typeof setTimeout>;
     const finish = (result: RewardedAdResult) => {
       if (settled) return;
       settled = true;
@@ -96,10 +107,16 @@ export async function showRewardedAd(): Promise<RewardedAdResult> {
     };
     // 로드 타임아웃 — 노필(no-fill) 등으로 LOADED/ERROR가 끝내 안 오면 프라미스가 영영 안 풀려
     // 모달의 "광고 보는 중" 스피너가 무한 대기한다(감사 발견). 20초 안에 아무 이벤트도 없으면 실패 처리.
-    const timeoutId = setTimeout(() => finish('failed_no_fill'), 20000);
+    timeoutId = setTimeout(() => finish('failed_no_fill'), LOAD_TIMEOUT_MS);
 
     unsubscribers.push(
       rewarded.addAdEventListener(RewardedAdEventType!.LOADED, () => {
+        // 로드는 끝났다 — 여기서 로드 타임아웃을 반드시 꺼야 한다(위 주석 참고). 이 시점부터는
+        // 사용자가 광고를 보는 시간이라 남은 시간에 제한을 두면 안 된다.
+        clearTimeout(timeoutId);
+        // 감시견이 끝내 터지더라도 이미 보상을 받았으면 보상으로 확정한다 — 사용자가 광고를 다 본
+        // 것은 EARNED_REWARD로 확정된 사실이고, CLOSED가 안 온 건 우리 사정이지 사용자 잘못이 아니다.
+        timeoutId = setTimeout(() => finish(earned ? 'earned' : 'failed_error'), SHOW_WATCHDOG_MS);
         rewarded.show().catch(() => finish('failed_error'));
       })
     );

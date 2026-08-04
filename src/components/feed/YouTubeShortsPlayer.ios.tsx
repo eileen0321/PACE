@@ -32,8 +32,13 @@ type Props = {
   onProgress?: (fraction: number) => void;
   /** 스와이프 모드에서 실제 재생 중인 videoId 변화 통보(현재 영상 즐겨찾기 추가용). */
   onVideoChange?: (videoId: string) => void;
-  /** iOS 유저 손가락 스와이프(1=위로/다음, -1=아래로/이전) — WebView JS가 감지해 통보(2026-08-01). */
-  onUserSwipe?: (dir: number) => void;
+  /** iOS 유저 손가락 스와이프(1=위로/다음, -1=아래로/이전) — WebView JS가 감지해 통보(2026-08-01).
+   *  moved=true면 **WebView가 이미 유튜브 피드를 넘긴 뒤**다(2026-08-05 버벅임 수정) — 부모는 기록/상태만
+   *  맞추고 다시 넘기면 안 된다(이중 이동). moved=false는 리스트 모드라 부모가 이동을 수행해야 한다. */
+  onUserSwipe?: (dir: number, moved: boolean) => void;
+  /** HOT/즐겨찾기 순서 재생 중인지 — true면 손가락 스와이프의 이동을 WebView가 하지 않고 부모에 위임한다
+   *  (리스트의 다음 항목으로 리마운트해야 하므로). WebView 안의 window.__paceListMode로 전달된다. */
+  listMode?: boolean;
   /** /shorts/{id}가 watch로 리다이렉트된 "비-쇼츠"(라이브/롱폼) 감지 — 스와이프/자동넘김/손짓이 전부
    *  Shorts 릴 DOM에 의존해 동작 불가하므로, 부모가 정상 쇼츠로 리마운트하게 통보(2026-08-01 사장님 지적). */
   onNotShorts?: () => void;
@@ -224,7 +229,13 @@ const INJECTED_JS_SWIPE = `
 
   function installGlobalsOnce() {
     if (globalsOn) return; globalsOn = true;
-    function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
+    // 2026-08-05 — capture 단계라 스와이프의 touchend에도 걸린다. 예전엔 매번 play()+음량 재설정을 해서
+    // 릴 전환 순간에 디코더를 건드렸다(버벅임에 가산). 이미 소리내어 재생 중이면 할 일이 없으므로 즉시 빠진다.
+    function unmuteOnce() {
+      var v = curV; if (!v) return;
+      if (v.__ok && !v.muted && !v.paused) return;
+      v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {});
+    }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전). WebView는
@@ -239,11 +250,24 @@ const INJECTED_JS_SWIPE = `
     document.addEventListener('touchend', function (e) {
       var tt = e.changedTouches && e.changedTouches[0]; if (!tt || !swST) return;
       var dy = tt.clientY - swSY, dx = tt.clientX - swSX, dt = Date.now() - swST; swST = 0;
-      if (dt > 800) return;                            // 너무 느린 드래그는 스와이프로 안 봄
+      // 2026-08-05 사장님 "스와이프 개 버벅" — 800ms는 너무 빡빡해 조금만 천천히 끌어도 통째로 버려졌다
+      // (사용자 체감: "먹통"). 1500ms로 완화. 위쪽 |dy|·수직우세 조건이 이미 탭/가로스크롤을 걸러낸다.
+      if (dt > 1500) return;                           // 정말 느린 드래그(스크롤 의도)만 스와이프에서 제외
       if (Math.abs(dy) < 60) return;                   // 탭/미세 이동 무시(재생·음소거 탭 보존)
       if (Math.abs(dy) < Math.abs(dx) * 1.3) return;   // 수평 우세면 무시(수직만)
       var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지
-      send({ type: 'userswipe', dir: dy < 0 ? 1 : -1 });                   // 위로(dy<0)=다음, 아래로=이전
+      var dir = dy < 0 ? 1 : -1;                                           // 위로(dy<0)=다음, 아래로=이전
+      // ⚡ 2026-08-05 버벅임 수정의 핵심 — 예전엔 이동을 RN에 위임했다(userswipe → 브릿지 → goNext →
+      //   injectJavaScript → 브릿지 → doSwipe). scrollEnabled=false라 드래그 중 화면이 손가락을 안
+      //   따라오는데 그 왕복 지연까지 얹혀 "손 떼고 한 박자 뒤 툭" 하고 넘어갔다. 이동은 여기서 즉시
+      //   실행하고, RN에는 기록(idle 리셋/상태)용으로만 알린다 — 이동 지연에서 브릿지가 빠진다.
+      //   swipe()가 아니라 doSwipe()를 직접 부른다: swipe()의 450ms 재시도는 핸즈프리 첫 손짓 씹힘용
+      //   자가치유라, 손가락 스와이프에 걸리면 릴 전환 도중 한 번 더 스크롤해 튀거나 두 칸 넘어간다.
+      // ⚠️ 리스트 모드(HOT/즐겨찾기 순서 재생)에선 이동을 하면 안 된다 — 그건 유튜브 피드가 아니라
+      //   우리 리스트의 다음 항목으로 리마운트해야 하므로 RN이 처리한다(moved=false로 위임).
+      var moved = false;
+      if (!window.__paceListMode) { doSwipe(dir); moved = true; }
+      send({ type: 'userswipe', dir: dir, moved: moved });
     }, { capture: true, passive: true });
     // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. 스와이프 모드에선 부모의 current.videoId가 첫 영상에
     // 고정돼 있어(리로드 안 함) 실제 재생 중인 영상 id를 부모가 모른다. URL(/shorts/ID)에서 현재 id를
@@ -339,7 +363,7 @@ function isAllowedNavigation(url: string): boolean {
 export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
-  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload }: Props,
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload, listMode }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -380,6 +404,13 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
     }
   }, [preload]);
 
+  // 리스트 모드 전달 — WebView의 손가락 스와이프 핸들러가 "직접 넘길지(유튜브 피드) 부모에 위임할지
+  // (리스트 다음 항목)" 판단하는 데 쓴다. 페이지 로드 시점 값은 injectedJavaScriptBeforeContentLoaded가
+  // 심으므로(리마운트 대응), 이 effect는 리마운트 없이 값만 바뀌는 경우(리스트 소진 등)를 담당한다.
+  useEffect(() => {
+    webRef.current?.injectJavaScript(`window.__paceListMode=${listMode ? 'true' : 'false'};true;`);
+  }, [listMode]);
+
   // 재생/일시정지 반영.
   useEffect(() => {
     if (!ready) return;
@@ -395,7 +426,7 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
         source={source}
         injectedJavaScript={NAV_MODE === 'swipe' ? INJECTED_JS_SWIPE : INJECTED_JS}
         // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
-        injectedJavaScriptBeforeContentLoaded={`window.__PACE_DIAG__=${__DEV__ ? 'true' : 'false'};window.__pacePreload=${preload ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__PACE_DIAG__=${__DEV__ ? 'true' : 'false'};window.__pacePreload=${preload ? 'true' : 'false'};window.__paceListMode=${listMode ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
@@ -438,7 +469,8 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
           }
           if (msg.type === 'userswipe') {
             const d = (msg as any).dir;
-            if (d === 1 || d === -1) onUserSwipe?.(d);
+            // moved=true = WebView가 이미 넘김(부모는 기록만). 구버전 메시지 호환을 위해 !!로 좁힌다.
+            if (d === 1 || d === -1) onUserSwipe?.(d, !!(msg as any).moved);
             return;
           }
           if (msg.type === 'ready') {

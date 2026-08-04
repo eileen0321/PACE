@@ -105,6 +105,10 @@ export default function PaceFeedScreen() {
   // 추적. 타임아웃 후 재활성화 시도 시 비프리미엄이면 무료 재개 대신 보상광고 연장 모달로 보낸다.
   const sessionTimedOutRef = useRef(false);
   const [showExtendModal, setShowExtendModal] = useState(false);
+  // 광고가 화면을 덮는 동안 재생을 멈췄다가 되돌리기 위해 직전 상태를 기억한다
+  // (FocusSessionExtendModal의 onAdVisibilityChange 주석 참고 — 광고는 앱을 백그라운드로
+  //  보내지 않아서 AppState 기반 일시정지가 안 걸린다).
+  const statusBeforeAdRef = useRef<PlayerStatus>('PLAYING');
   // 2026-08-01 사장님 지적("Shorts HOT/Favorite 누르면 우리 앱에서 열려야지 사파리로 열지 마") — 이 값이
   // 설정되면 플레이어를 그 videoId로 리마운트(key 변경)해 앱 내 피드에서 재생하고, 이후 YouTube 네이티브
   // 스와이프로 이어진다(Safari로 안 튕김). 스와이프 모드는 firstVideoIdRef에 첫 영상을 핀하므로 key 교체로
@@ -118,14 +122,21 @@ export default function PaceFeedScreen() {
   // 리로드=리마운트라 전환에 로딩 커버가 잠깐 뜨지만, "카테고리만 보고 싶다"는 의도가 매끈함보다 우선.)
   const forcedListRef = useRef<string[] | null>(null);
   const forcedIndexRef = useRef(0);
+  // 2026-08-05 — 위 ref를 그대로 플레이어에 내려줄 수 없어(ref 변경은 리렌더를 안 일으킴) 같은 값을 state로
+  // 미러링한다. 이 값이 WebView의 window.__paceListMode가 되어, 손가락 스와이프를 WebView가 직접 처리할지
+  // (유튜브 피드) 부모에 위임할지(리스트 다음 항목 리마운트) 가른다. ⚠️ forcedListRef를 바꾸는 곳은
+  // 반드시 이 setter도 같이 호출해야 한다(현재 4곳: playInFeed 2분기, goNext 리스트소진, onNotShorts).
+  const [listMode, setListMode] = useState(false);
   const playInFeed = (videoId: string, playlist?: string[]) => {
     markUserInput();
     if (playlist && playlist.length > 0) {
       forcedListRef.current = playlist;
       forcedIndexRef.current = Math.max(0, playlist.indexOf(videoId));
+      setListMode(true);
     } else {
       forcedListRef.current = null;
       forcedIndexRef.current = 0;
+      setListMode(false);
     }
     setForcedVideoId(videoId);
     setStatus('PLAYING');
@@ -417,6 +428,7 @@ export default function PaceFeedScreen() {
       // 리스트 소진 → 유튜브 자동으로 전환. forcedListRef만 비우고(다음부턴 스와이프 경로), 마지막 영상
       // 페이지에서 그대로 스와이프를 주입해 유튜브 네이티브 피드로 이어간다(forcedVideoId는 유지 = 리마운트 없음).
       forcedListRef.current = null;
+      setListMode(false); // WebView가 이제부터 손가락 스와이프를 직접 처리(유튜브 피드)
       useToastStore.getState().show(t('feed.listEndYoutubeToast'));
       // 아래 스와이프 경로로 진행.
     }
@@ -559,13 +571,23 @@ export default function PaceFeedScreen() {
           playing={playing}
           onProgress={handleProgress}
           onVideoChange={(id) => { currentVideoIdRef.current = id; }}
-          onUserSwipe={(dir) => {
-            // iOS 유저 손가락 스와이프(위=다음/아래=이전) — 핸즈프리/볼륨키와 동일 경로(goNext/goPrev)로
-            // idle 리셋·토스트·전환정지까지 재사용. 실제 이동은 goNext→player.advance()가 수행.
+          onUserSwipe={(dir, moved) => {
+            // iOS 유저 손가락 스와이프(위=다음/아래=이전).
             markUserInput();
+            // 2026-08-05 사장님 "스와이프 개 버벅" 수정 — moved=true면 WebView가 브릿지 왕복 없이 이미
+            // 넘긴 뒤다. 여기서 goNext()를 또 부르면 이중 이동(두 칸)이 된다. 기록/상태만 맞춘다.
+            // 토스트도 안 띄운다: 손짓·볼륨키는 화면 피드백이 없어 필요하지만, 손가락 스와이프는 본인이
+            // 한 동작이라 매번 뜨면 방해만 되고 전환 순간에 불필요한 렌더/애니메이션을 얹는다.
+            if (moved) {
+              pauseWaveRef.current?.(); // 전환 중 손짓 오발화 방지(goNext가 하던 것과 동일)
+              setStatus('PLAYING');
+              return;
+            }
+            // moved=false = 리스트 모드(HOT/즐겨찾기) — 이동은 여기서 리스트의 다음/이전 항목으로 수행.
             if (dir === 1) { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); }
             else if (goPrev()) { useToastStore.getState().show(t('feed.previousShortToast')); }
           }}
+          listMode={listMode}
           onEnded={onEnded}
           onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onNotShorts={() => {
@@ -577,7 +599,7 @@ export default function PaceFeedScreen() {
             if (list) {
               const ni = forcedIndexRef.current + 1;
               if (ni < list.length) { forcedIndexRef.current = ni; setForcedVideoId(list[ni]); return; }
-              forcedListRef.current = null; setForcedVideoId(null); return;
+              forcedListRef.current = null; setListMode(false); setForcedVideoId(null); return;
             }
             if (forcedVideoId) setForcedVideoId(null);
             else advance();
@@ -670,6 +692,16 @@ export default function PaceFeedScreen() {
           visible={showExtendModal}
           onExtend={() => { sessionTimedOutRef.current = false; setIsAutoMode(true); }}
           onDismiss={() => setShowExtendModal(false)}
+          onAdVisibilityChange={(adVisible) => {
+            if (adVisible) {
+              statusBeforeAdRef.current = status;
+              setStatus('PAUSED'); // 광고 뒤에서 유튜브 소리가 계속 나는 것부터 막는다
+            } else if (statusBeforeAdRef.current === 'PLAYING') {
+              // 광고 전에 재생 중이었을 때만 되살린다 — playing이 false→true로 바뀌면서
+              // 플레이어가 pacePlay를 다시 주입한다(YouTubeShortsPlayer의 [ready, playing] effect).
+              setStatus('PLAYING');
+            }
+          }}
         />
 
         {/* 수면감지 2단계 확정 팝업(안드 showStillWatchingPrompt 패리티) — 반응(버튼/배경 탭) 자체가

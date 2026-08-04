@@ -4586,9 +4586,20 @@ Transparency) 프롬프트가 없다. **ATT 미동의 상태에서 개인화 광
 **2. 사용 시간 "실시청" 기준 — iOS는 오히려 더 정확히 만들 수 있다**
 Android는 접근성으로 재생 여부를 추정해 실제 재생 중일 때만 차감하도록 바꿨다(`watched_seconds`).
 iOS는 `getWatchedSeconds()`가 `null`이라 **기존 벽시계로 폴백**한다 — 회귀는 없지만 두 OS의 통계
-기준이 다르다. **iOS Pace Feed는 우리 앱 안의 IFrame 플레이어라 재생/일시정지를 정확히 안다** —
-추정이 아니라 정확한 값을 만들 수 있는 유리한 위치다. 플레이어의 재생 상태로 실시청 초를 누적해
-`getWatchedSeconds()`가 실제 값을 반환하게 하면 양쪽 기준이 통일된다.
+기준이 다르다.
+
+> ⚠️ 2026-08-04 정정 — 이 항목을 처음 쓸 때 "iOS는 IFrame 플레이어라서"라고 적었는데 **틀렸다.**
+> 사장님 지적으로 확인: iOS는 IFrame을 쓰지 않는다. `YouTubeShortsPlayer.ios.tsx`는
+> `react-native-webview`로 `youtube.com/shorts/<ID>` **페이지를 직접 로드**한다(파일 주석의 당시
+> 지시: "IFrame 포기, 웹뷰로 다시 전환"). Android의 base `.tsx`도 같은 WebView 방식이지만 **파일이
+> 갈린 별개 구현**이고, Pace Feed 자체는 `supportsPaceFeed: Platform.OS === 'ios'`로 iOS 전용이다.
+
+이유는 틀렸지만 **결론은 유효하다**: 그 WebView에 주입한 JS가 실제 `<video>` 엘리먼트에 붙어
+`play`/`pause`/`playing`/`waiting`/`stalled` 이벤트를 `postMessage`로 RN에 보내고 있다
+(`YouTubeShortsPlayer.ios.tsx`의 `send({type:'audio', ... paused: v.paused})` 및 이벤트 리스너 등록부).
+즉 iOS는 **접근성 추정이 아니라 플레이어의 실제 상태**를 이미 받고 있으므로, 그 신호로 실시청 초를
+누적해 `getWatchedSeconds()`가 실제 값을 반환하게 하면 양쪽 기준이 통일된다 — 새 배선이 아니라
+이미 오는 이벤트를 집계만 하면 된다.
 
 **3. 앱 업데이트 후 세션 표시 복구 — iOS도 같은 구멍이 있는지 확인 필요**
 Android에서 발견: 스토어 업데이트가 패키지를 교체하며 포그라운드 서비스를 죽여, 세션 중에

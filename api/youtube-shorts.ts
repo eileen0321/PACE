@@ -83,10 +83,14 @@ const MAX_SHORT_SECONDS = 60;
 // 횟수가 사용자 수만큼 늘어 원래 문제로 되돌아간다) — 대신 "시간에 따라 바뀌게" 해서 같은 사람이
 // 다시 열었을 때 같은 리스트를 보지 않게 한다.
 function rotationSeed(): number {
-  // 단순히 "시간이 흐르면 값이 변하는 카운터"가 필요할 뿐이라 UTC 기준 (일 * 24 + 시)로 둔다.
-  // 특정 시간대(KST 등)에 맞출 이유가 없다 — 전 세계 사용자를 대상으로 하고, 어느 시간대든
-  // 한 시간마다 카테고리가 한 칸씩 밀리는 효과는 동일하다.
-  return Math.floor(Date.now() / 3600000);
+  // 단순히 "시간이 흐르면 값이 변하는 카운터"가 필요할 뿐이라 UTC 기준으로 둔다(특정 시간대에
+  // 맞출 이유가 없다 — 전 세계 사용자 대상).
+  // 2026-08-04 재조정 — 처음엔 1시간 단위였는데, 그러면 **그 한 시간 동안 접속한 사용자가 전원 같은
+  // 목록**을 받는다(사장님이 아이폰에서 확인한 증상, 연속 두 호출의 videoId 나열이 완전 일치했다).
+  // 아래 Cache-Control과 같은 주기(5분)로 맞춰 다른 시각에 연 사용자는 다른 조합을 받게 한다.
+  // 스크래핑 횟수는 (조합 × 12회/시간)로 늘지만 여전히 **사용자 수와 무관**해서 이 설계가 지키려는
+  // 스케일 이점(사용자가 100명이든 100만명이든 YouTube 트래픽 동일)은 그대로다.
+  return Math.floor(Date.now() / 300000);
 }
 
 // 지역/언어 — 2026-08-04 사장님 지적("각 나라에 맞게 보여야 할 거 아냐"). 처음엔 KR로 박으려 했는데
@@ -219,17 +223,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 2026-08-04 — 예전엔 `CATEGORIES[page % N]`이라 page 0이 누구에게나 항상 'satisfying'이었다.
   // 시간 시드를 더해 시간마다 시작 카테고리가 달라지게 한다(rotationSeed 주석 참고).
   const isGeneric = !reqQuery || reqQuery === '#shorts' || reqQuery.toLowerCase() === 'shorts';
-  const category = isGeneric
-    ? categoriesFor(hl)[(page + rotationSeed()) % categoriesFor(hl).length]
-    : reqQuery;
+  const cats = categoriesFor(hl);
+  const seed = rotationSeed();
+  // 2026-08-04 사장님 지적("같은 영상 나오고 사람들 다", 아이폰으로 확인) — 시간 시드를 넣어 매시간
+  // 목록이 바뀌게는 했지만, **같은 캐시 창 안에서는 여전히 전원이 완전히 동일한 목록**을 받는다
+  // (실측: 연속 두 호출의 videoId 나열이 완전 일치). CDN 캐시를 없애면 사용자 수만큼 스크래핑이 늘어
+  // 이 설계가 애초에 해결한 스케일 문제로 되돌아가므로 캐시는 유지하되, 겹침을 두 방향으로 줄인다:
+  //   (a) 한 응답에 카테고리 3개를 섞는다 → 목록 자체가 넓어져 우연히 같은 영상을 볼 확률이 낮아짐
+  //   (b) 캐시 창을 분 단위로 좁힌다(아래 Cache-Control) → 다른 시각에 연 사용자는 다른 목록을 받음
+  // ⚠️ 사용자별로 완전히 다르게 하려면 결국 **앱이 받은 목록을 기기에서 섞어야** 한다(그게 진짜
+  //    해법이고, 서버가 목록을 정하는 한 캐시를 공유하는 사용자끼리는 같을 수밖에 없다).
+  //    그건 앱 업데이트가 필요해 별도 작업으로 남긴다 — 여기서는 앱 수정 없이 지금 설치된 사용자에게
+  //    바로 적용되는 개선만 한다.
+  const MIX_COUNT = 3;
+  const categories = isGeneric
+    ? Array.from({ length: MIX_COUNT }, (_, i) => cats[(page * MIX_COUNT + seed + i) % cats.length])
+    : [reqQuery];
 
   try {
     let shorts: Short[] = [];
     try {
-      shorts = await scrapeWithRetry(category, gl, hl);
+      const results = await Promise.all(categories.map((c) => scrapeWithRetry(c, gl, hl).catch(() => [])));
+      // 카테고리별 결과를 번갈아 끼워 넣는다(앞쪽에 한 카테고리만 몰리면 첫 화면이 단조로워진다).
+      const seen = new Set<string>();
+      const maxLen = Math.max(0, ...results.map((r) => r.length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const r of results) {
+          const item = r[i];
+          if (!item || seen.has(item.videoId)) continue;
+          seen.add(item.videoId);
+          shorts.push(item);
+        }
+      }
     } catch {
+      shorts = [];
+    }
+    if (!shorts.length) {
       const apiKey = process.env.YOUTUBE_API_KEY || process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
-      if (apiKey) shorts = await dataApiFallback(category, apiKey, gl, hl);
+      if (apiKey) shorts = await dataApiFallback(categories[0], apiKey, gl, hl);
     }
     // 카테고리 로테이션이라 nextPageToken은 항상 다음 index → 피드가 하드스톱 안 됨(무한).
     // (앱은 videoId로 dedup하므로 한 바퀴 돈 뒤 중복은 자동 제거. 카테고리 20개×~30개면 한 바퀴 ~600개.)
@@ -239,7 +270,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 24시간 묵은 리스트"를 뜻했다(실측: Age 520s, X-Vercel-Cache HIT). 위 시간 시드가 매시간 카테고리를
     // 바꾸므로 캐시 창도 그에 맞춰 좁힌다. swr은 30분으로 줄여 하루 지난 목록이 나가는 일을 없앤다.
     // 스크래핑 횟수는 여전히 (카테고리 × 시간당 1회) 수준이라 스케일 이점은 그대로다.
-    res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
     // ⚠️ 이 헤더가 없으면 CDN이 URL만으로 캐시해서, 맨 처음 요청한 나라의 결과가 전 세계에 그대로
     // 나간다(국가별 분기를 넣어도 무의미해진다). 지오IP 헤더를 캐시 키에 포함시킨다.
     res.setHeader('Vary', 'x-vercel-ip-country');

@@ -195,6 +195,16 @@ const INJECTED_JS_SWIPE = `
   function send(o) { if (o && o.type === 'domlog' && !window.__PACE_DIAG__) return; if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
   var reportedReady = false, reportedEnded = false, lastT = -1;
   var curHref = '' + location.href, curV = null, globalsOn = false;
+  // 2026-08-05 — URL에서 영상 id만 뽑는다. 재부착 판단을 href 전체가 아니라 **id**로 해야 한다(아래 참고).
+  function videoIdOf(h) {
+    var i = h.indexOf('/shorts/'); if (i < 0) return '';
+    var id = h.slice(i + 8).split('?')[0].split('/')[0].split('#')[0];
+    return id.length >= 6 ? id : '';
+  }
+  var curVid = videoIdOf(curHref);
+  // attach는 <video>가 아직 없으면 300ms 간격으로 재시도하는 체인이다. 새 부착이 시작되면 이전 체인은
+  // 죽어야 한다 — 안 그러면 낡은 체인이 뒤늦게 살아나 play()를 한 번 더 걸어 재생을 끊는다.
+  var attachSeq = 0;
 
   // 실제 스와이프 동작(여러 전략) — dir>0 다음(아래로), dir<0 이전(위로).
   function doSwipe(dir) {
@@ -273,21 +283,29 @@ const INJECTED_JS_SWIPE = `
     // 고정돼 있어(리로드 안 함) 실제 재생 중인 영상 id를 부모가 모른다. URL(/shorts/ID)에서 현재 id를
     // 뽑아 부모로 보고한다(초기 1회 + URL 변할 때마다).
     function reportVideo() {
-      var h = '' + location.href;
-      var i = h.indexOf('/shorts/');
-      if (i < 0) return;
-      var id = h.slice(i + 8).split('?')[0].split('/')[0].split('#')[0];
-      if (id && id.length >= 6) send({ type: 'video', videoId: id });
+      var id = videoIdOf('' + location.href);
+      if (id) send({ type: 'video', videoId: id });
     }
     reportVideo();
     setInterval(function () {
       // 스와이프로 새 쇼츠 로드(URL 변화, 리로드 없음) → 새 video에 재부착.
-      if (('' + location.href) !== curHref) {
-        curHref = '' + location.href;
-        reportedReady = false; reportedEnded = false; lastT = -1;
-        send({ type: 'domlog', text: 'URLCHG reattach ' + curHref.slice(-16) });
-        reportVideo();
-        attach(40); return;
+      // ⚠️ 2026-08-05 사장님/맥 진단 — "같은 비디오가 짧은 시간에 두 번 걸려 첫 재생이 두 번째에 끊긴다."
+      //   원인: 재부착 판단을 **href 전체**로 하고 있었다. 유튜브는 같은 쇼츠를 보면서도 URL 뒤쪽을
+      //   손댄다(파라미터 추가/정규화 등). 그때마다 href가 달라져 attach()가 다시 돌고, attach는 끝에서
+      //   v.play()를 걸고 muted를 되돌린다 → 이미 재생 중이던 **같은 영상**이 멈칫하고 다시 시작한다.
+      //   영상 id가 실제로 바뀔 때만 재부착한다. id가 같으면 curHref만 갱신하고 넘어간다.
+      var h = '' + location.href;
+      if (h !== curHref) {
+        var vid = videoIdOf(h);
+        curHref = h;
+        if (vid && vid !== curVid) {
+          curVid = vid;
+          reportedReady = false; reportedEnded = false; lastT = -1;
+          send({ type: 'domlog', text: 'URLCHG reattach ' + vid });
+          reportVideo();
+          attach(40); return;
+        }
+        send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
       }
       var v = curV; if (!v) return;
       if (v.__ok && v.muted) { v.muted = false; v.volume = 1.0; }
@@ -301,10 +319,14 @@ const INJECTED_JS_SWIPE = `
     }, 500);
   }
 
-  function attach(n) {
+  // seq — 이 부착 시도의 세대 번호. 새 attach가 시작되면 attachSeq가 올라가고, 진행 중이던 낡은 재시도
+  // 체인은 다음 틱에서 스스로 멈춘다(안 그러면 뒤늦게 살아나 play()를 한 번 더 걸어 재생을 끊는다).
+  function attach(n, seq) {
+    if (seq === undefined) seq = ++attachSeq;
+    else if (seq !== attachSeq) return; // 낡은 체인 — 폐기
     var v = document.querySelector('video');
     if (!v) {
-      if (n > 0) { setTimeout(function () { attach(n - 1); }, 300); return; }
+      if (n > 0) { setTimeout(function () { attach(n - 1, seq); }, 300); return; }
       var href = '' + location.href;
       var signin = /consent|accounts\\.google|signin|login/i.test(href) || !!document.querySelector('form[action*="consent"]');
       send({ type: 'novideo', signin: signin, href: href.slice(0, 80) }); return;
@@ -316,7 +338,12 @@ const INJECTED_JS_SWIPE = `
     if (('' + location.href).indexOf('/shorts/') < 0) {
       send({ type: 'notshorts', href: ('' + location.href).slice(0, 80) }); return;
     }
+    // 2026-08-05 — 같은 영상에 이미 붙어 있으면 아무것도 다시 하지 않는다. 아래는 play()와 muted 되돌림,
+    // 리스너 재등록을 하는데, 재생 중인 같은 영상에 그걸 또 하면 멈칫하고 다시 시작한다(사장님 보고 증상).
+    // 위 폴링의 id 비교로 대부분 걸러지지만, 초기 attach와 폴링이 겹치는 창이 있어 여기서 한 번 더 막는다.
+    if (curV === v && v.__paceAttached === curVid) { installGlobalsOnce(); return; }
     curV = v;
+    v.__paceAttached = curVid;
     window.pacePlay = function () { v.play().catch(function () {}); };
     window.pacePause = function () { v.pause(); };
     // 오디오: 처음부터 소리로 재생 + muted setter 가로채 유튜브 자동음소거 무시(재로드 없어 영상당 1회 깔끔).

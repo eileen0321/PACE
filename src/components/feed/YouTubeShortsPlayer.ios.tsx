@@ -240,14 +240,12 @@ const INJECTED_JS_SWIPE = `
 
   function installGlobalsOnce() {
     if (globalsOn) return; globalsOn = true;
-    // ⚠️ 2026-08-05 되돌림 — 한때 "이미 소리내어 재생 중이면 즉시 return"을 넣었다(스와이프 touchend마다
-    //   play()가 도는 게 전환 순간 낭비로 보였다). 근거 없는 최적화였다: 그 play()는 매 터치의 핸들러
-    //   콜스택 안에서 도는 것이라 iOS 자동재생 정책상 "유저 제스처" 문맥을 갱신하는 역할을 겸한다.
-    //   이미 재생 중인 요소의 play()는 사실상 no-op이라 아끼는 값도 없다 — 원래대로 매 터치마다 부른다.
-    //   (참고: "다음 영상에서 멈췄다 플레이"는 이 함수와 무관한 별개 선재 버그다 — attach()의 unmute
-    //    순서 문제로 추정. MD의 해당 항목 참고.)
+    // ⚠️ 2026-08-05 — 이 play()는 iOS 자동재생 정책상 "유저 제스처" 문맥을 갱신하는 역할을 겸해서
+    //   완전히 없앨 순 없지만(탭으로 소리 해제하는 원래 목적), **스와이프로 판정된 터치에서는 건너뛴다**
+    //   — 스와이프는 곧 다른 영상으로 넘어간다는 뜻이라 지금 영상(curV, 곧 교체될 대상)에 다시 거는
+    //   play()가 유튜브 자신의 비디오 교체 처리와 겹쳐 "멈칫하고 재생"을 만들 수 있다(실측: AbortError).
+    //   탭(스와이프가 아닌 모든 touchend/click)에서는 그대로 부른다 — 필요성 자체는 그대로 유효하다.
     function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
-    document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전). WebView는
     // scrollEnabled=false라 손가락 스와이프가 YouTube를 직접 안 움직인다. 여기서 수직 스와이프를 감지해
@@ -259,14 +257,15 @@ const INJECTED_JS_SWIPE = `
       swST = Date.now(); swSY = tt.clientY; swSX = tt.clientX;
     }, { capture: true, passive: true });
     document.addEventListener('touchend', function (e) {
-      var tt = e.changedTouches && e.changedTouches[0]; if (!tt || !swST) return;
+      var tt = e.changedTouches && e.changedTouches[0];
+      if (!tt || !swST) { unmuteOnce(); return; } // touchstart를 못 잡은 케이스는 안전하게 탭으로 취급.
       var dy = tt.clientY - swSY, dx = tt.clientX - swSX, dt = Date.now() - swST; swST = 0;
       // 2026-08-05 사장님 "스와이프 개 버벅" — 800ms는 너무 빡빡해 조금만 천천히 끌어도 통째로 버려졌다
       // (사용자 체감: "먹통"). 1500ms로 완화. 위쪽 |dy|·수직우세 조건이 이미 탭/가로스크롤을 걸러낸다.
-      if (dt > 1500) return;                           // 정말 느린 드래그(스크롤 의도)만 스와이프에서 제외
-      if (Math.abs(dy) < 60) return;                   // 탭/미세 이동 무시(재생·음소거 탭 보존)
-      if (Math.abs(dy) < Math.abs(dx) * 1.3) return;   // 수평 우세면 무시(수직만)
-      var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지
+      if (dt > 1500) { unmuteOnce(); return; }         // 정말 느린 드래그(스크롤 의도) — 탭으로 취급
+      if (Math.abs(dy) < 60) { unmuteOnce(); return; }                    // 탭/미세 이동 — 재생·음소거 탭 보존
+      if (Math.abs(dy) < Math.abs(dx) * 1.3) { unmuteOnce(); return; }   // 수평 우세 — 탭으로 취급
+      var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지(스와이프 자체를 버림 — unmuteOnce도 안 부름)
       var dir = dy < 0 ? 1 : -1;                                           // 위로(dy<0)=다음, 아래로=이전
       // ⚡ 2026-08-05 버벅임 수정의 핵심 — 예전엔 이동을 RN에 위임했다(userswipe → 브릿지 → goNext →
       //   injectJavaScript → 브릿지 → doSwipe). scrollEnabled=false라 드래그 중 화면이 손가락을 안

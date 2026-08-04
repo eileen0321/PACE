@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pace",
     "slug": "Pace",
-    "version": "1.0",
+    "version": "1.0.1",
     "scheme": "pace",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +19,8 @@
         "NSCameraUsageDescription": "Pace watches for a hand wave over the front camera to advance to the next Short hands-free during a Focus Session. Video never leaves your device and is not recorded."
       },
       "icon": "./assets/icon-phone11.png",
-      "backgroundColor": "#0B0C0F"
+      "backgroundColor": "#0B0C0F",
+      "runtimeVersion": "1.0.1"
     },
     "android": {
       "package": "com.strides7.pace",

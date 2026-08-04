@@ -99,6 +99,16 @@ class PaceRewardedAdActivity : Activity() {
       })
     }
 
+    /**
+     * 광고를 보지 않고 팝업을 닫았을 때 미리 받아둔 인스턴스를 버린다.
+     * 하드웨어 비디오 디코더는 제한된 자원이라 안 쓸 광고를 들고 있으면 다른 앱(유튜브)의 영상이
+     * 검게 나올 수 있다(onAdDismissedFullScreenContent 주석의 실기기 증상·근거 참고).
+     */
+    fun dropPreloaded() {
+      preloadedAd = null
+      preloadedAtMs = 0L
+    }
+
     /** 미리 받아둔 광고를 1회성으로 꺼낸다(만료됐으면 버리고 null). */
     private fun takePreloaded(): RewardedAd? {
       val ad = preloadedAd ?: return null
@@ -175,9 +185,24 @@ class PaceRewardedAdActivity : Activity() {
   private fun showAd(ad: RewardedAd) {
     ad.fullScreenContentCallback = object : FullScreenContentCallback() {
       override fun onAdDismissedFullScreenContent() {
-        // 다음 연장을 대비해 미리 받아둔다 — 연속으로 광고를 보며 이어가는 흐름에서 두 번째부터도
-        // 기다림이 없어진다.
-        preload(applicationContext)
+        // 2026-08-04 사장님 실기기 지적("광고 보고 5분 받았는데 왜 쇼츠가 안 보이고 까만 화면이야") —
+        // 광고 시청 직후부터 유튜브 영상만 검게 나오고(재생 UI·진행바는 정상), 다른 영상으로 넘겨도
+        // 계속 검으며, **유튜브 프로세스를 죽이면 즉시 복구**되는 것을 실기기로 확인했다.
+        //
+        // 원인: 하드웨어 비디오 디코더는 개수가 제한된 시스템 자원이다. androidx/media 이슈(#1825)에
+        // 플레이어 인스턴스가 2개 이상이면 ERROR_CODE_DECODING_RESOURCES_RECLAIMED가 나고, 디코더가
+        // 에러 없이 초기화되는데 **출력 서피스만 검게 남는** 사례가 문서화돼 있다(#2765) — 증상이
+        // 정확히 일치한다. AdMob 광고 후 검은 화면은 널리 보고된 문제이기도 하다(Solar2D 포럼,
+        // Google AdMob SDK 그룹의 "Black screen on interstitial ad" 등).
+        //
+        // 여기서 원래 다음 광고를 미리 받아뒀는데(연속 연장 시 대기 없애려고), 그러면 **광고가 끝난
+        // 뒤에도 우리 프로세스가 광고 인스턴스를 계속 들고 있게 된다.** 그 인스턴스가 디코더를 점유하면
+        // 유튜브가 디코더를 못 받아 검게 나온다 — 즉 내가 넣은 사전 로드가 이 증상을 만들었다.
+        // 사전 로드는 "선택 팝업이 뜰 때"만 한다(showExtendChoiceOverlay) — 그 시점엔 아직 유튜브가
+        // 재생 중이 아니어도 되고, 사용자가 실제로 누를 때까지의 짧은 창이라 점유가 문제되지 않는다.
+        // 여기서는 오히려 **참조를 확실히 끊어** SDK가 자원을 반납할 수 있게 한다.
+        preloadedAd = null
+        ad.fullScreenContentCallback = null
         finishOnce()
       }
       override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.AdError) {

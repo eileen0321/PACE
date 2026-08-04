@@ -2091,6 +2091,16 @@ class PaceOverlayService : Service() {
     extendChoiceView = null
   }
 
+  // 2026-08-04 — 선택 팝업을 광고를 보지 않고 닫았을 때("나중에"/바깥 탭) 미리 받아둔 광고를 버린다.
+  // 하드웨어 비디오 디코더는 개수가 제한된 시스템 자원이라, 쓰지도 않을 광고 인스턴스를 계속 들고
+  // 있으면 유튜브가 디코더를 못 받아 영상만 검게 나올 수 있다(실기기 증상·근거는
+  // PaceRewardedAdActivity.onAdDismissedFullScreenContent 주석 참고).
+  // 광고를 실제로 보는 경로에서는 takePreloaded()가 이미 꺼내 가므로 이 정리가 그 흐름을 방해하지 않는다.
+  private fun hideExtendChoiceAndDropPreload() {
+    hideExtendChoice()
+    PaceRewardedAdActivity.dropPreloaded()
+  }
+
   // 2026-08-02 사장님 지적("FOCUS OFF일 때 1)접근성 권한 off 2)focus 시간 다 된 거, 너 구분 못 하는
   // 거 아냐?") — 두 원인은 사용자가 해야 할 행동이 정반대다. 시간 만료는 "광고를 보거나 크레딧을
   // 쓰면" 풀리지만, 접근성이 꺼진 건 광고를 백 번 봐도 안 풀린다(설정에서 다시 켜야만 한다).
@@ -2350,7 +2360,7 @@ class PaceOverlayService : Service() {
     }
 
     card.addView(button(if (ko) "나중에" else "Not now", "#00000000", Color.parseColor("#99FFFFFF")) {
-      hideExtendChoice()
+      hideExtendChoiceAndDropPreload()
     }, lp)
 
     val container = LinearLayout(this).apply {
@@ -2359,7 +2369,7 @@ class PaceOverlayService : Service() {
       setPadding((24 * d).toInt(), 0, (24 * d).toInt(), 0)
       setBackgroundColor(Color.parseColor("#B3000000"))
       isClickable = true
-      setOnClickListener { hideExtendChoice() } // 바깥 탭으로 닫기
+      setOnClickListener { hideExtendChoiceAndDropPreload() } // 바깥 탭으로 닫기
       addView(card, LinearLayout.LayoutParams((320 * d).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 

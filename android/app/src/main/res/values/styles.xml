@@ -19,6 +19,15 @@
          SystemUI가 창을 처음 만들 때부터 반영한다. -->
     <item name="android:enforceNavigationBarContrast">false</item>
     <item name="android:enforceStatusBarContrast">false</item>
+    <!-- 2026-08-04 사장님 실기기 지적("광고 누르면 왜 하단 키가 흰색이었다가") — 위 두 줄로 바의 "색"과
+         삼성 스크림은 잡았지만, 그 위에 그려지는 아이콘/키를 어둡게 할지(light 모드) 여부는 별개
+         속성이라 지정하지 않으면 시스템 기본값을 따른다. 구글 광고 SDK의 AdActivity가 이 AppTheme을
+         쓰는데(앱 매니페스트의 tools:replace로 강제 지정), 그 액티비티가 뜨는 순간 이 값이 없어
+         하단 키가 밝게 그려졌다. 어두운 바 위에는 밝은 키가 맞으므로 light 모드를 명시적으로 끈다.
+         (모듈의 Theme.Pace.TransparentAd에는 이미 같은 두 줄이 들어 있다 — 그쪽만 고치고 이쪽을
+         빠뜨려서 구글 AdActivity 경로에서만 증상이 남아 있었다.) -->
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
   </style>
   <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen">
     <item name="windowSplashScreenBackground">@color/splashscreen_background</item>

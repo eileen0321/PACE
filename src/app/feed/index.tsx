@@ -283,6 +283,11 @@ export default function PaceFeedScreen() {
   const handsFreeDetectActive = isAutoMode && handsFreeGesture;
 
   useEffect(() => {
+    // §4-1 "Shorts with PACE 누를 때마다 새 영상"(2026-08-04 사장님) — loadInitial엔 "큐가 이미 있으면
+    // skip"(즉시재생용) 가드가 있어, 재진입 시 zustand에 남은 이전 시드가 그대로 나왔다. 진입마다 큐를
+    // 비워 가드를 통과시켜 새 시드를 뽑는다(서버가 9cbfef5로 serverPool을 1순위로 바꿔 매번 다른 영상이
+    // 나오고, 그 뒤 스와이프는 유튜브 알고리즘). 시드는 로컬(캐시된 seedPool)이라 네트워크 대기 없음.
+    useShortsQueueStore.setState({ queue: [], isLoading: false, error: null });
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

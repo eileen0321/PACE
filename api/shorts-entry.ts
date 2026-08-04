@@ -21,11 +21,12 @@
 // 전략을 즉시 실행한다(탭 시점에 네트워크를 기다리면 그게 곧 체감 지연이 된다).
 // 서버가 죽거나 응답이 이상해도 앱에 내장된 기본 전략으로 동작하므로 안전하다.
 
+type VideoIdSource = 'userSaved' | 'serverPool';
 type Strategy =
   // 네이티브 인텐트 액션(안드로이드 전용). 앱이 이 액션으로 유튜브를 연다.
   | { kind: 'nativeAction'; action: string; packageName: string }
-  // URL 열기. `{videoId}` 자리표시자가 있으면 앱이 아래 seedVideoIds 중 하나로 치환한다.
-  | { kind: 'url'; url: string };
+  // URL 열기. `{videoId}` 자리표시자가 있으면 앱이 videoIdSource 순서대로 시작점을 구해 치환한다.
+  | { kind: 'url'; url: string; videoIdSource?: VideoIdSource[] };
 
 type VercelRequest = { query: Record<string, string | string[] | undefined> };
 type VercelResponse = {
@@ -45,7 +46,16 @@ const STRATEGIES: Strategy[] = [
   },
   // 영상 ID를 붙인 www 주소 — Shorts 탭으로 들어가고, 스와이프하면 사용자 개인 알고리즘 피드로
   // 이어지는 것을 실기기에서 확인했다(시작 영상 하나만 우리가 정하고 그 뒤는 유튜브가 개인화).
-  { kind: 'url', url: 'https://www.youtube.com/shorts/{videoId}' },
+  {
+    kind: 'url',
+    url: 'https://www.youtube.com/shorts/{videoId}',
+    // ⚠️ 시작 영상 "목록"을 서버가 정해 내려주면 같은 캐시 창의 사용자가 전부 같은 영상에서
+    // 시작한다 — 처음에 문제였던 "전원 동일"이 그대로 재발한다(사장님 지적). 그래서 서버는
+    // **어디서 뽑을지 순서만** 지시하고 실제 값은 각 기기가 고른다:
+    //   userSaved  = 그 사용자가 직접 저장/캡처한 영상 → 기기마다 다름(진짜 개인화)
+    //   serverPool = 위가 비어 있는 신규 사용자용 최후 수단(앱이 풀에서 무작위 선택)
+    videoIdSource: ['userSaved', 'serverPool'],
+  },
   // 최후 폴백 — 홈 탭으로 떨어지지만 아무것도 안 열리는 것보다는 낫다(출시본의 기존 동작).
   { kind: 'url', url: 'https://www.youtube.com/shorts' },
 ];
@@ -89,5 +99,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 흩어진다 — 둘의 요구가 반대라 짧은 쪽(시드)에 맞춘다. 어차피 앱이 부팅 때 1회만 부른다.
   res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1800');
   res.setHeader('Vary', 'x-vercel-ip-country');
-  res.status(200).json({ strategies: STRATEGIES, seedVideoIds });
+  res.status(200).json({ strategies: STRATEGIES, seedPool: seedVideoIds });
 }

@@ -1,4 +1,5 @@
 import { Linking, Platform } from 'react-native';
+import { openShortsFeed } from '../services/shortsEntry';
 import type { AppShieldTarget } from '../types/models';
 
 // 세션 시작/오버레이 자동 표시가 실제로 감시하는 MVP 지원 앱 — PACE_ARCHITECTURE.md "제품 전략
@@ -61,14 +62,20 @@ export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
   // 이고 나오는 영상도 완전히 달랐다). 유튜브 앱이 자체 등록해둔 전용 액션으로 진짜 Shorts 탭에
   // 진입한다(PaceOverlayModule.openYouTubeShortsFeed 주석에 근거·검증 과정 상세). 실패하면 기존
   // URL 경로로 그대로 폴백하므로 회귀 위험이 없다.
-  if (platform === 'youtube') {
-    try {
-      const { PaceOverlay } = require('../../modules/pace-overlay');
-      if (PaceOverlay?.openYouTubeShortsFeed?.()) return;
-    } catch {
-      // 네이티브 미링크(Dev Client 빌드 전) 등 — 아래 기존 경로로 폴백.
-    }
-  }
+  //
+  // 실기기 검증(2026-08-04)으로 확정한 우선순위 — 각 후보가 실제로 어디로 떨어지는지 스크린샷의
+  // 하단 네비 선택 상태로 판정했다:
+  //   ① 네이티브 액션 open.shorts        → Shorts 탭 ✅ (사용자 개인 피드로 바로)
+  //   ② www.youtube.com/shorts/<영상ID>  → Shorts 탭 ✅ (그 영상으로 시작해 이후 개인 피드로 이어짐)
+  //   ③ m.youtube.com/shorts/<영상ID>    → 홈 탭 ❌ (같은 경로라도 m. 서브도메인은 다르게 동작)
+  //   ④ www.youtube.com/shorts (ID 없음) → 홈 탭 ❌ (기존 동작 = 이번에 고친 결함)
+  // ②는 사장님 지시("쇼츠 시작 링크를 웹에서 가져다 쓴다")대로 앱 시작 때 미리 받아둔 ID를 쓴다
+  // (services/shortsEntry.ts). ①이 유튜브 업데이트로 사라져도 ②가 공개 URL만으로 Shorts 탭을
+  // 지켜주므로, ④(홈 탭)로 되돌아가는 회귀를 막는다.
+  // ⚠️ 전략 자체는 서버(api/shorts-entry.ts)가 내려준다 — 유튜브 동작이 바뀌어도 그 파일만 고쳐
+  // 배포하면 설치된 앱 전부가 즉시 고쳐진다(앱 업데이트/스토어 심사 불필요). 서버가 죽어도
+  // services/shortsEntry.ts의 내장 기본값으로 동작하므로 새 단일 장애점이 되지 않는다.
+  if (platform === 'youtube' && await openShortsFeed()) return;
   const [first, second] = app.preferScheme
     ? [app.androidScheme, app.webFallback]
     : [app.webFallback, app.androidScheme];

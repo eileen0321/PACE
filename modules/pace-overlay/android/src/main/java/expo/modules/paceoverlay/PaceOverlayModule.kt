@@ -617,11 +617,15 @@ class PaceOverlayModule : Module() {
     //
     // ⚠️ 이건 공개 API가 아니라 유튜브 앱 내부 액션이라 언젠가 사라질 수 있다 — 실패하면 false를
     // 돌려주고 호출부(constants/supportedApps.ts)가 기존 URL 방식으로 폴백한다.
-    Function("openYouTubeShortsFeed") {
+    // 2026-08-04 사장님 지시("주소 변환 방식을 백엔드에 두고 업데이트를 하든") — 액션 문자열을
+    // 하드코딩하지 않고 JS가 넘겨준다. JS는 그 값을 서버(api/shorts-entry.ts)에서 받으므로,
+    // 유튜브가 액션 이름을 바꾸거나 없애도 **서버만 고치면 설치된 앱이 즉시 따라간다**(스토어 심사
+    // 불필요). 인자가 없으면 검증된 기본값을 쓴다(구버전 JS 호환).
+    Function("openYouTubeShortsFeed") { action: String?, packageName: String? ->
       appContext.reactContext?.let { context ->
         try {
-          val intent = Intent("com.google.android.youtube.action.open.shorts").apply {
-            setPackage("com.google.android.youtube")
+          val intent = Intent(action ?: "com.google.android.youtube.action.open.shorts").apply {
+            setPackage(packageName ?: "com.google.android.youtube")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
           }
           // 처리할 액티비티가 없으면(유튜브 미설치/구버전/액션 제거) 여기서 예외 → 폴백.

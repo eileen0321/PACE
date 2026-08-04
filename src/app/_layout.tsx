@@ -39,6 +39,7 @@ import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
+import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
 import { useAdsConsentStore } from '../store/useAdsConsentStore';
 import { useTranslation } from '../services/i18n';
@@ -338,6 +339,10 @@ export default function RootLayout() {
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).
     syncAutoNextBuildFlag();
+    // 2026-08-04 사장님 지시("앱 시작하면서 가져왔다 사용자가 누르면 연결") — "Shorts with PACE"
+    // 폴백용 시작 영상 ID를 미리 받아둔다. 탭하는 순간 네트워크를 기다리면 그게 곧 체감 지연이 된다
+    // (services/shortsEntry.ts 주석에 근거·검증 상세).
+    prefetchShortsEntryPolicy();
     // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — 쇼츠 위 FOCUS 연장 보상광고는
     // 네이티브 액티비티(PaceRewardedAdActivity)가 띄우는데, 실광고 유닛/테스트 유닛 선택을 prefs의
     // use_real_ads로 하고 기본값이 false다. 그런데 그 값을 쓰는 코드가 앱 전체에 한 줄도 없어서,

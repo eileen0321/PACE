@@ -99,5 +99,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 흩어진다 — 둘의 요구가 반대라 짧은 쪽(시드)에 맞춘다. 어차피 앱이 부팅 때 1회만 부른다.
   res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1800');
   res.setHeader('Vary', 'x-vercel-ip-country');
-  res.status(200).json({ strategies: STRATEGIES, seedPool: seedVideoIds });
+  // 2026-08-04 사장님 설계 확정("안드로이드랑 애플이 시작 주소만 다를 뿐, 다음 영상은 유튜브
+  // 알고리즘이 보여준다") — 두 플랫폼이 **같은 정책 소스**를 쓰고 시작 주소 형태만 다르다.
+  //   android: 유튜브 앱을 여는 방법(인텐트 액션 / App Link URL)
+  //   ios    : 앱 안 WebView가 로드할 URL (외부 앱을 열지 않는다)
+  // 시작점(videoId)은 어느 쪽이든 기기가 정한다 — 서버가 목록을 정하면 캐시를 공유하는 사용자끼리
+  // 같은 영상에서 시작하게 되므로(그게 원래 문제였다), 서버는 재료(seedPool)와 규칙만 준다.
+  //
+  // ⚠️ `strategies`는 기존 필드명을 그대로 유지한다 — 이미 배포된 Android 앱이 이 이름으로 파싱한다.
+  //    새 필드(ios)는 구버전 앱이 그냥 무시하므로 하위호환이 깨지지 않는다.
+  res.status(200).json({
+    strategies: STRATEGIES,
+    ios: {
+      // iOS는 이 URL을 WebView에 로드하고, 그 뒤 스와이프/자동넘김은 유튜브 페이지가 스스로 처리한다
+      // (주입 JS의 window.paceAdvance가 scrollBy + ArrowDown으로 페이지 자체를 넘긴다).
+      startUrl: 'https://www.youtube.com/shorts/{videoId}',
+      videoIdSource: ['userSaved', 'serverPool'],
+    },
+    seedPool: seedVideoIds,
+  });
 }

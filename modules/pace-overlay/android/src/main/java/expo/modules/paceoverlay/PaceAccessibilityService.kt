@@ -333,6 +333,30 @@ class PaceAccessibilityService : AccessibilityService() {
     // "유튜브"인 채로 멈춰있다. maxAgeMs 안에 실제로 갱신된 값만 신뢰하고, 그보다 오래됐으면 null을
     // 반환해 호출부가 UsageStatsManager 폴백을 타게 한다 — "떠나면 오래지 않아 반드시 숨겨진다"를
     // 보장하는 안전장치.
+    // 2026-08-05 사장님 실기기 재현("Shorts with PACE를 눌러도 유튜브 앱 홈만 뜬다") — 시청 세션이
+    // running이면 JS(home.tsx onSelectPlatform)가 **무조건** resumeThirdPartyApp으로 빠졌다. 그건
+    // 런처 인텐트+REORDER_TO_FRONT라 "유튜브 태스크가 살아 있을 때 그 상태 그대로 복원"하는 용도인데,
+    // 태스크가 이미 홈에 있거나 죽었으면 같은 인텐트가 새 태스크를 **홈 탭으로** 열어버린다. 그래서
+    // 세션이 한 번 켜진 뒤로는 쇼츠 진입 코드(openShortsFeed)에 영영 도달하지 못했다 — "첫 영상이
+    // 매번 같다"의 진짜 원인이기도 하다(시드를 뽑는 코드 자체가 실행되지 않았다).
+    //
+    // 재개가 옳은 경우는 딱 하나, 사용자가 PIP로 줄여둔 화면이 남아 있을 때다(2026-08-01 지시
+    // "작아진 화면 다시 키워야지"). 그 창이 실제로 있는지만 읽어 호출부가 가르게 한다 — 추측 없음.
+    // ⭐ PIP 창이 Pace로 전환한 뒤에도 windows 목록에 남는다는 건 이미 실기기로 확인된 사실이다
+    //   (아래 supportedAppWindowVisible 주석 참고 — 거기선 그게 문제여서 제외했고, 여기선 그게 신호다).
+    fun isPackageInPictureInPicture(packageName: String): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+      val service = instance ?: return false
+      return try {
+        service.windows.any {
+          it.isInPictureInPictureMode && it.root?.packageName?.toString() == packageName
+        }
+      } catch (e: Exception) {
+        Log.w("PaceAccessibility", "isPackageInPictureInPicture 실패", e)
+        false
+      }
+    }
+
     fun getCurrentForegroundPackage(maxAgeMs: Long = 3000L): String? {
       val service = instance ?: return null
       val age = SystemClock.elapsedRealtime() - service.currentForegroundPackageAtMs

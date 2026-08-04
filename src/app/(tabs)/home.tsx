@@ -454,8 +454,21 @@ export default function HomeScreen() {
     // launchPlatformApp을 썼었는데, 그 함수는 매번 "새 Shorts 진입" URL을 열어서 PIP로 줄어있던
     // 기존 화면 대신 새 피드가 열렸다. 재소환 전용 resumePlatformApp(순수 스킴, 특정 화면 강제 없음)
     // 으로 교체 — supportedApps.ts 주석 참고.
+    // 2026-08-05 사장님 실기기 재현("또 유튜브 앱이야", "첫 영상이 매번 같다") — 이 가드가 세션이
+    // running인 동안 **무조건** 재개로 빠뜨려서, 쇼츠 진입 코드(openShortsFeed)가 한 번도 실행되지
+    // 않았다. 재개는 런처 인텐트라 복원할 태스크가 없으면 유튜브 홈이 열린다. 두 증상의 공통 원인.
     if (useSessionStore.getState().status === 'running') {
-      resumePlatformApp(platform).catch(() => {});
+      // iOS는 외부 앱을 안 열어 resumePlatformApp이 즉시 return이다 — 예전엔 카드를 눌러도 **아무 일도
+      // 일어나지 않았다**(피드에서 나온 뒤 홈에서 재탭 시 먹통). 보던 피드로 되돌려 준다.
+      if (Platform.OS === 'ios') { router.push('/feed'); return; }
+      resumePlatformApp(platform)
+        .then((resumed) => {
+          // PIP로 줄여둔 창이 없으면 복원할 게 없다 → 정상 진입으로 새 쇼츠를 연다.
+          // ⚠️ startSession을 부르면 안 된다 — viewing_sessions 행이 하나 더 생겨 겹치는 구간이
+          //    이중집계된다(감사 HIGH2). 세션·오버레이는 그대로 두고 앱만 정식 경로로 연다.
+          if (!resumed) launchPlatformApp(platform).catch(() => {});
+        })
+        .catch(() => {});
       return;
     }
     AsyncStorage.getItem(STORAGE_KEYS.bluetoothOnboardingSeen).then((seen) => {

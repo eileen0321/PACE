@@ -96,8 +96,8 @@ android {
         // android.versionCode는 `expo prebuild`가 이 파일을 재생성할 때만 쓰이는데 우리는
         // prebuild를 안 돌리므로 무시된다(app.json만 4로 올렸다가 빌드가 또 code 3으로
         // 나온 것을 EAS 빌드 목록에서 확인). 올릴 때 두 곳을 같이 올릴 것.
-        versionCode 5
-        versionName "1.0"
+        versionCode 6
+        versionName "1.0.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

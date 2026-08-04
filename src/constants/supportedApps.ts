@@ -97,15 +97,30 @@ export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
 // 이 문제 자체는 못 피함). **최종 수정**: 딥링크를 아예 안 쓰고 네이티브
 // getLaunchIntentForPackage+REORDER_TO_FRONT(PaceOverlayModule.resumeThirdPartyApp, 런처 아이콘을
 // 다시 탭한 것과 완전히 동일한 방식)로 기존 태스크를 그 상태 그대로 앞으로 가져온다.
-export async function resumePlatformApp(platform: AppShieldTarget | undefined) {
-  if (Platform.OS !== 'android' || !platform) return;
+/**
+ * 세션이 이미 running일 때 대상 앱을 "그 상태 그대로" 다시 앞으로 가져온다.
+ * @returns 실제로 복원했으면 true. **false면 복원할 게 없었다는 뜻**이라 호출부가 정상 진입
+ *          (launchPlatformApp → openShortsFeed)으로 돌려야 한다.
+ */
+export async function resumePlatformApp(platform: AppShieldTarget | undefined): Promise<boolean> {
+  if (Platform.OS !== 'android' || !platform) return false;
   const app = SUPPORTED_APPS[platform as keyof typeof SUPPORTED_APPS];
-  if (!app) return;
+  if (!app) return false;
   try {
     const { PaceOverlay } = require('../../modules/pace-overlay');
+    // 2026-08-05 사장님 실기기 재현("또 유튜브 앱이야") — resumeThirdPartyApp은 런처 인텐트라
+    // 복원할 태스크가 없으면 유튜브를 **홈 탭으로 새로** 열어버린다. 세션이 한 번 running이 되면
+    // home.tsx가 항상 이 경로로 빠지므로, 그 뒤로는 쇼츠 진입 코드에 영영 도달하지 못했다.
+    // 복원이 옳은 경우(사용자가 PIP로 줄여둔 창이 남아 있음)만 재개하고, 아니면 false를 돌린다.
+    // ⚠️ 구버전 네이티브엔 이 함수가 없어 undefined가 나온다 — 그땐 기존 동작(항상 재개)을 유지해
+    //    회귀를 만들지 않는다. false일 때만 새 분기를 탄다.
+    const inPip = PaceOverlay?.isThirdPartyAppInPip?.(app.packageNames[0]);
+    if (inPip === false) return false;
     PaceOverlay?.resumeThirdPartyApp(app.packageNames[0]);
+    return true;
   } catch {
     // 네이티브 미링크(Dev Client 빌드 전) — 조용히 무시, 최후 폴백으로 기존 방식 시도.
     await Linking.openURL(app.androidScheme).catch(() => {});
+    return true;
   }
 }

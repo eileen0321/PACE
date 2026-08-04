@@ -5252,3 +5252,92 @@ iOS `getShortsSeedVideoId()`엔 `dfd4fb7`로 "seedPool 비었으면 프리페치
 **🍎 Mac 확인 방법(싸게 판별됨)** — dev 빌드에서 `__PACE_DIAG__`가 켜지므로, 전환마다
 `AUDIO audible-blocked`가 찍히면 위 추정이 맞다. `audible-ok`만 찍히면 다른 원인이니 더 파야 한다.
 Windows에선 iOS 빌드가 안 돼 여기서 더 못 좁힌다.
+
+### 2026-08-05 — Windows 세션 (🔴🔴 진짜 원인 발견: 세션이 running이면 쇼츠 진입 코드가 **한 번도 실행되지 않았다**)
+
+사장님 실기기 재현: "또 유튜브 앱이야", "첫 영상이 계속 같다".
+**두 증상이 같은 원인이었고, 그 앞의 내 수정들(ab27560 시드 3건)은 이 게이트에 막혀 실행조차 안 됐다.**
+
+#### 원인
+
+`src/app/(tabs)/home.tsx` onSelectPlatform:
+
+```ts
+if (useSessionStore.getState().status === 'running') {
+  resumePlatformApp(platform).catch(() => {});
+  return;                      // ← openShortsFeed()에 영원히 도달 못 함
+}
+```
+
+`resumePlatformApp` → 네이티브 `resumeThirdPartyApp` → `getLaunchIntentForPackage` + `REORDER_TO_FRONT`.
+이건 "유튜브 태스크가 살아 있을 때 그 상태 그대로 복원"하는 용도인데(2026-08-01 사장님 "작아진 화면
+다시 키워야지"), **태스크가 이미 홈에 있거나 죽었으면 같은 인텐트가 새 태스크를 홈 탭으로 열어버린다.**
+
+즉 세션이 한 번 running이 된 뒤로는 카드를 눌러도 유튜브 홈만 떴고, 시드를 뽑는 코드 자체가 안 돌았다.
+
+**실기기 logcat 증거 (수정 전)**
+```
+START u0 {act=android.intent.action.MAIN cat=[LAUNCHER] flg=0x10020000
+          cmp=com.google.android.youtube/.app.honeycomb.Shell$HomeActivity} from uid 10741
+```
+`flg=0x10020000` = `NEW_TASK|REORDER_TO_FRONT` → resumeThirdPartyApp과 플래그까지 일치. uid 10741 = Pace.
+
+#### 수정
+
+**판별 기준 = "PIP 창이 실제로 남아 있는가"** (추측 아님, 실제 창 상태를 읽는다).
+PIP 창이 Pace 전환 후에도 `windows` 목록에 남는다는 건 이미 실기기로 확인된 사실이다
+(`supportedAppWindowVisible` 주석 — 거기선 그게 문제라 제외했고, 여기선 그게 신호다).
+
+- `PaceAccessibilityService.isPackageInPictureInPicture(pkg)` 신설 (`AccessibilityWindowInfo.isInPictureInPictureMode`, API 26+)
+- `PaceOverlayModule`에 `isThirdPartyAppInPip` 노출
+- `resumePlatformApp`이 `Promise<boolean>` 반환 — PIP 없으면 재개하지 않고 false
+- `home.tsx`: false면 `launchPlatformApp`(=openShortsFeed)으로 새 쇼츠.
+  ⚠️ **`startSession`을 부르면 안 된다** — viewing_sessions 행이 하나 더 생겨 이중집계(감사 HIGH2).
+- **회귀 방지**: 구버전 네이티브엔 이 함수가 없어 `undefined` → 기존 동작(항상 재개) 유지. `false`일 때만 새 분기.
+- **iOS 부수 수정**: 같은 게이트 때문에 iOS는 세션 중 카드 탭이 **아무 일도 안 일어났다**(재개 함수가
+  즉시 return, `/feed` 라우팅은 running이 아닐 때만 있었다). `running`이면 `/feed`로 보내준다.
+
+#### ✅ 실기기 검증 완료 (Note20 SM-N986N, Android 13)
+
+| 상황 | 인텐트 | 결과 |
+|---|---|---|
+| 세션 시작(첫 탭) | `act=VIEW dat=https://www.youtube.com/… → UrlActivity` | 쇼츠 진입 ✅ |
+| 유튜브가 PIP로 살아있음 | `MAIN/LAUNCHER + REORDER_TO_FRONT` | 보던 쇼츠 그대로 복원 ✅ (기존 동작 보존) |
+| **유튜브가 홈 탭에 있음** | `act=VIEW → UrlActivity` | **새 쇼츠로 진입 ✅ (이게 이번 수정)** |
+
+- 4회 연속 진입 시 화면 md5 전부 다름 = 매번 다른 영상.
+- 화면 확인: 유튜브 하단 네비 **Shorts 탭 선택 상태**, 한국 콘텐츠(댄스/케이팝, "계란 마술"),
+  Pace 오버레이 알약 정상 표시(`59m left / FOCUS 7m`) = 접근성 서비스도 살아있음.
+- 새 카테고리(재미) 반영 확인 — "계란 마술"은 이번에 넣은 `마술` 카테고리다.
+
+#### ⚠️ 재설치할 때마다 접근성이 죽는다 (작업 메모)
+
+`adb install -r`과 `am force-stop` 둘 다 접근성 서비스를 죽인다. 시스템이 다시 안 붙는 경우가 있어
+매번 아래로 강제 재바인딩해야 한다(`settings put ... ""`는 `Bad arguments`로 실패하므로 `delete`를 써야 함):
+
+```bash
+adb shell settings put secure accessibility_enabled 0
+adb shell settings delete secure enabled_accessibility_services
+adb shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService
+adb shell settings put secure accessibility_enabled 1
+```
+
+### 2026-08-05 — ⚠️ 릴리즈 버전 올릴 때 반드시 볼 것 (내가 한 번 걸린 함정)
+
+`app.json`의 `version` / `android.versionCode`만 올리면 **아무 효과가 없다.** 이 프로젝트는 `android/`,
+`ios/` 네이티브 폴더가 있는 **bare 워크플로**라 실제 버전은 네이티브 프로젝트 파일이 결정한다
+(app.json 값은 `expo prebuild`가 그 파일을 재생성할 때만 쓰이는데 우리는 prebuild를 안 돌린다).
+
+실제로 app.json만 올리고 EAS 빌드를 걸었더니 `Version 1.0 / Version code 5`로 잡혔다 —
+5는 이미 출시된 번호라 그대로 뒀으면 Play Console이 중복으로 거부했을 것이다. 빌드를 취소하고 고쳤다.
+
+**올려야 하는 진짜 위치**
+- Android: `android/app/build.gradle` → `versionCode`, `versionName` (build.gradle 95~100행에 경고 주석 있음)
+- iOS(🍎 Mac): `ios/Pace.xcodeproj/project.pbxproj` → `CURRENT_PROJECT_VERSION`(빌드번호), `MARKETING_VERSION`(버전명)
+  — 현재 `CURRENT_PROJECT_VERSION = 1`, `MARKETING_VERSION = 1.0`. **Mac이 릴리즈 올릴 때 여기도 올려야 한다.**
+- `app.json`도 같이 맞춰둔다(불일치가 나중에 혼란을 만든다).
+
+**업로드 경로(이미 설정돼 있음)** — `eas.json`
+- `build.production`: app-bundle, `EXPO_PUBLIC_USE_REAL_ADS=true`
+- `submit.production.android`: **track `alpha` = 비공개 테스트**, 서비스계정 키 경로 지정됨(존재 확인)
+- EAS 로그인 계정: `strides7`

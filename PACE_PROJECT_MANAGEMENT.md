@@ -5321,3 +5321,23 @@ adb shell settings delete secure enabled_accessibility_services
 adb shell settings put secure enabled_accessibility_services com.strides7.pace/expo.modules.paceoverlay.PaceAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 ```
+
+### 2026-08-05 — ⚠️ 릴리즈 버전 올릴 때 반드시 볼 것 (내가 한 번 걸린 함정)
+
+`app.json`의 `version` / `android.versionCode`만 올리면 **아무 효과가 없다.** 이 프로젝트는 `android/`,
+`ios/` 네이티브 폴더가 있는 **bare 워크플로**라 실제 버전은 네이티브 프로젝트 파일이 결정한다
+(app.json 값은 `expo prebuild`가 그 파일을 재생성할 때만 쓰이는데 우리는 prebuild를 안 돌린다).
+
+실제로 app.json만 올리고 EAS 빌드를 걸었더니 `Version 1.0 / Version code 5`로 잡혔다 —
+5는 이미 출시된 번호라 그대로 뒀으면 Play Console이 중복으로 거부했을 것이다. 빌드를 취소하고 고쳤다.
+
+**올려야 하는 진짜 위치**
+- Android: `android/app/build.gradle` → `versionCode`, `versionName` (build.gradle 95~100행에 경고 주석 있음)
+- iOS(🍎 Mac): `ios/Pace.xcodeproj/project.pbxproj` → `CURRENT_PROJECT_VERSION`(빌드번호), `MARKETING_VERSION`(버전명)
+  — 현재 `CURRENT_PROJECT_VERSION = 1`, `MARKETING_VERSION = 1.0`. **Mac이 릴리즈 올릴 때 여기도 올려야 한다.**
+- `app.json`도 같이 맞춰둔다(불일치가 나중에 혼란을 만든다).
+
+**업로드 경로(이미 설정돼 있음)** — `eas.json`
+- `build.production`: app-bundle, `EXPO_PUBLIC_USE_REAL_ADS=true`
+- `submit.production.android`: **track `alpha` = 비공개 테스트**, 서비스계정 키 경로 지정됨(존재 확인)
+- EAS 로그인 계정: `strides7`

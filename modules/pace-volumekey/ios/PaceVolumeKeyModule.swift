@@ -35,6 +35,11 @@ public class PaceVolumeKeyModule: Module {
 
     AsyncFunction("start") { (promise: Promise) in
       DispatchQueue.main.async {
+        // ⭐ 2026-08-04 사장님 지적("볼륨 2로 하고 포커스 온하면 5로 튄다") — 원인: baseline 캡처를
+        // setActive(true)/MPVolumeView 생성 "직후"에 하면 session.outputVolume이 iOS18 stale 버그로
+        // 사용자 실제 볼륨(2=0.125) 대신 0.5 기본값을 반환해 baseline=0.5로 잡히고 볼륨이 5로 강제됐다.
+        // → 세션 활성화·뷰 생성 전에 "먼저" 현재 시스템 볼륨을 읽어 baseline으로 삼는다(사용자 2가 그대로 유지).
+        let cur = self.session.outputVolume
         do {
           try self.session.setCategory(.playback, options: [.mixWithOthers])
           try self.session.setActive(true)
@@ -46,10 +51,10 @@ public class PaceVolumeKeyModule: Module {
           Self.topWindow()?.addSubview(mv)
           self.volumeView = mv
         }
-        // 사용자가 맞춰둔 현재 볼륨을 baseline으로 캡처(0.5 강제 금지). iOS 볼륨은 1/16 스텝이라, 리셋이 정확히
-        // baseline에 안착하도록 스텝에 정렬한다(안 그러면 리셋값이 스텝에 반올림돼 baseline과 어긋나고, 그
-        // 어긋남이 "눌림"으로 오인돼 이벤트가 겹치거나 씹힌다). 양극단은 감지 여지를 위해 [0.125,0.875]로 클램프.
-        let cur = self.session.outputVolume
+        // 위에서 세션 활성화 전에 읽은 사용자 현재 볼륨(cur)을 baseline으로 캡처(0.5 강제 금지). iOS 볼륨은
+        // 1/16 스텝이라 리셋이 정확히 baseline에 안착하도록 스텝에 정렬한다(안 그러면 리셋값이 스텝에 반올림돼
+        // baseline과 어긋나고, 그 어긋남이 "눌림"으로 오인돼 이벤트가 겹치거나 씹힌다). 양극단은 감지 여지를
+        // 위해 [0.125,0.875]로 클램프.
         let clamped = min(0.875, max(0.125, cur))
         self.baseline = (clamped * 16).rounded() / 16
         self.setSystemVolume(self.baseline)

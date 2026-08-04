@@ -512,6 +512,31 @@ class PaceOverlayService : Service() {
   }
 
   private fun setupMediaSession() {
+    // 2026-08-04 사장님 실기기 지적, 두 증상이 한 원인이었다 —
+    //   ① "폰 사이드키로 볼륨 조절이 안 된다"
+    //   ② "FOCUS OFF에서 볼륨 낮추고 FOCUS ON 하니 볼륨이 지 멋대로 올라간다"
+    //
+    // ①의 원인: 안드로이드는 볼륨 키를 **지금 활성인 MediaSession**으로 라우팅한다. 아래에서
+    // `isActive = true` + `STATE_PLAYING`짜리 세션을 만들어두면 볼륨 키가 유튜브가 아니라 Pace의
+    // (아무 소리도 안 내는) 세션을 향하게 되어, 눌러도 아무 일이 일어나지 않는다.
+    //
+    // ②의 원인: requestAudioFocusForMediaButtons()가 AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK으로 포커스를
+    // 잡는다. MAY_DUCK은 "다른 앱은 소리를 줄여라"는 요청이고, 덕킹이 해제될 때 시스템이 **덕킹 이전
+    // 볼륨으로 복원**한다. 그래서 덕킹 중에 사용자가 내린 볼륨이 취소되며 저절로 올라간다.
+    //
+    // 그런데 이 배선은 **이미 동작 불가로 확정된 기능**을 위한 것이다 — MD §2-B B1:
+    // "블루투스 핸즈프리, Android OS 레벨에서 실제 유튜브 조작 불가능 확정(4가지 우회 전부 실패)".
+    // MediaSession으로 미디어 버튼을 받으려던 시도가 그 4가지 중 하나였고, 실패로 결론난 뒤에도
+    // 코드만 남아 실사용자의 볼륨을 망가뜨리고 있었다.
+    //
+    // 지금 실제로 동작하는 블루투스 경로는 접근성의 onKeyEvent(볼륨키 하이재킹)뿐이고, 그건 오디오
+    // 포커스도 MediaSession도 전혀 필요로 하지 않는다. 따라서 통째로 비활성화한다 — 잃는 기능이 없고
+    // 두 증상이 동시에 사라진다.
+    //
+    // 되살릴 일이 생기면(예: OS 정책 변경으로 미디어 버튼이 실제로 오게 되면) 이 return만 지우면
+    // 된다. 아래 콜백/해제 코드는 그대로 남겨둔다.
+    if (true) return
+    @Suppress("UNREACHABLE_CODE")
     if (mediaSession != null) return
     val session = MediaSession(this, "PaceSession")
     session.setCallback(object : MediaSession.Callback() {

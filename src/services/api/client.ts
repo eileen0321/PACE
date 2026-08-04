@@ -1,7 +1,20 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Localization from 'expo-localization';
 import { STORAGE_KEYS } from '../storage/keys';
 import type { FlatContent } from '../insightContent';
+
+// "ko-KR,ko;q=0.9,en;q=0.8" 형태. 백엔드는 앞쪽 태그의 지역 코드(KR)만 읽는다.
+function acceptLanguageTag(): string {
+  try {
+    const loc = Localization.getLocales()[0];
+    const lang = (loc?.languageCode || 'en').toLowerCase();
+    const tag = loc?.languageTag || lang;
+    return lang === 'en' ? `${tag},en;q=0.9` : `${tag},${lang};q=0.9,en;q=0.8`;
+  } catch {
+    return 'en-US,en;q=0.9';
+  }
+}
 
 // 커스텀 백엔드 REST 클라이언트 (zen-master src/common/services/api.ts 패턴 이식).
 // Supabase 대신 자체 API 서버 + JWT를 쓰기로 결정 — PACE_ARCHITECTURE.md "확정 결정" 참고.
@@ -65,7 +78,14 @@ type RequestOptions = {
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, auth = true } = opts;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // 2026-08-05 — Accept-Language를 붙인다. 백엔드 ShortsHotController는 country 파라미터가 없을 때
+  // 이 헤더의 지역 코드로 폴백하도록 짜여 있는데, RN fetch는 이 헤더를 자동으로 안 붙여서 그 폴백이
+  // **한 번도 동작한 적이 없었다**(국가를 못 정해 US=영어 목록으로 떨어졌다). 서버가 이미 기대하는
+  // 신호를 실제로 보내주는 것뿐이라 다른 엔드포인트에 영향은 없다.
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept-Language': acceptLanguageTag(),
+  };
   if (auth) {
     const token = await getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -153,9 +173,32 @@ export type ShortsHotVideo = {
 };
 // 백엔드 curated 카테고리(Android ShortsHotStore.CATEGORIES와 동일).
 export const SHORTS_HOT_CATEGORIES = ['all', 'music', 'gaming', 'comedy', 'entertainment', 'pets'] as const;
+
+// 2026-08-05 사장님 실기기 확인 — 쇼츠 HOT 리스트가 **전부 영어 + 베트남어**였다(한국어 0건).
+// 백엔드(ShortsHotController)는 국가를 두 경로로 받는다: ①`country` 파라미터 ②`Accept-Language` 폴백.
+// 그런데 앱은 ①을 아예 안 보냈고, ②도 도착하지 않았다 — 위 request()가 붙이는 헤더는
+// Content-Type과 Authorization뿐이라 RN fetch에 Accept-Language가 없다. 그래서 백엔드가 국가를
+// 정하지 못해 US로 폴백했고, 그게 영어 목록의 정체다(a6002c1의 KR/JP/US 분리가 무의미해져 있었다).
+// 기기 언어로 국가를 정해 **명시적으로** 보낸다. 규칙은 services/shortsEntry.ts와 동일하게 스토어
+// 지역이 아니라 **언어** 기준 — 한국어 사용자는 폰 지역이 US여도 한국 콘텐츠를 원한다.
+// 백엔드 화이트리스트는 KR/JP/US이고 그 외는 서비스 계층이 US로 폴백한다.
+const LANG_TO_COUNTRY: Record<string, string> = { ko: 'KR', ja: 'JP' };
+function deviceCountry(): string {
+  try {
+    const loc = Localization.getLocales()[0];
+    const lang = (loc?.languageCode || '').toLowerCase();
+    return LANG_TO_COUNTRY[lang] || (loc?.regionCode || '').toUpperCase();
+  } catch {
+    return '';
+  }
+}
+
 export const shortsHotApi = {
-  list: (category: string): Promise<ShortsHotVideo[]> =>
-    request<ShortsHotVideo[]>(`/shorts-hot?category=${encodeURIComponent(category)}`),
+  list: (category: string): Promise<ShortsHotVideo[]> => {
+    const country = deviceCountry();
+    const q = `category=${encodeURIComponent(category)}${country ? `&country=${encodeURIComponent(country)}` : ''}`;
+    return request<ShortsHotVideo[]>(`/shorts-hot?${q}`);
+  },
 };
 
 // 2026-08-01 — 홈 배너 인사이트 문구(힐링/명언/기능가이드/통계템플릿) 백엔드 이전. 문구 하나 고칠

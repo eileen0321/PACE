@@ -5341,3 +5341,29 @@ adb shell settings put secure accessibility_enabled 1
 - `build.production`: app-bundle, `EXPO_PUBLIC_USE_REAL_ADS=true`
 - `submit.production.android`: **track `alpha` = 비공개 테스트**, 서비스계정 키 경로 지정됨(존재 확인)
 - EAS 로그인 계정: `strides7`
+
+### 2026-08-05 — 🔴 쇼츠 HOT 리스트가 전부 영어였다 (국가 분리가 한 번도 동작한 적 없음)
+
+실기기 P메뉴 → HOT Shorts 확인 결과 **한국어 0건**. 실제로 나온 목록:
+`Oliver Tree's Biggest Lyric Was Fake` / `GTA V Super Cow Saves Dog` /
+`SUBSCRIBE FOR 7 YEARS OF GOOD LUCK!` / `Chị gái có cách chữa buồn ngủ…`(베트남어) / `Comment 'PAW'…`
+
+#### 원인 — 국가 신호가 **두 경로 다** 앱에서 나가지 않았다
+
+`ShortsHotController`는 국가를 ①`country` 파라미터 ②`Accept-Language` 폴백 두 경로로 받게 짜여 있다.
+그런데 앱은:
+- ① `src/services/api/client.ts`의 `shortsHotApi.list`가 **`category`만** 보냈다(`country` 없음).
+- ② `request()`가 붙이는 헤더는 `Content-Type`, `Authorization` 뿐 — **RN fetch는 `Accept-Language`를
+  자동으로 안 붙인다.** 그래서 그 폴백은 **한 번도 동작한 적이 없다.**
+
+결과: 백엔드가 국가를 못 정해 `FALLBACK_COUNTRY = "US"`로 떨어졌다 → 영어(+US 트렌딩에 섞인 베트남어) 목록.
+**a6002c1로 만든 KR/JP/US 국가 분리 전체가 무의미해져 있었다** — 백엔드는 정상인데 아무도 KR을 요청하지 않았다.
+
+#### 수정 (`src/services/api/client.ts`)
+- `shortsHotApi.list`가 기기 언어로 국가를 정해 **명시적으로 `country`를 보낸다.**
+  규칙은 `services/shortsEntry.ts`와 동일하게 **언어 기준**(ko→KR, ja→JP, 그 외 폰 지역) —
+  스토어 지역이 US여도 한국어 사용자는 한국 콘텐츠를 원한다.
+- `request()`에 `Accept-Language`를 추가해 ②번 폴백도 실제로 동작하게 했다(서버가 이미 기대하는 신호).
+
+⚠️ **이미 출시된 v1.0(versionCode 5) 사용자는 앱을 업데이트해야 고쳐진다** — ①②가 모두 클라이언트
+쪽이라 서버만 고쳐서는 해결되지 않는다. 이번 1.0.1에 포함.

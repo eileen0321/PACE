@@ -24,12 +24,47 @@ const CONSENT_COOKIE =
 const SHORTS_FILTER = 'EgIYAQ%3D%3D';
 
 // PACE는 "차분한 대체 피드" — 자극적이지 않은 힐링/창작/공예 위주 카테고리로 로테이션.
-const CATEGORIES = [
-  'satisfying', 'asmr', 'nature relaxing', 'cooking', 'art process',
-  'diy craft', 'origami', 'pottery', 'latte art', 'baking',
-  'gardening', 'space facts', 'ocean', 'calligraphy', 'science experiment',
-  'woodworking', 'coffee', 'knitting', 'aquarium', 'hiking',
-];
+//
+// 2026-08-04 사장님 지적("HOT 리스트가 어제 본 것과 같고 영어다") — gl/hl 파라미터를 붙여도 영어
+// 결과가 계속 나온 진짜 이유가 여기 있었다. **검색어 자체가 영어**라 'gardening'으로 검색하면
+// 지역을 KR로 줘도 영어 영상이 나온다. 지역 설정은 "같은 검색어에 대해 어느 지역 결과를 우선할지"를
+// 정할 뿐이고, 검색어가 언어를 결정한다. 언어별 검색어 목록을 따로 둬야 실제로 그 나라 콘텐츠가 나온다.
+// 목록에 없는 언어는 영어로 폴백(전 세계 대상 앱이라 영어가 가장 넓은 커버리지).
+const CATEGORIES_BY_LANG: Record<string, string[]> = {
+  en: [
+    'satisfying', 'asmr', 'nature relaxing', 'cooking', 'art process',
+    'diy craft', 'origami', 'pottery', 'latte art', 'baking',
+    'gardening', 'space facts', 'ocean', 'calligraphy', 'science experiment',
+    'woodworking', 'coffee', 'knitting', 'aquarium', 'hiking',
+  ],
+  ko: [
+    '힐링 영상', 'ASMR', '자연 풍경', '요리', '그림 그리기',
+    '핸드메이드', '종이접기', '도예', '라떼아트', '베이킹',
+    '식물 가꾸기', '우주 이야기', '바다', '캘리그라피', '과학 실험',
+    '목공', '커피 내리기', '뜨개질', '수족관', '등산',
+  ],
+  ja: [
+    '癒し', 'ASMR', '自然 風景', '料理', '絵を描く',
+    'ハンドメイド', '折り紙', '陶芸', 'ラテアート', 'お菓子作り',
+    'ガーデニング', '宇宙', '海', '書道', '科学実験',
+    '木工', 'コーヒー', '編み物', 'アクアリウム', '登山',
+  ],
+  es: [
+    'satisfactorio', 'asmr', 'naturaleza relajante', 'cocina', 'proceso de arte',
+    'manualidades', 'origami', 'cerámica', 'arte latte', 'repostería',
+    'jardinería', 'datos del espacio', 'océano', 'caligrafía', 'experimento científico',
+    'carpintería', 'café', 'tejer', 'acuario', 'senderismo',
+  ],
+  pt: [
+    'satisfatório', 'asmr', 'natureza relaxante', 'culinária', 'processo de arte',
+    'artesanato', 'origami', 'cerâmica', 'latte art', 'confeitaria',
+    'jardinagem', 'curiosidades espaço', 'oceano', 'caligrafia', 'experimento científico',
+    'marcenaria', 'café', 'tricô', 'aquário', 'trilha',
+  ],
+};
+function categoriesFor(hl: string): string[] {
+  return CATEGORIES_BY_LANG[hl] ?? CATEGORIES_BY_LANG.en;
+}
 
 const DATA_API = 'https://www.googleapis.com/youtube/v3';
 const MAX_SHORT_SECONDS = 60;
@@ -185,7 +220,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 시간 시드를 더해 시간마다 시작 카테고리가 달라지게 한다(rotationSeed 주석 참고).
   const isGeneric = !reqQuery || reqQuery === '#shorts' || reqQuery.toLowerCase() === 'shorts';
   const category = isGeneric
-    ? CATEGORIES[(page + rotationSeed()) % CATEGORIES.length]
+    ? categoriesFor(hl)[(page + rotationSeed()) % categoriesFor(hl).length]
     : reqQuery;
 
   try {

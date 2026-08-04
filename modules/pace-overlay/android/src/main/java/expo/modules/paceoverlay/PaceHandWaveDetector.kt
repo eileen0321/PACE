@@ -153,6 +153,10 @@ object PaceHandWaveDetector {
   // ⚠️ 다음에 이 값을 만지려면 반드시 diagEnabled 로그로 "가만히" 구간을 함께 재서 위와 같은 표를
   // 만든 뒤에 정할 것. 손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다.
   private const val SWEEP_RATIO_THRESHOLD = 0.22
+  // 2026-08-05 — 손이 "정말 나갔다"고 판단하기까지의 유예. 스윕 양 끝의 모션블러/프레임 이탈로
+  // 한두 프레임 놓치는 것과, 손을 실제로 내린 것을 구분한다. PROCESS_INTERVAL_MS(150ms) 기준
+  // 두세 프레임 분량 — 실제로 손을 내리면 그보다 훨씬 오래 비므로 구분이 확실하다.
+  private const val HAND_LOST_GRACE_MS = 400L
   private const val MIN_HAND_SIZE = 0.03 // 손이 화면에 거의 안 보일 만큼 작으면(먼 배경 노이즈) 무시
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
@@ -215,6 +219,8 @@ object PaceHandWaveDetector {
   private var fakeLifecycleOwner: FakeLifecycleOwner? = null
   private var lastProcessedAtMs = 0L
   private var lastTriggerAtMs = 0L
+  // 마지막으로 손 랜드마크를 실제로 잡은 시각 — 위 HAND_LOST_GRACE_MS 판정용.
+  private var lastLandmarkAtMs = 0L
   // 2026-08-01 사용자 지적("화면이 2개씩 넘어가냐 큐에 넣었다가") — 손을 밀어낸 뒤 바로 안 치우고
   // 카메라 앞에 머물러 있으면, 그 잔류 흔들림만으로도 GROWTH_WINDOW_MS(700ms) 새 창에서 growthRatio가
   // 다시 1.2를 넘어 REFRACTORY_MS(1.2초)만 지나면 또 트리거됐다(실기기 로그로 확인 — 한 번의 제스처
@@ -268,6 +274,7 @@ object PaceHandWaveDetector {
     sizeHistory.clear()
     xHistory.clear()
     lastTriggerAtMs = 0L
+    lastLandmarkAtMs = 0L // 새 세션 — 이전 세션의 "마지막으로 손을 본 시각"이 남으면 유예 판정이 틀어진다
 
     try {
       handLandmarker = HandLandmarker.createFromOptions(
@@ -525,10 +532,27 @@ object PaceHandWaveDetector {
       // 2026-08-02 — 손이 사라졌으면 이전 접근 동작의 크기 이력도 버린다. 남겨두면 다음에 손을
       // 다시 넣었을 때 "직전 동작의 큰 손"이 최솟값 기준에 섞여 들어가(또는 반대로 남은 작은 값이
       // 오탐을 유발해) 판정이 흐려진다. 매 접근을 깨끗한 상태에서 새로 재기 위함.
-      sizeHistory.clear()
-      xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
+      //
+      // ⚠️ 2026-08-05 사장님 실기기("손짓 되는데 여전히 첫 손짓은 잘 안 됨") — 위 초기화가
+      //   **한 프레임만 비어도** 즉시 돌던 게 문제였다. 손을 크게 흔들면 스윕 양 끝에서 모션블러가
+      //   생기거나 손이 화면 밖으로 살짝 나가 MediaPipe가 그 프레임만 손을 못 잡는다. 그때마다
+      //   xHistory가 통째로 비워지므로 **스윕 폭을 한 번도 끝까지 재지 못한다** — 지워진 뒤 남은
+      //   조각만 재게 되어 sweepRatio가 실제보다 훨씬 작게 나온다.
+      //   첫 손짓이 특히 안 되는 이유: 첫 동작은 손이 화면 밖에서 들어오며 가장 크고 빠르다
+      //   (=빈 프레임이 가장 많다). 두세 번째부터는 손이 이미 화면 가운데 있어 덜 끊긴다.
+      //   ⭐ 코드에 남은 실측 기록이 이 설명과 정확히 맞는다 — "sweep 성공값(0.75~0.81)과
+      //     실패값(0.14~0.23)이 같은 동작인데 4배씩 벌어진다"(아래 진단 로그 주석). 이력이 중간에
+      //     지워지면 스윕의 일부만 재게 되어 딱 저런 분포가 나온다.
+      //   → 손이 HAND_LOST_GRACE_MS 넘게 안 보일 때만 "진짜 나갔다"고 보고 버린다. 순간적으로
+      //     놓친 프레임은 이력을 유지해 스윕을 끝까지 잇는다. 윈도우가 2.5초라 유예 400ms가
+      //     남기는 잔여 샘플은 판정에 유의미한 영향을 주지 않는다(오탐 증가 위험 낮음).
+      if (lastLandmarkAtMs != 0L && System.currentTimeMillis() - lastLandmarkAtMs > HAND_LOST_GRACE_MS) {
+        sizeHistory.clear()
+        xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
+      }
       return
     }
+    lastLandmarkAtMs = System.currentTimeMillis()
     val landmarks = result.landmarks()[0]
     if (landmarks.size <= 9) return
     val wrist = landmarks[0]

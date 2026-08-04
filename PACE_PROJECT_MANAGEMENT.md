@@ -4883,3 +4883,102 @@ Mac 세션이 고치는 앱 소스(50d25a8 등 클라이언트 배선)와 상호
 추출하고 CDN에 5분 캐시한다(사용자 수와 무관하게 유튜브 트래픽을 일정하게 유지하는 설계).
 `api/shorts-entry.ts`는 그 함수를 재사용해 시드 12개를 뽑아 정책과 함께 내려준다.
 **쇼츠 관련 수정은 전부 Vercel 쪽이고 Railway는 건드리지 않는다.**
+
+---
+
+### 2026-08-04 (이어서) — Mac 세션: iOS 수면감지 2단계 패리티 포팅 (사장님 지적 — "안드가 한 거 왜 iOS는 안 함")
+
+**배경**: 안드가 어젯밤~오늘 새벽 사이 수면감지를 완전히 새로 설계했다(커밋 `6616521`/`c6481e4`/`1917234`,
+`PaceOverlayService.kt`/`PaceAccessibilityService.kt`만 수정). "폰이 안 움직임"(가속도계) 단독판정을
+버리고 "사용자 입력 부재" 축의 2단계 상태기계(AWAKE→SUSPECT 10분→CONFIRM +5분+밤시간대+보조신호
+1개↑→PROMPTED "아직 보고 계세요?" 팝업→30초 무응답 확정)로 교체, 실기기 전 구간 검증까지 완료했다.
+iOS(`useSleepGuard.ios.ts`)는 8/2에 껐던 옛 가속도계 방식(`SLEEP_DETECTION_DISABLED=true`) 그대로
+방치돼 있었다 — 사장님이 이 격차를 지적, 바로 포팅 착수.
+
+**포팅 범위**:
+1. `src/hooks/useSleepGuard.ios.ts` — 판정 로직을 네이티브에서 JS로 이전, 안드 상태기계를 그대로 이식
+   (AWAKE/SUSPECT/PROMPTED, 임계값·타임아웃 전부 안드와 동일 수치). `markActivity()`를 반환해 실제
+   사용자 입력 지점에서 호출받는 구조 — Android의 `markUserActivity()`와 동등.
+2. `src/app/feed/index.tsx` — 기존에 이미 있던 "무입력 idle 하드상한"(`markUserInput`, 2026-07-29 도입,
+   모든 실제 입력 지점에 이미 배선돼 있었음)에 `markSleepActivity()` 호출을 얹어 재사용 — 입력 마킹
+   지점을 새로 늘리지 않았다. 30분 하드컷 idle cap은 그대로 유지(주간 백스톱, 무변경).
+3. `src/components/feed/SleepPromptModal.tsx`(신규) — "아직 보고 계세요?" 확인 팝업, 안드
+   `showStillWatchingPrompt()`와 문구·동작(버튼/배경 탭 둘 다 "계속 볼게요"로 리셋) 동일.
+4. `modules/pace-sleep/ios/PaceSleepModule.swift` — 네이티브를 raw 신호 제공자로 축소: `gravityZ()`
+   (눕혀짐, TYPE_GRAVITY 등가), `isCharging()`(신규, UIDevice.batteryState), `onAudioRouteLost`(기존
+   유지). 예전의 임계값 기반 자동발신(`onSleepDetected`)·가속도계 무진동 로직은 제거. 백그라운드 수면
+   인사이트용 `queryStationaryOnset`(방법B, `_layout.tsx` backfill이 씀)은 **손대지 않음** — 완전히
+   별개 경로.
+5. `src/services/i18n/translations.ts` — `feed.sleepPromptTitle/Body/Button` en/ko 추가.
+
+**의도적으로 포팅 안 한 것**: 안드의 "어둡다"(조도 센서) 보조신호. iOS엔 서드파티 앱이 쓸 수 있는 공개
+주변광 센서 API가 없다(private API뿐 — 심사 리스크). 나머지 3개(눕혀짐/충전/이어폰탈착) 중 1개
+이상이면 확정하는 구조라 신호 하나가 빠져도 기능은 안 죽는다(안드도 센서 없는 기기에서 같은 방식으로
+열화).
+
+**⚠️ 미검증 — 다음 세션 필수**: 이번 포팅은 전부 **소스 레벨만**, 실기기/시뮬 빌드는 아직 안 했다
+(Xcode 빌드+기기 설치 필요, D8 때와 동일 패턴). tsc는 통과(0 errors). 확인해야 할 것:
+- `PaceSleepModule.swift` 실제 컴파일(Swift 문법은 육안 검증만 함) + `gravityZ`/`isCharging` 값이
+  기대대로 나오는지.
+- SUSPECT→PROMPTED 전이가 실제로 뜨는지, 버튼/배경 탭이 정말 리셋하는지, 무응답 30초 뒤 실제로
+  `sleep_detected`로 세션이 끝나고 홈에 "…잠드셨습니다" 배너가 뜨는지.
+- 임계값을 축소한 디버그 빌드로 빠르게 왕복 검증(안드가 `c6481e4`에서 쓴 방식과 동일 전략 권장).
+
+**별개로 남아있는 Mac 확인 요청**(Windows가 위 "광고 보면 화면 까매짐" 섹션 #5에 남김, 아직 미착수):
+전면광고 중 iOS 피드 재생 일시정지/재개(`FocusSessionExtendModal`의 `onAdVisibilityChange` 배선)를
+실기기에서 확인해달라는 요청 — 다음 세션에서 위 수면감지 실기기 검증과 함께 처리 권장.
+
+**사장님 지적("그것만 빼먹었어? 더 많지 않아?")** — 맞았다. Windows가 19:11에 `MAC_HANDOFF_ANDROID_IMPL_
+2026-08-04.md`(Android 구현 전수 대조 후 iOS 인계용)를 이미 남겨뒀는데 그 뒤로 열어보지 않고 있었다.
+전수 대조한 결과:
+
+| 항목 | 상태 |
+|---|---|
+| §4-1 쇼츠를 유튜브 알고리즘에 맡기기(SWIPE_NAV) | ✅ 이미 완료(핸드오프 작성 시점 19:11 이후 같은 세션이 20:08~23:12에 `50d25a8`~`42f250a`로 처리 — 핸드오프가 최신 상태 반영 전이라 낡은 항목이었음) |
+| §7 수면감지 2단계 게이트 | ✅ 이번에 포팅(위 섹션) |
+| §4-2 ATT 미동의 상태의 개인화 광고 | ✅ 이번에 수정 — `AdBanner.tsx`/`rewardedAd.ts`에 `Platform.OS==='ios'`면 무조건 `requestNonPersonalizedAdsOnly:true` 분기 추가(UMP 동의와 별개로 ATT 프롬프트 자체가 없어 개인화 요청 시 애플 정책 위반 소지) |
+| §4-3 WebView `<video>` 이벤트로 실시청 초 누적 | ⚠️ **핸드오프 전제가 틀렸다** — `YouTubeShortsPlayer.ios.tsx:128`의 pause/playing/waiting/stalled 리스너는 "검증용 진단"이라 주석에 명시돼 있고 `type:'domlog'`만 보내는데, `send()`가 `!window.__PACE_DIAG__`면 domlog를 통째로 버린다(53행) — 즉 **출시빌드에선 이 이벤트가 애초에 RN에 도달하지 않는다.** "이미 오는 이벤트를 집계만 하면 된다"는 핸드오프 서술과 달리 실제로는 구조화된 이벤트 타입 신설(도달 여부와 무관하게 정상 전송)부터 필요한 더 큰 작업이다. 이 WebView는 실기기 버그(음소거/씹힘 등)가 반복 발생한 민감한 코드라 **실기기 검증 없이 손대지 않았다** — 다음 세션 실기기 확보 시 처리. 현재는 벽시계 폴백 유지(회귀 아님, 정확도만 안드와 다름). |
+| §4-4 앱 업데이트 후 Live Activity 생존 | 🔲 미확인 — 실기기 필요 |
+| §4-5 App Store Connect 마케팅 URL | 🔲 코드 아님 — 사장님이 콘솔에서 직접 입력해야 함(`https://eileen0321.github.io`) |
+| §4-6 `ios/` 네이티브 폴더 git 추적 | 🔲 확인함: `.gitignore:44`에 `/ios` 있음(`git ls-files ios/` → 0개). Android와 같은 위험(수동 Info.plist/entitlements 수정이 prebuild마다 사라질 수 있음) — 아직 원인/대응 미착수, 다음 세션 |
+
+⚠️ **정정(같은 날 재검증)** — 아래 두 항목은 핸드오프 문서를 그대로 옮겨적었다가 사장님이 "현재 상태
+확인하고 다시 정리해"라고 재지적해서 **실제 화면 코드를 열어 재확인**한 결과 둘 다 틀린 서술이었다:
+
+| 항목 | 핸드오프 서술 | 실제 확인 결과 |
+|---|---|---|
+| §6-1 iOS Bluetooth Hands-Free "가짜 UI" | 사장님 결정 필요(숨김 vs 구현) | **문제 없음, 결정 불필요.** `bluetoothService.ios.ts`는 여전히 no-op 스텁이지만, 그걸 쓰는 화면 3곳이 이미 전부 무해하게 처리돼 있다 — Settings는 `Platform.OS!=='ios'` 조건으로 섹션 자체를 숨김(7/27 처리, `settings.tsx:412`), Stats는 렌더 조건이 "블루투스로 조작한 횟수>0"인데 그 카운터를 증가시키는 함수가 전부 no-op이라 구조적으로 항상 0(`stats.tsx:295`), Home의 "🎧 Hands-Free" 배지는 가짜 연결상태 표시가 아니라 실제로 동작하는 기능(피드 안 볼륨키+손짓, `useFeedRemoteControl.ios.ts`)을 가리키는 정직한 라벨이다(`home.tsx:569`, `capabilities.ts:23-27` 주석에 이 구분이 이미 설명돼 있었음). |
+| §6-2 Sign in with Apple 커스텀 버튼 | 미착수, 결정 필요 | **이미 완료.** `src/app/auth/index.tsx:75`가 커스텀 텍스트 버튼이 아니라 `expo-apple-authentication`의 공식 `AppleAuthenticationButton`을 이미 쓴다(주석에 "§2-C C2, HIG 4.8 리뷰 리스크 해결"이라고 명시돼 있음) — 핸드오프 문서가 그 이전 상태를 기준으로 낡아 있었다. |
+
+**교훈**: 인계 문서(`MAC_HANDOFF_ANDROID_IMPL_2026-08-04.md`)는 작성 시점(19:11) 스냅샷이라 그 뒤 같은 날
+안에도 여러 커밋으로 상태가 바뀌었다 — **문서 서술을 그대로 옮기지 말고 항상 실제 화면/코드로 재확인할 것.**
+
+**진짜로 남은 것(재검증 완료 기준)**: §4-3(실시청 시간, 실기기 필요) / §4-4(Live Activity 업데이트 생존
+— 재시작 시 복구 로직 자체가 코드에 없음을 확인, 실기기 필요) / §4-6(`ios/` git 추적 대응, 아래서 완료) /
+§4-5(콘솔 작업, 사장님이 직접 — 이번 버전업 때 처리 예정). §6-1/§6-2는 할 일 없음(위 표 참고) — 종료.
+
+### 2026-08-05 — §4-6 완료 + iOS 볼륨키 리모컨 오탐 완화(3중 체크)
+
+**§4-6**: `.gitignore`에서 `/ios` 블랭킷 무시 제거, android/와 동일 패턴(빌드산출물만 무시)으로 교체.
+`ios/.gitignore`(Expo 표준 템플릿, build/·Pods/·xcuserdata·DerivedData만 무시)가 이미 올바르게 구성돼
+있어 루트에서 더 손댈 것 없었음. 23개 파일(project.pbxproj, Info.plist, entitlements, Podfile 등) 내용
+확인(민감정보 없음) 후 git add 완료 — 커밋은 사용자 확인 후.
+
+**iOS 볼륨키 리모컨 오탐**(사장님 지적 — "핸즈프리 모드 켜져 있어도 리모컨 없으면 폰 볼륨 조절돼야지"):
+`PaceVolumeKeyModule.swift`가 `outputVolume` KVO로 볼륨 버튼 눌림을 감지해 다음/이전 Short로 하이재킹
+하는데, iOS는 이 눌림이 폰 물리버튼인지 블루투스 리모컨인지 출처를 공개 API로 구분 못 한다(리서치로
+재확인). 그래서 리모컨이 아예 없어도 핸즈프리+피드 화면 중엔 폰 버튼도 항상 하이재킹됐다.
+
+**완화책(3중 체크, `isKnownAudioAccessoryConnected()`)**: 확정적 판별은 여전히 불가능하지만, "지금 연결된
+오디오 기기가 유명 브랜드"라는 약한 신호로 가장 흔한 케이스(에어팟 끼고 폰 버튼 누름)를 해결한다.
+1. **포트 타입** — A2DP/HFP/블루투스 LE 세 프로파일 다 체크(LE 빠뜨리면 최신 이어폰류를 놓침).
+2. **포트 이름** — `portName`을 에어팟/버즈/JBL 등 화이트리스트와 대조.
+3. **라우트 방향** — outputs(재생)뿐 아니라 inputs(마이크)도 같이 봄(HFP가 순간적으로 마이크 쪽에만
+   잡히는 상태 커버).
+추가로 **A2DP는 이름 대조 없이 그 자체로 충분**하다고 판단해 조기 반환 추가 — A2DP는 순수 스트리밍
+전용 프로파일이라 그 카테고리 자체에 리모컨(HID 버튼) 성격이 섞일 수 없기 때문(HFP는 통화용이라 일부
+기기가 인라인 컨트롤을 얹기도 해서 이름 체크를 유지).
+검증: `.bluetoothA2DP`/`.bluetoothHFP`/`.bluetoothLE`가 실제 `AVAudioSession.Port` 값인지, currentRoute
+API 사용법이 커뮤니티 패턴과 일치하는지 웹 리서치로 확인함(애플 공식 문서 링크 확보).
+⚠️ **미검증** — Swift 문법은 육안 검증만 했고 실제 컴파일은 다음 Xcode 빌드 때 확인 필요. 시뮬레이터엔
+물리 볼륨버튼이 없어(모듈 최상단 주석 참고) 이 기능 자체가 실기기 검증 대상.

@@ -1,4 +1,4 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { bottomSheetPadding, colors, radius, spacing, typography } from '../../constants/theme';
@@ -87,7 +87,14 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
         {/* 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓 줄에만 있던
             보조 설명(hint)이 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지" 정보가 부족했다.
             손짓 hint와 같은 스타일(들여쓰기·크기)로 통일. */}
-        <Text style={styles.hintText}>{t('handsFreeSheet.bluetoothRemoteHint')}</Text>
+        <Text style={styles.hintText}>
+          {t('handsFreeSheet.bluetoothRemoteHint')}
+          {/* 2026-08-05 사장님 지시 — iOS는 "이 볼륨 버튼이 리모컨인지 헤드폰인지"를 확정적으로 구분
+              못 해 유명 오디오 기기(에어팟 등)가 연결돼 있으면 리모컨을 눌러도 그냥 볼륨으로 처리한다
+              (PaceVolumeKeyModule.swift의 오탐 완화 트레이드오프). Android는 KeyEvent.getDevice()로
+              출처를 구분할 수 있어 이 제약이 없다 — iOS에만 캐비엇을 붙인다. */}
+          {Platform.OS === 'ios' ? ` ${t('handsFreeSheet.bluetoothRemoteHintIOSCaveat')}` : ''}
+        </Text>
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><GestureFlickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>

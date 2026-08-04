@@ -27,6 +27,7 @@ import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
+import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -193,7 +194,9 @@ export default function PaceFeedScreen() {
     flushWatchTime('sleep_detected', sleepOnsetAtMs); // 잠든 실제 시각까지의 시청시간+ended_at 기록
   };
   // 영상이 실제 재생 중이고 아직 블랙아웃 전일 때만 감지. stillnessMinutes=설정값(안드 parity, D8 프리미엄 조절).
-  useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected, stillnessMinutes: sleepStillnessMinutes });
+  // markSleepActivity/isSleepPrompted = 2단계 상태기계(안드 evaluateSleepStages 패리티, 2026-08-04) —
+  // 아래 markUserInput()이 실제 사용자 입력마다 같이 호출해 무입력 시계를 리셋한다.
+  const { markActivity: markSleepActivity, isSleepPrompted } = useSleepGuard({ enabled: playing && !sleepBlackout, onSleep: onSleepDetected, stillnessMinutes: sleepStillnessMinutes });
 
   // 2026-07-27 iOS 수면감지 필수 전제 — 잠들면 화면을 안 만져서 iOS가 자동으로 화면을 끈다. 그러면
   // AppState가 'active'가 아니게 돼 useSleepGuard의 무진동 tick이 그 훅 L54 가드에서 멈춰, 취침을 영영
@@ -394,7 +397,10 @@ export default function PaceFeedScreen() {
   // TV 3편+90분/기타 3편 연속(장편이라 더 김). 웰빙앱 성격상 짧게 잡아 더 보호적 — 깨어있으면 탭 1번으로 재개.
   const IDLE_CAP_MINUTES = 30;
   const idleMinRef = useRef(0);
-  const markUserInput = () => { idleMinRef.current = 0; };
+  // 2026-08-04 — 같은 "실제 사용자 입력" 신호를 idle 상한(위 IDLE_CAP_MINUTES)과 수면감지 2단계
+  // (useSleepGuard) 둘 다에 공급한다. 별도 마킹 지점을 새로 늘리지 않고 기존 idle 상한이 이미 걸어둔
+  // 모든 실제 입력 호출부(탭/스와이프/손짓/볼륨키)를 그대로 재사용 — 안드 markUserActivity()와 동등.
+  const markUserInput = () => { idleMinRef.current = 0; markSleepActivity(); };
 
   const goNext = () => {
     pauseWaveRef.current?.();
@@ -665,6 +671,10 @@ export default function PaceFeedScreen() {
           onExtend={() => { sessionTimedOutRef.current = false; setIsAutoMode(true); }}
           onDismiss={() => setShowExtendModal(false)}
         />
+
+        {/* 수면감지 2단계 확정 팝업(안드 showStillWatchingPrompt 패리티) — 반응(버튼/배경 탭) 자체가
+            markUserInput()을 태워 idle 상한과 수면 무입력 시계를 함께 리셋한다. */}
+        <SleepPromptModal visible={isSleepPrompted} onKeepWatching={markUserInput} />
 
         {/* 2026-07-25 사용자 지시: 인앱 "시간 상태바"(벽시계+남은시간)가 iOS 시스템 상태바와 겹쳐 제거.
             시간은 시스템 상태바(시계)와 다이나믹 아일랜드 Live Activity(세션 남은시간)가 이미 담당. */}

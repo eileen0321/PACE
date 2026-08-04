@@ -95,7 +95,11 @@ export function AdBanner() {
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         // 2026-08-04 — 사용자가 실제로 준 동의를 따른다(위 canRequestPersonalizedAds 주석 참고).
         // GDPR 비대상(한국 등)이거나 개인화 목적에 동의했으면 개인화, 그 외에는 비개인화.
-        requestOptions={{ requestNonPersonalizedAdsOnly: !canRequestPersonalizedAds }}
+        // 2026-08-05 §4-2(MAC_HANDOFF) — canRequestPersonalizedAds는 UMP(GDPR) 동의일 뿐 애플 ATT
+        // 동의가 아니다. 이 앱은 ATTrackingManager 프롬프트를 아예 안 띄우므로(app.json
+        // NSPrivacyTracking=false) iOS에서 IDFA 기반 개인화 광고를 요청하면 트래킹 동의 없이 추적하는
+        // 것이 되어 애플 정책 위반이다 — iOS는 GDPR 동의 여부와 무관하게 항상 비개인화만 요청한다.
+        requestOptions={{ requestNonPersonalizedAdsOnly: Platform.OS === 'ios' ? true : !canRequestPersonalizedAds }}
         // 배너의 key에 이 값을 물려 동의 결과가 바뀌면(폼을 다시 열어 설정을 변경한 경우) 다음 광고가
         // 새 설정으로 나가게 한다 — requestOptions는 이미 요청된 광고에 소급 적용되지 않는다.
         key={canRequestPersonalizedAds ? 'personalized' : 'npa'}

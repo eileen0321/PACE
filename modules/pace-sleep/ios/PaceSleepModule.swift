@@ -1,20 +1,26 @@
 import ExpoModulesCore
 import CoreMotion
 import AVFoundation
-import QuartzCore
+import UIKit
 
-// Pace iOS 취침 감지 프리미티브 (스펙 §4-B, 2026-07-24). CMMotionManager userAcceleration(중력 제거된
-// 순수 움직임)로 "마지막 움직임 이후 경과"를 재고, AVAudioSession 라우트 변경으로 이어폰/블루투스
-// 탈착을 알린다. 몇 분을 재울지 판단은 JS(useSleepGuard)가 소유 — native는 raw 신호만 제공.
+// Pace iOS 취침 감지 프리미티브 (스펙 §4-B). 2026-08-04 안드로이드 2단계 재설계(PaceOverlayService.kt
+// evaluateSleepStages, 커밋 c6481e4/1917234) 패리티 포팅 — "폰이 안 움직임"(가속도계) 축을 폐기하고
+// "사용자 입력 부재"를 판정 주 축으로 옮겼다(이유는 useSleepGuard.ios.ts 참고, 거기가 새 상태기계를
+// 소유). native는 그 판정에 필요한 raw 보조신호 3개만 제공한다:
+//  - gravityZ(): 기기가 눕혀졌는가(중력 Z축). Android TYPE_GRAVITY와 동등, deviceMotion.gravity 재사용.
+//  - isCharging(): 충전 중인가(UIDevice.batteryState).
+//  - onAudioRouteLost: 이어폰/블루투스 탈착(AVAudioSession 라우트 변경) — Android의 BT 탈착 보조신호와 동등.
+// ⚠️ Android는 조도(TYPE_LIGHT)도 보조신호로 쓰지만 iOS엔 서드파티 앱이 쓸 수 있는 공개 주변광 센서
+// API가 없다(private API만 존재, 심사 리스크) — 그 신호는 포팅하지 않는다. 나머지 3개 중 1개 이상이면
+// 확정하는 Android 규칙(4개 중 1개 이상)을 3개 기준으로 그대로 유지 — "몇 개 중 1개"의 정신은 같다.
 //
-// iOS엔 OS 레벨 sleep/wake API가 없어(Apple 포럼 확인) userAcceleration 무진동이 정석.
-// 2026-07-28 사장님 결정 — 무진동 "판정"을 여기 네이티브로 내렸다(이전엔 JS setInterval이 판정했는데
-// JS 타이머는 백그라운드에서 throttle되고 AppState 가드에 막혀 "화면 켜고 조는" 경우만 잡혔다 → 실제 수면
-// (전원 끄고 잠)은 0건이었음). 피드가 영상 오디오를 백그라운드 재생하는 동안엔 앱이 살아있어 CoreMotion
-// 콜백(0.5s)이 계속 오므로, 그 콜백에서 무진동이 임계값을 넘으면 onSleepDetected를 발신 → 화면이 꺼져도 감지.
+// 판정 타이머(무입력 경과, 단계 전이, 팝업 타임아웃)는 전부 JS(useSleepGuard.ios.ts)가 소유한다 —
+// 사용자 입력 이벤트(탭/스와이프/손짓/볼륨키) 자체가 JS(feed/index.tsx)에서 발생하므로 그쪽이
+// "마지막 입력 시각"의 소스오브트루스를 갖는 게 자연스럽다(Android는 반대로 네이티브가 세션 전체를
+// 포그라운드서비스로 들고 있어 네이티브가 판정 주체 — 플랫폼 아키텍처 차이, 결과 동작은 동일).
 //
-// 🔒 스레드 안전(pace-flip과 동일 원칙): 모션 콜백(백그라운드 큐) ↔ millisSinceMotion(JS 스레드) ↔
-//    start/stop이 lastMotionAt을 공유 → lock 직렬화, 콜백 큐 직렬(1), 이벤트는 메인 스레드 발신.
+// 🔒 스레드 안전(pace-flip과 동일 원칙): 모션 콜백(백그라운드 큐) ↔ gravityZ()(JS 스레드)가 lastGravityZ를
+//    공유 → lock 직렬화, 콜백 큐 직렬(1), 이벤트는 메인 스레드 발신.
 public class PaceSleepModule: Module {
   private let motion = CMMotionManager()
   // 백그라운드 수면 감지용(방법 B, 2026-07-28 사장님 결정 — 리서치로 A안[백그라운드 오디오+CMMotionManager]이
@@ -34,32 +40,26 @@ public class PaceSleepModule: Module {
   private let lock = NSLock()
 
   private var observing = false
-  private var lastMotionAt: CFTimeInterval = 0 // 마지막 "의미있는 움직임" 시각(CACurrentMediaTime)
   private var routeObserver: NSObjectProtocol?
-  // userAcceleration 크기(g) 임계값 — 이 이상이면 "움직임"으로 보고 타이머 리셋. 호흡에 의한 미세운동
-  // (~0.01~0.02g)은 넘고, 깨어서 스크롤할 때(>0.05g)는 확실히 넘게 0.03으로 잡음(센서 노이즈 ~0.01 위).
-  // 2026-07-26 안드로이드 파리티: 안드는 TYPE_LINEAR_ACCELERATION에 1.0 m/s²(≈0.102 G)를 쓰는데 iOS는
-  // 0.03 G라 3.4배 더 민감 → 작은 움직임에도 무진동 타이머가 리셋돼 "잠듦" 판정이 안드보다 훨씬 어려웠다.
-  // 안드와 동일 민감도로 맞춘다(1.0 m/s² ÷ 9.81 ≈ 0.10 G). userAcceleration은 G 단위.
-  private let MOTION_EPSILON = 0.10
-
-  // 무진동 "판정"용 상태(모두 lock으로 보호). start()에서 JS가 넘긴 임계값을 받아 콜백에서 검사한다.
-  private var stillnessMs: Double = 0     // 기본 임계값(ms)
-  private var shortMs: Double = 0         // 오디오 라우트 끊김 후 단축 임계값(ms)
-  private var audioLost = false           // 이어폰/BT 탈착 보조신호 → 임계값 단축
-  private var fired = false               // 1회성 — 감지 후 재발신 방지(stop/재start 전까지)
+  // 중력 Z축(단위 벡터, G) — deviceMotion.gravity에서 매 콜백 갱신. "기기가 눕혀졌는가"만 보므로
+  // Android의 TYPE_LINEAR_ACCELERATION 움직임-크기 감지와 달리 거치대/책상 오탐과 무관하다.
+  private var lastGravityZ: Double = 0
 
   public func definition() -> ModuleDefinition {
     Name("PaceSleep")
-    // onSleepDetected: 무진동이 임계값 초과 → {stillMs}(무진동 지속시간)와 함께 발신. JS는 Date.now()-stillMs로
-    // "실제 잠든 시각"을 계산해 DB ended_at에 기록. (CACurrentMediaTime은 단조시계라 벽시계 변환은 JS에서.)
-    Events("onAudioRouteLost", "onSleepDetected")
+    Events("onAudioRouteLost")
 
-    // 마지막 움직임 이후 경과(ms). 관찰 중이 아니면 0(JS가 "정지 시간"으로 판단).
-    Function("millisSinceMotion") { () -> Double in
+    // 마지막으로 관측된 중력 Z축(G, -1..1). 관찰 중이 아니면 0. |값| >= SLEEP_FLAT_GRAVITY_RATIO
+    // (useSleepGuard.ios.ts, Android SLEEP_FLAT_GRAVITY_Z=7.5/9.81의 비율 환산)면 "눕혀짐"으로 판정.
+    Function("gravityZ") { () -> Double in
       self.lock.lock(); defer { self.lock.unlock() }
-      guard self.observing else { return 0 }
-      return max(0, (CACurrentMediaTime() - self.lastMotionAt) * 1000.0)
+      return self.observing ? self.lastGravityZ : 0
+    }
+
+    // 충전 중인가 — Android의 isCharging()(BatteryManager)과 동등한 보조 신호. 별도 권한 불필요.
+    Function("isCharging") { () -> Bool in
+      let state = UIDevice.current.batteryState
+      return state == .charging || state == .full
     }
 
     // 백그라운드 수면 감지(방법 B) — sinceEpochMs(세션 시작)부터 지금까지 모션활동 이력을 조회해,
@@ -111,7 +111,7 @@ public class PaceSleepModule: Module {
       }
     }
 
-    AsyncFunction("start") { (stillnessMs: Double, shortMs: Double, promise: Promise) in
+    AsyncFunction("start") { (promise: Promise) in
       guard self.motion.isDeviceMotionAvailable else {
         promise.resolve(nil)
         return
@@ -122,35 +122,21 @@ public class PaceSleepModule: Module {
       }
       self.lock.lock()
       self.observing = true
-      self.lastMotionAt = CACurrentMediaTime() // 시작 시점은 "방금 움직임 있음"으로 초기화
-      self.stillnessMs = stillnessMs
-      self.shortMs = shortMs > 0 ? shortMs : stillnessMs
-      self.audioLost = false
-      self.fired = false
+      self.lastGravityZ = 0
       self.lock.unlock()
 
-      self.motion.deviceMotionUpdateInterval = 0.5 // 2Hz — 무진동 판정엔 충분, 배터리 절약
+      UIDevice.current.isBatteryMonitoringEnabled = true
+
+      self.motion.deviceMotionUpdateInterval = 0.5 // 2Hz — 분 단위 판정이라 초 단위 정밀도 불필요, 배터리 절약
       self.motion.startDeviceMotionUpdates(to: self.queue) { [weak self] data, _ in
-        guard let self = self, let a = data?.userAcceleration else { return }
-        let mag = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot()
-        let now = CACurrentMediaTime()
+        guard let self = self, let gravity = data?.gravity else { return }
         self.lock.lock()
-        if mag > self.MOTION_EPSILON {
-          self.lastMotionAt = now // 움직임 → 무진동 타이머 리셋
-        }
-        // 무진동 판정을 여기서(콜백은 백그라운드 오디오 재생 중에도 0.5s마다 옴 → 화면 꺼져도 감지).
-        let stillMs = (now - self.lastMotionAt) * 1000.0
-        let threshold = self.audioLost ? self.shortMs : self.stillnessMs
-        let shouldFire = self.observing && !self.fired && threshold > 0 && stillMs >= threshold
-        if shouldFire { self.fired = true }
+        self.lastGravityZ = gravity.z
         self.lock.unlock()
-        if shouldFire {
-          // 이벤트는 메인 스레드에서 발신(Expo 규약). stillMs를 넘겨 JS가 벽시계 잠든 시각으로 환산.
-          DispatchQueue.main.async { self.sendEvent("onSleepDetected", ["stillMs": stillMs]) }
-        }
       }
 
       // 오디오 라우트 변경 관찰 — 이어폰/블루투스가 빠지면(.oldDeviceUnavailable) 보조 신호 발신.
+      // 판정 자체(무입력 경과·단계 전이·타임아웃)는 JS가 소유하므로 여기선 그대로 전달만 한다.
       self.routeObserver = NotificationCenter.default.addObserver(
         forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
       ) { [weak self] note in
@@ -158,8 +144,7 @@ public class PaceSleepModule: Module {
         guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
         if reason == .oldDeviceUnavailable {
-          self.lock.lock(); self.audioLost = true; self.lock.unlock() // 임계값 단축(네이티브 판정에 반영)
-          self.sendEvent("onAudioRouteLost", [:]) // 이미 .main 큐(JS 로깅/보조용)
+          self.sendEvent("onAudioRouteLost", [:]) // 이미 .main 큐
         }
       }
       promise.resolve(nil)
@@ -172,6 +157,7 @@ public class PaceSleepModule: Module {
         NotificationCenter.default.removeObserver(obs)
         self.routeObserver = nil
       }
+      UIDevice.current.isBatteryMonitoringEnabled = false
       self.lock.lock()
       self.observing = false
       self.lock.unlock()
@@ -184,6 +170,7 @@ public class PaceSleepModule: Module {
         NotificationCenter.default.removeObserver(obs)
         self.routeObserver = nil
       }
+      UIDevice.current.isBatteryMonitoringEnabled = false
     }
   }
 }

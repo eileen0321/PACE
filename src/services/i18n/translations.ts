@@ -469,6 +469,10 @@ export const translations = {
       emptyQueueMessage: 'No Shorts to show.',
       loadFailedMessage: 'Failed to load Shorts.',
       sleepBlackout: 'Looks like you dozed off · tap to exit',
+      // 2026-08-04 iOS 수면감지 2단계(Android parity, afb8573→새 설계) — "아직 보고 계세요?" 확인 팝업.
+      sleepPromptTitle: 'Are you still watching?',
+      sleepPromptBody: "No activity for a while. If there's no response, this session will end shortly.",
+      sleepPromptButton: 'Keep watching',
     },
 
     // 2026-07-26 감사 발견 — quick-control-sheet.tsx(Home 빠른 설정에서 여는 Daily Limit/Break
@@ -507,6 +511,11 @@ export const translations = {
       // 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓엔 힌트 문구가
       // 있었는데 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지, 뭘 눌러야 하는지" 정보가 부족했다.
       bluetoothRemoteHint: 'Any Bluetooth remote with a volume button works — just pair it and press.',
+      // 2026-08-05 §4-6 후속 — iOS는 "이 볼륨 버튼이 리모컨인지 헤드폰인지"를 확정적으로 구분 못 해
+      // 유명 오디오 기기(에어팟 등)가 연결돼 있으면 리모컨 눌러도 그냥 볼륨으로 처리한다(오탐 완화
+      // 트레이드오프, PaceVolumeKeyModule.swift 참고) — 그래서 리모컨과 블루투스 이어폰을 동시에 쓸
+      // 수 없다는 걸 가이드에 미리 알린다(사장님 지시).
+      bluetoothRemoteHintIOSCaveat: "Note: can't be used at the same time as Bluetooth headphones (AirPods etc.) — the remote's button presses just adjust volume while they're connected.",
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: 'Recommended',
       nextShort: 'Next Short',
@@ -936,6 +945,9 @@ export const translations = {
       emptyQueueMessage: '표시할 Shorts가 없습니다.',
       loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
       sleepBlackout: '잠드신 것 같아요 · 탭하면 종료',
+      sleepPromptTitle: '아직 보고 계세요?',
+      sleepPromptBody: '한동안 아무 조작이 없어서 여쭤봐요. 반응이 없으면 잠시 후 자동으로 종료할게요.',
+      sleepPromptButton: '계속 볼게요',
     },
 
     quickControl: {
@@ -967,6 +979,7 @@ export const translations = {
       // 2026-08-01 — 사용자 지시("설명 좀더 상세히") → 바로 다음 지적("너무 길어", "좀 적당히
       // 조절을 못하냐") — 손짓 hint와 길이가 맞게 한 문장으로 줄였다.
       bluetoothRemoteHint: '볼륨 버튼 있는 블루투스 리모컨이면 뭐든 페어링만 하면 바로 돼요.',
+      bluetoothRemoteHintIOSCaveat: '단, 블루투스 이어폰(에어팟 등)과 동시에는 못 써요 — 이어폰이 연결돼 있으면 리모컨을 눌러도 그냥 볼륨만 바뀌어요.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: '추천',
       nextShort: '다음 영상',

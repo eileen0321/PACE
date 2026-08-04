@@ -40,8 +40,12 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders
-/ios
+# 2026-08-05 §4-6(MAC_HANDOFF_ANDROID_IMPL) — ios/도 android/와 같은 이유로 더 이상 통째로 무시하지
+# 않는다. 안드가 7/29에 겪은 것과 똑같은 위험이 iOS에도 그대로 있었다: prebuild로 매번 새로 생성되는
+# 폴더로 취급해 전체를 무시하면, 그 안의 수동 네이티브 수정(Info.plist 권한 문구, entitlements,
+# Podfile 커스터마이징 등)이 한 번도 커밋된 적이 없어 다음 prebuild/클린빌드마다 조용히 사라진다.
+# ios/.gitignore(Expo 표준 템플릿, build/·Pods/·xcuserdata·DerivedData·.xcode.env.local만 무시)가
+# 이미 올바르게 구성돼 있으므로 루트에서 더 손댈 것 없이 블랭킷 무시만 걷어내면 된다.
 
 # 2026-07-29 — android/는 더 이상 통째로 무시하지 않는다. 이전엔 prebuild로 매번 새로 생성되는
 # 폴더로 취급해 전체를 무시했는데, 그 안의 네이티브 커스터마이징(styles.xml 시스템 바 색 등)이
@@ -54,6 +58,9 @@ yarn-error.*
 /android/.kotlin/
 /android/local.properties
 /android/app/debug.keystore
+
+# local Expo module build artifacts (source under modules/*/ios is tracked, build output isn't)
+modules/**/ios/build/
 
 # local Expo module build artifacts (source under modules/*/android is tracked, build output isn't)
 modules/**/android/build/

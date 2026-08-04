@@ -80,8 +80,11 @@ export async function showRewardedAd(): Promise<RewardedAdResult> {
     // 2026-08-04 — 사용자가 실제로 준 동의를 따른다(services/ads/adsConsent.ts의
     // canRequestPersonalizedAds 주석 참고). 예전엔 비개인화가 하드코딩돼 있어, 개인화에 동의한
     // 사용자에게도 계속 비개인화 광고만 나가며 수익이 깎이고 있었다.
+    // 2026-08-05 §4-2(MAC_HANDOFF) — canRequestPersonalizedAds는 UMP(GDPR) 동의일 뿐 애플 ATT 동의가
+    // 아니다. 이 앱은 ATTrackingManager 프롬프트를 안 띄우므로 iOS에서 IDFA 기반 개인화 광고를
+    // 요청하면 트래킹 동의 없이 추적하는 셈이라 애플 정책 위반이다 — iOS는 항상 비개인화만 요청한다.
     const rewarded = RewardedAd!.createForAdRequest(getAdUnitId(), {
-      requestNonPersonalizedAdsOnly: !useAdsConsentStore.getState().canRequestPersonalizedAds,
+      requestNonPersonalizedAdsOnly: Platform.OS === 'ios' ? true : !useAdsConsentStore.getState().canRequestPersonalizedAds,
     });
     const unsubscribers: Array<() => void> = [];
     const finish = (result: RewardedAdResult) => {

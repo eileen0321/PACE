@@ -17,12 +17,16 @@ import { create } from 'zustand';
 type AdsConsentState = {
   canRequestAds: boolean;
   privacyOptionsRequired: boolean;
-  setConsent: (v: { canRequestAds: boolean; privacyOptionsRequired: boolean }) => void;
+  // 2026-08-04 — 개인화 광고 요청 가능 여부(services/ads/adsConsent.ts 주석 참고). 기본값 false는
+  // "거부"가 아니라 "아직 판단 전"이다 — 판단 전에는 안전한 비개인화로 나간다.
+  canRequestPersonalizedAds: boolean;
+  setConsent: (v: { canRequestAds: boolean; privacyOptionsRequired: boolean; canRequestPersonalizedAds: boolean }) => void;
 };
 
 export const useAdsConsentStore = create<AdsConsentState>((set) => ({
   canRequestAds: false,
   privacyOptionsRequired: false,
-  setConsent: ({ canRequestAds, privacyOptionsRequired }) =>
-    set({ canRequestAds, privacyOptionsRequired }),
+  canRequestPersonalizedAds: false,
+  setConsent: ({ canRequestAds, privacyOptionsRequired, canRequestPersonalizedAds }) =>
+    set({ canRequestAds, privacyOptionsRequired, canRequestPersonalizedAds }),
 }));

@@ -54,6 +54,21 @@ export async function launchPlatformApp(platform: AppShieldTarget | undefined) {
   // 커스텀 스킴 우선순위를 뒤집어 App Link(webFallback)를 먼저 시도.
   // 2026-07-28 Instagram은 정반대로 확인돼(위 주석) `preferScheme` 플래그로 플랫폼별 우선순위를
   // 분리한다 — 모든 플랫폼에 같은 순서를 강제하면 한쪽은 항상 틀린 화면으로 열린다.
+  // 2026-08-04 사장님 지적("각자 폰의 유튜브 앱 쇼츠 누른 것과 같은 URL이어야 유튜브 개인 알고리즘을
+  // 타는 거 아냐") — 맞는 지적이었다. 아래 webFallback(`www.youtube.com/shorts`, 영상 ID 없음)은
+  // **Shorts 탭이 아니라 홈 탭 컨텍스트에서 쇼츠 하나**를 트는 것이었다(실기기 스크린샷으로 확인:
+  // 우리 URL로 열면 하단 네비가 "홈" 선택 상태, 사용자가 Shorts 탭을 직접 누르면 "Shorts" 선택 상태
+  // 이고 나오는 영상도 완전히 달랐다). 유튜브 앱이 자체 등록해둔 전용 액션으로 진짜 Shorts 탭에
+  // 진입한다(PaceOverlayModule.openYouTubeShortsFeed 주석에 근거·검증 과정 상세). 실패하면 기존
+  // URL 경로로 그대로 폴백하므로 회귀 위험이 없다.
+  if (platform === 'youtube') {
+    try {
+      const { PaceOverlay } = require('../../modules/pace-overlay');
+      if (PaceOverlay?.openYouTubeShortsFeed?.()) return;
+    } catch {
+      // 네이티브 미링크(Dev Client 빌드 전) 등 — 아래 기존 경로로 폴백.
+    }
+  }
   const [first, second] = app.preferScheme
     ? [app.androidScheme, app.webFallback]
     : [app.webFallback, app.androidScheme];

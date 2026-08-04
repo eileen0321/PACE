@@ -61,7 +61,27 @@ export type AdsConsentResult = {
   canRequestAds: boolean;
   /** 설정에 "광고 개인정보 설정" 진입점을 보여야 하는가(TCF 요구사항). */
   privacyOptionsRequired: boolean;
+  /**
+   * 2026-08-04 출시 전 광고 감사에서 발견한 수익 손실 — 개인화 광고를 요청해도 되는가.
+   *
+   * 그동안 배너/보상형 양쪽 모두 `requestNonPersonalizedAdsOnly: true`가 **하드코딩**돼 있었다.
+   * 그건 UMP 동의 흐름이 아예 없던 시절(감사 H1)의 안전장치였는데, 2026-08-03에 동의 흐름을
+   * 붙이고도 이 값이 그대로 남아서 **개인화에 동의한 사용자에게도 계속 비개인화 광고만** 나가고
+   * 있었다. 구글 문서는 비개인화가 "수익이 낮은 트레이드오프"라고 명시하고, SDK 기본 동작은
+   * 개인화다 — 즉 지금은 아무 이유 없이 전 사용자의 수익을 깎고 있던 셈이다. 한국을 포함한 EEA
+   * 밖 사용자는 애초에 GDPR 대상이 아니라 동의 자체가 불필요한데도 똑같이 손해를 봤다.
+   */
+  canRequestPersonalizedAds: boolean;
 };
+
+// TCF `IABTCF_PurposeConsents`는 목적 1..N의 동의 여부를 '0'/'1' 문자로 이어붙인 문자열이다
+// (인덱스 0 = 목적 1). 개인화 광고에 필요한 목적:
+//   1) 기기 정보 저장/접근  3) 개인화 광고 프로필 생성  4) 개인화 광고 선택
+// 셋 중 하나라도 없으면 개인화로 요청하면 안 된다.
+function hasPersonalizedAdsPurposes(purposeConsents: string): boolean {
+  const consented = (purposeIndex: number) => purposeConsents.charAt(purposeIndex - 1) === '1';
+  return consented(1) && consented(3) && consented(4);
+}
 
 /**
  * 앱 시작 시 1회(콜드 스타트마다). 동의 정보를 갱신하고 필요하면 폼을 띄운 뒤 결과를 돌려준다.
@@ -78,17 +98,38 @@ export async function ensureAdsConsent(): Promise<AdsConsentResult> {
     // 네이티브 모듈이 없으면 광고 자체가 없다 — 게이팅이 의미 없으므로 true로 열어둔다(광고 컴포넌트
     // 쪽에서 모듈 부재를 이미 따로 처리한다). false로 두면 모듈 미링크 개발 빌드에서 배너 자리가
     // 영영 안 잡혀 레이아웃 디버깅이 어려워진다.
-    return { canRequestAds: true, privacyOptionsRequired: false };
+    return { canRequestAds: true, privacyOptionsRequired: false, canRequestPersonalizedAds: false };
   }
   try {
     // requestInfoUpdate + loadAndShowConsentFormIfRequired를 합친 공식 헬퍼.
     // 동의가 필요 없는 지역이면 폼 없이 즉시 반환된다.
     const info = await AdsConsent.gatherConsent(debugOptions());
+    // 개인화 광고 가능 여부(위 canRequestPersonalizedAds 주석 참고).
+    // GDPR 비대상 지역(한국 등)이면 TCF 동의 개념 자체가 없으므로 SDK 기본 동작대로 개인화가 맞다.
+    // GDPR 대상이면 사용자가 실제로 고른 목적 동의를 읽어 판단한다 — "동의했는데도 비개인화"(수익
+    // 손실)와 "거부했는데 개인화"(정책 위반) 양쪽을 다 피하려면 이 값을 직접 확인하는 수밖에 없다.
+    let canRequestPersonalizedAds = false;
+    if (info.canRequestAds === true) {
+      try {
+        const gdprApplies = await AdsConsent.getGdprApplies();
+        if (!gdprApplies) {
+          canRequestPersonalizedAds = true;
+        } else {
+          const purposeConsents = await AdsConsent.getPurposeConsents();
+          canRequestPersonalizedAds = purposeConsents.length > 0 && hasPersonalizedAdsPurposes(purposeConsents);
+        }
+      } catch (e) {
+        // 판단 근거를 못 얻으면 안전한 쪽(비개인화)으로 — 수익보다 정책 준수가 우선이다.
+        console.warn('[adsConsent] 개인화 가능 여부 판단 실패 — 비개인화로 폴백:', e);
+        canRequestPersonalizedAds = false;
+      }
+    }
     const result = {
       canRequestAds: info.canRequestAds === true,
       privacyOptionsRequired:
         PrivacyOptionsStatus != null &&
         info.privacyOptionsRequirementStatus === PrivacyOptionsStatus.REQUIRED,
+      canRequestPersonalizedAds,
     };
     if (__DEV__) {
       // 검증용 — 폼이 안 떴을 때 "동의가 불필요한 지역으로 판정됐는지" vs "폼 자체가 없는지"를
@@ -98,13 +139,14 @@ export async function ensureAdsConsent(): Promise<AdsConsentResult> {
         '[adsConsent] status=' + info.status +
         ' formAvailable=' + info.isConsentFormAvailable +
         ' canRequestAds=' + info.canRequestAds +
-        ' privacyOptions=' + info.privacyOptionsRequirementStatus
+        ' privacyOptions=' + info.privacyOptionsRequirementStatus +
+        ' personalized=' + canRequestPersonalizedAds
       );
     }
     return result;
   } catch (e) {
     console.warn('[adsConsent] 동의 흐름 실패(광고만 영향, 앱은 계속):', e);
-    return { canRequestAds: false, privacyOptionsRequired: false };
+    return { canRequestAds: false, privacyOptionsRequired: false, canRequestPersonalizedAds: false };
   }
 }
 

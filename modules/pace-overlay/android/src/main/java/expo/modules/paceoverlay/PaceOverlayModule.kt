@@ -464,6 +464,11 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.watchedSeconds(context) } ?: 0
     }
 
+    // 2026-08-04 — UMP 동의 결과를 네이티브 보상형 광고에 전달(PaceRewardedAdActivity 주석 참고).
+    Function("setAdsConsent") { canRequestAds: Boolean, personalized: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setAdsConsent(context, canRequestAds, personalized) }
+    }
+
     Function("setUseRealAds") { useRealAds: Boolean ->
       appContext.reactContext?.let { context -> PaceOverlayService.setUseRealAds(context, useRealAds) }
     }
@@ -592,6 +597,41 @@ class PaceOverlayModule : Module() {
           Log.w("PaceOverlayModule", "resumeThirdPartyApp($packageName) failed", e)
         }
       }
+    }
+
+    // 2026-08-04 사장님 지적("쇼츠 with PACE는 각자 폰의 유튜브 앱 쇼츠 누른 것과 같아야 유튜브
+    // 개인 알고리즘을 타는 거 아냐") — 정확한 지적이었고, 실기기 비교로 확인했다.
+    //
+    // 기존에는 `https://www.youtube.com/shorts`(영상 ID 없는 URL)를 열었는데, 그건 **Shorts 탭이
+    // 아니라 홈 탭 컨텍스트에서 쇼츠 하나**를 트는 것이었다. 실기기 스크린샷 비교:
+    //   우리 URL          → 하단 네비 "홈" 선택 상태, 판다 영상
+    //   vnd.youtube://shorts → 역시 "홈" 선택 상태 (후보였으나 실패)
+    //   Shorts 탭 직접 탭  → 하단 네비 "Shorts" 선택 상태, 전혀 다른 영상
+    // 즉 사용자가 앱에서 Shorts를 누를 때 보는 그 개인화 피드와 다른 경로였다.
+    //
+    // 공개 문서에는 Shorts 탭 딥링크가 없다(웹 검색으로 확인). 그래서 기기에 설치된 유튜브 APK의
+    // 인텐트 필터를 직접 덤프해서(`dumpsys package com.google.android.youtube`) 유튜브가 스스로
+    // 등록해둔 전용 액션을 찾았다:
+    //   Action: "com.google.android.youtube.action.open.shorts"  (Shell$HomeActivity가 처리)
+    // 실기기 실행 결과 하단 네비 "Shorts"가 선택된 진짜 Shorts 탭 피드로 진입하는 것을 확인했다.
+    //
+    // ⚠️ 이건 공개 API가 아니라 유튜브 앱 내부 액션이라 언젠가 사라질 수 있다 — 실패하면 false를
+    // 돌려주고 호출부(constants/supportedApps.ts)가 기존 URL 방식으로 폴백한다.
+    Function("openYouTubeShortsFeed") {
+      appContext.reactContext?.let { context ->
+        try {
+          val intent = Intent("com.google.android.youtube.action.open.shorts").apply {
+            setPackage("com.google.android.youtube")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          // 처리할 액티비티가 없으면(유튜브 미설치/구버전/액션 제거) 여기서 예외 → 폴백.
+          context.startActivity(intent)
+          true
+        } catch (e: Exception) {
+          Log.w("PaceOverlayModule", "openYouTubeShortsFeed failed — falling back to URL", e)
+          false
+        }
+      } ?: false
     }
 
     Function("cacheAuthToken") { token: String ->

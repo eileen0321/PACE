@@ -169,16 +169,58 @@ export default function RootLayout() {
   //     깜빡임 없이 뜬다")와도 일치한다. 부팅 중에 띄우면 스플래시 위로 폼이 겹쳐 보인다.
   // requestInfoUpdate는 매 앱 실행마다 호출하는 것이 구글 권장이다(동의 상태·재동의 필요 여부가
   // 서버에서 바뀔 수 있음) — 이 효과는 스플래시가 끝날 때마다, 즉 콜드 스타트마다 한 번 돈다.
+  //
+  // 2026-08-04 사장님 지적("출시앱에 광고가 아예 안 뜬다") 조사 중 발견 — 이 효과는 예전에 스플래시
+  // 종료 시 **딱 한 번만** 돌았다. ensureAdsConsent()는 절대 throw하지 않는 대신 실패를
+  // canRequestAds=false로 돌려주는데(부팅 순간의 일시적 네트워크 실패로 충분히 일어난다), 재시도가
+  // 없어서 그 한 번이 실패하면 앱을 완전히 껐다 켜기 전까지 배너가 영영 안 떴다 — 일시적 문제 하나로
+  // 그 세션 광고 수익이 0이 된다. AdBanner의 로드 실패 백오프(2026-07-28)와 같은 이유로 여기도 넣는다.
+  //
+  // 재시도해도 사용자를 귀찮게 하지 않는다: gatherConsent()는 동의 상태가 이미 정해진 사용자에게 폼을
+  // 다시 띄우지 않는다(loadAndShowConsentFormIfRequired가 "필요할 때만" 띄운다). 그래서 false가
+  // "EEA에서 거부"든 "호출 실패"든 구분 없이 같은 경로로 재시도해도 안전하다.
+  //
+  // 성공하면 즉시 멈춘다. 포그라운드 복귀는 네트워크가 회복됐을 가능성이 가장 큰 시점이라 백오프와
+  // 별개로 한 번 더 트리거한다(위 sleepBackfill/크레딧 reconcile 효과와 동일한 패턴).
   const setAdsConsent = useAdsConsentStore((s) => s.setConsent);
   useEffect(() => {
     if (showAnimatedSplash) return;
     let cancelled = false;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight = false;
+    let attempt = 0;
+    const MAX_ATTEMPTS = 4; // 5 → 10 → 20 → 40s. 그 뒤로는 포그라운드 복귀에만 기댄다.
+    const run = async () => {
+      // 이미 성공했으면 다시 부를 이유가 없다. 구글이 권장하는 "매 앱 실행 1회"는 콜드 스타트마다
+      // 도는 이 효과 자체가 이미 만족한다.
+      if (cancelled || inFlight || useAdsConsentStore.getState().canRequestAds) return;
+      inFlight = true;
       const result = await ensureAdsConsent(); // throw 안 함 — 실패 시 canRequestAds=false로 온다
-      if (!cancelled) setAdsConsent(result);
-    })();
+      inFlight = false;
+      if (cancelled) return;
+      setAdsConsent(result);
+      // 2026-08-04 — 쇼츠 위 보상형 광고는 네이티브 액티비티가 띄우는데, 그쪽은 UMP 동의를 스스로
+      // 알 방법이 없어 그동안 동의를 무시하고 요청하고 있었다(bluetoothService.android.ts 주석 참고).
+      // 동의가 확정되는 이 지점에서 네이티브로 넘겨준다.
+      if (Platform.OS === 'android') {
+        bluetoothService.setAdsConsent(result.canRequestAds, result.canRequestPersonalizedAds).catch(() => {});
+      }
+      if (result.canRequestAds || attempt >= MAX_ATTEMPTS) return;
+      const delay = 5000 * Math.pow(2, attempt);
+      attempt += 1;
+      timer = setTimeout(run, delay);
+    };
+    run();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s !== 'active' || useAdsConsentStore.getState().canRequestAds) return;
+      attempt = 0; // 네트워크가 회복됐을 수 있으니 백오프를 처음부터 다시
+      if (timer) { clearTimeout(timer); timer = null; }
+      run();
+    });
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
+      try { sub.remove(); } catch {}
     };
   }, [showAnimatedSplash, setAdsConsent]);
 

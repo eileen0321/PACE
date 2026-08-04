@@ -213,6 +213,12 @@ export interface BluetoothService {
    * 안 밀어주면 출시 빌드에서도 테스트 광고만 나간다(수익 0 + AdMob 정책 위반). iOS는 no-op.
    */
   setUseRealAds(useRealAds: boolean): Promise<void>;
+  /**
+   * 2026-08-04 — UMP 동의 결과를 네이티브 보상형 광고(쇼츠 위 "5분 더")에 전달한다. 동의는 JS만
+   * 알고 네이티브는 모르는데 그 배선이 없어, EEA 사용자가 개인화를 거부해도 네이티브 광고는 개인화로
+   * 요청되고 있었다(정책 위반 소지). iOS는 네이티브 광고 경로 자체가 없어 no-op.
+   */
+  setAdsConsent(canRequestAds: boolean, personalized: boolean): Promise<void>;
   setAvailableCredits(credits: number): Promise<void>;
   /**
    * 네이티브 팝업에서 크레딧으로 연장한 분량을 1회성으로 회수(읽으면 즉시 리셋). 실제 잔액 차감은

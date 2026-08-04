@@ -1148,6 +1148,15 @@ class PaceOverlayService : Service() {
     // 수익 경로인데 수익이 0이고, 실사용자에게 테스트 광고를 서빙하는 것 자체가 AdMob 정책 위반이다.
     // 네이티브는 EXPO_PUBLIC_USE_REAL_ADS 같은 JS 빌드 플래그를 스스로 알 방법이 없으므로, 기존
     // is_premium/available_credits와 똑같이 JS가 부팅 시 한 번 밀어준다(_layout.tsx 참고).
+    // 2026-08-04 — UMP 동의는 JS만 알고 네이티브는 모른다. 안 밀어주면 네이티브 보상형이 동의를
+    // 무시하고 개인화로 요청한다(EEA 정책 위반 소지) — PaceRewardedAdActivity 주석 참고.
+    fun setAdsConsent(context: Context, canRequestAds: Boolean, personalized: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PaceRewardedAdActivity.PREF_ADS_CAN_REQUEST, canRequestAds)
+        .putBoolean(PaceRewardedAdActivity.PREF_ADS_PERSONALIZED, personalized)
+        .apply()
+    }
+
     fun setUseRealAds(context: Context, useRealAds: Boolean) {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         .putBoolean(PaceRewardedAdActivity.PREF_USE_REAL_ADS, useRealAds).apply()
@@ -2265,6 +2274,11 @@ class PaceOverlayService : Service() {
 
   private fun showExtendChoiceOverlay() {
     hideExtendChoice()
+    // 2026-08-04 사장님 지적("광고 로딩이 느려") — 예전엔 사용자가 "광고 보고 5분 더"를 누른 그 순간
+    // RewardedAd.load()를 시작해 네트워크 왕복을 그대로 기다려야 했다. 이 팝업이 뜬 시점이면 광고를
+    // 볼 가능성이 높으므로 지금 미리 받아둔다(PaceRewardedAdActivity.preload 주석 참고). 구글도
+    // 보상형은 사전 로드를 권장한다(배너는 반대로 정책상 금지). 실패해도 기존 온디맨드 경로가 살아있다.
+    PaceRewardedAdActivity.preload(applicationContext)
     val ko = java.util.Locale.getDefault().language == "ko"
     val d = resources.displayMetrics.density
     val credits = availableCredits(applicationContext)

@@ -77,8 +77,12 @@ export async function showRewardedAd(): Promise<RewardedAdResult> {
   return new Promise((resolve) => {
     let settled = false;
     let earned = false;
-    // 감사 H1 — 배너와 동일하게 비개인화 광고로 요청(EEA UMP 동의 요건 회피, no-ATT 정합).
-    const rewarded = RewardedAd!.createForAdRequest(getAdUnitId(), { requestNonPersonalizedAdsOnly: true });
+    // 2026-08-04 — 사용자가 실제로 준 동의를 따른다(services/ads/adsConsent.ts의
+    // canRequestPersonalizedAds 주석 참고). 예전엔 비개인화가 하드코딩돼 있어, 개인화에 동의한
+    // 사용자에게도 계속 비개인화 광고만 나가며 수익이 깎이고 있었다.
+    const rewarded = RewardedAd!.createForAdRequest(getAdUnitId(), {
+      requestNonPersonalizedAdsOnly: !useAdsConsentStore.getState().canRequestPersonalizedAds,
+    });
     const unsubscribers: Array<() => void> = [];
     const finish = (result: RewardedAdResult) => {
       if (settled) return;

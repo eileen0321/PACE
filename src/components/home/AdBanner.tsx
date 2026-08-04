@@ -43,12 +43,27 @@ export function AdBanner() {
   // EEA 밖에서는 동의가 불필요해 즉시 resolved=true가 되므로 한국 사용자 체감 지연은 사실상 없다
   // (store/useAdsConsentStore.ts, services/ads/adsConsent.ts 참고).
   const canRequestAds = useAdsConsentStore((s) => s.canRequestAds);
+  // 2026-08-04 출시 전 광고 감사 — 아래 requestOptions가 `requestNonPersonalizedAdsOnly: true`로
+  // 하드코딩돼 있었다. UMP 동의 흐름이 없던 시절의 안전장치인데 동의를 붙인 뒤에도 그대로 남아,
+  // 개인화에 동의한 사용자에게까지 계속 비개인화 광고만 나가 수익을 깎고 있었다
+  // (services/ads/adsConsent.ts의 canRequestPersonalizedAds 주석 참고).
+  const canRequestPersonalizedAds = useAdsConsentStore((s) => s.canRequestPersonalizedAds);
   const visible = adModuleAvailable && !failed && canRequestAds;
 
   // 2026-07-28 리서치(광고 2.4) — 예전엔 첫 로드 실패에 failed=true로 박아 세션 내내 배너가 영영 안 떴다
   // (일시적 no-fill 하나로 수익 0). 구글 권고대로 지수 백오프+지터로 재시도(5→10→20→40s 상한 60s) —
   // failed를 잠깐 true로 뒀다 타이머로 되돌리면 BannerAd가 remount되며 새로 로드한다. 성공 시 attempt 리셋.
-  const handleFailed = () => {
+  //
+  // 2026-08-04 — 실패 사유를 남긴다. 사장님의 "출시앱에 광고가 아예 안 뜬다" 신고를 조사할 때, 이
+  // 핸들러가 아무것도 로깅하지 않아 **출시빌드에서 원인을 알아낼 방법이 전혀 없었다**(배너는 조용히
+  // 언마운트되고 `__DEV__` 로그는 릴리즈 번들에서 사라진다). AdMob 에러 코드는 원인을 바로 가른다:
+  //   0 INTERNAL_ERROR / 1 INVALID_REQUEST(광고 단위 ID·앱 설정 문제) / 2 NETWORK_ERROR /
+  //   3 NO_FILL(요청은 정상인데 내보낼 광고가 없음 — 신규 앱·미승인·app-ads.txt 미검증에서 흔함)
+  // `__DEV__` 게이트를 일부러 걸지 않았다 — 출시빌드에서 진단이 안 되는 게 이번 문제의 핵심이었다.
+  const handleFailed = (error?: unknown) => {
+    console.warn('[AdBanner] 광고 로드 실패 unit=' + BANNER_UNIT_ID + ' err=' + String(
+      (error as { code?: string; message?: string } | undefined)?.code ?? error
+    ) + ' msg=' + String((error as { message?: string } | undefined)?.message ?? ''));
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     const n = Math.min(attemptRef.current, 3); // 0,1,2,3 → 5,10,20,40s
     const base = 5000 * Math.pow(2, n);
@@ -78,9 +93,12 @@ export function AdBanner() {
       <BannerAd
         unitId={BANNER_UNIT_ID}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-        // 감사 H1(2026-07-27) — UMP 동의 플로우가 없어 EEA에서 개인화 광고는 정책 위반이 될 수 있다.
-        // 비개인화로 요청해 동의 없이도 안전하게 서빙(앱의 NSPrivacyTracking=false/ATT 미사용 정합).
-        requestOptions={{ requestNonPersonalizedAdsOnly: true }}
+        // 2026-08-04 — 사용자가 실제로 준 동의를 따른다(위 canRequestPersonalizedAds 주석 참고).
+        // GDPR 비대상(한국 등)이거나 개인화 목적에 동의했으면 개인화, 그 외에는 비개인화.
+        requestOptions={{ requestNonPersonalizedAdsOnly: !canRequestPersonalizedAds }}
+        // 배너의 key에 이 값을 물려 동의 결과가 바뀌면(폼을 다시 열어 설정을 변경한 경우) 다음 광고가
+        // 새 설정으로 나가게 한다 — requestOptions는 이미 요청된 광고에 소급 적용되지 않는다.
+        key={canRequestPersonalizedAds ? 'personalized' : 'npa'}
         onAdLoaded={() => { attemptRef.current = 0; }}
         onAdFailedToLoad={handleFailed}
       />

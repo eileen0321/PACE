@@ -23,6 +23,7 @@ let PaceOverlay: {
   getFocusSessionDurationMinutes(): number;
   setIsPremium(isPremium: boolean): void;
   setUseRealAds(useRealAds: boolean): void;
+  setAdsConsent(canRequestAds: boolean, personalized: boolean): void;
   setAvailableCredits(credits: number): void;
   consumePendingCreditSpend(): number;
   setSleepStillnessMinutes(minutes: number): void;
@@ -151,6 +152,18 @@ export const bluetoothService: BluetoothService = {
       PaceOverlay?.setUseRealAds(useRealAds);
     } catch (e) {
       console.warn('[bluetoothService.android] setUseRealAds failed', e);
+    }
+  },
+
+  // 2026-08-04 출시 전 광고 감사 — 네이티브 보상형(PaceRewardedAdActivity)이 AdRequest를 그냥
+  // build()해서 **UMP 동의를 전혀 반영하지 않고 있었다**. 동의는 JS(services/ads/adsConsent.ts)만
+  // 알고 네이티브는 모르는데 그 배선이 없었던 것 — EEA 사용자가 개인화를 거부해도 이 광고는
+  // 개인화로 요청됐다(정책 위반 소지). 동의 결과가 확정될 때마다 밀어준다.
+  async setAdsConsent(canRequestAds: boolean, personalized: boolean) {
+    try {
+      PaceOverlay?.setAdsConsent(canRequestAds, personalized);
+    } catch (e) {
+      console.warn('[bluetoothService.android] setAdsConsent failed', e);
     }
   },
 

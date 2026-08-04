@@ -36,6 +36,76 @@ class PaceRewardedAdActivity : Activity() {
     const val EXTRA_EXTEND_MINUTES = "extendMinutes"
     // JS가 부팅 시 밀어주는 값(EXPO_PUBLIC_USE_REAL_ADS) — 네이티브는 이 플래그를 스스로 모른다.
     const val PREF_USE_REAL_ADS = "use_real_ads"
+    // 2026-08-04 출시 전 광고 감사 — 아래 로드가 AdRequest.Builder().build()로만 나가서 **사용자 동의를
+    // 전혀 반영하지 않고 있었다**. UMP 동의는 JS(services/ads/adsConsent.ts)만 알고 네이티브는 모르는데,
+    // 그 값을 밀어주는 배선이 없었던 것. 결과적으로 EEA 사용자가 개인화를 거부해도 이 네이티브 광고는
+    // 개인화로 요청됐다(정책 위반 소지). use_real_ads와 동일한 경로로 JS가 부팅 시 밀어준다.
+    const val PREF_ADS_CAN_REQUEST = "ads_can_request"
+    const val PREF_ADS_PERSONALIZED = "ads_personalized"
+
+    // 2026-08-04 사장님 지적("광고 로딩이 느려") — 예전엔 사용자가 "광고 보고 5분 더"를 누른 **그 순간**
+    // RewardedAd.load()를 시작해서, 네트워크 왕복이 끝날 때까지 아무것도 안 보이는 상태로 기다려야 했다.
+    // 구글 문서도 "지연을 줄이려면 미리 로드하라"고 명시한다(배너는 정책상 사전 로드 금지지만 보상형은
+    // 권장). 선택 팝업이 뜨는 순간(showExtendChoiceOverlay) 미리 받아두면, 실제로 누를 때는 이미 준비돼
+    // 있어 즉시 재생된다.
+    @Volatile private var preloadedAd: RewardedAd? = null
+    @Volatile private var preloadedAtMs = 0L
+    @Volatile private var preloading = false
+    // 구글 보상형 광고는 로드 후 약 1시간이면 만료된다 — 만료 직전 것을 쓰면 show가 실패하므로
+    // 넉넉히 앞당겨 폐기하고 새로 받는다.
+    private const val PRELOAD_TTL_MS = 45 * 60 * 1000L
+
+    private fun adUnitId(context: Context): String {
+      val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      return if (prefs.getBoolean(PREF_USE_REAL_ADS, false)) REAL_UNIT_ID else TEST_UNIT_ID
+    }
+
+    // 동의를 못 받았으면 요청 자체를 하지 않는다(EEA에서 동의 없는 요청은 정책 위반). 개인화 여부는
+    // JS가 판단해 밀어준 값을 그대로 따른다 — 판단 전(기본값)에는 안전한 비개인화로 나간다.
+    private fun buildAdRequest(context: Context): AdRequest? {
+      val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+      // 기본값 true — JS가 아직 안 밀어준 구버전 상태에서 광고가 아예 안 나가는 회귀를 막는다
+      // (동의가 필요한 지역이면 JS가 false를 밀어준다).
+      if (!prefs.getBoolean(PREF_ADS_CAN_REQUEST, true)) return null
+      val builder = AdRequest.Builder()
+      if (!prefs.getBoolean(PREF_ADS_PERSONALIZED, false)) {
+        // 구글 공식 방식 — AdMobAdapter에 npa=1 extra를 실어 비개인화로 요청한다.
+        val extras = Bundle().apply { putString("npa", "1") }
+        builder.addNetworkExtrasBundle(com.google.ads.mediation.admob.AdMobAdapter::class.java, extras)
+      }
+      return builder.build()
+    }
+
+    /** 선택 팝업이 뜰 때 미리 불러둔다(PaceOverlayService.showExtendChoiceOverlay에서 호출). */
+    fun preload(context: Context) {
+      if (preloading) return
+      if (preloadedAd != null && System.currentTimeMillis() - preloadedAtMs < PRELOAD_TTL_MS) return
+      val request = buildAdRequest(context) ?: return
+      preloading = true
+      RewardedAd.load(context.applicationContext, adUnitId(context), request, object : RewardedAdLoadCallback() {
+        override fun onAdFailedToLoad(error: LoadAdError) {
+          preloading = false
+          preloadedAd = null
+          // 실패해도 조용히 둔다 — 사용자가 실제로 누르면 그때 다시 로드하는 기존 경로가 살아있다.
+          Log.i(TAG, "preload failed (will load on demand): ${error.code} ${error.message}")
+        }
+
+        override fun onAdLoaded(ad: RewardedAd) {
+          preloading = false
+          preloadedAd = ad
+          preloadedAtMs = System.currentTimeMillis()
+          Log.i(TAG, "preload ready")
+        }
+      })
+    }
+
+    /** 미리 받아둔 광고를 1회성으로 꺼낸다(만료됐으면 버리고 null). */
+    private fun takePreloaded(): RewardedAd? {
+      val ad = preloadedAd ?: return null
+      preloadedAd = null
+      if (System.currentTimeMillis() - preloadedAtMs >= PRELOAD_TTL_MS) return null
+      return ad
+    }
 
     fun start(context: Context, extendMinutes: Int) {
       val intent = Intent(context, PaceRewardedAdActivity::class.java).apply {
@@ -70,10 +140,26 @@ class PaceRewardedAdActivity : Activity() {
       window.isStatusBarContrastEnforced = false
     }
     extendMinutes = intent?.getIntExtra(EXTRA_EXTEND_MINUTES, 5) ?: 5
-    val prefs = getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
-    val unitId = if (prefs.getBoolean(PREF_USE_REAL_ADS, false)) REAL_UNIT_ID else TEST_UNIT_ID
 
-    RewardedAd.load(this, unitId, AdRequest.Builder().build(), object : RewardedAdLoadCallback() {
+    // 2026-08-04 — 선택 팝업이 뜰 때 미리 받아둔 광고가 있으면 네트워크 왕복 없이 즉시 재생한다
+    // (위 preload 주석 참고). 없거나 만료됐으면 기존대로 지금 로드한다.
+    val ready = takePreloaded()
+    if (ready != null) {
+      Log.i(TAG, "using preloaded ad")
+      showAd(ready)
+      return
+    }
+
+    val request = buildAdRequest(this)
+    if (request == null) {
+      // 동의를 못 받아 요청 자체가 불가 — 사용자를 기다리게 하지 말고 즉시 닫는다.
+      Log.w(TAG, "ads consent not granted — skipping request")
+      PaceOverlayService.showAdFailedToast(applicationContext)
+      finishOnce()
+      return
+    }
+
+    RewardedAd.load(this, adUnitId(this), request, object : RewardedAdLoadCallback() {
       override fun onAdFailedToLoad(error: LoadAdError) {
         // 광고가 안 뜨는 건 사용자 잘못이 아니므로 벌주지 않는다 — 조용히 닫고, 사용자가 다시
         // 시도할 수 있게 한다(연장은 주지 않음: 광고를 실제로 못 봤으므로).
@@ -82,23 +168,30 @@ class PaceRewardedAdActivity : Activity() {
         finishOnce()
       }
 
-      override fun onAdLoaded(ad: RewardedAd) {
-        ad.fullScreenContentCallback = object : FullScreenContentCallback() {
-          override fun onAdDismissedFullScreenContent() = finishOnce()
-          override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.AdError) {
-            Log.w(TAG, "rewarded ad show failed: ${error.code} ${error.message}")
-            PaceOverlayService.showAdFailedToast(applicationContext)
-            finishOnce()
-          }
-        }
-        ad.show(this@PaceRewardedAdActivity) {
-          // 보상 획득 — Focus Session을 extendMinutes만큼 연장한다. extendFocusSession이 내부에서
-          // 워처 재시작 + 마감시각 저장 + 토스트 + 원래 보던 앱으로 복귀까지 담당한다.
-          Log.i(TAG, "reward earned -> extendFocusSession($extendMinutes)")
-          PaceOverlayService.extendFocusSession(applicationContext, extendMinutes)
-        }
-      }
+      override fun onAdLoaded(ad: RewardedAd) = showAd(ad)
     })
+  }
+
+  private fun showAd(ad: RewardedAd) {
+    ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+      override fun onAdDismissedFullScreenContent() {
+        // 다음 연장을 대비해 미리 받아둔다 — 연속으로 광고를 보며 이어가는 흐름에서 두 번째부터도
+        // 기다림이 없어진다.
+        preload(applicationContext)
+        finishOnce()
+      }
+      override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.AdError) {
+        Log.w(TAG, "rewarded ad show failed: ${error.code} ${error.message}")
+        PaceOverlayService.showAdFailedToast(applicationContext)
+        finishOnce()
+      }
+    }
+    ad.show(this) {
+      // 보상 획득 — Focus Session을 extendMinutes만큼 연장한다. extendFocusSession이 내부에서
+      // 워처 재시작 + 마감시각 저장 + 토스트 + 원래 보던 앱으로 복귀까지 담당한다.
+      Log.i(TAG, "reward earned -> extendFocusSession($extendMinutes)")
+      PaceOverlayService.extendFocusSession(applicationContext, extendMinutes)
+    }
   }
 
   private fun finishOnce() {

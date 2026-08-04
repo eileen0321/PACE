@@ -88,35 +88,59 @@ export async function getTodayUsageMinutes(userId: string): Promise<number> {
 // 이번 주 총합을 내는데, 여기도 duration_seconds만 더해 진행 중인 세션의 실제 경과시간이 빠져
 // 있었다(오늘 항목만 영향, 지난 날짜엔 열린 행이 있을 수 없음). getTodayUsageMinutes와 동일한
 // 경과초 계산 + 4시간 상한을 여기도 적용해 "이번 주" 합계와 "최장 연속 시청"이 진행 중에도 정확하게.
+// 2026-08-04 — getTodayUsageMinutes를 실시청 기준으로 바꾸면서 이 함수를 같이 안 고쳐서, 분석 화면
+// 안에서 자가 다시 갈려 있었다: "기록 범위 → Pace가 기록한 시간"은 실시청인데, 같은 화면의
+// "This Week" 히어로·주간 그래프·"Longest Session"은 이 함수를 쓰므로 진행 중인 세션이 여전히
+// 벽시계로 잡혔다 — 사장님이 지적하신 바로 그 모순을 한쪽만 없앤 꼴이었다. 두 함수의 기준을 맞춘다.
 export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
   const db = await getDb();
+  // 진행 중(ended_at IS NULL)인 행은 SQL 집계에서 빼고 아래에서 실시청 시간으로 따로 더한다
+  // (실시청 시간은 DB가 아니라 네이티브만 아는 값 — getTodayUsageMinutes와 동일한 구조).
   const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
     `SELECT date(started_at, 'localtime') as date,
-            SUM(
-              CASE WHEN ended_at IS NULL
-                THEN MIN(14400, MAX(0, CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)))
-                ELSE duration_seconds
-              END
-            ) / 60 as total_minutes,
+            SUM(CASE WHEN ended_at IS NOT NULL THEN duration_seconds ELSE 0 END) / 60 as total_minutes,
             SUM(videos_watched) as total_videos,
-            MAX(
-              CASE WHEN ended_at IS NULL
-                THEN MIN(14400, MAX(0, CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)))
-                ELSE duration_seconds
-              END
-            ) as longest
+            MAX(CASE WHEN ended_at IS NOT NULL THEN duration_seconds ELSE 0 END) as longest
      FROM viewing_sessions
      WHERE user_id = ? AND date(started_at, 'localtime') >= date('now', '-6 days', 'localtime')
      GROUP BY date(started_at, 'localtime')
      ORDER BY date ASC`,
     [userId]
   );
-  return rows.map((r) => ({
+  const stats: DailyStats[] = rows.map((r) => ({
     date: r.date,
     totalMinutes: r.total_minutes ?? 0,
     totalVideos: r.total_videos ?? 0,
     longestSessionSeconds: r.longest ?? 0,
   }));
+
+  const open = await db.getFirstAsync<{ date: string; startedAt: string }>(
+    `SELECT date(started_at, 'localtime') as date, started_at as startedAt
+     FROM viewing_sessions
+     WHERE user_id = ? AND ended_at IS NULL AND date(started_at, 'localtime') >= date('now', '-6 days', 'localtime')
+     ORDER BY started_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (open) {
+    const wallClock = Math.min(
+      14400,
+      Math.max(0, Math.round((Date.now() - new Date(open.startedAt).getTime()) / 1000))
+    );
+    // iOS는 null → 기존과 동일하게 벽시계(회귀 없음). Android는 실시청 시간, 벽시계를 상한으로.
+    const watched = await overlayService.getWatchedSeconds().catch(() => null);
+    const seconds = watched != null ? Math.min(wallClock, Math.max(0, watched)) : wallClock;
+    const entry = stats.find((s) => s.date === open.date);
+    if (entry) {
+      entry.totalMinutes += Math.floor(seconds / 60);
+      entry.longestSessionSeconds = Math.max(entry.longestSessionSeconds, seconds);
+    } else {
+      // 오늘 닫힌 세션이 하나도 없어 그 날짜 행 자체가 없는 경우 — 진행 중인 세션만으로 행을 만든다
+      // (예전 SQL은 open 행도 GROUP BY에 포함했으므로 이 행이 있었다. 빠뜨리면 회귀가 된다).
+      stats.push({ date: open.date, totalMinutes: Math.floor(seconds / 60), totalVideos: 0, longestSessionSeconds: seconds });
+      stats.sort((a, b) => a.date.localeCompare(b.date));
+    }
+  }
+  return stats;
 }
 
 // 2026-07-18: "지난주 대비 X%" 트렌드 표시를 위한 지난주(오늘로부터 -13일 ~ -7일) 집계 —

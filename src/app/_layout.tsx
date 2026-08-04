@@ -221,9 +221,23 @@ export default function RootLayout() {
         const nativeExpiry = Platform.OS === 'android' ? await overlayService.consumeExpired().catch(() => null) : null;
         const endedAtMs = nativeExpiry?.sleepOnsetAtMs ?? Date.now();
         const endedAtIso = new Date(endedAtMs).toISOString();
+        // 2026-08-04 — 여기도 벽시계로 duration을 기록하고 있었다. 사장님 결정("알약 기준이 맞지
+        // 않아?")으로 사용 시간의 기준을 실시청으로 통일했는데, 프로세스가 죽어 고아가 된 세션만
+        // 예전 기준으로 남으면 같은 통계 안에 두 자가 섞인다 — 하필 "폰을 켜둔 채 방치했다가 프로세스가
+        // 죽은" 경우가 벽시계와 실시청의 차이가 가장 크게 벌어지는 상황이라 왜곡도 제일 크다.
+        // 네이티브의 watched_seconds는 prefs에 있어 프로세스가 죽어도 남아있고, 이 정리는 콜드스타트에
+        // 새 세션이 시작되기 전에 돌므로(settingsReady 직후) 아직 죽은 세션의 값이 그대로 들어있다.
+        // ⚠️ 단 그 값은 "가장 최근 세션 하나"의 누적이라, 고아가 여러 개면 어느 것에 귀속되는지 알 수
+        // 없다 — 그 경우엔 기존처럼 벽시계로 폴백한다(잘못 귀속시키는 것보다 낫다). iOS도 null → 폴백.
+        const orphanWatchedSeconds = orphans.length === 1 && Platform.OS === 'android'
+          ? await overlayService.getWatchedSeconds().catch(() => null)
+          : null;
         for (const session of orphans) {
           const startedAtMs = new Date(session.startedAt).getTime();
-          const durationSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
+          const wallClockSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
+          const durationSeconds = orphanWatchedSeconds != null
+            ? Math.min(wallClockSeconds, Math.max(0, orphanWatchedSeconds))
+            : wallClockSeconds;
           await closeOrphanedSession(session.id, durationSeconds, endedAtIso);
         }
         // 2026-07-26 사용자 지적("유튜브는 PIP로 계속 도는데 Pace 추적/오버레이는 안 살아남", "화면을
@@ -360,12 +374,22 @@ export default function RootLayout() {
         if (!openSessions.length) return;
         const endedAtMs = nativeExpiry.sleepOnsetAtMs ?? Date.now();
         const endedAtIso = new Date(endedAtMs).toISOString();
+        // 2026-08-04 — 네이티브 만료(수면감지/한도도달)로 닫는 이 경로도 벽시계를 쓰고 있었다.
+        // 사용 시간 기준을 실시청으로 통일했으므로(위 고아 정리 경로와 동일한 이유) 여기도 맞춘다.
+        // 이 시점엔 네이티브가 세션을 막 끝낸 직후라 watched_seconds가 그 세션의 값 그대로다.
+        // 열린 세션이 여러 개면 어느 것에 귀속되는지 알 수 없어 벽시계로 폴백한다.
+        const expiredWatchedSeconds = openSessions.length === 1
+          ? await overlayService.getWatchedSeconds().catch(() => null)
+          : null;
         for (const session of openSessions) {
           const startedAtMs = new Date(session.startedAt).getTime();
           // 감사 MEDIUM3(2026-07-27) — 콜드스타트 정리 경로(위)와 동일하게 4h 상한을 둔다. 예전엔 이
           // 전경 경로만 clamp가 없어, sleepOnsetAtMs 없이 reason만 온 경우 endedAtMs=now라 오래 열려있던
           // 세션이 통짜 wall-clock으로 기록돼 통계/일일한도를 오염시킬 수 있었다.
-          const durationSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
+          const wallClockSeconds = Math.max(0, Math.min(4 * 3600, Math.round((endedAtMs - startedAtMs) / 1000)));
+          const durationSeconds = expiredWatchedSeconds != null
+            ? Math.min(wallClockSeconds, Math.max(0, expiredWatchedSeconds))
+            : wallClockSeconds;
           await endSessionRow(session.id, durationSeconds, session.videosWatched ?? 0, nativeExpiry.reason, nativeExpiry.sleepOnsetAtMs ? endedAtIso : undefined);
         }
         useSessionStore.getState().finish();

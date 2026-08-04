@@ -43,9 +43,32 @@ type ShortsQueueState = {
   refill: () => Promise<void>;
 };
 
+// 2026-08-04 사장님 지적("같은 영상 나오고 사람들 다" — 아이폰으로 확인, "정책만 그럼 둘 다 공통이고
+// 주소 다르게 되는 거 아니냐") — 정확한 지적이었고, 여기가 빠져 있었다.
+//
+// 프록시(/api/youtube-shorts)는 CDN 캐시로 응답을 공유한다 — 그게 "사용자가 100명이든 100만명이든
+// YouTube 트래픽 동일"을 만드는 이 설계의 핵심이라 없앨 수 없다. 그런데 앱이 그 목록을 **받은 순서
+// 그대로 0번부터** 재생해서, 같은 캐시 창의 사용자는 전원 같은 첫 영상을 봤다.
+//
+// 해결 원칙은 Android 진입 정책과 같다: **서버는 재료(목록)를, 기기가 순서를 정한다.** 서버가 목록을
+// 정하는 한 캐시를 공유하는 사용자끼리 같아지는 건 구조적으로 못 피하지만, 기기에서 섞으면 같은
+// 응답을 받아도 각자 다른 영상부터 보게 된다. 서버 캐시 이점은 그대로 유지된다.
+//
+// Fisher–Yates — 편향 없는 표준 셔플. 매 실행마다 새로 섞이므로 같은 사람이 다시 열어도 순서가 다르다.
+function shuffle<T>(list: T[]): T[] {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 function dedupeAppend(queue: YouTubeShort[], incoming: YouTubeShort[], watched: string[]): YouTubeShort[] {
   const seen = new Set([...queue.map((s) => s.videoId), ...watched]);
-  const fresh = incoming.filter((s) => !seen.has(s.videoId));
+  // 들어온 페이지 안에서만 섞는다 — 이미 재생 중인 앞부분(queue)의 순서를 건드리면 보고 있던 영상이
+  // 튀므로, 새로 붙는 부분만 섞어 이어붙인다.
+  const fresh = shuffle(incoming.filter((s) => !seen.has(s.videoId)));
   return [...queue, ...fresh];
 }
 

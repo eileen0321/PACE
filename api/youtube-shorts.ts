@@ -30,36 +30,50 @@ const SHORTS_FILTER = 'EgIYAQ%3D%3D';
 // 지역을 KR로 줘도 영어 영상이 나온다. 지역 설정은 "같은 검색어에 대해 어느 지역 결과를 우선할지"를
 // 정할 뿐이고, 검색어가 언어를 결정한다. 언어별 검색어 목록을 따로 둬야 실제로 그 나라 콘텐츠가 나온다.
 // 목록에 없는 언어는 영어로 폴백(전 세계 대상 앱이라 영어가 가장 넓은 커버리지).
+// ⚠️ 2026-08-05 사장님 결정 — 컨셉 전면 교체("재미있는 걸로 가, 저게 뭐야").
+//
+// 예전 목록은 018b5bd에서 "차분한 힐링/공예 위주"로 정한 것이었다(ASMR·도예·종이접기·라떼아트·
+// 뜨개질·수족관·목공…). 두 가지가 문제였다:
+//  1) 재미가 없다. 절제 앱이라도 볼 이유가 없으면 안 본다.
+//  2) **그게 "중간중간 영어 영상"의 원인이었다.** 저 주제들은 말이 필요 없는 시각적 콘텐츠라
+//     국적이 없다 — 실측으로 한/일/미 세 나라가 완전히 같은 3개 주제(커피·뜨개질·수족관)를
+//     받았다. 시드 자체는 한국어로 잘 뽑혀도(12개 중 11개), "라떼아트" 관련 영상은 대부분
+//     해외 채널이라 유튜브 알고리즘이 한두 개 만에 영어권으로 넘어간다.
+//
+// 그래서 이번엔 **번역이 아니라 나라마다 다른 목록**으로 짠다. 고르는 기준은 "그 나라 창작자가
+// 압도적인 주제"다 — 먹방·예능·아이돌 무대·성대모사·공감물처럼 언어와 문화에 묶인 것들.
+// 그래야 시드 이후 유튜브 알고리즘이 그 나라 안에 머문다(위 28~31행의 "검색어가 언어를 결정한다"와
+// 같은 원리를, 이번엔 언어가 아니라 **문화권**까지 밀어붙인 것).
 const CATEGORIES_BY_LANG: Record<string, string[]> = {
   en: [
-    'satisfying', 'asmr', 'nature relaxing', 'cooking', 'art process',
-    'diy craft', 'origami', 'pottery', 'latte art', 'baking',
-    'gardening', 'space facts', 'ocean', 'calligraphy', 'science experiment',
-    'woodworking', 'coffee', 'knitting', 'aquarium', 'hiking',
+    'funny videos', 'mukbang', 'comedy sketch', 'music performance', 'dance challenge',
+    'street interview', 'skit', 'impressions', 'song cover', 'funny pets',
+    'gaming highlights', 'cooking hacks', 'reaction', 'vlog', 'couple goals',
+    'office humor', 'school humor', 'prank', 'workout motivation', 'magic tricks',
   ],
   ko: [
-    '힐링 영상', 'ASMR', '자연 풍경', '요리', '그림 그리기',
-    '핸드메이드', '종이접기', '도예', '라떼아트', '베이킹',
-    '식물 가꾸기', '우주 이야기', '바다', '캘리그라피', '과학 실험',
-    '목공', '커피 내리기', '뜨개질', '수족관', '등산',
+    '웃긴 영상', '먹방', '예능 하이라이트', '케이팝 무대', '댄스 챌린지',
+    '길거리 인터뷰', '상황극', '성대모사', '노래 커버', '반려동물 웃긴',
+    '게임 하이라이트', '요리 꿀팁', '리액션', '브이로그', '커플 일상',
+    '회사 공감', '학교 공감', '몰래카메라', '운동 자극', '마술',
   ],
   ja: [
-    '癒し', 'ASMR', '自然 風景', '料理', '絵を描く',
-    'ハンドメイド', '折り紙', '陶芸', 'ラテアート', 'お菓子作り',
-    'ガーデニング', '宇宙', '海', '書道', '科学実験',
-    '木工', 'コーヒー', '編み物', 'アクアリウム', '登山',
+    '面白い動画', '大食い', 'バラエティ 名場面', 'アイドル ステージ', 'ダンス チャレンジ',
+    '街頭インタビュー', 'コント', 'ものまね', '歌ってみた', '猫 面白い',
+    'ゲーム実況', '料理 裏技', 'リアクション', 'Vlog', 'カップル 日常',
+    '会社 あるある', '学校 あるある', 'ドッキリ', '筋トレ', 'マジック',
   ],
   es: [
-    'satisfactorio', 'asmr', 'naturaleza relajante', 'cocina', 'proceso de arte',
-    'manualidades', 'origami', 'cerámica', 'arte latte', 'repostería',
-    'jardinería', 'datos del espacio', 'océano', 'caligrafía', 'experimento científico',
-    'carpintería', 'café', 'tejer', 'acuario', 'senderismo',
+    'videos graciosos', 'mukbang', 'sketch de comedia', 'actuación musical', 'reto de baile',
+    'entrevista callejera', 'parodia', 'imitaciones', 'cover de canción', 'mascotas graciosas',
+    'gameplay destacado', 'trucos de cocina', 'reacción', 'vlog', 'pareja',
+    'humor de oficina', 'humor escolar', 'broma', 'motivación gym', 'trucos de magia',
   ],
   pt: [
-    'satisfatório', 'asmr', 'natureza relaxante', 'culinária', 'processo de arte',
-    'artesanato', 'origami', 'cerâmica', 'latte art', 'confeitaria',
-    'jardinagem', 'curiosidades espaço', 'oceano', 'caligrafia', 'experimento científico',
-    'marcenaria', 'café', 'tricô', 'aquário', 'trilha',
+    'vídeos engraçados', 'mukbang', 'esquete de comédia', 'performance musical', 'desafio de dança',
+    'entrevista na rua', 'paródia', 'imitações', 'cover de música', 'pets engraçados',
+    'melhores momentos gameplay', 'dicas de culinária', 'reação', 'vlog', 'casal',
+    'humor de escritório', 'humor escolar', 'pegadinha', 'motivação treino', 'truques de mágica',
   ],
 };
 function categoriesFor(hl: string): string[] {

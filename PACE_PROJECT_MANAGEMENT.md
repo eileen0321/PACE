@@ -5187,3 +5187,68 @@ touchend → JSON.stringify → 브릿지 → RN onMessage → goNext()
   Mac이 실기기로 한번 켜보고 판단할 것. 켜진다면 합성 스와이프 자체가 불필요해진다.
 - **리스트 모드의 풀 리로드**(원인 4)는 "특정 videoId를 열어야 한다"는 요구에서 오는 구조적 비용이라
   이번에 안 건드렸다. 개선하려면 리스트도 유튜브 피드 위에서 처리하는 다른 설계가 필요.
+
+### 2026-08-05 — Windows 세션 (🔴 안드로이드 "첫 영상이 계속 같다" **원인 3건 규명 + 수정**)
+
+사장님: "넌 첫 영상 같은 거 나오는 거 찾아봐. 맥은 수정했어 이거."
+
+#### 먼저 — 맥의 수정은 안드로이드에 적용되지 않는다
+
+맥의 `42f250a`는 `src/app/feed/index.tsx` **한 파일**만 고쳤다. 그건 **인앱 Pace Feed(iOS WebView)** 화면이다.
+안드로이드의 "Shorts with PACE"는 그 화면을 거치지 않는다 — `constants/supportedApps.ts:78`이
+`openShortsFeed()`로 **유튜브 앱을 인텐트/URL로 띄운다**(iOS에선 `Platform.OS !== 'android'`로 즉시 false).
+즉 **두 플랫폼은 코드 경로가 아예 다르고, 안드로이드 경로는 아무도 안 고친 상태였다.**
+
+#### 서버는 정상이었다 (먼저 배제)
+
+`https://pace-strides7.vercel.app/api/shorts-entry?gl=KR&hl=ko` 실호출로 확인:
+- `strategies[0]` = `{kind:'url', url:'.../shorts/{videoId}', videoIdSource:['serverPool','userSaved']}` ✅
+- `seedPool` 12개 ✅
+
+즉 **서버 정책은 "매번 새 영상"이 맞았고, 앱이 그걸 못 쓰고 있었다.** 원인은 전부 클라이언트에 있었다.
+
+#### 원인 3건 (`src/services/shortsEntry.ts`)
+
+**① 앱 내장 `DEFAULT_POLICY`가 서버와 정반대 순서였다 (핵심)**
+서버는 `9cbfef5`에서 "누를 때마다 새 영상"을 위해 `url{videoId}`를 1순위로 올렸는데, **앱 기본값은
+`nativeAction`이 1순위인 옛 순서 그대로**였다. `nativeAction`(open.shorts)은 Shorts 탭을 "열" 뿐이라
+**유튜브가 보던 자리를 이어서** 보여준다 = 매번 같은 영상. 게다가 `openShortsFeed`는 첫 성공에서
+`return true` 하므로, 이 기본값이 쓰이는 한 시드 경로에는 **영영 도달하지 못한다**.
+→ 서버와 순서 일치(url{videoId} → nativeAction → 맨 URL). `videoIdSource`도 `['serverPool','userSaved']`로.
+
+**② `STORAGE_KEY`를 안 올려서 옛 정책이 기기에 살아 있었다**
+전략 순서가 바뀌었는데 키는 `v3` 그대로였다. `prefetchShortsEntryPolicy`는 부팅 때 **저장값을 먼저
+`cached`에 올린다**(새 응답을 못 받아도 쓰라고). 그래서 `9cbfef5` 이전에 정책을 캐시한 기기는 부팅
+직후 **옛 순서(nativeAction 1순위)** 를 들고 있다가, 새 응답이 오기 전에 탭하면 그대로 같은 영상.
+→ `v3` → `v4`로 올려 옛 정책 폐기.
+
+**③ 안드로이드 경로에만 시드 레이스 대응이 빠져 있었다**
+iOS `getShortsSeedVideoId()`엔 `dfd4fb7`로 "seedPool 비었으면 프리페치 기다렸다 재시도"가 들어갔는데,
+**안드로이드 `openShortsFeed()`엔 그게 없어** `resolveVideoId`가 null이면 곧바로 `continue` →
+`nativeAction` → 같은 영상. 부팅 프리페치보다 탭이 빠르면 매번 재현된다.
+→ 공용 헬퍼 `resolveVideoIdWithPrefetch(sources, waitMs)`로 통일. **단 안드로이드는 이 함수가 곧
+"유튜브 앱 열기"라 무한 대기가 곧 체감 지연** — `SEED_WAIT_MS = 1200ms`로 제한하고 못 받으면 다음
+전략으로 넘어간다(iOS는 로딩 커버가 떠 있어 기존대로 `null`=끝까지 대기).
+
+#### 검증 상태
+- ✅ `npx tsc --noEmit` 통과 / ✅ 서버 응답 실호출 확인(위)
+- ❌ **안드로이드 실기기 미검증** — 기기의 APK가 이 수정 이전 빌드다. 새로 설치해야 확인 가능.
+  확인 방법: Shorts with PACE를 연속 3~4회 눌러 **매번 다른 영상**에서 시작하는지.
+  (①만 고쳐도 대부분 해결되지만, ②는 **기존 사용자 기기에서만** 재현되므로 재설치 시 자동 해소된다.)
+
+### 2026-08-05 — iOS "다음 영상 넘어가면 멈췄다가 플레이" (선재 버그, 미수정)
+
+사장님이 스와이프 수정 후 보고 → **"원래 있었던 거야"**(내 스와이프 수정이 원인 아님).
+
+수정 과정에서 내가 `unmuteOnce`에 "이미 재생 중이면 즉시 return"을 넣었었는데 **되돌렸다.** 근거 없는
+최적화였고(이미 재생 중인 요소의 `play()`는 사실상 no-op이라 아끼는 값이 없다), 그 `play()`는 매 터치
+핸들러 콜스택 안에서 도는 것이라 **iOS 자동재생 정책의 유저 제스처 문맥 갱신**을 겸한다.
+
+**추정 원인(미검증)** — `attach()`가 URL 변화마다 다시 도는데, `v.muted=false; v.volume=1.0`을 **먼저**
+하고 그 다음 `v.play()`를 한다. iOS에서 제스처 밖에 무음 해제를 하면 WebKit이 재생을 멈출 수 있고,
+그러면 `.catch`가 `v.muted=true`로 되돌려 다시 `play()` → **멈칫 후 재생**. 순서를 바꾸면(재생 먼저,
+확인 후 unmute) 사라질 가능성.
+
+**🍎 Mac 확인 방법(싸게 판별됨)** — dev 빌드에서 `__PACE_DIAG__`가 켜지므로, 전환마다
+`AUDIO audible-blocked`가 찍히면 위 추정이 맞다. `audible-ok`만 찍히면 다른 원인이니 더 파야 한다.
+Windows에선 iOS 빌드가 안 돼 여기서 더 못 좁힌다.

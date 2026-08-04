@@ -47,20 +47,38 @@ type Strategy =
 // 이걸로 시드(첫 영상)를 기기가 고른다 — 공유 큐(전원 동일·외국) 대신. 이후는 WebView SWIPE로 유튜브 알고리즘.
 type EntryPolicy = { strategies: Strategy[]; seedPool: string[]; ios?: { videoIdSource: VideoIdSource[] } };
 
+// ⚠️ 2026-08-05 사장님 지적("안드로이드는 계속 첫 영상이 같다") — 여기 순서가 서버 정책(api/shorts-entry.ts)과
+// **정반대**였다. 서버는 9cbfef5에서 "누를 때마다 새 영상"을 위해 url{videoId}를 1순위로 올렸는데, 앱 내장
+// 기본값은 nativeAction이 1순위인 옛 순서 그대로 남아 있었다. nativeAction은 유튜브 Shorts 탭을 "열" 뿐이라
+// 유튜브가 보던 자리를 이어서 보여준다 = 매번 같은 영상. 게다가 openShortsFeed는 첫 성공에서 return하므로
+// 이 기본값이 쓰이는 한 시드 경로에는 영영 도달하지 못한다.
+//
+// 기본값은 "서버를 못 받았을 때"만 쓰이지만 그 경우가 드물지 않다 — 프리페치 실패/타임아웃, 오프라인 첫 실행,
+// 그리고 **부팅 프리페치보다 탭이 빠른 레이스**. 사장님 기기가 계속 같은 영상이던 게 이 경로다.
+// 서버 정책과 순서를 일치시킨다. (서버가 살아 있으면 어차피 덮어써지므로 중복이 아니라 안전망 정합이다.)
 const DEFAULT_POLICY: EntryPolicy = {
   strategies: [
+    // 1순위 — 시작 영상을 명시해 매번 새 영상에서 출발한다. 그 뒤 스와이프는 유튜브 알고리즘이 이어간다.
+    // videoIdSource도 서버와 같은 serverPool 우선: userSaved는 보통 몇 개뿐이라 1순위로 두면 누를 때마다
+    // 같은 영상이 나오고, 이미 저장해 본 영상이라 "새로 시작"에도 안 맞는다(서버 주석 58~63행과 동일 근거).
+    { kind: 'url', url: 'https://www.youtube.com/shorts/{videoId}', videoIdSource: ['serverPool', 'userSaved'] },
+    // 시작 영상을 못 구했을 때의 폴백 — Shorts 탭엔 확실히 들어가지만 보던 자리를 이어서 연다.
     {
       kind: 'nativeAction',
       action: 'com.google.android.youtube.action.open.shorts',
       packageName: 'com.google.android.youtube',
     },
-    { kind: 'url', url: 'https://www.youtube.com/shorts/{videoId}', videoIdSource: ['userSaved', 'serverPool'] },
-    { kind: 'url', url: 'https://www.youtube.com/shorts' },
+    { kind: 'url', url: 'https://www.youtube.com/shorts' }, // 최후 폴백(홈 탭으로 떨어짐)
   ],
   seedPool: [],
 };
 
-const STORAGE_KEY = 'pace.shortsEntryPolicy.v3';
+// ⚠️ 2026-08-05 v3 → v4. 서버 전략 순서가 9cbfef5에서 바뀌었는데(nativeAction 1순위 → url{videoId}
+// 1순위) 저장 키를 안 올렸다. 그래서 그 전에 정책을 캐시한 기기는 부팅 때 **옛 순서를 먼저 올려두고**
+// (아래 prefetch가 stored를 즉시 cached에 반영한다) 새 응답이 도착하기 전에 탭하면 nativeAction으로
+// 열려 유튜브가 보던 자리 = 매번 같은 영상이 나왔다. 키를 올려 옛 정책을 버린다 — 새 키로 처음
+// 뜰 땐 저장값이 없어 (수정된) DEFAULT_POLICY로 동작하므로 옛 순서가 되살아날 경로가 없다.
+const STORAGE_KEY = 'pace.shortsEntryPolicy.v4';
 const VIDEO_ID_RE = /^[\w-]{11}$/;
 let cached: EntryPolicy = DEFAULT_POLICY;
 
@@ -178,15 +196,31 @@ async function resolveVideoId(sources: VideoIdSource[]): Promise<string | null> 
  * null이면(신규 사용자 + 서버 seedPool 빈 경우) 호출부가 기존 공유 큐로 폴백한다.
  */
 export async function getShortsSeedVideoId(): Promise<string | null> {
-  const sources = cached.ios?.videoIdSource ?? ['userSaved', 'serverPool'];
-  let picked = await resolveVideoId(sources);
-  // seedPool이 아직 안 받아진 상태(부팅 프리페치 레이스 — 첫 진입이 프리페치보다 빠른 경우)면
-  // 한 번 프리페치를 기다렸다 재시도한다. 이게 없으면 첫 진입이 빈 seedPool→null→공유 큐(외국)로 폴백했다.
-  if (!picked && cached.seedPool.length === 0) {
-    await prefetchShortsEntryPolicy();
-    picked = await resolveVideoId(sources);
-  }
-  return picked;
+  // 기본 출처 순서는 서버와 동일하게 serverPool 우선(2026-08-05) — userSaved를 앞에 두면 저장 영상이
+  // 몇 개뿐인 사용자는 누를 때마다 같은 영상이 나온다(서버 주석 58~63행과 동일 근거).
+  return resolveVideoIdWithPrefetch(cached.ios?.videoIdSource ?? ['serverPool', 'userSaved'], null);
+}
+
+// 탭 순간 seedPool이 비어 있을 때 얼마나 기다릴지. 안드로이드는 이 함수가 곧 "유튜브 앱 열기"라
+// 무한정 기다리면 그게 체감 지연이 된다 — 짧게만 기다리고 못 받으면 다음 전략으로 넘어간다.
+const SEED_WAIT_MS = 1200;
+
+/**
+ * 시드 레이스 방지 — seedPool이 아직 비어 있으면(부팅 프리페치보다 탭이 빨랐거나 프리페치 실패)
+ * 프리페치를 한 번 기다렸다 재시도한다. 이게 없으면 첫 진입이 곧바로 폴백 전략으로 떨어진다
+ * (안드로이드에선 그게 nativeAction = 유튜브가 보던 자리 = **매번 같은 영상**).
+ * @param waitMs null이면 끝까지 기다린다(iOS 인앱 피드 — 이미 로딩 커버가 떠 있어 대기가 보이지 않는다).
+ */
+async function resolveVideoIdWithPrefetch(
+  sources: VideoIdSource[],
+  waitMs: number | null
+): Promise<string | null> {
+  const picked = await resolveVideoId(sources);
+  if (picked || cached.seedPool.length > 0) return picked; // 풀이 있는데 못 골랐으면 기다려도 소용없다
+  const prefetching = prefetchShortsEntryPolicy(); // 내부에서 전부 try/catch — reject 안 함
+  if (waitMs === null) await prefetching;
+  else await Promise.race([prefetching, new Promise<void>((r) => setTimeout(r, waitMs))]);
+  return resolveVideoId(sources);
 }
 
 /**
@@ -205,7 +239,14 @@ export async function openShortsFeed(): Promise<boolean> {
       if (s.url.includes('{videoId}')) {
         // 자리표시자가 있는데 시작점을 못 구하면 이 전략은 건너뛴다 — 빈 ID로 열면 홈 탭으로
         // 떨어지므로, 다음 폴백을 시도하는 편이 낫다.
-        const videoId = await resolveVideoId(s.videoIdSource ?? ['userSaved', 'serverPool']);
+        // ⚠️ 2026-08-05 — 예전엔 여기서 곧바로 continue했다. seedPool이 아직 안 왔을 뿐인데(부팅
+        // 프리페치 레이스) 바로 nativeAction으로 떨어져 유튜브가 보던 자리를 열었다 = "매번 같은 영상".
+        // iOS 경로(getShortsSeedVideoId)엔 dfd4fb7로 레이스 대응이 들어갔는데 안드로이드 경로에는
+        // 빠져 있었다. 동일한 대응을 넣되, 탭 응답성을 위해 대기를 SEED_WAIT_MS로 제한한다.
+        const videoId = await resolveVideoIdWithPrefetch(
+          s.videoIdSource ?? ['serverPool', 'userSaved'],
+          SEED_WAIT_MS
+        );
         if (!videoId) continue;
         await Linking.openURL(s.url.replace('{videoId}', videoId));
       } else {

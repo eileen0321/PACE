@@ -229,13 +229,13 @@ const INJECTED_JS_SWIPE = `
 
   function installGlobalsOnce() {
     if (globalsOn) return; globalsOn = true;
-    // 2026-08-05 — capture 단계라 스와이프의 touchend에도 걸린다. 예전엔 매번 play()+음량 재설정을 해서
-    // 릴 전환 순간에 디코더를 건드렸다(버벅임에 가산). 이미 소리내어 재생 중이면 할 일이 없으므로 즉시 빠진다.
-    function unmuteOnce() {
-      var v = curV; if (!v) return;
-      if (v.__ok && !v.muted && !v.paused) return;
-      v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {});
-    }
+    // ⚠️ 2026-08-05 되돌림 — 한때 "이미 소리내어 재생 중이면 즉시 return"을 넣었다(스와이프 touchend마다
+    //   play()가 도는 게 전환 순간 낭비로 보였다). 근거 없는 최적화였다: 그 play()는 매 터치의 핸들러
+    //   콜스택 안에서 도는 것이라 iOS 자동재생 정책상 "유저 제스처" 문맥을 갱신하는 역할을 겸한다.
+    //   이미 재생 중인 요소의 play()는 사실상 no-op이라 아끼는 값도 없다 — 원래대로 매 터치마다 부른다.
+    //   (참고: "다음 영상에서 멈췄다 플레이"는 이 함수와 무관한 별개 선재 버그다 — attach()의 unmute
+    //    순서 문제로 추정. MD의 해당 항목 참고.)
+    function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
     document.addEventListener('touchend', unmuteOnce, true);
     document.addEventListener('click', unmuteOnce, true);
     // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전). WebView는

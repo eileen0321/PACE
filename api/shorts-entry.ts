@@ -111,9 +111,13 @@ async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promis
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const rawGl = typeof req.query.gl === 'string' ? req.query.gl.toUpperCase() : '';
   const gl = /^[A-Z]{2}$/.test(rawGl) ? rawGl : '';
+  // 2026-08-05 — 앱이 보내는 hl(언어)을 실제로 읽어 시드 조회에 넘긴다. 값 검증을 두는 이유는
+  // gl과 같다 — 그대로 URL에 실리므로 임의 문자열이 들어오면 안 된다.
+  const rawHl = typeof req.query.hl === 'string' ? req.query.hl.toLowerCase() : '';
+  const hl = /^[a-z]{2}$/.test(rawHl) ? rawHl : '';
   // 배포 도메인을 코드에 박지 않는다 — 프리뷰/프로덕션 어디에 배포돼도 자기 자신을 부른다.
   const origin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
-  const seedVideoIds = origin ? await fetchSeedVideoIds(origin, gl) : [];
+  const seedVideoIds = origin ? await fetchSeedVideoIds(origin, gl, hl) : [];
 
   // 진입 전략은 거의 안 바뀌므로 길게 캐시해도 되지만, 시드 영상은 자주 갈려야 사용자마다 시작점이
   // 흩어진다 — 둘의 요구가 반대라 짧은 쪽(시드)에 맞춘다. 어차피 앱이 부팅 때 1회만 부른다.

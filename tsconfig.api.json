@@ -1,0 +1,26 @@
+{
+  // 2026-08-05 — Vercel 서버리스 함수(api/) 전용 타입체크 설정.
+  //
+  // 왜 따로 두는가: 루트 tsconfig.json은 `exclude: ["api"]`다(React Native 앱과 Node 서버는
+  // lib/타입이 충돌한다 — RN 쪽은 react-native 타입, api/ 쪽은 @vercel/node + DOM fetch).
+  // 그 결과 `npx tsc --noEmit`이 api/를 **아예 검사하지 않아**, 실제로 이런 사고가 났다:
+  //   fetchSeedVideoIds의 인자를 2개 → 3개로 바꾸면서 호출부를 안 고쳤는데 로컬 tsc는 통과했고,
+  //   Vercel 빌드에서만 깨져 그 커밋의 api/ 변경이 배포되지 않았다(옛 배포본이 계속 서빙됨 —
+  //   엔드포인트가 200을 주니 겉으론 멀쩡해 보여서 알아채기도 어려웠다).
+  //
+  // 사용법: `npx tsc -p tsconfig.api.json --noEmit`
+  // 앞으로 api/ 를 고쳤으면 **푸시 전에 이걸 돌릴 것.**
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["api/**/*.ts"]
+}

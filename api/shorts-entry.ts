@@ -78,13 +78,20 @@ const STRATEGIES: Strategy[] = [
 // 영상" 문제였다. 시작점만 갈라주면 그 뒤는 각자의 개인 피드로 흩어진다.
 const SEED_COUNT = 12;
 
-async function fetchSeedVideoIds(origin: string, gl: string): Promise<string[]> {
+async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promise<string[]> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
       // 같은 프로젝트의 기존 프록시를 재사용한다 — 스크래핑/캐싱/지역분기 로직을 중복 구현하지 않는다.
-      const res = await fetch(`${origin}/api/youtube-shorts?query=%23shorts&gl=${gl}`, {
+      // ⚠️ 2026-08-05 — hl을 안 넘기고 있었다. 앱은 ?hl=을 보내는데 이 핸들러가 읽지도, 안쪽 호출에
+      //   붙이지도 않아 그냥 버려졌다. youtube-shorts는 hl이 없으면 COUNTRY_TO_LANG[gl]로 추정하므로
+      //   한국폰(gl=KR)은 우연히 맞았지만, **한국에 사는 영어 사용자**(gl=KR, hl=en)는 앱이 en을
+      //   보내도 한국어 시드를 받았다. 이 호출은 서버-투-서버라 지오IP 폴백도 안 먹으니 반드시 넘긴다.
+      const qp = new URLSearchParams({ query: '#shorts' });
+      if (gl) qp.set('gl', gl);
+      if (hl) qp.set('hl', hl);
+      const res = await fetch(`${origin}/api/youtube-shorts?${qp.toString()}`, {
         signal: controller.signal,
       });
       if (!res.ok) return [];

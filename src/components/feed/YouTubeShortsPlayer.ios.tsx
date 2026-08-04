@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
+import * as Localization from 'expo-localization';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
 // 임시 진단: WebView 로그를 NSLog로 흘려 devicectl --console로 캡처.
@@ -419,6 +420,19 @@ function isAllowedNavigation(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank';
 }
 
+// 기기 언어를 유튜브에 알려주는 헤더 — "ko-KR,ko;q=0.9,en;q=0.8" 형태.
+// 유튜브는 익명 세션의 추천 언어권을 이걸로도 판단한다.
+function acceptLanguageHeader(): string {
+  try {
+    const loc = Localization.getLocales()[0];
+    const lang = (loc?.languageCode || 'en').toLowerCase();
+    const tag = loc?.languageTag || lang;
+    return lang === 'en' ? `${tag},en;q=0.9` : `${tag},${lang};q=0.9,en;q=0.8`;
+  } catch {
+    return 'en-US,en;q=0.9';
+  }
+}
+
 export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
@@ -434,7 +448,16 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
   const firstVideoIdRef = useRef(videoId);
   const navVideoId = NAV_MODE === 'swipe' ? firstVideoIdRef.current : videoId;
   const source = useMemo(
-    () => ({ uri: `https://www.youtube.com/shorts/${navVideoId}`, headers: { Cookie: CONSENT_COOKIE } }),
+    // 2026-08-05 — Accept-Language를 명시한다. 예전엔 Cookie만 보내서 유튜브에 **언어를 한 번도
+    // 알려주지 않았다**(UA도 일반 iPhone Safari 고정). WebView 세션이 로그인 상태면 계정 설정이
+    // 우선이라 영향이 없지만, 로그인 쿠키가 공유 안 된 익명 세션에선 유튜브가 언어 힌트 없이
+    // 전 세계 인기(=영어 위주)로 흐른다. 헤더만 더한다 — ⚠️ URL 형태는 절대 안 건드린다.
+    // `www.youtube.com/shorts/<ID>`가 Shorts 탭으로 가는 유일하게 검증된 형태라(services/shortsEntry.ts
+    // 상단 표 참고) 쿼리 파라미터를 붙이는 건 이미 출시된 동작을 걸고 하는 도박이다.
+    () => ({
+      uri: `https://www.youtube.com/shorts/${navVideoId}`,
+      headers: { Cookie: CONSENT_COOKIE, 'Accept-Language': acceptLanguageHeader() },
+    }),
     [navVideoId]
   );
 

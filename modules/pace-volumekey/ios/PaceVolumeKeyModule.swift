@@ -51,12 +51,13 @@ public class PaceVolumeKeyModule: Module {
           Self.topWindow()?.addSubview(mv)
           self.volumeView = mv
         }
-        // 위에서 세션 활성화 전에 읽은 사용자 현재 볼륨(cur)을 baseline으로 캡처(0.5 강제 금지). iOS 볼륨은
-        // 1/16 스텝이라 리셋이 정확히 baseline에 안착하도록 스텝에 정렬한다(안 그러면 리셋값이 스텝에 반올림돼
-        // baseline과 어긋나고, 그 어긋남이 "눌림"으로 오인돼 이벤트가 겹치거나 씹힌다). 양극단은 감지 여지를
-        // 위해 [0.125,0.875]로 클램프.
-        let clamped = min(0.875, max(0.125, cur))
-        self.baseline = (clamped * 16).rounded() / 16
+        // 위에서 세션 활성화 전에 읽은 사용자 현재 볼륨(cur)을 baseline으로 "그대로" 쓴다 — 클램프/강제 금지.
+        // 2026-08-04 사장님 지적("볼륨 다 줄이고 포커스 온했는데 볼륨이 커져") — 기존 [0.125,0.875] 클램프가
+        // 사용자가 0(무음)으로 둔 볼륨을 0.125(2칸)로 끌어올려 "볼륨이 커지는" 문제였다. "사용자 볼륨을 절대
+        // 안 건드린다"가 감지 여지 확보보다 우선이므로 클램프 제거 — baseline = 사용자 실제 볼륨. iOS 볼륨은
+        // 1/16 스텝이라 스텝 정렬만 유지(이미 스텝이라 사실상 no-op). 극단값(0/최대)에선 한 방향 감지가 안 될
+        // 수 있으나, 사용자가 맞춘 볼륨을 바꾸는 것보다 낫다.
+        self.baseline = (cur * 16).rounded() / 16
         self.setSystemVolume(self.baseline)
         NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur))") // 진단(테스트 후 제거)
         self.observer = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in

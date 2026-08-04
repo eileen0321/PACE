@@ -100,8 +100,11 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       // 시드는 로컬(저장영상 DB + 부팅 때 캐시된 seedPool)이라 네트워크 대기 없음. 매 진입 새로 골라
       // 기기마다 다른 시작점 → 이후 feed의 SWIPE 모드가 유튜브 페이지에 스와이프를 주입해 유튜브 알고리즘이
       // 각자 다르게 이어간다(큐 advance 안 씀). null(신규+seedPool 빈 경우)이면 아래 기존 공유 큐로 폴백.
+      // ⚠️ watched 제외를 하지 않는다(2026-08-04 사장님 "왜 영어지") — 제외하면 한국 시드 12개를 다 본
+      // 뒤 seedId가 null이 되고, 아래 공유 큐(Vercel, 영어) 폴백으로 떨어져 "한국이었다가 영어"가 된다.
+      // SWIPE 모드는 어차피 유튜브가 다음을 이어주므로 시드가 가끔 겹쳐도 무방하다(영어로 떨어지는 것보다 낫다).
       const seedId = await getShortsSeedVideoId().catch(() => null);
-      if (seedId && !watchedIds.includes(seedId)) {
+      if (seedId) {
         set({
           queue: [{ videoId: seedId, title: 'Short', channelTitle: '', thumbnailUrl: null }],
           watchedIds,

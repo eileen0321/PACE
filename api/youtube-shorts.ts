@@ -34,6 +34,40 @@ const CATEGORIES = [
 const DATA_API = 'https://www.googleapis.com/youtube/v3';
 const MAX_SHORT_SECONDS = 60;
 
+// 2026-08-04 사장님 실기기 지적("HOT이 왜 같은 리스트야", "같은 영상으로 나온다") — 출시 후 확인된 결함.
+//
+// 원인 1: 아래 카테고리 로테이션이 `CATEGORIES[page % N]`이라 **page 0은 누구에게나 항상 'satisfying'**
+//         이었다. 거기에 CDN 캐시(s-maxage=3600)가 겹쳐, 한 시간 동안 전 세계 모든 사용자가 문자 그대로
+//         동일한 리스트 + 동일한 첫 영상을 받았다(실측: X-Vercel-Cache HIT, Age 520).
+// 원인 2: 스크래핑이 en-US UA/Accept-Language로 나가고 Data API 폴백도 regionCode=US/en이라
+//         한국 사용자에게 영어 콘텐츠만 나갔다(실측 1위: "6 Satisfying Cool 3D Prints... ASMR").
+//
+// 해결: 시간(KST) 기반 시드로 카테고리를 돌린다. 같은 시간대 안에서는 여전히 캐시가 먹어 스케일
+// 이점(사용자 수와 무관하게 YouTube 트래픽 일정)은 그대로 유지되면서, 시간이 지나면 목록이 바뀐다.
+// CDN 캐시 때문에 "사용자별로 다르게"는 구조적으로 불가능하다(캐시를 사용자별로 쪼개면 스크래핑
+// 횟수가 사용자 수만큼 늘어 원래 문제로 되돌아간다) — 대신 "시간에 따라 바뀌게" 해서 같은 사람이
+// 다시 열었을 때 같은 리스트를 보지 않게 한다.
+function rotationSeed(): number {
+  // 단순히 "시간이 흐르면 값이 변하는 카운터"가 필요할 뿐이라 UTC 기준 (일 * 24 + 시)로 둔다.
+  // 특정 시간대(KST 등)에 맞출 이유가 없다 — 전 세계 사용자를 대상으로 하고, 어느 시간대든
+  // 한 시간마다 카테고리가 한 칸씩 밀리는 효과는 동일하다.
+  return Math.floor(Date.now() / 3600000);
+}
+
+// 지역/언어 — 2026-08-04 사장님 지적("각 나라에 맞게 보여야 할 거 아냐"). 처음엔 KR로 박으려 했는데
+// 그건 US 하드코딩을 KR 하드코딩으로 바꾸는 것뿐이라 똑같이 틀렸다(앱은 전 세계 대상이다).
+// Vercel이 요청마다 넣어주는 `x-vercel-ip-country` 헤더로 **접속한 나라를 그대로 따라간다** —
+// 이미 배포된 앱을 고치지 않아도 각 사용자가 자기 나라 콘텐츠를 받는다.
+// 헤더가 없는 경우(로컬 개발 등)에만 최후 기본값을 쓴다.
+const FALLBACK_GL = 'US';
+// 국가 → 유튜브 hl(언어) 매핑. 전 세계를 다 넣을 필요는 없고, 국가코드와 언어코드가 다른 주요
+// 시장만 명시하면 나머지는 국가코드를 소문자로 내려도 대체로 맞는다(FR→fr, DE→de, IT→it …).
+const COUNTRY_TO_LANG: Record<string, string> = {
+  KR: 'ko', JP: 'ja', US: 'en', GB: 'en', AU: 'en', CA: 'en', IN: 'en',
+  CN: 'zh', TW: 'zh', HK: 'zh', BR: 'pt', MX: 'es', AR: 'es', VN: 'vi',
+  ID: 'id', TH: 'th', PH: 'en', SA: 'ar', AE: 'ar', RU: 'ru', UA: 'uk',
+};
+
 type Short = { videoId: string; title: string; channelTitle: string; thumbnailUrl: string | null };
 
 function cleanTitle(s: string): string {
@@ -45,14 +79,16 @@ function cleanTitle(s: string): string {
   return t;
 }
 
-async function scrapeOnce(query: string): Promise<Short[]> {
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}`;
+async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[]> {
+  // 2026-08-04 — gl/hl을 붙여야 유튜브가 해당 지역·언어 결과를 준다. 예전엔 이 둘이 없어 서버(미국
+  // Vercel) 기준 영어 결과만 나왔다 — 사장님 지적("HOT 리스트가 왜 영어냐")의 직접 원인.
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}&gl=${gl}&hl=${hl}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   let html: string;
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': DESKTOP_UA, 'Accept-Language': 'en-US,en;q=0.9', Cookie: CONSENT_COOKIE },
+      headers: { 'User-Agent': DESKTOP_UA, 'Accept-Language': `${hl}-${gl},${hl};q=0.9`, Cookie: CONSENT_COOKIE },
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`YT_SCRAPE_HTTP_${res.status}`);
@@ -84,11 +120,11 @@ async function scrapeOnce(query: string): Promise<Short[]> {
 }
 
 // 캐시 미스 시에만 실행되므로(대부분 CDN 히트) 재시도 백오프로 순간 레이트리밋/네트워크 흔들림 흡수.
-async function scrapeWithRetry(query: string, tries = 3): Promise<Short[]> {
+async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3): Promise<Short[]> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      const s = await scrapeOnce(query);
+      const s = await scrapeOnce(query, gl, hl);
       if (s.length) return s;
     } catch (e) {
       last = e;
@@ -106,8 +142,10 @@ function parseISO(iso: string): number {
   const m = /PT(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '');
   return m ? parseInt(m[1] || '0', 10) * 60 + parseInt(m[2] || '0', 10) : 0;
 }
-async function dataApiFallback(query: string, apiKey: string): Promise<Short[]> {
-  const sp = new URLSearchParams({ key: apiKey, part: 'snippet', type: 'video', videoDuration: 'short', videoEmbeddable: 'true', q: query, maxResults: '25', regionCode: 'US', relevanceLanguage: 'en' });
+async function dataApiFallback(query: string, apiKey: string, gl: string, hl: string): Promise<Short[]> {
+  // 2026-08-04 — regionCode/relevanceLanguage가 US/en 하드코딩이라 한국 사용자에게 영어 결과가 나갔다.
+  // order=viewCount도 추가: 메뉴 이름이 "HOT"인데 실제로는 검색 관련도 순이라 인기와 아무 상관이 없었다.
+  const sp = new URLSearchParams({ key: apiKey, part: 'snippet', type: 'video', videoDuration: 'short', videoEmbeddable: 'true', q: query, maxResults: '25', order: 'viewCount', regionCode: gl, relevanceLanguage: hl });
   const sr = await fetch(`${DATA_API}/search?${sp}`);
   if (!sr.ok) throw new Error(`YT_SEARCH_${sr.status}`);
   const ids = ((await sr.json()).items ?? []).map((i: { id?: { videoId?: string } }) => i.id?.videoId).filter(Boolean);
@@ -119,7 +157,7 @@ async function dataApiFallback(query: string, apiKey: string): Promise<Short[]> 
     .map((v) => ({ videoId: v.id, title: v.snippet?.title ?? '', channelTitle: v.snippet?.channelTitle ?? '', thumbnailUrl: v.snippet?.thumbnails?.high?.url ?? v.snippet?.thumbnails?.medium?.url ?? null }));
 }
 
-type VercelRequest = { query: Record<string, string | string[] | undefined> };
+type VercelRequest = { query: Record<string, string | string[] | undefined>; headers?: Record<string, string | string[] | undefined> };
 type VercelResponse = { status: (code: number) => VercelResponse; json: (body: unknown) => void; setHeader: (name: string, value: string) => void };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -128,24 +166,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const pt = req.query.pageToken;
   const page = Math.max(0, parseInt((typeof pt === 'string' ? pt : '0') || '0', 10) || 0);
 
+  // 지역/언어 — 이미 배포된 앱은 안 넘기므로 기본값(KR/ko)이 적용된다. 향후 앱이 사용자 로케일을
+  // 넘겨주면 그걸 쓴다. 값 검증을 두는 이유: 그대로 URL에 실리므로 임의 문자열이 들어오면 안 된다.
+  // 우선순위: 앱이 명시적으로 넘긴 값 > Vercel 지오IP 헤더(접속 국가) > 최후 기본값.
+  // 지오IP를 쓰면 **이미 배포된 앱을 고치지 않아도** 각 사용자가 자기 나라 콘텐츠를 받는다.
+  // 값 검증을 두는 이유: 그대로 URL에 실리므로 임의 문자열이 들어오면 안 된다.
+  const headerCountryRaw = req.headers?.['x-vercel-ip-country'];
+  const headerCountry = (typeof headerCountryRaw === 'string' ? headerCountryRaw : '').toUpperCase();
+  const rawGl = typeof req.query.gl === 'string' ? req.query.gl.toUpperCase() : '';
+  const rawHl = typeof req.query.hl === 'string' ? req.query.hl.toLowerCase() : '';
+  const gl = /^[A-Z]{2}$/.test(rawGl) ? rawGl
+    : /^[A-Z]{2}$/.test(headerCountry) ? headerCountry
+    : FALLBACK_GL;
+  const hl = /^[a-z]{2}$/.test(rawHl) ? rawHl : (COUNTRY_TO_LANG[gl] ?? gl.toLowerCase());
+
   // 구체적 검색어(향후 검색 기능)면 그걸 쓰고, 기본(#shorts/빈값)이면 카테고리 로테이션.
+  // 2026-08-04 — 예전엔 `CATEGORIES[page % N]`이라 page 0이 누구에게나 항상 'satisfying'이었다.
+  // 시간 시드를 더해 시간마다 시작 카테고리가 달라지게 한다(rotationSeed 주석 참고).
   const isGeneric = !reqQuery || reqQuery === '#shorts' || reqQuery.toLowerCase() === 'shorts';
-  const category = isGeneric ? CATEGORIES[page % CATEGORIES.length] : reqQuery;
+  const category = isGeneric
+    ? CATEGORIES[(page + rotationSeed()) % CATEGORIES.length]
+    : reqQuery;
 
   try {
     let shorts: Short[] = [];
     try {
-      shorts = await scrapeWithRetry(category);
+      shorts = await scrapeWithRetry(category, gl, hl);
     } catch {
       const apiKey = process.env.YOUTUBE_API_KEY || process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
-      if (apiKey) shorts = await dataApiFallback(category, apiKey);
+      if (apiKey) shorts = await dataApiFallback(category, apiKey, gl, hl);
     }
     // 카테고리 로테이션이라 nextPageToken은 항상 다음 index → 피드가 하드스톱 안 됨(무한).
     // (앱은 videoId로 dedup하므로 한 바퀴 돈 뒤 중복은 자동 제거. 카테고리 20개×~30개면 한 바퀴 ~600개.)
     const nextPageToken = String(page + 1);
-    // CDN 캐싱: 카테고리당 1시간 1회만 실제 스크래핑 → 사용자 수와 무관. stale-while-revalidate로
-    // 만료 직후에도 지연 없이 응답하며 백그라운드 갱신.
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    // CDN 캐싱: 사용자 수와 무관하게 YouTube 트래픽을 일정하게 유지하는 이 설계의 핵심이라 유지한다.
+    // 다만 2026-08-04 — 예전 값(s-maxage=3600, swr=86400)은 "한 시간 내내 전원 동일 + 최악의 경우
+    // 24시간 묵은 리스트"를 뜻했다(실측: Age 520s, X-Vercel-Cache HIT). 위 시간 시드가 매시간 카테고리를
+    // 바꾸므로 캐시 창도 그에 맞춰 좁힌다. swr은 30분으로 줄여 하루 지난 목록이 나가는 일을 없앤다.
+    // 스크래핑 횟수는 여전히 (카테고리 × 시간당 1회) 수준이라 스케일 이점은 그대로다.
+    res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
+    // ⚠️ 이 헤더가 없으면 CDN이 URL만으로 캐시해서, 맨 처음 요청한 나라의 결과가 전 세계에 그대로
+    // 나간다(국가별 분기를 넣어도 무의미해진다). 지오IP 헤더를 캐시 키에 포함시킨다.
+    res.setHeader('Vary', 'x-vercel-ip-country');
     res.status(200).json({ shorts, nextPageToken });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'PROXY_ERROR' });

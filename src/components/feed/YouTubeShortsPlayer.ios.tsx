@@ -356,12 +356,44 @@ const INJECTED_JS_SWIPE = `
       }
     } catch (e) {}
     try { var ust = document.createElement('style'); ust.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}'; (document.head || document.documentElement).appendChild(ust); } catch (e) {}
-    v.muted = false; v.volume = 1.0;
-    v.play().then(function () { v.__ok = true; send({ type: 'audio', tag: 'audible-ok', muted: v.muted }); })
-      .catch(function (e) { send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name) }); v.muted = true; v.play().catch(function () {}); });
-    v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
-    v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
-    v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
+    // ⚠️ 2026-08-05 "다음 영상에서 멈칫" 2차 수정 — **순서**가 원인이다. 예전엔 muted=false를 **먼저**
+    //   하고 play()를 했다. 유튜브는 새 쇼츠를 무음 자동재생으로 시작하는데, 유저 제스처 밖에서 무음을
+    //   풀면 iOS(WebKit) 자동재생 정책상 그 순간 재생이 멈출 수 있다 → play()가 거부되고 catch가 다시
+    //   muted=true로 되돌려 재생 → 정확히 "멈췄다가 플레이". 게다가 이미 재생 중인 영상에 play()를 또
+    //   거는 것도 불필요하다. 그래서: **이미 돌고 있으면 건드리지 않고 소리만 켜고**, 멈춰 있을 때만
+    //   재생을 먼저 붙잡은 뒤 소리를 켠다.
+    v.volume = 1.0;
+    var goAudible = function () {
+      if (v.muted) {
+        v.muted = false;
+        // 무음 해제 때문에 멈췄으면 되살린다(소리를 포기하진 않는다 — 다음 터치의 unmuteOnce가 또 시도).
+        if (v.paused) v.play().catch(function () {});
+      }
+      v.__ok = true;
+      send({ type: 'audio', tag: v.muted ? 'audible-blocked' : 'audible-ok', muted: v.muted });
+    };
+    if (v.paused) {
+      v.play().then(goAudible)
+        .catch(function (e) { send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name) }); v.muted = true; v.play().catch(function () {}); });
+    } else {
+      goAudible(); // 이미 재생 중 — play()를 다시 걸지 않는다(그게 멈칫을 만든다)
+    }
+    // 유튜브가 릴 사이에서 같은 <video> 요소를 재사용하면 attach마다 리스너가 겹겹이 쌓인다.
+    // 요소에 표식을 남겨 1회만 등록한다(핸들러는 클로저 밖 변수만 읽으므로 재등록이 필요 없다).
+    if (!v.__paceListeners) {
+      v.__paceListeners = true;
+      v.addEventListener('loadeddata', function () { if (!reportedReady) { reportedReady = true; send({ type: 'ready' }); } });
+      v.addEventListener('ended', function () { if (!reportedEnded) { reportedEnded = true; send({ type: 'ended' }); } });
+      v.addEventListener('error', function () { send({ type: 'error', code: v.error ? v.error.code : -1 }); });
+      // 진단(dev 전용) — 전환 순간 무엇이 멈추는지 기기에서 직접 본다. 스와이프 모드엔 이 로그가
+      // 아예 없어서 "멈칫"의 원인을 추정으로만 좁혀야 했다. __PACE_DIAG__ 밖에선 문자열도 안 만든다.
+      ['pause', 'playing', 'waiting', 'stalled'].forEach(function (ev) {
+        v.addEventListener(ev, function () {
+          if (!window.__PACE_DIAG__) return;
+          send({ type: 'domlog', text: 'VEV ' + ev + ' t=' + (v.currentTime || 0).toFixed(2) + ' muted=' + v.muted + ' rs=' + v.readyState });
+        });
+      });
+    }
     if (v.readyState >= 2 && !reportedReady) { reportedReady = true; send({ type: 'ready' }); }
     installGlobalsOnce();
   }

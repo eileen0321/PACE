@@ -127,7 +127,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // iOS는 이 URL을 WebView에 로드하고, 그 뒤 스와이프/자동넘김은 유튜브 페이지가 스스로 처리한다
       // (주입 JS의 window.paceAdvance가 scrollBy + ArrowDown으로 페이지 자체를 넘긴다).
       startUrl: 'https://www.youtube.com/shorts/{videoId}',
-      videoIdSource: ['userSaved', 'serverPool'],
+      // Android와 같은 이유로 serverPool 먼저 — userSaved는 개수가 적어 누를 때마다 같은 영상이
+      // 나온다(위 STRATEGIES의 videoIdSource 주석 참고). 양 플랫폼 동작을 일치시킨다.
+      videoIdSource: ['serverPool', 'userSaved'],
     },
     seedPool: seedVideoIds,
   });

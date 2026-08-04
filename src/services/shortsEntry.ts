@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Localization from 'expo-localization';
 import { Linking, Platform } from 'react-native';
 import { YOUTUBE_PROXY_URL } from './api/youtube';
 import { getSavedVideos } from '../database/repositories/savedVideosRepository';
@@ -109,7 +110,16 @@ export async function prefetchShortsEntryPolicy(): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await fetch(`${YOUTUBE_PROXY_URL}/api/shorts-entry`, { signal: controller.signal });
+      // 2026-08-04 사장님 지적("iOS는 아직 외국") — 프록시는 gl/hl이 없으면 접속 IP(x-vercel-ip-country)로
+      // 지역을 추정하는데, iOS 요청 IP가 KR로 안 잡히면 US seedPool을 줘 외국 시드가 나왔다(안드는 Railway
+      // 하드코딩 KR이라 무관). 기기 로케일(지역/언어)을 명시적으로 넘겨 seedPool을 기기 나라에 맞춘다
+      // (하드코딩 아님 — 한국 기기=KR, 미국 기기=US). 프록시가 gl/hl 파라미터를 우선한다.
+      const loc = Localization.getLocales()[0];
+      const qp = new URLSearchParams();
+      if (loc?.regionCode) qp.set('gl', loc.regionCode);
+      if (loc?.languageCode) qp.set('hl', loc.languageCode);
+      const entryUrl = `${YOUTUBE_PROXY_URL}/api/shorts-entry${qp.toString() ? `?${qp}` : ''}`;
+      const res = await fetch(entryUrl, { signal: controller.signal });
       if (!res.ok) return;
       const parsed = sanitize(await res.json());
       if (!parsed) return;
@@ -163,7 +173,15 @@ async function resolveVideoId(sources: VideoIdSource[]): Promise<string | null> 
  * null이면(신규 사용자 + 서버 seedPool 빈 경우) 호출부가 기존 공유 큐로 폴백한다.
  */
 export async function getShortsSeedVideoId(): Promise<string | null> {
-  return resolveVideoId(cached.ios?.videoIdSource ?? ['userSaved', 'serverPool']);
+  const sources = cached.ios?.videoIdSource ?? ['userSaved', 'serverPool'];
+  let picked = await resolveVideoId(sources);
+  // seedPool이 아직 안 받아진 상태(부팅 프리페치 레이스 — 첫 진입이 프리페치보다 빠른 경우)면
+  // 한 번 프리페치를 기다렸다 재시도한다. 이게 없으면 첫 진입이 빈 seedPool→null→공유 큐(외국)로 폴백했다.
+  if (!picked && cached.seedPool.length === 0) {
+    await prefetchShortsEntryPolicy();
+    picked = await resolveVideoId(sources);
+  }
+  return picked;
 }
 
 /**

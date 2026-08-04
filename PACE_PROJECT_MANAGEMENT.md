@@ -4788,3 +4788,98 @@ onUserSwipe → feed/index.tsx:551 goNext() → player.advance() → videoId 교
 유튜브 알고리즘이 다음 영상을 정하면 **우리가 큐레이션하던 "차분한 피드"(힐링/공예/자연) 컨셉이
 사라진다.** 자극적인 콘텐츠가 나올 수 있다. 사장님이 이 설계를 지시했으므로 그대로 가되,
 페이월·스토어 설명에서 "차분한 대체 피드"를 주장하는 문구가 있으면 함께 조정해야 한다.
+
+### 2026-08-04 (이어서) — Windows 세션 (🔴 "광고 보면 화면이 까매진다" 전수 조사 + 수정 5건)
+
+사장님 지시: "광고보면 화면이 까매지는 문제가 있는데 렌더링 문제인 거 같은데 전수 문제 없는지 확인해"
+→ 배너/보상형(인앱)/보상형(쇼츠 위 네이티브)/동의 흐름까지 광고 경로 전체를 훑었다. **진짜 원인을
+찾았고, 조사 중 "보상이 아예 안 들어가던" 별개 버그도 나왔다.** 5건 전부 수정 완료(수정 후 Gradle로
+매니페스트 병합/리소스 링크/Kotlin 컴파일, tsc 통과 확인).
+
+#### 1. 🔴 근본 원인 — 구글 AdActivity 테마를 불투명 테마로 강제 교체하고 있었다
+`android/app/src/main/AndroidManifest.xml`이 `tools:replace`로 AdActivity 테마를
+`@style/AppTheme`(불투명, `windowBackground=#060709`)로 바꿔놨다(7-29 "하단키 흰색" 수정의 부작용).
+SDK는 이 액티비티를 **투명**으로 선언한다(play-services-ads AAR에서 직접 확인:
+`android:theme="@android:style/Theme.Translucent"`). 불투명으로 바꾸면 세 가지가 동시에 깨진다:
+1. 광고가 안 그려지는 순간(로드·전환·엔드카드 사이)에 뒤가 비치는 대신 **앱 배경색(≈검정)이 화면을
+   꽉 채운다** — 사장님이 보신 그 검은 화면.
+2. 투명 액티비티는 뒤 액티비티를 paused-but-visible로 남기는데(구글이 투명을 쓰는 이유), 불투명이면
+   **유튜브가 onStop까지 내려가 비디오 서피스가 파괴**된다 → 광고 닫고 오면 재생 UI는 정상인데 영상만
+   검은 그 증상. (8-04 `returnToLastTrackedApp` 시점 이동은 방향은 맞았지만 이 원인은 그대로였다.)
+3. `PaceRewardedAdActivity`는 `noHistory=true`라 **광고가 불투명해지는 순간 재생 중에 껍데기가
+   finish**된다 → 광고 닫힐 때 빈 태스크가 검게 뜨고 복귀 전환과 겹친다.
+
+**수정**: 모듈 `res/values/styles.xml`에 `Theme.Pace.AdActivity`(부모=`@android:style/Theme.Translucent`
++ 시스템 바 색/대비 고정) 추가, 매니페스트가 이 테마를 쓰게 교체. 원래 고치려던 흰 하단키는 그대로
+잡힌다(Theme.Pace.TransparentAd와 같은 방식). 부수 효과로, prebuild가 매니페스트 한 줄을 날려도
+이제 안전하다 — SDK 기본값(투명)으로 돌아갈 뿐이라 최악이 외관 문제지 검은 화면이 아니다.
+
+#### 2. 🔴 20초 넘는 보상형 광고는 보상이 아예 안 들어갔다 (렌더링과 별개, 수익/신뢰 직결)
+`src/services/ads/rewardedAd.ts`의 20초 타이머가 로드 대기용인데 `LOADED`에서 안 꺼져서 **광고가 떠
+있는 동안 터졌다.** 보상형은 보통 15~30초라 상당수가 걸렸고, 그때마다 광고 위에 "광고 실패" 토스트가
+뜨고 리스너가 전부 해제돼 **끝까지 보고도 5분이 안 들어갔다.**
+**수정**: `LOADED`에서 로드 타임아웃 해제 → 시청 중에는 넉넉한 감시견(5분, 모달 스피너 무한대기 방지)
+으로 교체. 감시견이 터져도 이미 `EARNED_REWARD`를 받았으면 보상으로 확정한다.
+
+#### 3. 네이티브 껍데기 액티비티 방어 (PaceRewardedAdActivity.kt)
+- 로드 감시견 20초 추가. 이 액티비티는 **투명하지만 터치는 전부 먹는다** — 로드 콜백이 끝내 안 오면
+  사용자가 "유튜브는 보이는데 아무것도 안 눌리는" 상태에 갇혔다(JS 경로엔 이미 있던 장치).
+- `showAd()`에 `isFinishing/isDestroyed` 가드 — 로드 중 액티비티가 사라졌으면 조용히 포기.
+- `onDestroy`/`finishOnce`에서 핸들러 정리.
+
+#### 4. 배너 재시도 백오프 상한이 주석과 달랐다 (AdBanner.tsx)
+상한(min)을 base에만 걸고 지터를 뒤에 더해서 "상한 60s"가 실제로는 안 지켜졌다(그리고 상한에 닿지도
+않아 ~46s에서 맴돌았다). 최종값에 상한을 건다.
+
+#### 5. 🍎 Mac 확인 필요 — 광고 중 인앱 피드 재생 (iOS)
+전면 광고는 앱을 백그라운드로 보내지 않아서 피드의 AppState 기반 일시정지가 안 걸린다 → 광고 뒤에서
+유튜브 소리가 계속 나거나, iOS가 영상을 멈춘 뒤 아무도 다시 안 틀어줘서 광고를 닫고 오면 멈춘 화면이
+남을 수 있다. `FocusSessionExtendModal`에 `onAdVisibilityChange`를 추가해 광고 직전 `PAUSED`,
+닫힌 뒤 원상복구하게 배선했다. **iOS 실기기에서 "광고 보는 동안 소리 안 남 / 닫으면 다시 재생됨"을
+확인해 줄 것** (Android는 이 경로를 안 쓴다 — 쇼츠 위 네이티브 광고 경로).
+
+#### 이상 없음으로 확인한 것
+배너(언마운트·높이 0 복원·동의 게이팅), 오버레이 팝업(광고 시작 전 제거, 알약은 selfForeground로 숨김),
+UMP 동의 흐름(순서·재시도·네이티브 전달).
+
+---
+
+### 2026-08-04 (이어서) — "누를 때마다 새 영상" + 서버 구성 정리
+
+**사장님 지적(아이폰)**: "다른 데 갔다가 다시 Shorts with PACE를 누르면 아까 나왔던 시작 영상이 다시
+보인다", "누를 때마다 영상을 새로 받아와서 실행해야지".
+
+**원인**: 진입 정책 1순위가 네이티브 액션(`open.shorts`)이었는데, 그건 유튜브의 Shorts **탭을 열** 뿐이라
+유튜브가 보던 자리를 그대로 이어서 보여준다. 그래서 나갔다 들어오면 같은 영상이 다시 나온다.
+
+**수정(커밋 9cbfef5, 서버만)**
+1. 시작 영상을 명시하는 URL(`www.youtube.com/shorts/<ID>`)을 **1순위로** 올림 — 매번 기기가 새로 고른
+   영상에서 출발하고 그 뒤 스와이프는 유튜브 알고리즘이 이어간다. 네이티브 액션은 시드를 못 구했을
+   때의 폴백으로 내림.
+2. `videoIdSource`를 **serverPool 먼저**로(android/ios 양쪽). `userSaved`(저장/캡처 영상)는 보통 몇
+   개뿐이라 1순위면 누를 때마다 같은 영상이 나오고, 이미 저장한 영상은 사용자가 이미 본 것이라
+   "새로 시작"에 안 맞는다. 시드는 진입점 하나를 만드는 용도이고 그 뒤는 유튜브가 이어가므로
+   개인화보다 **매번 달라지는 것**이 우선.
+
+배포 확인(라이브 응답):
+```
+1. url  https://www.youtube.com/shorts/{videoId}  [serverPool→userSaved]
+2. nativeAction  com.google.android.youtube.action.open.shorts
+3. url  https://www.youtube.com/shorts
+ios: https://www.youtube.com/shorts/{videoId}  [serverPool→userSaved]   seedPool: 12개
+```
+⚠️ **앱 업데이트 없이 양 플랫폼에 즉시 반영된다** — 이 정책 구조를 만든 이유가 이것이다.
+Mac 세션이 고치는 앱 소스(50d25a8 등 클라이언트 배선)와 상호보완 관계다.
+
+#### 📌 서버가 둘이다 — 혼동 주의 (사장님 질문 "railway에 배포한 거 아냐? 영상 어디서 가져오는데")
+
+| 서버 | 용도 | 주소 | 소스 |
+|---|---|---|---|
+| **Vercel** | **쇼츠 영상 목록 · 진입 정책** | `pace-strides7.vercel.app` | `api/youtube-shorts.ts`, `api/shorts-entry.ts` |
+| **Railway** | 로그인 · 설정 동기화 · 구독 | `pace-backend-production-2e52.up.railway.app` | 별도 백엔드 저장소 |
+
+**영상은 Vercel이 유튜브 검색 결과를 서버사이드 스크래핑해서 가져온다** —
+`youtube.com/results?search_query=<카테고리>&sp=<Shorts필터>&gl=<국가>&hl=<언어>`를 긁어 `videoId`를
+추출하고 CDN에 5분 캐시한다(사용자 수와 무관하게 유튜브 트래픽을 일정하게 유지하는 설계).
+`api/shorts-entry.ts`는 그 함수를 재사용해 시드 12개를 뽑아 정책과 함께 내려준다.
+**쇼츠 관련 수정은 전부 Vercel 쪽이고 Railway는 건드리지 않는다.**

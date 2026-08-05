@@ -5848,3 +5848,46 @@ SESSION END              reason=sleep_detected tier=0 stillnessElapsedMs=315240
   올바르게 이어지는 것만 확인했다. 실제 시간으로 돌리려면 밤 10시 이후에 15분 방치가 필요하다.
 - **iOS 수면 감지는 구조가 다르다** — `useSleepGuard`(무진동 `sleepStillnessMinutes`, 기본 10분)와
   시간 창과 무관한 `sleepTimerMinutes`. **Mac 검증 필요.**
+
+### 2026-08-05 — 😴 수면 감지: iOS vs Android 차이 정리 (코드 대조)
+
+사장님 질문 "iOS는 뭐가 다른데" — `src/hooks/useSleepGuard.ios.ts`와
+`PaceOverlayService.evaluateSleepStages()`를 직접 대조한 결과.
+
+#### 같은 것 (의도적 패리티 — iOS 파일 주석에 "안드 패리티" 명시)
+단계 구조 동일: 무입력 → SUSPECT → 확정대기 → PROMPTED(30초) → CONFIRMED.
+- 확정 대기 `SLEEP_CONFIRM_AFTER_MS` = **5분** (양쪽 동일)
+- 프롬프트 타임아웃 `SLEEP_PROMPT_TIMEOUT_MS` = **30초** (양쪽 동일)
+- 시간 창 **22:00 ~ 익일 09:00** (양쪽 동일)
+- 눕힘 판정 기준도 동일(안드 `|gravityZ| ≥ 7.5`, iOS `SLEEP_FLAT_GRAVITY_RATIO = 7.5 / 9.81`)
+
+#### 다른 것 ①: 무입력 임계
+| | 값 |
+|---|---|
+| Android | `SLEEP_NO_INPUT_ENTER_MS` = **10분 고정** |
+| iOS | `Math.max(설정값, 15)` = **최소 15분** — 설정에서 10분으로 해도 15분이 적용된다 |
+
+#### 다른 것 ②: 뒷받침 증거 (가장 큰 차이)
+| 증거 | Android | iOS |
+|---|---|---|
+| 눕힘(중력Z) | ✅ | ✅ |
+| **어두움(조도)** | ✅ `SLEEP_DARK_LUX = 15` | ❌ **불가 — iOS는 앱에 조도값을 주지 않는다** |
+| 충전 중 | ❌ | ✅ |
+| 오디오 경로 끊김 | ❌ | ✅ `onAudioRouteLost` (BT 이어폰 빠짐 = 잠든 신호) |
+
+iOS 판정식: `supporting = laidFlat || charging || audioLost`
+→ **불 끄고 자는 상황을 안드로이드는 조도로 잡고, iOS는 충전/이어폰 빠짐으로 대체한다.**
+
+#### 다른 것 ③: 슬립 타이머는 iOS 쪽에 별도로 존재
+`sleepTimerMinutes`가 지나면 **수면 감지와 무관하게, 시간 창도 안 보고 무조건** 정지+블랙아웃한다
+(`feed/index.tsx` 230~239행). 안드로이드에 있던 것을 iOS에 뒤늦게 맞춘 것.
+
+#### 다른 것 ④: 감시 게이트
+iOS는 `enabled: playing && !sleepBlackout` — **재생 중일 때만** 감시한다. 영상이 멈춰 있으면 안 돈다.
+
+#### 🍎 Mac 검증 방법 (Android와 다르게 해야 함)
+Android는 조도/눕힘으로 확정되지만 iOS는 그 경로가 없다. **가장 확실한 재현**:
+폰을 평평하게 두고 **충전기를 꽂은 채**, 영상 재생 중 상태로 **15분 이상 무입력** 방치.
+그 뒤 5분 → "아직 보고 계세요?" 프롬프트 → 30초 무응답 → 정지+블랙아웃.
+⚠️ 22시~9시 밖이면 확정 단계로 못 간다(Android와 동일 제약). `__DEV__` 빌드면
+`[sleep] confirm held — window= … flat= … charging= … btGone=` 로그로 어느 조건이 막고 있는지 바로 보인다.

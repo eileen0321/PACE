@@ -5727,3 +5727,27 @@ T:위험한 발언에 리액션 고장난 아이돌 TOP4 | T:@People_Shortsting
 
 **교훈**: "저장하는 방법"(Android 링크 복사)과 "저장된 걸 재생하는 것"은 **완전히 별개 이슈**다.
 사장님 지적대로 섞어서 진단하면 안 된다.
+
+#### ✅ 실기기 종단 검증 완료 (Android, 2026-08-05)
+사용자가 하는 그대로 전 과정을 밟아 확인했다.
+
+| 단계 | 결과 |
+|---|---|
+| 유튜브 공유 → 링크 복사 | ✅ |
+| Pace P메뉴 → Favorite → `＋ Save copied link` | ✅ 클립보드에서 읽음 |
+| 저장 결과 | ✅ 목록에 추가 + **썸네일 정상 표시** |
+| 저장된 항목 탭 | ✅ `act=VIEW dat=youtube.com/… → UrlActivity` — 해당 쇼츠로 이동 |
+
+**결정적 수정 — 클립보드는 `onCreate`가 아니라 `onWindowFocusChanged(true)`에서 읽어야 한다.**
+처음엔 `onCreate`에서 읽었는데 로그가 매번 `received sharedText=null`이었다. Android 10+의 클립보드
+제한은 "포커스를 가진 앱"만 허용하는데 **onCreate 시점엔 액티비티가 생성만 됐을 뿐 포커스가 없다.**
+포커스를 받은 뒤 읽으니 바로 성공:
+```
+clipboard(focused)=https://youtube.com/shorts/U71XMQIucyw?si=vW1UZDXtcd-iQ2Le
+```
+
+**남은 다듬기(기능엔 지장 없음)**
+- 저장된 항목의 **제목이 "—"로 비어 있다** — `readVisibleTitleChannel()`이 제목을 못 읽었다.
+  videoId·썸네일·재생은 모두 정상이라 표시상의 문제. 접근성 트리의 제목 후보 판정을 손봐야 한다.
+- 클립보드를 읽는 순간 **Pace가 잠깐 전면으로 나온다**(투명 액티비티가 포커스를 얻어야 하므로 불가피).
+  읽은 뒤 유튜브로 곧장 되돌려주면 더 매끄럽다.

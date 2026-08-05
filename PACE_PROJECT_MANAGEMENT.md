@@ -6215,3 +6215,52 @@ n=4 {id=14105 type=3 pip=false pkg=com.android.systemui}
 "색이 안 맞는다"를 색 문제로만 보고 테마를 네 번 고쳤다. 픽셀을 한 번 쟀으면
 `#000000`(우리가 안 칠함) vs `#060709`(우리가 칠함) 구분이 즉시 됐고, 처음부터 방향이 잡혔다.
 **눈으로 "검다"고 판단하지 말고 값을 잴 것.**
+
+### 2026-08-06 — OTA(expo-updates) 예외처리 보강 (사장님 지시 "웹서치해서 제대로 다 해서 적용")
+
+expo-updates **v57 공식 문서**(AGENTS.md 규칙대로 버전 고정 문서)와 현재 구현을 대조했다. 기본 구조
+(콜드스타트+포그라운드 복귀 체크 → 다운로드 → 강제 리로드, 세션 중이면 리로드만 연기)는 그대로 두고
+빠져 있던 5가지를 채웠다. `services/updates/index.ts`.
+
+**① 🔴 롤백(isRollBackToEmbedded) 처리가 아예 없었다 — 가장 중요**
+`eas update:roll-back`을 발행하면 서버는 "새 업데이트"가 아니라 **"내장 번들로 되돌려라"**는 별개
+지시를 준다. 그때 `checkForUpdateAsync()`는 `{ isAvailable: false, isRollBackToEmbedded: true }`로
+온다. 기존 코드는 `isAvailable`만 보고 'no-update'로 끝내서 **롤백이 사용자에게 영영 도달하지
+않았다.** 즉 잘못된 번들을 한 번 밀면 되돌릴 수단이 없고 스토어 심사를 다시 타야만 복구되는
+상태였다. 이제 롤백도 `fetchUpdateAsync()` → `reloadAsync()` 경로로 정상 적용된다.
+
+**② `reloadAsync()` 뒤에 로직 두지 않음** — 문서 명시 주의사항(프라미스가 실제 리로드보다 먼저
+resolve됨). `checkInFlight`도 일부러 안 푼다(곧 프로세스가 새로 뜬다. 푸는 순간 리로드 직전에 또
+체크가 들어올 수 있다).
+
+**③ 포그라운드일 때만 리로드** — 백그라운드에서 리로드하면 사용자가 다음에 열었을 때 이유 없이 첫
+화면에 있다("앱이 꺼졌다"로 읽힌다). `AppState.currentState === 'active'`일 때만. 'inactive'(권한
+팝업/전환 중)도 제외.
+
+**④ 연속 실패 백오프** — 기존엔 실패해도 1분 고정이라 네트워크가 죽어 있으면 포그라운드마다 계속
+헛수고. 이제 1 → 2 → 4 → 8분(상한). 성공하면 리셋. dev/비활성 에러(`ERR_UPDATES_DISABLED`,
+`ERR_NOT_AVAILABLE_IN_DEV_CLIENT`)는 실패로 세지 않는다.
+
+**⑤ `fetchUpdateAsync()` 결과 확인** — `isNew=false`면 지금 돌고 있는 것과 같은 번들이라 리로드하지
+않는다(공연히 세션만 날린다).
+
+**⑥ 진단 로그**(`getUpdateDiagnostics()`, `_layout.tsx` 부팅 시 1회) —
+`enabled / embedded / channel / runtimeVersion / updateId`를 남긴다. "OTA를 쐈는데 왜 안 와?"는 이
+값들이 없으면 추측만 하게 된다. check/download 실패도 로그로 남긴다(설계상 사용자에겐 아무 표시가
+안 나가므로 로그가 유일한 단서). `__DEV__` 게이트를 일부러 안 걸었다 — 필요한 순간이 출시빌드다.
+
+#### runtimeVersion 확인 결과 — 정상(이전 세션의 "확인 필요" 지적 해소)
+```
+app.json  version=1.0.1 / ios.runtimeVersion=1.0.1 / android.runtimeVersion=1.0
+빌드 산출물 android/app/src/main/res/values/strings.xml  expo_runtime_version = 1.0  ← 일치
+```
+안드로이드는 런타임버전 **1.0**, iOS는 **1.0.1**로 각각 발행돼야 하고, `eas update`가 app.json에서
+플랫폼별로 읽으므로 그대로 맞는다. 다만 **두 플랫폼 값이 다르다는 사실 자체를 모르면 사고가 난다** —
+누가 안드로이드 값을 1.0.1로 "정리"하는 순간 이미 배포된 1.0 바이너리는 업데이트를 영영 못 받는다.
+(안드로이드가 1.0에 고정된 건 이미 배포된 1.0 바이너리에 계속 OTA를 쏘기 위한 의도로 보인다.)
+
+#### ⚠️ OTA로 못 나가는 것 (오늘 작업 기준)
+OTA는 JS/에셋만 교체한다. **네이티브 변경은 스토어 재빌드가 필요하다** —
+`PaceOverlayService.kt`(하루 한도 B안 안드로이드), AdActivity 투명 테마(매니페스트/styles),
+접근성 재바인딩 유예, 보상 액티비티 가드/감시견은 전부 새 빌드로만 나간다.
+반대로 iOS 하루 한도·쇼츠 언어·로그인 시트, 광고 20초 보상 유실 수정, 배너 백오프, 설정 UI는 OTA 대상.

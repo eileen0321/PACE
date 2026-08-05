@@ -37,7 +37,7 @@ import { ToastHost } from '../components/ui/ToastHost';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { checkAndForceUpdate, type ForceUpdatePhase } from '../services/updates';
+import { checkAndForceUpdate, getUpdateDiagnostics, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
@@ -505,8 +505,26 @@ export default function RootLayout() {
   // 화면이 리로드되는 것처럼 보이지 않게 한다(진행 상태 없이 순간 리로드되면 크래시처럼 보임).
   const [updatePhase, setUpdatePhase] = useState<ForceUpdatePhase | null>(null);
   useEffect(() => {
+    // 2026-08-06 — 지금 돌고 있는 번들의 신원을 부팅 때 한 줄 남긴다. "OTA를 쐈는데 왜 안 와?"는
+    // 이 값들(채널/런타임버전/현재 업데이트ID/내장번들 여부)이 없으면 추측만 하게 된다 — 오늘 광고
+    // 문제를 로그 없이 조사하느라 헤맸던 것과 같은 교훈. `__DEV__` 게이트를 일부러 안 건다:
+    // 정작 필요한 순간이 출시빌드다(AdBanner 실패 로그와 동일한 판단).
+    const d = getUpdateDiagnostics();
+    console.warn(
+      `[updates] enabled=${d.isEnabled} embedded=${d.isEmbeddedLaunch} channel=${d.channel} ` +
+        `runtimeVersion=${d.runtimeVersion} updateId=${d.updateId}`
+    );
     const runCheck = () => {
       checkAndForceUpdate((phase) => setUpdatePhase(phase))
+        .then((result) => {
+          // 결과도 남긴다 — 특히 check-failed/download-failed는 사용자에게 아무 표시가 안 나가므로
+          // (의도된 설계: 업데이트 실패로 앱을 막지 않는다) 로그가 유일한 단서다.
+          if (result.status === 'check-failed' || result.status === 'download-failed') {
+            console.warn(`[updates] ${result.status}:`, String((result.error as Error)?.message ?? result.error));
+          } else if (result.status === 'reloading') {
+            console.warn(`[updates] reloading (rollback=${result.rollback})`);
+          }
+        })
         .catch(() => {
           // reloadAsync 네이티브 예외 — services/updates 설계상 여기까지 올라온다. 다음 포그라운드
           // 복귀 때 재시도되므로 여기선 조용히 삼킨다(unhandled rejection 방지).

@@ -3,6 +3,7 @@
 // (=_layout.tsx가 checkAndForceUpdate를 import) 'Cannot find native module ExpoUpdates' throw →
 // ErrorBoundary undefined로 앱 전체가 크래시했다. 타입만 import(런타임 erased)하고, 실제 모듈은
 // 함수 안에서 lazy require + try/catch로 로드해 네이티브가 없으면 조용히 스킵한다.
+import { AppState } from 'react-native';
 import type * as UpdatesNS from 'expo-updates';
 import { useTimerStore } from '../../store/useTimerStore';
 import { usePlayerStore } from '../../store/usePlayerStore';
@@ -35,25 +36,90 @@ import { usePlayerStore } from '../../store/usePlayerStore';
 //  - 너무 잦은 체크로 서버에 부담 주지 않도록 MIN_CHECK_INTERVAL_MS 안에는 재체크 안 함(단,
 //    다운로드가 이미 끝나 리로드만 기다리는 중이면 이 스로틀과 무관하게 매 포그라운드 복귀마다
 //    가드를 재확인한다 — 아래 hasPendingDownloadedUpdate 분기 참고).
+//
+// 2026-08-06 사장님 지시("웹서치해서 OTA 예외처리 다 해서 적용해") — expo-updates v57 문서를 다시
+// 대조해 빠진 것들을 채웠다. 아래 5가지가 이번에 추가/수정된 부분이다.
+//
+//  ① 🔴 **롤백(isRollBackToEmbedded) 처리가 아예 없었다.** 우리가 잘못된 OTA를 쏜 뒤 `eas update:roll-back`
+//     을 발행하면, 서버는 "새 업데이트 있음"이 아니라 **"내장 번들로 되돌려라"** 라는 별개 지시를 준다.
+//     그때 checkForUpdateAsync()는 `{ isAvailable: false, isRollBackToEmbedded: true }`로 온다.
+//     기존 코드는 isAvailable만 보고 'no-update'로 끝내서 **롤백이 사용자에게 영영 도달하지 않았다.**
+//     OTA의 유일한 되돌리기 수단이 작동하지 않고 있던 셈 — 나쁜 번들을 밀면 스토어 심사를 다시 타야만
+//     복구되는 상태였다. (v57 문서의 UpdateCheckResult/UpdateFetchResult에 이 필드가 명시돼 있다.)
+//  ② reloadAsync() **뒤에 아무 로직도 두지 않는다** — 문서 명시 주의사항: 이 프라미스는 실제 리로드보다
+//     먼저 resolve되므로 그 뒤 코드는 실행이 보장되지 않는다. 그래서 checkInFlight를 여기서 풀지 않는다
+//     (어차피 곧 프로세스가 새로 뜬다. 푸는 순간 리로드 직전에 또 체크가 들어올 수 있다).
+//  ③ **포그라운드일 때만 리로드한다.** 백그라운드에서 리로드하면 사용자가 다음에 앱을 열었을 때 이유 없이
+//     첫 화면으로 튕겨 있다(무슨 일이 있었는지 알 방법이 없어 "앱이 꺼졌다"로 읽힌다).
+//  ④ **연속 실패에 백오프.** 기존엔 실패해도 1분 고정이라 네트워크가 죽어 있으면 포그라운드마다 계속
+//     헛수고를 했다. 실패가 쌓이면 간격을 늘린다(AdBanner 로드 실패 백오프와 같은 원리).
+//  ⑤ **진단 정보 노출**(getUpdateDiagnostics). "OTA가 왜 안 와?"를 조사할 때 채널/런타임버전/현재 업데이트
+//     ID가 없으면 아무것도 못 한다 — 오늘 광고 조사에서 로그가 없어 원인을 못 좁혔던 것과 같은 교훈.
 const MIN_CHECK_INTERVAL_MS = 60_000; // 1분 — 포그라운드 복귀할 때마다 매번 네트워크 왕복하지 않게.
+// 연속 실패 시 상한. 1분 → 2 → 4 → 8분에서 멈춘다(그 이상 벌리면 정작 복구된 뒤 반영이 너무 늦다).
+const MAX_CHECK_INTERVAL_MS = 8 * 60_000;
 let lastCheckAtMs = 0;
+let consecutiveFailures = 0;
 let checkInFlight = false;
 let hasPendingDownloadedUpdate = false;
+// 롤백 지시를 받아 내장 번들로 되돌리는 중인지 — 리로드가 미뤄질 때도 이 성격을 기억해야 한다
+// (다음 기회에 리로드하면 되는 건 같지만, 로그/결과값에서 일반 업데이트와 구분돼야 조사가 된다).
+let pendingIsRollback = false;
 
 export type ForceUpdateResult =
   | { status: 'skipped-dev' }
   | { status: 'skipped-throttled' }
+  | { status: 'skipped-background' }
   | { status: 'no-update' }
   | { status: 'check-failed'; error: unknown }
   | { status: 'download-failed'; error: unknown }
-  | { status: 'deferred-mid-session' }
-  | { status: 'reloading' };
+  | { status: 'deferred-mid-session'; rollback: boolean }
+  | { status: 'reloading'; rollback: boolean };
 
 export type ForceUpdatePhase = 'checking' | 'downloading' | 'reloading';
 
 /** Android 오버레이 세션(useTimerStore) 또는 Pace Feed 재생(usePlayerStore) 도중인지. */
 function isUserMidSession(): boolean {
   return useTimerStore.getState().isSessionActive || usePlayerStore.getState().isPlaying;
+}
+
+/**
+ * 리로드해도 되는 순간인가 — 앱이 실제로 화면에 있어야 한다(위 ③).
+ * 'inactive'(iOS 전환 중/권한 팝업)도 제외한다: 그 순간 리로드하면 팝업 뒤에서 앱이 재시작된다.
+ */
+function isAppForeground(): boolean {
+  return AppState.currentState === 'active';
+}
+
+/** dev 클라이언트/Updates 비활성에서 나는 정상 에러 — 실패로 세지 않고 조용히 스킵한다. */
+function isUpdatesUnavailableError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code === 'ERR_UPDATES_DISABLED' || code === 'ERR_NOT_AVAILABLE_IN_DEV_CLIENT';
+}
+
+/**
+ * 현재 실행 중인 번들의 신원 — "OTA가 왜 안 와?"를 조사할 때 첫 번째로 봐야 하는 값들(위 ⑤).
+ * 네이티브 모듈이 없거나 dev면 전부 null이 담긴 객체를 돌려준다(호출부가 분기하지 않아도 되게).
+ */
+export function getUpdateDiagnostics(): {
+  isEnabled: boolean;
+  isEmbeddedLaunch: boolean | null;
+  channel: string | null;
+  runtimeVersion: string | null;
+  updateId: string | null;
+} {
+  try {
+    const Updates = require('expo-updates') as typeof UpdatesNS;
+    return {
+      isEnabled: Updates.isEnabled,
+      isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+      channel: Updates.channel ?? null,
+      runtimeVersion: Updates.runtimeVersion ?? null,
+      updateId: Updates.updateId ?? null,
+    };
+  } catch {
+    return { isEnabled: false, isEmbeddedLaunch: null, channel: null, runtimeVersion: null, updateId: null };
+  }
 }
 
 /**
@@ -85,19 +151,21 @@ export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePha
   // (네트워크 호출이 없으므로 서버 부담과 무관).
   if (hasPendingDownloadedUpdate) {
     if (isUserMidSession()) {
-      return { status: 'deferred-mid-session' };
+      return { status: 'deferred-mid-session', rollback: pendingIsRollback };
+    }
+    if (!isAppForeground()) {
+      return { status: 'skipped-background' };
     }
     checkInFlight = true;
-    try {
-      onPhaseChange?.('reloading');
-      await Updates.reloadAsync();
-      return { status: 'reloading' };
-    } finally {
-      checkInFlight = false;
-    }
+    onPhaseChange?.('reloading');
+    // ⚠️ reloadAsync 뒤에는 아무것도 두지 않는다(위 ②) — checkInFlight도 일부러 안 푼다.
+    await Updates.reloadAsync();
+    return { status: 'reloading', rollback: pendingIsRollback };
   }
   const now = Date.now();
-  if (now - lastCheckAtMs < MIN_CHECK_INTERVAL_MS) {
+  // 연속 실패가 쌓이면 간격을 벌린다(위 ④) — 1 → 2 → 4 → 8분 상한.
+  const interval = Math.min(MIN_CHECK_INTERVAL_MS * Math.pow(2, consecutiveFailures), MAX_CHECK_INTERVAL_MS);
+  if (now - lastCheckAtMs < interval) {
     return { status: 'skipped-throttled' };
   }
   checkInFlight = true;
@@ -108,27 +176,51 @@ export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePha
     try {
       check = await Updates.checkForUpdateAsync();
     } catch (error) {
+      // dev 클라이언트/비활성은 실패가 아니다 — 백오프를 키우지 않는다.
+      if (isUpdatesUnavailableError(error)) return { status: 'skipped-dev' };
+      consecutiveFailures += 1;
       return { status: 'check-failed', error };
     }
-    if (!check.isAvailable) {
+    consecutiveFailures = 0;
+    // 🔴 롤백 지시(위 ①) — isAvailable은 false지만 "내장 번들로 되돌려라"라는 별개 지시다.
+    // 이걸 안 보면 우리가 나쁜 번들을 밀었을 때 되돌릴 방법이 없다.
+    const isRollback = check.isRollBackToEmbedded === true;
+    if (!check.isAvailable && !isRollback) {
       return { status: 'no-update' };
     }
     onPhaseChange?.('downloading');
+    // 롤백도 동일하게 fetchUpdateAsync()로 "적용 대상"을 확정한 뒤 리로드해야 한다(v57 문서).
+    let fetched: UpdatesNS.UpdateFetchResult;
     try {
-      await Updates.fetchUpdateAsync();
+      fetched = await Updates.fetchUpdateAsync();
     } catch (error) {
+      consecutiveFailures += 1;
       return { status: 'download-failed', error };
+    }
+    const rollback = fetched.isRollBackToEmbedded === true;
+    // isNew=false면 지금 돌고 있는 것과 같은 번들이다 — 리로드할 이유가 없다(공연히 세션만 날린다).
+    if (!rollback && !fetched.isNew) {
+      return { status: 'no-update' };
     }
     if (isUserMidSession()) {
       hasPendingDownloadedUpdate = true;
-      return { status: 'deferred-mid-session' };
+      pendingIsRollback = rollback;
+      return { status: 'deferred-mid-session', rollback };
+    }
+    if (!isAppForeground()) {
+      hasPendingDownloadedUpdate = true;
+      pendingIsRollback = rollback;
+      return { status: 'skipped-background' };
     }
     onPhaseChange?.('reloading');
     // reloadAsync 자체가 실패하면(네이티브 쪽 예외) 이 함수 밖(호출부)에서 잡도록 던진다 —
     // 여기까지 왔으면 이미 다운로드가 끝난 상태라 재시도보다 상위 에러 리포팅이 맞다.
+    // ⚠️ 이 줄 뒤에 로직을 추가하지 말 것(위 ②). finally의 checkInFlight 해제도 이 경로에선
+    // 실행이 보장되지 않는데, 그게 오히려 의도한 동작이다(곧 프로세스가 새로 뜬다).
     await Updates.reloadAsync();
-    return { status: 'reloading' };
+    return { status: 'reloading', rollback };
   } finally {
+    // 리로드 경로에선 이 줄에 도달하지 못할 수 있다(위 주석) — 그 외 모든 경로에서만 풀린다.
     checkInFlight = false;
   }
 }

@@ -565,10 +565,19 @@ object PaceHandWaveDetector {
       //   → 손이 HAND_LOST_GRACE_MS 넘게 안 보일 때만 "진짜 나갔다"고 보고 버린다. 순간적으로
       //     놓친 프레임은 이력을 유지해 스윕을 끝까지 잇는다. 윈도우가 2.5초라 유예 400ms가
       //     남기는 잔여 샘플은 판정에 유의미한 영향을 주지 않는다(오탐 증가 위험 낮음).
-      if (lastLandmarkAtMs != 0L && System.currentTimeMillis() - lastLandmarkAtMs > HAND_LOST_GRACE_MS) {
-        sizeHistory.clear()
-        xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
-      }
+      // ⛔ 2026-08-05 되돌림 — 위 유예(HAND_LOST_GRACE_MS) 도입은 **오탐 회귀를 만들었다.**
+      //   실기기 로그(16분간 WAVE 36회, 사용자는 흔들지 않음):
+      //     s=0.580 g=1.0 v=0.0 / s=0.262 g=1.0 v=0.0 / s=2.307 g=1.0 v=0.0
+      //   성장 1.0(=손 크기 그대로) + 속도 0.0(=안 움직임)인데 sweep만 임계를 넘었다. sweep이 2.3까지
+      //   튄 것이 결정적 단서다 — 손 인식이 잠깐 끊겼다가 **다른 위치에서** 다시 잡히면, 이력을
+      //   유지한 탓에 그 두 위치의 점프가 "가로로 크게 흔들었다"로 계산된다. 실제로는 안 움직였다.
+      //   그 결과 triggerNext가 연달아 불려 영상이 제멋대로 넘어갔다(사장님: "왜 지맘대로 계속 넘어가").
+      //   → 원래대로 손이 안 보이면 이력을 버린다. 첫 손짓이 덜 잡히는 것보다 오탐이 훨씬 나쁘다.
+      //   ⚠️ "첫 손짓이 잘 안 된다"는 문제는 여전히 남아 있다. 다만 원인은 이 이력 초기화가 아니라
+      //     발화 직후의 재무장/불응 구간(REFRACTORY_MS + awaitingRearm + sizeHistory.clear)일 가능성이
+      //     크다 — 그쪽은 실측(rearmed after …ms 로그) 없이 건드리지 않는다.
+      sizeHistory.clear()
+      xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
       return
     }
     lastLandmarkAtMs = System.currentTimeMillis()

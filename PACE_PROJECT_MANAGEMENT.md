@@ -5707,3 +5707,23 @@ T:위험한 발언에 리액션 고장난 아이돌 TOP4 | T:@People_Shortsting
 | iOS | `item.videoId`가 없으면 앱 안 재생을 건너뛰고 외부 열기로 갔는데 그 실패를 `.catch(() => {})`로 **삼켰다**. | url에서 videoId를 뽑아 앱 안에서 재생한다(앱 밖으로 안 내보낸다). 실패 시 토스트. |
 
 새 번역 키 `overlay.openFailed` 추가(en/ko).
+
+#### (정정) iOS "주소가 있는데도 안 열림"의 **진짜 원인** — 앞 표의 iOS 항목은 오진이었다
+
+앞에서 "videoId가 없어 외부 열기로 갔다가 조용히 실패"라고 적었는데 **틀렸다.** iOS의 `onAddCurrent`는
+저장할 때 videoId를 항상 넣으므로(`videoId: vid`, 없으면 아예 저장 안 함) 그 경로는 애초에 안 탄다.
+
+**진짜 원인은 `src/app/feed/index.tsx`의 렌더 조건이다:**
+```tsx
+{current && !feedBlocked && !sleepBlackout && (<YouTubeShortsPlayer … />)}
+```
+플레이어가 **큐의 `current`가 있을 때만** 렌더된다. `forcedVideoId`(즐겨찾기/HOT에서 연 특정 영상)만으로는
+아무것도 안 뜬다. 그런데 이 화면은 **진입할 때마다 큐를 비우고 다시 받아온다**(§4-1 "누를 때마다 새 영상").
+그 사이거나 큐가 소진된 상태에서 즐겨찾기를 누르면 `forcedVideoId`는 설정되는데 **화면엔 아무 일도
+일어나지 않는다** — 저장은 멀쩡한데 안 열리는 정체.
+
+→ 조건을 `(forcedVideoId || current) &&` 로 바꿨다. forcedVideoId만으로도 재생돼야 한다(그게 그 값의 존재 이유).
+⚠️ **iOS·Android 공통 파일이라 양쪽 다 고쳐진다.**
+
+**교훈**: "저장하는 방법"(Android 링크 복사)과 "저장된 걸 재생하는 것"은 **완전히 별개 이슈**다.
+사장님 지적대로 섞어서 진단하면 안 된다.

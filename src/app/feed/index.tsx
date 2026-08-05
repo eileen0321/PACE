@@ -563,11 +563,17 @@ export default function PaceFeedScreen() {
       {/* 2026-08-01 배터리 감사 — sleepBlackout(취침/슬립타이머/idle 상한 발동)이면 WebView를 통째로
           언마운트한다. 예전엔 검은 Pressable로 가리기만 해서 유튜브 페이지가 메모리에 남고 내부
           500ms 폴링이 계속 브릿지로 메시지를 쏘았다(재생은 정지됐어도 CPU/wakeup 낭비). */}
-      {current && !feedBlocked && !sleepBlackout && (
+      {/* ⚠️ 2026-08-05 사장님 지적("아이폰은 주소가 있는데도 안 열렸어") — 예전 조건은 `current &&` 였다.
+          즉 **큐에 현재 영상이 있어야만** 플레이어가 렌더됐고, `forcedVideoId`(즐겨찾기/HOT에서 연 특정
+          영상)만으로는 아무것도 안 떴다. 그런데 이 화면은 진입할 때마다 큐를 비우고 다시 받아온다
+          (§4-1 "누를 때마다 새 영상"). 그 사이거나 큐가 소진된 상태에서 즐겨찾기를 누르면
+          forcedVideoId는 설정되는데 **화면엔 아무 일도 안 일어난다** — 저장은 멀쩡한데 안 열리는 정체.
+          forcedVideoId만으로도 재생할 수 있어야 한다(그게 그 값의 존재 이유다). */}
+      {(forcedVideoId || current) && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
-          key={forcedVideoId ?? current.videoId}
+          key={forcedVideoId ?? current!.videoId}
           ref={playerRef}
-          videoId={forcedVideoId ?? current.videoId}
+          videoId={forcedVideoId ?? current!.videoId}
           playing={playing}
           onProgress={handleProgress}
           onVideoChange={(id) => { currentVideoIdRef.current = id; }}

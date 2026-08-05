@@ -6127,3 +6127,55 @@ sweep이 2.3까지 튄 것이 결정적 단서 — 손 인식이 잠깐 끊겼�
 이 로그는 **릴리즈 빌드에도 남는다**(`Log.d`, proguard 제거 설정 없음). 사장님이 평소처럼 쓰시는
 동안 `adb logcat -s PaceHandWaveDetector` 한 번만 받아두면 그 자리에서 결론이 난다.
 → **다음 세션 최우선 항목.** 그전까지 손짓 임계값은 어떤 것도 건드리지 않는다.
+
+### 2026-08-05 (심야, 이어서2) — 🔴🔴 "손짓이 아예 안 됨"의 진짜 원인 — 유튜브 창이 PIP로 잘못 표시됨
+
+사장님 신고 "지금은 또 왜 손짓이 아예 안 되나". **감지기 문제가 아니었다.**
+
+#### 증상과 첫 단서
+```
+22:46:27.638  WAVE detected by=sweep sweep=0.346 handSize=0.276
+22:46:27.641  triggerNext() aborted — isSupportedAppWindowVisible()=false
+22:46:29.127  WAVE detected → aborted
+22:46:30.818  WAVE detected → aborted
+```
+손짓은 **정상 감지**됐다. 스와이프를 쏘는 쪽이 "감시 대상 앱 창이 안 보인다"며 전부 막았다.
+그런데 같은 순간 `dumpsys`로는:
+- `topResumedActivity = com.google.android.youtube/InternalMainActivity`
+- `Task{#1938 ... visible=true mode=fullscreen}`
+- 창 z-order도 정상 (유튜브가 Pace 액티비티 위)
+
+즉 "창이 없다"가 아니라 **접근성이 그 창을 못 보고 있다**는 뜻이었다.
+
+#### 창 전수 덤프로 확정
+`supportedAppWindowVisible()`에 진단 로그를 넣어 창을 하나씩 찍었다:
+```
+n=4 {id=14105 type=3 pip=false pkg=com.android.systemui}
+    {id=14101 type=3 pip=false pkg=com.samsung.android.app.cocktailbarservice}
+    {id=14113 type=3 pip=false pkg=com.android.systemui}
+    {id=14111 type=1 pip=true  pkg=com.google.android.youtube}   ← 이것
+```
+**유튜브가 전체화면인데 `AccessibilityWindowInfo.isInPictureInPictureMode()`만 true로 남아 있었다.**
+유튜브가 PIP에 들어갔다 전체화면으로 돌아온 뒤 이 플래그가 안 지워진다(이 기기/One UI에서 재현).
+
+2026-08-01에 넣은 PIP 제외 로직(`if (window.isInPictureInPictureMode) continue`)이 그 잘못된
+플래그를 믿고 유튜브 창을 통째로 걸러냈다. 이 함수를 쓰는 **모든 경로가 한꺼번에 죽었다**:
+손짓 · 볼륨키 · 블루투스 리모컨 · 오버레이 알약 표시.
+
+#### 수정
+플래그를 믿지 않고 **창 크기**로 진짜 PIP를 가린다 — 진짜 PIP는 화면 한구석의 작은 썸네일이고
+전체화면 창은 화면 폭을 그대로 덮는다. `pipFlag && bounds.width() < 화면폭*0.8`일 때만 제외.
+- 8/1의 원래 목적("Open App 눌러도 다시 쇼츠로 옴" — 작은 PIP 창이 남아 알약이 Pace 위에 계속
+  뜨던 문제)은 **진짜 PIP일 때 그대로 유지**된다.
+- 전체화면인데 플래그만 남은 이번 경우만 정상 통과한다.
+
+#### 실기기 검증
+- 수정 전: 유튜브 포그라운드 상태에서 차단 로그가 1초에 1회씩 계속 (10초에 10회+)
+- 수정 후: 유튜브 포그라운드 **30초간 차단 로그 0회**, 알약("0m left / FOCUS 9m")이 유튜브 위에
+  정상 표시됨(알약 표시도 같은 게이트를 쓰므로 이게 곧 게이트가 true라는 증거)
+- Pace 자기 화면일 때는 여전히 false (정상 — 넘길 대상이 없음)
+
+#### 교훈
+2026-08-02에 넣어둔 `triggerNext() aborted` 진단 로그 한 줄이 이번 원인 규명의 전부였다.
+그게 없었으면 또 감지기 임계값을 의심하며 시간을 버렸을 것이다 —
+**"감지는 되는데 안 먹는다"와 "감지가 안 된다"를 로그로 구분할 수 있게 해두는 것**이 핵심이다.

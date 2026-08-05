@@ -732,13 +732,47 @@ class PaceAccessibilityService : AccessibilityService() {
   // 패널이 Pace 위에 계속 뜨고, 사용자 눈엔 "안 나가고 다시 쇼츠로 온 것"처럼 보였다. PIP 창은
   // 이 판정에서 제외한다(TYPE_PICTURE_IN_PICTURE, API 26+) — PIP는 없어도 감시 대상 앱을 못 찾는
   // 문제(장시간 무전환) 자체가 없으므로 이 신호가 굳이 필요하지 않다.
+  // 🔴 2026-08-05 실기기로 근본원인 확정 — 사장님 "지금은 또 왜 손짓이 아예 안 되나".
+  // 손짓은 정상 감지됐는데(WAVE detected ×3) triggerNext()가 여기서 false를 받아 전부 막혔다.
+  // 창을 전수 덤프해보니:
+  //     {id=14111 type=1 pipFlag=true pkg=com.google.android.youtube}
+  // 같은 순간 ActivityManager는 `mode=fullscreen visible=true`에 topResumedActivity였고 화면에도
+  // 전체화면으로 그려지고 있었다. 즉 **AccessibilityWindowInfo.isInPictureInPictureMode()가
+  // 유튜브가 PIP에서 전체화면으로 돌아온 뒤에도 true로 남는다**(이 기기/One UI에서 재현).
+  // 그 잘못된 플래그 하나 때문에 위 PIP 제외 로직이 유튜브 창을 통째로 걸러냈고, 이 함수를 쓰는
+  // 모든 경로 — 손짓·볼륨키·블루투스 리모컨·오버레이 알약 표시 — 가 한꺼번에 죽었다.
+  // (2026-08-02에 넣었던 "triggerNext() aborted" 진단 로그가 아니었으면 또 감지기 임계값을
+  //  의심하며 시간을 버렸을 것이다.)
+  //
+  // → 플래그를 믿지 않고 **창 크기**로 판정한다. 진짜 PIP는 화면 한구석의 작은 썸네일이라 폭이
+  //   화면의 절반도 안 되고, 전체화면 창은 화면 폭을 그대로 덮는다. 8/1에 PIP를 제외한 원래
+  //   목적("Open App 눌러도 다시 쇼츠로 옴" — 작은 PIP 창이 남아 알약이 Pace 위에 계속 뜨던 문제)은
+  //   진짜 PIP일 때 그대로 유지되고, 전체화면인데 플래그만 남은 이번 경우만 정상 통과한다.
+  // 실패했을 때만 한 줄 남긴다(성공 시엔 안 찍으므로 정상 사용 중 로그 스팸 없음).
   private fun supportedAppWindowVisible(): Boolean {
     try {
+      val screenWidth = resources.displayMetrics.widthPixels
+      val dump = StringBuilder()
+      var hit = false
+      val bounds = Rect()
       for (window in windows) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && window.isInPictureInPictureMode) continue
-        val pkg = window.root?.packageName?.toString() ?: continue
-        if (pkg in SupportedApps.PACKAGES) return true
+        val pkg = window.root?.packageName?.toString()
+        window.getBoundsInScreen(bounds)
+        // 진짜 PIP인지는 **플래그가 아니라 창 크기**로 판정한다(위 주석 참고). 진짜 PIP 창은 화면
+        // 한구석의 작은 썸네일이고, 전체화면 창은 화면 폭을 그대로 덮는다.
+        val small = screenWidth > 0 && bounds.width() < screenWidth * 0.8
+        val pipFlag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && window.isInPictureInPictureMode
+        dump.append("{id=").append(window.id)
+          .append(" type=").append(window.type)
+          .append(" pipFlag=").append(pipFlag)
+          .append(" w=").append(bounds.width()).append('/').append(screenWidth)
+          .append(" pkg=").append(pkg ?: "NULL")
+          .append("} ")
+        if ((pipFlag && small) || pkg == null) continue
+        if (pkg in SupportedApps.PACKAGES) hit = true
       }
+      if (hit) return true
+      Log.w("PaceAccessibility", "supportedAppWindowVisible=false n=${windows.size} active=${rootInActiveWindow?.packageName} $dump")
     } catch (e: Exception) {
       Log.w("PaceAccessibility", "supportedAppWindowVisible lookup failed", e)
     }

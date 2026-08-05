@@ -54,6 +54,8 @@ object PaceHandWaveDetector {
   private const val MODEL_ASSET = "hand_landmarker.task"
   private const val PROCESS_INTERVAL_MS = 150L
   private const val REFRACTORY_MS = 1200L
+  // 진단 하트비트 주기(2026-08-05) — 프레임이 계속 들어오는지 확인용.
+  private const val HEARTBEAT_MS = 3000L
   // 손 크기(손목~중지 뿌리 거리, 정규화 좌표계 0~1)가 이 윈도우 안에서 이 배수 이상 커지면
   // "다가오는 움직임"으로 판단. 초기 추정치 — 실기기 튜닝 전(V1, PaceSnapDetector와 동일 원칙).
   // 2026-08-02 실기기 발견 — MediaPipe 추론 지연(기기 부하 시 700ms 훌쩍 넘김)이 겹치면 이 창
@@ -221,6 +223,11 @@ object PaceHandWaveDetector {
   private var lastTriggerAtMs = 0L
   // 마지막으로 손 랜드마크를 실제로 잡은 시각 — 위 HAND_LOST_GRACE_MS 판정용.
   private var lastLandmarkAtMs = 0L
+  // 진단 카운터(2026-08-05) — analyzeFrame 진입 / detectAsync 호출 / onResult 수신.
+  @Volatile private var framesIn = 0
+  @Volatile private var detectSent = 0
+  @Volatile private var resultsIn = 0
+  @Volatile private var lastHeartbeatAtMs = 0L
   // 2026-08-01 사용자 지적("화면이 2개씩 넘어가냐 큐에 넣었다가") — 손을 밀어낸 뒤 바로 안 치우고
   // 카메라 앞에 머물러 있으면, 그 잔류 흔들림만으로도 GROWTH_WINDOW_MS(700ms) 새 창에서 growthRatio가
   // 다시 1.2를 넘어 REFRACTORY_MS(1.2초)만 지나면 또 트리거됐다(실기기 로그로 확인 — 한 번의 제스처
@@ -391,6 +398,17 @@ object PaceHandWaveDetector {
 
   private fun analyzeFrame(proxy: ImageProxy, onWave: () -> Unit) {
     val now = System.currentTimeMillis()
+    // ⭐ 2026-08-05 사장님 실기기("막판엔 손짓이 하나도 안 됐다") — 로그가 WAVE 직후 완전히 끊겼는데
+    //   카메라는 Pace가 계속 잡고 있었다(= 카메라는 열어둔 채 분석만 영구 정지). 그런데 지금 로그로는
+    //   **CameraX가 프레임을 안 주는 것**인지 **MediaPipe가 결과를 안 돌려주는 것**인지 구분이 안 된다
+    //   (DIAG는 onResult에서만 찍히므로 둘 다 "로그 없음"으로 보인다).
+    //   → 셋을 각각 세어 주기적으로 남긴다. HB가 아예 안 찍히면 CameraX가 멈춘 것이고,
+    //     HB는 찍히는데 out이 안 늘면 MediaPipe가 멈춘 것이다.
+    framesIn++
+    if (now - lastHeartbeatAtMs >= HEARTBEAT_MS) {
+      lastHeartbeatAtMs = now
+      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn running=$running")
+    }
     if (!running || now - lastProcessedAtMs < PROCESS_INTERVAL_MS) {
       proxy.close()
       return
@@ -414,7 +432,7 @@ object PaceHandWaveDetector {
         // 그 경우 handLandmarker는 이미 닫혔거나 닫히는 중이다(널 체크만으로는 close()가 진행 중인
         // 순간을 못 걸러낸다 — 그 틈이 정확히 SIGSEGV가 났던 창이다).
         synchronized(landmarkerLock) {
-          if (running) handLandmarker?.detectAsync(mpImage, now)
+          if (running) { handLandmarker?.detectAsync(mpImage, now); detectSent++ }
         }
       }
     } catch (e: Exception) {
@@ -527,6 +545,7 @@ object PaceHandWaveDetector {
   }
 
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
+    resultsIn++
     if (result.landmarks().isEmpty()) {
       awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
       // 2026-08-02 — 손이 사라졌으면 이전 접근 동작의 크기 이력도 버린다. 남겨두면 다음에 손을

@@ -94,7 +94,7 @@
       android:name="expo.modules.paceoverlay.PaceShareCaptureActivity"
       android:exported="true"
       android:label="Pace"
-      android:theme="@android:style/Theme.Translucent.NoTitleBar"
+      android:theme="@style/Theme.Pace.TransparentShell"
       android:noHistory="true"
       android:excludeFromRecents="true">
       <intent-filter>

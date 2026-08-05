@@ -14,6 +14,15 @@
        Gradle 병합으로 합쳐지므로 prebuild와 무관하게 살아남는다. 같은 이유로 PaceRewardedAdActivity의
        activity 선언도 모듈 AndroidManifest.xml로 옮겼다. -->
   <style name="Theme.Pace.TransparentAd" parent="@android:style/Theme.Translucent.NoTitleBar">
+    <!-- ⚠️ 2026-08-05 사장님 재보고("보상형 광고 시작 전에 하단 흰 키, 광고에서는 검은 하단키") —
+         아래 statusBarColor/navigationBarColor가 **무시되고 있었다.** 부모인 @android:style/
+         Theme.Translucent(.NoTitleBar)는 머티리얼 이전 테마라 windowDrawsSystemBarBackgrounds가
+         기본 false인데, 그러면 시스템이 창의 시스템 바 색 지정을 아예 안 쓴다(OEM 기본 = 흰 키).
+         같은 원인을 아래 Theme.Pace.AdActivity에서는 이미 이 한 줄로 고쳐놨는데 **이쪽 테마에만
+         빠뜨렸다** — 그래서 광고 액티비티(검정)로 넘어가는 순간 색이 바뀌는 것처럼 보였다.
+         코드(PaceRewardedAdActivity.onCreate의 window.navigationBarColor)로도 같은 값을 넣지만
+         그건 첫 프레임 이후라, 번쩍임을 없애려면 테마에서 처음부터 적용돼야 한다. -->
+    <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     <!-- MainActivity/AppTheme와 동일한 색 — 이 모듈에서는 앱의 R.color를 참조할 수 없어 값으로 직접 지정. -->
     <item name="android:statusBarColor">#060709</item>
     <item name="android:navigationBarColor">#060709</item>
@@ -59,11 +68,50 @@
          (실기기에서 광고 엔드카드 위 하단키가 흰색으로 나오는 걸로 확인). 투명도와는 무관한 플래그라
          켜도 windowIsTranslucent=true는 그대로 유지된다. -->
     <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    <!-- ⚠️ 2026-08-05 사장님 지적("광고색은 회색인데 키만 검은색이잖아") — 여기 색을 #060709로 박아뒀던
+         게 잘못이었다. 이 창에 그려지는 건 **구글 광고 콘텐츠**이고 그 배경색은 광고마다 다르다
+         (이번엔 회색). 우리가 하단에 검은 띠를 강제로 칠하니 광고와 어긋나 "키만 검은색"으로 보인다.
+         광고 배경색은 알 수 없으므로 **맞출 수 없다 — 칠하지 않는 게 답이다.** 투명으로 두면 광고가
+         그 영역까지 그대로 채운다.
+         ⚠️ 투명으로 두되 enforce*Contrast=false는 반드시 유지해야 한다. One UI는 투명 시스템 바 뒤에
+         자동으로 밝은 대비 스크림을 깔아 흰 키처럼 보이게 만드는데(원래 문제의 원인), 그걸 끄는 게
+         이 두 줄이다. windowDrawsSystemBarBackgrounds도 유지 — 이게 꺼져 있으면 아래 색 지정 자체가
+         무시돼 OEM 기본값(흰 키)으로 되돌아간다. -->
+    <!-- ⚠️ 2026-08-05 (웹서치 후 정정) — 이 앱은 targetSdk 36이다. Android 15(SDK 35)+를 타겟하면
+         시스템이 **강제 edge-to-edge**를 적용하고, 그 모드에서는 statusBarColor/navigationBarColor
+         지정이 **무시된다.** 즉 위에서 색을 뭘로 넣든(검정이든 투명이든) 효력이 없었다 —
+         오늘 이 파일에서 색만 바꾸며 시도한 것들이 전부 헛수고였던 이유다.
+         회색 광고 아래 검은 띠의 정체는 "우리가 칠한 색"이 아니라 **광고가 안 그리는 영역에 그 뒤
+         (투명 껍데기 → 유튜브)가 비치는 것**이다.
+         → 이 창에 한해 강제 edge-to-edge를 끈다(공식 속성 windowOptOutEdgeToEdgeEnforcement, API 35+).
+           그러면 광고가 시스템 바를 침범하지 않고 그 위에 정상 배치되고, 아래 색 지정도 다시 효력을 갖는다.
+           translucent 계열도 함께 꺼야 한다(같은 증상의 알려진 처방 — SDK 35 타겟 시 광고가 내비게이션
+           바와 겹치는 문제 보고 다수).
+         ⚠️ 구버전 안드로이드는 모르는 속성이라 그냥 무시한다(이 기기는 Android 13이라 원래 이 문제 없음). -->
+    <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    <item name="android:windowTranslucentStatus">false</item>
+    <item name="android:windowTranslucentNavigation">false</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+    <item name="android:enforceNavigationBarContrast">false</item>
+    <item name="android:enforceStatusBarContrast">false</item>
+  </style>
+  <!-- 2026-08-05 — 화면을 안 그리는 투명 껍데기 액티비티 공용 테마(PaceShareCaptureActivity).
+       ⚠️ windowDrawsSystemBarBackgrounds가 없으면 시스템 바 색 지정이 무시돼 OEM 기본(흰 키)이
+       그대로 나온다 — Theme.Pace.TransparentAd에서 겪은 것과 완전히 같은 함정이다.
+       매니페스트에서 @android:style/Theme.Translucent.NoTitleBar를 직접 쓰면 이 보호가 없다. -->
+  <style name="Theme.Pace.TransparentShell" parent="@android:style/Theme.Translucent.NoTitleBar">
+    <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     <item name="android:statusBarColor">#060709</item>
     <item name="android:navigationBarColor">#060709</item>
     <item name="android:windowLightStatusBar">false</item>
     <item name="android:windowLightNavigationBar">false</item>
     <item name="android:enforceNavigationBarContrast">false</item>
     <item name="android:enforceStatusBarContrast">false</item>
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowAnimationStyle">@null</item>
   </style>
 </resources>

@@ -53,17 +53,12 @@
          res/values/styles.xml Theme.Pace.AdActivity 주석 참고. 투명 부모를 유지하면서 시스템 바
          색만 박은 그 테마로 교체한다. -->
     <activity android:name="com.google.android.gms.ads.AdActivity" android:theme="@style/Theme.Pace.AdActivity" tools:replace="android:theme" android:exported="false"/>
-    <!-- 2026-07-31 오버레이 Favorite/Capture — 유튜브 Shorts는 URL 주소창이 없는 몰입형 플레이어라
-         접근성 트리만으로는 실제 영상 링크(videoId)를 못 읽는다. 우리 앱을 ACTION_SEND(text/plain)
-         대상으로 등록해두고, 접근성 서비스가 유튜브의 "공유" 버튼을 눌러 시스템 공유시트를 띄운 뒤
-         목록에서 "Pace"를 클릭하면 안드로이드가 공유 텍스트(영상 URL)를 이 액티비티로 전달한다 —
-         유튜브 UI 내부 구조가 바뀌어도 안 깨지는 공식 Intent 계약 기반(PaceShareCaptureActivity.kt). -->
-    <activity android:name="expo.modules.paceoverlay.PaceShareCaptureActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:noHistory="true" android:excludeFromRecents="true" android:exported="true">
-      <intent-filter>
-        <action android:name="android.intent.action.SEND"/>
-        <category android:name="android.intent.category.DEFAULT"/>
-        <data android:mimeType="text/plain"/>
-      </intent-filter>
-    </activity>
+    <!-- ⚠️ 2026-08-05 — PaceShareCaptureActivity 선언은 **모듈 매니페스트로 일원화**했다
+         (modules/pace-overlay/android/src/main/AndroidManifest.xml). 여기 중복으로 남아 있어서
+         테마를 고치는 순간 매니페스트 병합이 충돌로 실패했다:
+           module = @style/Theme.Pace.TransparentShell  vs  여기 = @android:style/Theme.Translucent.NoTitleBar
+         투명 껍데기가 시스템 바 색을 못 그려 하단키가 흰색으로 번쩍이던 문제를 고치려면 그 테마여야 한다.
+         이 파일은 `expo prebuild`가 통째로 재생성하며 수동 편집을 날리므로 애초에 선언을 두면 안 된다
+         (같은 이유로 PaceRewardedAdActivity 선언도 모듈로 옮긴 이력이 있다 — 모듈 styles.xml 주석 참고). -->
   </application>
 </manifest>

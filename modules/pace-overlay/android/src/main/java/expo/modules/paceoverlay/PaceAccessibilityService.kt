@@ -935,10 +935,35 @@ class PaceAccessibilityService : AccessibilityService() {
   // "더보기"를 눌러야 전체 앱 목록(별도 그리드/리스트)이 펼쳐지고 거기서 Pace를 찾을 수 있다
   // (uiautomator dump가 이 기기에서 계속 실패해 실제 위젯 구조 대신 스크린샷으로 확인함).
   // "더보기"를 한 번 클릭한 뒤에는 펼쳐진 목록이 RecyclerView일 수 있어 스크롤 폴백도 유지한다.
+  // ⭐ 2026-08-05 실기기 진단으로 확정 — `rootInActiveWindow` 하나만 보면 공유창의 아랫부분이 안 보인다.
+  //   폴백 시점에 트리를 통째로 덤프해보니 이것뿐이었다:
+  //     D:Gmail | D:메시지 | D:블루투스 | D:메시지 | D:Samsung Notes | D:드래그 핸들
+  //   화면에는 분명히 있는 "링크 복사"/"Quick Share"가 **트리에 아예 없다** = 그 부분이 **다른 창**에
+  //   그려져 있다는 뜻이다(활성 창의 루트에 포함되지 않는다). 그래서 지금까지 Pace든 더보기든 링크
+  //   복사든 무엇을 찾아도 못 찾고 매번 타임아웃했다 — 찾는 방법이 아니라 **보는 범위**가 문제였다.
+  //   `windows`의 모든 루트를 뒤진다(이 서비스는 이미 supportedAppWindowVisible에서 같은 API를 쓴다).
+  private fun forEachWindowRoot(action: (AccessibilityNodeInfo) -> Boolean) {
+    rootInActiveWindow?.let { if (action(it)) return }
+    try {
+      for (w in windows) {
+        val r = w.root ?: continue
+        if (action(r)) return
+      }
+    } catch (e: Exception) {
+      Log.w("PaceAccessibility", "windows 순회 실패", e)
+    }
+  }
+
+  private fun findInAnyWindow(finder: (AccessibilityNodeInfo) -> AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    var found: AccessibilityNodeInfo? = null
+    forEachWindowRoot { root -> finder(root)?.also { found = it } != null }
+    return found
+  }
+
   private fun pollForShareTarget(attemptsLeft: Int, totalAttempts: Int = 20, expanded: Boolean = false) {
     if (attemptsLeft <= 0) return
     val root = rootInActiveWindow
-    val target = findNodeByExactText(root, "Pace")
+    val target = findInAnyWindow { findNodeByExactText(it, "Pace") }
     if (target != null) {
       val clickable = generateSequence(target) { it.parent }.firstOrNull { it.isClickable } ?: target
       clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -954,6 +979,51 @@ class PaceAccessibilityService : AccessibilityService() {
       }
     } else if (attemptsLeft <= totalAttempts / 2) {
       findScrollableNode(root)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+    }
+    // ⭐ 2026-08-05 실기기 A/B — 유튜브 쇼츠의 공유 버튼은 **시스템 공유창을 안 띄운다.** 유튜브 자체
+    //   UI이고 내용물은 다이렉트공유 아이콘 5개 + "링크 복사" + "Quick Share"가 전부다. **앱 목록도
+    //   "더보기"도 없어** 위의 Pace 탐색/더보기/스크롤이 전부 헛돌고 매번 타임아웃했다(로그: "공유 결과
+    //   대기 타임아웃"). 대조군으로 같은 기기에 시스템 ACTION_SEND를 직접 쏘면 android/…ResolverActivity가
+    //   앱 그리드를 정상으로 보여준다 — 둘은 완전히 다른 화면이다. Pace 등록 자체는 정상
+    //   (`cmd package query-activities`에 nonLocalizedLabel=Pace로 잡힘).
+    //
+    //   그래서 그 창에 **실제로 있는** "링크 복사"를 대신 누른다. URL이 클립보드에 들어가면
+    //   PaceShareCaptureActivity를 EXTRA_READ_CLIPBOARD로 띄워 읽는다(Android 10+는 포커스를 가진 앱만
+    //   클립보드를 읽을 수 있어 접근성 서비스에서 직접은 불가 — 그 액티비티가 필요한 이유).
+    //   ⚠️ Pace 탐색을 먼저 시도한 뒤의 **폴백**으로 둔다. 나중에 유튜브가 시스템 공유창으로 되돌리거나
+    //     다른 기기/OEM에서 앱 목록이 나오면 기존 경로가 그대로 먹히기 때문이다(회귀 방지).
+    if (attemptsLeft <= totalAttempts / 2) {
+      // 진단(2026-08-05) — "링크 복사"를 못 찾는 원인을 추측하지 않기 위해, 폴백 시도 시점에 공유창의
+      // 실제 텍스트/contentDesc를 한 번만 덤프한다. uiautomator dump가 이 기기에서 계속 실패해
+      // 외부 도구로는 확인할 수 없어 서비스 자신이 남기는 게 유일한 방법이다.
+      if (attemptsLeft == totalAttempts / 2) {
+        val texts = mutableListOf<String>()
+        forEachWindowRoot { r -> collectVisibleTexts(r, texts, 0, intArrayOf(600)); false }
+        Log.i("PaceAccessibility", "SHARE-SHEET texts=${texts.take(40).joinToString(" | ")}")
+      }
+      val copy = findInAnyWindow { findNodeByExactText(it, "링크 복사") }
+        ?: findInAnyWindow { findNodeByExactText(it, "Copy link") }
+        ?: findInAnyWindow { findNodeByTextContains(it, "링크 복사") }
+        ?: findInAnyWindow { findNodeByTextContains(it, "Copy link") }
+      if (copy != null) {
+        val clickableCopy = generateSequence(copy) { it.parent }.firstOrNull { it.isClickable } ?: copy
+        if (clickableCopy.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+          Log.i("PaceAccessibility", "공유시트에 앱 목록이 없어 '링크 복사'로 폴백")
+          // 복사 반영에 약간의 지연이 있어 잠깐 기다렸다 읽는다.
+          handler.postDelayed({
+            try {
+              startActivity(
+                Intent(this, PaceShareCaptureActivity::class.java)
+                  .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
+                  .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+              )
+            } catch (e: Exception) {
+              Log.w("PaceAccessibility", "클립보드 읽기 액티비티 실행 실패", e)
+            }
+          }, 350L)
+          return
+        }
+      }
     }
     handler.postDelayed({ pollForShareTarget(attemptsLeft - 1, totalAttempts, expanded) }, 300L)
   }
@@ -971,6 +1041,28 @@ class PaceAccessibilityService : AccessibilityService() {
       }
     }
     return best
+  }
+
+  // 진단용 — 화면의 text/contentDescription을 모두 모은다(위 SHARE-SHEET 로그).
+  private fun collectVisibleTexts(node: AccessibilityNodeInfo?, out: MutableList<String>, depth: Int, budget: IntArray) {
+    if (node == null || depth > 40 || budget[0] <= 0) return
+    budget[0]--
+    node.text?.toString()?.takeIf { it.isNotBlank() }?.let { out.add("T:$it") }
+    node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { out.add("D:$it") }
+    for (i in 0 until node.childCount) collectVisibleTexts(node.getChild(i), out, depth + 1, budget)
+  }
+
+  // "링크 복사"가 정확일치로 안 잡히는 경우(앞뒤 공백/부가 문구)를 위한 부분일치 탐색.
+  private fun findNodeByTextContains(node: AccessibilityNodeInfo?, needle: String, depth: Int = 0, budget: IntArray = intArrayOf(600)): AccessibilityNodeInfo? {
+    if (node == null || depth > 40 || budget[0] <= 0) return null
+    budget[0]--
+    val t = node.text?.toString()
+    val d = node.contentDescription?.toString()
+    if ((t != null && t.contains(needle)) || (d != null && d.contains(needle))) return node
+    for (i in 0 until node.childCount) {
+      findNodeByTextContains(node.getChild(i), needle, depth + 1, budget)?.let { return it }
+    }
+    return null
   }
 
   private fun collectContentDescriptions(node: AccessibilityNodeInfo?, out: MutableList<String>, depth: Int, budget: IntArray) {

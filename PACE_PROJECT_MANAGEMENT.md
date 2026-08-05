@@ -5609,3 +5609,47 @@ Android 12+는 **알림이 꺼진 앱의 Toast도 같이 막는다.** Android 13
 1. 온보딩에서 알림 권한을 확실히 받게 고친다 — 정공법이지만 사용자가 거부하면 그대로다.
 2. 오버레이로 자체 토스트를 그린다 — 앱이 이미 `SYSTEM_ALERT_WINDOW`로 알약을 그리므로 같은 방식이면
    시스템 차단과 무관해진다. 확실하지만 작업량이 있다.
+
+### 2026-08-05 — 즐겨찾기(Favorite/Capture) 실패 원인 확정 — **유튜브 공유창은 접근성에 안 잡힌다**
+
+사장님 지시로 실기기에서 끝까지 파고든 결과. 추측 아니고 전부 로그/스크린샷 근거.
+
+#### 1) 유튜브 공유 버튼은 **시스템 공유창을 안 띄운다** (A/B로 확정)
+| | 유튜브 공유 버튼 | 시스템 ACTION_SEND 직접 |
+|---|---|---|
+| topResumedActivity | `com.google.android.youtube/…InternalMainActivity` | `android/com.android.internal.app.ResolverActivity` |
+| 내용 | 아이콘 5개 + `링크 복사` + `Quick Share` | **앱 그리드**(메시지·캘린더·Samsung Notes·게임런처·리마인더·블루투스…) |
+| 펼치기 | 손잡이 드래그해도 안 펼쳐짐(이게 전부) | 스크롤됨 |
+
+→ 완전히 다른 화면이다. **Pace는 유튜브 공유창에 영영 못 뜬다.**
+Pace 등록 자체는 정상 — `cmd package query-activities -a SEND -t text/plain`에
+`PaceShareCaptureActivity … nonLocalizedLabel=Pace` 존재. **앱 잘못이 아니다.**
+(코드가 기대하던 "더보기" 버튼도 지금 공유창엔 없다 — 2026-07-31 당시와 UI가 달라졌다.)
+
+#### 2) 더 근본적인 문제 — 그 창은 **접근성 트리에 거의 안 올라온다**
+`rootInActiveWindow`만 보던 것을 **모든 창(`windows`)**으로 넓혀 트리를 통째로 덤프해봤다:
+```
+D:Gmail | D:메시지 | D:블루투스 | D:메시지 | D:Samsung Notes | D:드래그 핸들
+| D:최근 앱 | D:뒤로가기 | D:홈 | … | T:Favorite | T:+ Add current video | …
+```
+상태바·내비바·Pace 자체 오버레이까지 다 잡히는데 **화면에 분명히 보이는 `링크 복사` / `Quick Share`는
+끝까지 안 나온다.** 즉 그 두 행은 접근성에 노출되지 않는다 → **텍스트로 찾아 클릭하는 방식은
+어떤 문자열을 넣어도 동작할 수 없다.**
+
+#### 이번에 넣은 것 (유지할 가치가 있는 개선)
+- `forEachWindowRoot` / `findInAnyWindow` — 탐색 범위를 활성 창 → **전 창**으로 확대.
+  Pace/더보기/링크 복사 탐색 전부 여기에 태웠다. 다른 기기·OEM에서 목록이 노출되면 그대로 먹힌다.
+- `PaceShareCaptureActivity`에 `EXTRA_READ_CLIPBOARD` 경로 추가(투명 액티비티가 포커스를 얻어
+  클립보드를 읽는다). Android 10+는 포커스 가진 앱만 클립보드 접근 가능
+  (developer.android.com/about/versions/10/privacy/changes) — 접근성 서비스에서 직접은 불가.
+  **"링크 복사"를 누를 수만 있으면 이 경로는 그대로 쓸 수 있다.**
+- 진단 로그 `SHARE-SHEET texts=…` — uiautomator dump가 이 기기에서 계속 실패해서, 서비스가 자기
+  트리를 남기는 게 유일한 관측 수단이었다.
+
+#### ❌ 아직 안 됨 — 남은 선택지 (제품 판단 필요)
+1. **좌표 탭**: 노출된 노드(드래그 핸들/아이콘 행)의 bounds에서 `링크 복사` 위치를 계산해
+   `dispatchGesture`로 탭. 기기/폰트/OEM마다 어긋날 위험이 있다.
+2. **제목·채널로 서버에서 videoId 역검색**: 제목/채널은 접근성 트리에서 **정상적으로 읽힌다**
+   (`T:@PEPLI-Beats` 등 확인). Vercel 프록시에 검색 엔드포인트를 하나 만들어 videoId를 되찾는다.
+   유튜브 UI 변화에 영향받지 않아 가장 견고하지만 서버 작업이 필요하고 동명이곡 오차가 있다.
+3. **기능 보류**: Favorite/Capture를 비활성화하거나 "현재 영상 저장" 대신 다른 UX로 대체.

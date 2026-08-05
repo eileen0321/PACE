@@ -37,7 +37,7 @@ import { ToastHost } from '../components/ui/ToastHost';
 import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { checkAndForceUpdate, getUpdateDiagnostics, type ForceUpdatePhase } from '../services/updates';
+import { checkAndForceUpdate, getUpdateDiagnostics, getUpdateNativeLog, type ForceUpdatePhase } from '../services/updates';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
@@ -519,8 +519,14 @@ export default function RootLayout() {
         .then((result) => {
           // 결과도 남긴다 — 특히 check-failed/download-failed는 사용자에게 아무 표시가 안 나가므로
           // (의도된 설계: 업데이트 실패로 앱을 막지 않는다) 로그가 유일한 단서다.
-          if (result.status === 'check-failed' || result.status === 'download-failed') {
+          if (result.status === 'check-failed' || result.status === 'download-failed' || result.status === 'reload-failed') {
             console.warn(`[updates] ${result.status}:`, String((result.error as Error)?.message ?? result.error));
+            // 2026-08-06 — 실패했을 때만 네이티브 로그를 함께 남긴다. 서명 실패/런타임버전 불일치
+            // 같은 진짜 원인은 JS로 안 올라오고 expo-updates 네이티브 로그에만 남는다.
+            // 성공 경로에선 부르지 않는다(불필요한 네이티브 왕복 + 로그 소음).
+            getUpdateNativeLog()
+              .then((lines) => { if (lines.length) console.warn('[updates] native log:', lines.slice(-8).join(' | ')); })
+              .catch(() => {});
           } else if (result.status === 'reloading') {
             console.warn(`[updates] reloading (rollback=${result.rollback})`);
           }

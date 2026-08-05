@@ -74,6 +74,7 @@ export type ForceUpdateResult =
   | { status: 'check-failed'; error: unknown }
   | { status: 'download-failed'; error: unknown }
   | { status: 'deferred-mid-session'; rollback: boolean }
+  | { status: 'reload-failed'; error: unknown; rollback: boolean }
   | { status: 'reloading'; rollback: boolean };
 
 export type ForceUpdatePhase = 'checking' | 'downloading' | 'reloading';
@@ -123,6 +124,23 @@ export function getUpdateDiagnostics(): {
 }
 
 /**
+ * 2026-08-06 추가 — expo-updates가 **네이티브 쪽에 직접 남긴** 최근 로그. 위 getUpdateDiagnostics가
+ * "지금 무슨 번들인가"라면 이건 "왜 그 번들인가"에 답한다(서명 실패/런타임버전 불일치/다운로드
+ * 오류 등은 JS로 올라오지 않고 여기에만 남는다).
+ * 실패하면 빈 배열 — 이 함수 때문에 앱이 죽거나 부팅이 늦어지면 안 된다.
+ */
+export async function getUpdateNativeLog(maxAgeMs = 60 * 60 * 1000): Promise<string[]> {
+  try {
+    const Updates = require('expo-updates') as typeof UpdatesNS;
+    if (!Updates.isEnabled || typeof Updates.readLogEntriesAsync !== 'function') return [];
+    const entries = await Updates.readLogEntriesAsync(maxAgeMs);
+    return entries.map((e) => `${e.level} ${e.code ?? ''} ${e.message}`.trim());
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 업데이트 확인 → 있으면 다운로드 → 세션 중이 아니면 즉시 재시작(강제 반영), 세션 중이면 다운로드된
  * 상태로 대기. 실패해도 절대 throw하지 않는다 — 호출부(_layout.tsx)가 매 포그라운드 복귀마다
  * fire-and-forget으로 부르기 때문에, 여기서 던지면 unhandled rejection이 쌓인다. 결과는 로그/원격
@@ -158,8 +176,22 @@ export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePha
     }
     checkInFlight = true;
     onPhaseChange?.('reloading');
-    // ⚠️ reloadAsync 뒤에는 아무것도 두지 않는다(위 ②) — checkInFlight도 일부러 안 푼다.
-    await Updates.reloadAsync();
+    // 🔴 2026-08-06 — 여기 예외처리가 없어서 **OTA가 영구히 죽는 경로**가 있었다.
+    //   이 분기는 위의 try/finally 밖이라, reloadAsync()가 네이티브 예외를 던지면 checkInFlight가
+    //   true로 남는다 → 이후 모든 checkAndForceUpdate()가 맨 위에서 'skipped-throttled'로 즉시
+    //   반환된다 → **이미 받아둔 업데이트조차 이 프로세스에선 영영 적용되지 않는다.**
+    //   (같은 예외를 아래 본 경로에서는 finally가 풀어주고 있었다 — 이쪽만 빠져 있었다.)
+    //   ⚠️ 성공 시에는 여전히 아무것도 하지 않는다(위 ②: reloadAsync는 실제 리로드보다 먼저
+    //     resolve되므로 뒤 코드의 실행이 보장되지 않는다). catch에서만 되돌린다.
+    try {
+      await Updates.reloadAsync();
+    } catch (error) {
+      checkInFlight = false;
+      // 다운로드분은 그대로 유지한다 — 다음 포그라운드 복귀에서 재시도하면 되고, 실패했다고
+      // 지우면 멀쩡히 받아둔 번들을 버리고 처음부터 다시 받게 된다.
+      consecutiveFailures += 1;
+      return { status: 'reload-failed', error, rollback: pendingIsRollback };
+    }
     return { status: 'reloading', rollback: pendingIsRollback };
   }
   const now = Date.now();
@@ -213,11 +245,19 @@ export async function checkAndForceUpdate(onPhaseChange?: (phase: ForceUpdatePha
       return { status: 'skipped-background' };
     }
     onPhaseChange?.('reloading');
-    // reloadAsync 자체가 실패하면(네이티브 쪽 예외) 이 함수 밖(호출부)에서 잡도록 던진다 —
-    // 여기까지 왔으면 이미 다운로드가 끝난 상태라 재시도보다 상위 에러 리포팅이 맞다.
-    // ⚠️ 이 줄 뒤에 로직을 추가하지 말 것(위 ②). finally의 checkInFlight 해제도 이 경로에선
-    // 실행이 보장되지 않는데, 그게 오히려 의도한 동작이다(곧 프로세스가 새로 뜬다).
-    await Updates.reloadAsync();
+    // ⚠️ 이 줄 뒤에 로직을 추가하지 말 것(위 ②) — reloadAsync는 실제 리로드보다 먼저 resolve된다.
+    // 2026-08-06 — 예전엔 여기서 던져 호출부가 잡게 했는데, 그러면 "왜 리로드가 안 됐는지"가
+    //   호출부의 빈 catch로 사라졌다(_layout.tsx는 unhandled rejection만 막고 조용히 삼킨다).
+    //   위 pending 경로와 동일하게 결과값으로 돌려 로그에 남게 한다. 다운로드분은 이미 적용
+    //   대기 상태이므로 다음 콜드스타트에 expo-updates가 알아서 반영한다.
+    try {
+      await Updates.reloadAsync();
+    } catch (error) {
+      hasPendingDownloadedUpdate = true; // 다음 포그라운드 복귀에서 리로드만 재시도
+      pendingIsRollback = rollback;
+      consecutiveFailures += 1;
+      return { status: 'reload-failed', error, rollback };
+    }
     return { status: 'reloading', rollback };
   } finally {
     // 리로드 경로에선 이 줄에 도달하지 못할 수 있다(위 주석) — 그 외 모든 경로에서만 풀린다.

@@ -207,6 +207,34 @@ const INJECTED_JS_SWIPE = `
   // 죽어야 한다 — 안 그러면 낡은 체인이 뒤늦게 살아나 play()를 한 번 더 걸어 재생을 끊는다.
   var attachSeq = 0;
 
+  // ⭐ 2026-08-06 "다음 영상 시작 시 멈칫" 3차 수정 — 원인의 마지막 조각.
+  //   지금까지의 muted 가로채기는 **요소 단위**(v.__mo)였다. 유튜브가 다음 쇼츠에서 <video> 요소를
+  //   새로 만들면 그 새 요소에는 가로채기가 없으므로, 유튜브가 muted=true로 무음 자동재생을 시작하고
+  //   우리가 attach에서 뒤늦게 muted=false로 되돌린다. 그 무음 해제가 재생을 한 번 끊었다가 되살리는
+  //   것이 바로 "시작할 때 멈칫"이다(아래 goAudible의 `if (v.paused) v.play()` 경로).
+  //   → 가로채기를 **프로토타입 레벨**로 올린다. 그러면 **앞으로 만들어질 모든 <video>가 태어날 때부터**
+  //     보호되어, 유튜브의 muted=true 자체가 무시된다 → 애초에 음소거가 안 되니 되돌릴 일도 없고
+  //     멈칫도 없다.
+  //   안전 근거: 이 WebView는 mediaPlaybackRequiresUserAction={false}로 떠 있어(=WKWebView의
+  //     mediaTypesRequiringUserActionForPlayback이 비어 있음) **소리 있는 자동재생이 앱 설정상
+  //     허용**된다. 즉 무음을 막아도 자동재생이 차단되지 않는다.
+  //   __paceAudioOk가 켜지기 전(=아직 한 번도 소리 재생에 성공하지 못한 상태)에는 가로채지 않는다 —
+  //     첫 재생만큼은 유튜브의 무음 자동재생을 그대로 두어 확실히 시작되게 하고, 소리가 한 번 붙은
+  //     뒤부터 보호를 건다. 실패 시 최악이라도 예전과 동일한 동작으로 폴백된다.
+  try {
+    if (!window.__paceMutedHook) {
+      var pmd = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+      if (pmd && pmd.get && pmd.set) {
+        window.__paceMutedHook = true;
+        Object.defineProperty(HTMLMediaElement.prototype, 'muted', {
+          configurable: true,
+          get: function () { return pmd.get.call(this); },
+          set: function (val) { if (window.__paceAudioOk && val === true) return; pmd.set.call(this, val); }
+        });
+      }
+    }
+  } catch (e) {}
+
   // 실제 스와이프 동작(여러 전략) — dir>0 다음(아래로), dir<0 이전(위로).
   function doSwipe(dir, scrollFallback) {
     var dy = (dir > 0 ? 1 : -1) * (window.innerHeight || 800), tried = [];
@@ -223,9 +251,25 @@ const INJECTED_JS_SWIPE = `
     //   → **평상시엔 스크롤을 아예 하지 않는다.** ArrowDown 키만으로 릴이 넘어간다(유튜브 자체 단축키).
     //     키가 안 먹어 URL이 안 바뀐 경우에만 swipe()의 재시도에서 scrollBy 폴백을 쓴다(scrollFallback).
     if (scrollFallback) {
-      var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
-      try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
-      try { window.scrollBy(0, dy); } catch (e) {}
+      // ⭐ 2026-08-06 — 폴백에서도 **메인 프레임 스크롤은 마지막 수단**으로 미룬다.
+      //   위 근거대로 재생을 정지시키는 것은 UIScrollView(=메인 프레임) 스크롤이다. 안쪽 오버플로
+      //   컨테이너를 스크롤하는 것은 그 대상이 아니다. 그런데 예전 코드는 컨테이너를 스크롤한 **직후
+      //   조건 없이 window.scrollBy도 같이** 불러서, 컨테이너만으로 넘어갈 수 있는 경우까지 매번
+      //   메인 프레임을 흔들어 멈칫을 만들었다.
+      //   → 컨테이너 스크롤을 먼저 하고, 그것으로 URL이 바뀌지 않았을 때만 250ms 뒤 메인 프레임을 쓴다.
+      var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container');
+      var beforeScroll = '' + location.href;
+      var scrolledInner = false;
+      try { if (reel && reel.scrollBy) { reel.scrollBy(0, dy); scrolledInner = true; tried.push('scroll-inner'); } } catch (e) {}
+      if (!scrolledInner) {
+        try { window.scrollBy(0, dy); tried.push('scroll-window'); } catch (e) {}
+      } else {
+        setTimeout(function () {
+          if (('' + location.href) === beforeScroll) {
+            try { window.scrollBy(0, dy); send({ type: 'domlog', text: 'SWIPE-fallback window.scrollBy (inner failed)' }); } catch (e) {}
+          }
+        }, 250);
+      }
     }
     try {
       var key = dir > 0 ? 'ArrowDown' : 'ArrowUp', kc = dir > 0 ? 40 : 38;
@@ -380,6 +424,10 @@ const INJECTED_JS_SWIPE = `
         if (v.paused) v.play().catch(function () {});
       }
       v.__ok = true;
+      // 2026-08-06 — 소리가 실제로 붙은 시점에만 프로토타입 가로채기를 활성화한다(위 __paceMutedHook
+      // 주석 참고). 이 시점 이후 만들어지는 <video>는 유튜브가 muted=true를 걸어도 무시되므로,
+      // 다음 영상부터는 "무음으로 시작 → 우리가 되돌림 → 멈칫"의 고리 자체가 사라진다.
+      if (!v.muted) window.__paceAudioOk = true;
       send({ type: 'audio', tag: v.muted ? 'audible-blocked' : 'audible-ok', muted: v.muted });
     };
     if (v.paused) {

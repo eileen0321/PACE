@@ -14,7 +14,6 @@ import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
-import { useLimitHitStore } from '../../store/useLimitHitStore';
 import { getTodaysInsightMessage } from '../../services/usageInsight';
 import { useToastStore } from '../../store/useToastStore';
 import { backfillSleepFromHistory } from '../../services/sleepBackfill';
@@ -25,7 +24,6 @@ import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
 import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
-import { LimitReachedOverlay } from '../../components/home/LimitReachedOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, capabilities, overlayService } from '../../services/platform';
@@ -84,11 +82,6 @@ export default function HomeScreen() {
   const enableAutoModeForSession = useBluetoothStore((s) => s.enableAutoModeForSession);
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes);
   const addBonusMinutes = useDailyBonusStore((s) => s.addMinutes);
-  const hitCount = useLimitHitStore((s) => s.hitCount);
-  const dismissedHitCount = useLimitHitStore((s) => s.dismissedHitCount);
-  const loadLimitHits = useLimitHitStore((s) => s.load);
-  const ensureLimitHitAtLeast = useLimitHitStore((s) => s.ensureAtLeast);
-  const dismissLimitHit = useLimitHitStore((s) => s.dismiss);
   const celebrationVisible = useAttendanceStore((s) => s.celebrationVisible);
   // 2026-07-29 사장님 지시 — "몇시에 잠들었어요" 고정 배너를 "매일 하나의 랜덤 인사이트(사용 습관/
   // 신조어/힐링 문구/명언)" 선물상자로 확장. 뜨는 조건도 수면 감지와 무관하게 하루 1회로 바뀌었으므로
@@ -105,26 +98,19 @@ export default function HomeScreen() {
   // 배너와 달리 "평생 1회만" 안내하면 안 된다 — 이건 기능이 통째로 죽는 하드 블로커라 꺼져 있는 한
   // 계속 다시 보여야 한다(AsyncStorage seen-flag 없이 매 확인마다 실제 상태를 그대로 반영).
   const [showAccessibilityPrompt, setShowAccessibilityPrompt] = useState(false);
-  // 2026-07-22 — 예전엔 "한 번 닫으면 오늘 하루 끝"인 단일 boolean이었는데, 3단계 시스템에선 3차
-  // 토스트가 5분마다 계속 다시 떠야 한다(그래야 "완화된 반복 알림"이 됨). dismissedHitCount로
-  // "이 hitCount는 이미 보여준 적 있다"만 기록 — hitCount가 다음 5분 임계값으로 올라가면 그 값보다
-  // 커지므로 자동으로 다시 보인다. Extend Time으로 한도가 올라가 isLimitReached가 false가 되면
-  // hitCount 자체가 다음 로직에서 0으로 안 내려가지만(오늘 누적 기록이라 정직하게 유지), 어차피
-  // isLimitReached가 false면 visible 조건 자체가 꺼진다.
-  // 2026-07-31 — dismissedHitCount는 이제 useLimitHitStore에서 날짜 스코프로 영속화된 값을 그대로
-  // 구독한다(위 destructure) — 로컬 useState였을 땐 앱을 완전히 재시작할 때마다 0으로 리셋돼서,
-  // 오늘 이미 닫은 한도도달 팝업이 세션을 시작하지도 않았는데 재실행마다 다시 떴다.
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
   // 2026-08-02 사장님 지시("한도 차면 뜨는 팝업만 지워") — 하루 한도 도달 팝업(LimitReachedOverlay)
   // 과 그에 딸린 광고/크레딧 연장 모달은 제거됐다. 하루 한도는 이제 차단/팝업 없이 추적·표시만 하고,
   // 유일한 연장 게이트는 Focus Session 타임아웃(showFocusSessionExtend, 광고 5분)뿐이다.
+  //
+  // 2026-08-05 (B안 정리) — 그때 렌더만 지우고 남아 있던 잔해를 여기서 걷어냈다: 이 화면은
+  // hitCount/dismissedHitCount를 구독하고 currentHitThreshold를 계산해 ensureLimitHitAtLeast()까지
+  // 부르고 있었는데, 그 값을 **읽는 곳이 한 군데도 없었다**(유일한 소비처가 LimitReachedOverlay였다).
+  // 한도 도달 횟수는 이제 안드로이드 네이티브(daily_limit_hit_count)가 세고, 화면에는 비차단 토스트로
+  // 나간다(PaceOverlayService.showLimitNoticeToast / iOS는 feed/index.tsx). useLimitHitStore 자체는
+  // 데이터 초기화(settings.tsx resetToday)가 참조하므로 남겨둔다.
 
   const effectiveDailyLimitMinutes = settings.dailyLimitMinutes + bonusMinutes;
-  const isLimitReached = todayUsageMinutes >= effectiveDailyLimitMinutes;
-  useEffect(() => {
-    loadLimitHits();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ⚡ 쇼츠 큐를 홈 진입 시 미리 받아둔다(사용자가 홈 보는 동안 Vercel 콜드스타트+스크래핑이 끝남)
   // → 피드 열면 "쇼츠 불러오는 중" 5초 대기 없이 즉시 첫 영상. loadInitial은 큐가 이미 있으면 no-op이라
@@ -244,15 +230,6 @@ export default function HomeScreen() {
     });
     return () => sub.remove();
   }, [user?.id]);
-
-  // 2026-07-22 사용자 지시 — 한도 도달 알림 3단계화. 한도를 넘긴 뒤 5분 단위로 "몇 번째 도달인지"
-  // 계산(정확히 한도=1차, +5분=2차, +10분 이상=3차 이상)해서 useLimitHitStore를 그 값까지 따라잡게
-  // 하고, 그 값(tier로 clamp)에 맞는 다이얼로그/토스트를 렌더한다.
-  const minutesOverLimit = Math.max(0, todayUsageMinutes - effectiveDailyLimitMinutes);
-  const currentHitThreshold = isLimitReached ? Math.floor(minutesOverLimit / 5) + 1 : 0;
-  useEffect(() => {
-    if (currentHitThreshold > 0) ensureLimitHitAtLeast(currentHitThreshold);
-  }, [currentHitThreshold, ensureLimitHitAtLeast]);
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션

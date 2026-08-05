@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -13,7 +13,7 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import { useSleepGuard } from '../../hooks/useSleepGuard';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { hasRealYouTubeSource } from '../../services/api/youtube';
-import { useTranslation } from '../../services/i18n';
+import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
@@ -28,6 +28,7 @@ import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListO
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
+import { YouTubeLoginSheet } from '../../components/feed/YouTubeLoginSheet';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -42,6 +43,10 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // advance()로 다음, false면 끝난 자리에서 멈추고(PAUSED) 사용자가 Next를 눌러야 넘어간다. 리모컨
 // Next/Previous는 이 스위치와 무관하게 항상 즉시 이동(상태 전이표 규칙 A/B).
 type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
+
+// 하루 한도 도달 후 다음 안내까지의 간격(분). 안드로이드 네이티브의 EXTEND_MINUTES(=5)와 반드시
+// 같은 값이어야 두 플랫폼의 안내 주기가 어긋나지 않는다(PaceOverlayService.EXTEND_MINUTES 참고).
+const LIMIT_NOTICE_INTERVAL_MINUTES = 5;
 
 // 2026-08-01 사장님 지적 — Focus Session ON일 때 남은시간이 피드에 안 보였다(예전에 시계 리렌더가
 // 영상 "씹힘"을 유발해 통째로 제거됨). 부모(피드/WebView)를 리렌더하지 않도록 자체 타이머를 가진
@@ -143,12 +148,19 @@ export default function PaceFeedScreen() {
   };
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
   const [sleepBlackout, setSleepBlackout] = useState(false); // 취침 감지(§4-B) → 검은 풀스크린
+  // Hard Block Mode(설정, 기본 OFF) — 하루 한도 도달 시 안내 대신 실제로 멈춘다(안드로이드 parity).
+  const hardBlockMode = useSettingsStore((s) => s.settings.hardBlockMode);
+  const [limitBlocked, setLimitBlocked] = useState(false);
   const userId = useUserStore((s) => s.user?.id);
   // 2026-08-01 사장님 지적 — 피드(웹뷰) P 버튼이 홈 이동만 하고 P 메뉴를 안 띄웠다. overlay/index.tsx와
   // 동일하게 공용 PaceMenu(앱으로/Shorts HOT/Saved/Favorite) + SavedVideoListOverlay를 그대로 재사용.
   const [showPaceMenu, setShowPaceMenu] = useState(false);
   const [activeSavedList, setActiveSavedList] = useState<SavedVideoKind | null>(null);
   const [showShortsHot, setShowShortsHot] = useState(false);
+  // 유튜브 로그인 시트(iOS 전용) — 로그인에 성공하면 새 쿠키로 다시 붙어야 하므로 플레이어를 리마운트한다.
+  // ytSessionNonce를 플레이어 key에 섞어, 로그인 전/후가 같은 영상이어도 WebView가 확실히 새로 뜬다.
+  const [showYtLogin, setShowYtLogin] = useState(false);
+  const [ytSessionNonce, setYtSessionNonce] = useState(0);
   // 스와이프 모드에서 플레이어가 보고하는 실제 재생 중 videoId(현재 영상 즐겨찾기 추가용). current.videoId는
   // 스와이프 모드에선 첫 영상에 고정이라 실제 영상과 다를 수 있어, 플레이어 onVideoChange 보고값을 우선한다.
   const currentVideoIdRef = useRef<string | null>(null);
@@ -159,6 +171,12 @@ export default function PaceFeedScreen() {
   // ref로 옮겨 effect 재생성에도 살아남게 한다(피드 이탈=언마운트 시에만 자연 리셋 — 피드 방문당 누적이 목적).
   const watchedMinRef = useRef(0);
   const nextBreakInRef = useRef(0);
+  // 하루 한도 비차단 안내(2026-08-05 B안) — 안드로이드 네이티브와 같은 규칙으로 맞춘 값들.
+  // limitGraceRef: 한도에 닿을 때마다 5분씩 얹어 다음 안내까지의 간격을 만든다(네이티브의
+  //   `remainingMinutes += EXTEND_MINUTES`와 동일 역할). 이게 없으면 매 분 토스트가 뜬다.
+  // limitHitCountRef: 몇 번째 도달인지 — 알림 1회 제한과 4종 문구 순환에 쓴다.
+  const limitGraceRef = useRef(0);
+  const limitHitCountRef = useRef(0);
   const current = queue[0] ?? null;
   const usingScrape = !hasRealYouTubeSource();
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
@@ -258,19 +276,44 @@ export default function PaceFeedScreen() {
         clearInterval(id);
         return;
       }
-      const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes;
+      // 2026-08-05 사장님 결정(B안, 안드로이드와 통일) — 하루 한도는 차단하지 않는다.
+      // limitGraceRef는 안드로이드 네이티브의 `remainingMinutes += EXTEND_MINUTES`와 같은 역할:
+      // 한도에 닿을 때마다 5분씩 얹어서, 매 분 반복해서 안내가 뜨는 걸 막고 5분 간격으로만 알린다.
+      const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes + limitGraceRef.current;
       const remaining = effectiveDailyLimit - todayUsageMinutes - watchedMinRef.current;
       if (remaining === 5 || remaining === 1) notifyLowTime(remaining).catch(() => {}); // 저시간 알림
       if (breakIntervalMinutes > 0) { // 브레이크 리마인더
         nextBreakInRef.current -= 1;
         if (nextBreakInRef.current <= 0) { notifyBreakReminder().catch(() => {}); nextBreakInRef.current = breakIntervalMinutes; }
       }
-      if (remaining <= 0) { // 일일 한도 도달 → 종료 + 홈 복귀
-        notifyLimitReached().catch(() => {});
-        setStatus('PAUSED');
-        flushWatchTime('daily_limit_reached');
-        clearInterval(id);
-        if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home');
+      if (remaining <= 0) {
+        // 예전엔 여기서 setStatus('PAUSED') + 홈으로 강제 이동이었다. 그건 안드로이드보다 오히려 더
+        // 강한 개입이었고(보던 게 그냥 사라짐), 정작 연장 수단은 없었다 — 홈의 LimitReachedOverlay가
+        // 2026-08-02에 제거되면서 iOS만 "튕겨나가고 끝"으로 남아 있었다.
+        // 이제 안드로이드와 동일하게: 세션은 계속, 5분마다 비차단 안내만.
+        limitHitCountRef.current += 1;
+        limitGraceRef.current += LIMIT_NOTICE_INTERVAL_MINUTES;
+        // Hard Block Mode(설정, 기본 OFF) — 안드로이드의 showBlockOverlay와 동일한 역할.
+        // iOS는 다른 앱을 종료시킬 수 없으므로(안드로이드의 goHome 대응 불가), 시청이 실제로
+        // 일어나는 이 피드를 전체화면으로 막고 재생을 세우는 것이 같은 기능이다.
+        if (hardBlockMode) {
+          notifyLimitReached().catch(() => {});
+          setStatus('PAUSED');
+          setLimitBlocked(true);
+          flushWatchTime('daily_limit_reached');
+          clearInterval(id);
+          return;
+        }
+        // 알림은 첫 도달에만(안드로이드 performTick과 동일한 규칙) — 5분마다 반복하면 소음이다.
+        if (limitHitCountRef.current === 1) notifyLimitReached().catch(() => {});
+        const usageMinutes = dailyLimitMinutes + bonusMinutes + (limitHitCountRef.current - 1) * LIMIT_NOTICE_INTERVAL_MINUTES;
+        // 안드로이드 showLimitNoticeToast와 같은 4종 문구를 같은 순서로 순환한다.
+        const variant = ((limitHitCountRef.current - 1) % 4) + 1;
+        useToastStore.getState().show(
+          `${t(`limitReached.tier3Title${variant}` as TranslationKey)} ${t(`limitReached.tier3Body${variant}` as TranslationKey, {
+            n: variant === 4 ? dailyLimitMinutes + bonusMinutes : usageMinutes,
+          })}`
+        );
       }
     }, 60_000);
     return () => clearInterval(id);
@@ -571,7 +614,7 @@ export default function PaceFeedScreen() {
           forcedVideoId만으로도 재생할 수 있어야 한다(그게 그 값의 존재 이유다). */}
       {(forcedVideoId || current) && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
-          key={forcedVideoId ?? current!.videoId}
+          key={`${forcedVideoId ?? current!.videoId}:${ytSessionNonce}`}
           ref={playerRef}
           videoId={forcedVideoId ?? current!.videoId}
           playing={playing}
@@ -655,12 +698,16 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
+            // 유튜브 로그인은 iOS 피드에서만 의미가 있다 — 안드로이드는 실제 유튜브 앱(이미 로그인된
+            // 계정)으로 넘기므로 이 항목이 필요 없다(YouTubeLoginSheet.tsx 상단 주석 참고).
+            showYouTubeLogin={Platform.OS === 'ios'}
             onSelect={(action) => {
               setShowPaceMenu(false);
               if (action === 'app') { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home'); }
               else if (action === 'capture') setActiveSavedList('capture');
               else if (action === 'favorite') setActiveSavedList('favorite');
               else if (action === 'hot') setShowShortsHot(true);
+              else if (action === 'ytlogin') setShowYtLogin(true);
             }}
           />
         )}
@@ -690,6 +737,18 @@ export default function PaceFeedScreen() {
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}
+
+        {showYtLogin && (
+          <YouTubeLoginSheet
+            onClose={() => setShowYtLogin(false)}
+            onSignedIn={() => {
+              setShowYtLogin(false);
+              // 새 로그인 쿠키로 다시 붙게 플레이어를 리마운트한다(key 교체).
+              setYtSessionNonce((n) => n + 1);
+              useToastStore.getState().show(t('feed.youtubeSignInDone'));
+            }}
+          />
+        )}
 
         {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
             feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상
@@ -773,6 +832,44 @@ export default function PaceFeedScreen() {
           <Text style={styles.sleepBlackoutText}>{t('feed.sleepBlackout')}</Text>
         </Pressable>
       )}
+
+      {/* 2026-08-05 사장님 지시("iOS도 동일기능 만들어") — Hard Block Mode(설정, 기본 OFF)를 켠
+          사용자에게만 뜨는 하루 한도 전체화면 차단. 안드로이드 showBlockOverlay와 같은 문구·같은
+          두 버튼(광고로 5분 더 / 여기까지)을 쓴다(translations.ts limitReached.*를 양쪽이 공유).
+          iOS는 다른 앱을 종료시킬 수 없으므로 안드로이드의 goHome 대응은 없고, 대신 시청이 실제로
+          일어나는 이 피드를 덮어 재생을 세우는 것이 동일한 효과다. */}
+      {limitBlocked && (
+        <View style={styles.limitBlock}>
+          <Text style={styles.limitBlockIcon}>{limitHitCountRef.current >= 2 ? '☕' : '🛡'}</Text>
+          <Text style={styles.limitBlockTitle}>
+            {t(limitHitCountRef.current >= 2 ? 'limitReached.tier2Title' : 'limitReached.tier1Title')}
+          </Text>
+          <Text style={styles.limitBlockSubtitle}>
+            {limitHitCountRef.current >= 2
+              ? t('limitReached.tier2Subtitle', { n: (limitHitCountRef.current - 1) * LIMIT_NOTICE_INTERVAL_MINUTES })
+              : t('limitReached.tier1Subtitle', { n: dailyLimitMinutes + bonusMinutes })}
+          </Text>
+          <Text style={styles.limitBlockBody}>{t('limitReached.tier1Body')}</Text>
+          <View style={styles.limitBlockRow}>
+            <Pressable
+              style={[styles.limitBlockBtn, styles.limitBlockBtnPrimary]}
+              onPress={() => { setLimitBlocked(false); setShowExtendModal(true); }}
+            >
+              <Text style={styles.limitBlockBtnPrimaryText}>
+                {t(limitHitCountRef.current >= 2 ? 'limitReached.extendTier2' : 'limitReached.extendTier1')}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.limitBlockBtn}
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}
+            >
+              <Text style={styles.limitBlockBtnText}>
+                {t(limitHitCountRef.current >= 2 ? 'limitReached.dismissTier2' : 'limitReached.dismissTier1')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -786,6 +883,24 @@ const styles = StyleSheet.create({
   // index.tsx의 같은 패턴(overlayLayer)은 이미 position:'absolute'로 올바르게 돼 있었다 — 이
   // 화면만 그 컨벤션이 빠져 있었음.
   uiLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: spacing.md },
+  // 하루 한도 전체화면 차단(Hard Block Mode 전용) — 안드로이드 showBlockOverlay와 같은 톤.
+  limitBlock: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1500,
+    backgroundColor: 'rgba(11,12,15,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  limitBlockIcon: { fontSize: 40, marginBottom: 24 },
+  limitBlockTitle: { color: '#FFFFFF', fontSize: 20, fontFamily: typography.bodyFontFamilyBold, textAlign: 'center', marginBottom: 10 },
+  limitBlockSubtitle: { color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 6 },
+  limitBlockBody: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center', marginBottom: 24 },
+  limitBlockRow: { flexDirection: 'row', gap: 10 },
+  limitBlockBtn: { borderRadius: 100, paddingHorizontal: 22, paddingVertical: 13, backgroundColor: 'rgba(255,255,255,0.1)' },
+  limitBlockBtnPrimary: { backgroundColor: '#5856D6' },
+  limitBlockBtnPrimaryText: { color: '#FFFFFF', fontSize: 13, fontFamily: typography.bodyFontFamilyBold },
+  limitBlockBtnText: { color: '#D1D5DB', fontSize: 13, fontFamily: typography.bodyFontFamilyBold },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.sm },
   iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: 'rgba(0,0,0,0.45)' },
   categoryPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 },

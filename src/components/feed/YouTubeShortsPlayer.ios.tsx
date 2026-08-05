@@ -420,8 +420,38 @@ const NAV_MODE = 'swipe' as NavMode;
 export const SWIPE_NAV = NAV_MODE === 'swipe';
 
 // 동의(consent) 쿠키 — youtube.com이 실기기에서 "쿠키 동의" 페이지로 튕겨 <video>가 안 뜨는 것 방지.
-const CONSENT_COOKIE =
-  'SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCZW4gACgB; CONSENT=YES+1';
+//
+// 2026-08-05 사장님 지적("첫 영상은 유튜브에서 받고 다음도 유튜브가 잇기로 했는데 아직 영어가 나온다")
+// — 이어가는 구조 자체는 정상이었다(NAV_MODE='swipe' → window.paceAdvance로 유튜브 페이지가 스스로
+// 다음을 고름). 문제는 **그 유튜브 세션의 언어가 영어로 고정돼 있던 것**이다. 이 SOCS 값을 디코딩하면
+// 프로토버프 필드 3에 언어가 들어 있는데 그게 'en'이었다:
+//     CAISNQgD...GgJlbiAAKAE → ... 1A 02 'e' 'n' ...
+// 즉 우리가 매 요청마다 "이 세션 언어는 영어"라고 알려주고 있었다. 안드로이드는 실제 유튜브 앱으로
+// 넘겨서 계정/기기 로케일을 그대로 타므로 이 문제가 없다 — iOS만 WebView라 우리가 정하게 된다.
+// 언어 코드는 2바이트라 그 자리만 바꾸면 길이 프리픽스가 그대로 유효하다(ko/en 둘 다 2글자).
+const SOCS_BY_LANG: Record<string, string> = {
+  en: 'CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCZW4gACgB',
+  ko: 'CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCa28gACgB',
+};
+
+/** 기기 로케일 → 유튜브가 쓰는 (언어, 지역) 쌍. 지원 언어 밖이면 영어로 폴백. */
+function youtubeLocale(): { hl: string; gl: string } {
+  try {
+    const loc = Localization.getLocales()[0];
+    const hl = (loc?.languageCode || 'en').toLowerCase();
+    const gl = (loc?.regionCode || (hl === 'ko' ? 'KR' : 'US')).toUpperCase();
+    return { hl: SOCS_BY_LANG[hl] ? hl : 'en', gl: /^[A-Z]{2}$/.test(gl) ? gl : 'US' };
+  } catch {
+    return { hl: 'en', gl: 'US' };
+  }
+}
+
+// 익명(비로그인) 세션에서 유튜브가 언어·지역을 판단하는 표준 경로 세 가지를 모두 맞춘다:
+//   ① SOCS 동의 쿠키의 언어 필드   ② PREF 쿠키(hl/gl)   ③ URL 쿼리(hl/gl) + Accept-Language 헤더
+// 하나만 맞추면 나머지가 영어로 남아 흐름이 도로 영어권으로 끌려간다(실제로 ①만 영어였는데도 그랬다).
+function consentCookie(hl: string, gl: string): string {
+  return `SOCS=${SOCS_BY_LANG[hl] ?? SOCS_BY_LANG.en}; CONSENT=YES+1; PREF=hl=${hl}&gl=${gl}`;
+}
 
 // http(s)만 허용 → youtube 앱 딥링크(youtube://)/앱스토어(itms-apps://) 등 "앱에서 열기" 시도를 차단해
 // WebView가 딴 데로 튕겨 까매지는 것을 막는다. youtube/구글/영상CDN은 전부 http(s)라 그대로 허용됨.
@@ -460,13 +490,22 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
     // 2026-08-05 — Accept-Language를 명시한다. 예전엔 Cookie만 보내서 유튜브에 **언어를 한 번도
     // 알려주지 않았다**(UA도 일반 iPhone Safari 고정). WebView 세션이 로그인 상태면 계정 설정이
     // 우선이라 영향이 없지만, 로그인 쿠키가 공유 안 된 익명 세션에선 유튜브가 언어 힌트 없이
-    // 전 세계 인기(=영어 위주)로 흐른다. 헤더만 더한다 — ⚠️ URL 형태는 절대 안 건드린다.
-    // `www.youtube.com/shorts/<ID>`가 Shorts 탭으로 가는 유일하게 검증된 형태라(services/shortsEntry.ts
-    // 상단 표 참고) 쿼리 파라미터를 붙이는 건 이미 출시된 동작을 걸고 하는 도박이다.
-    () => ({
-      uri: `https://www.youtube.com/shorts/${navVideoId}`,
-      headers: { Cookie: CONSENT_COOKIE, 'Accept-Language': acceptLanguageHeader() },
-    }),
+    // 전 세계 인기(=영어 위주)로 흐른다.
+    //
+    // ⚠️ 앞선 주석은 "URL 형태는 절대 안 건드린다 — /shorts/<ID>가 Shorts 탭으로 가는 유일하게
+    // 검증된 형태"라고 못박고 헤더만 더했는데, **그 근거는 iOS에 해당하지 않는다.** 그 표
+    // (services/shortsEntry.ts 상단)는 **안드로이드에서 유튜브 앱으로 딥링크를 던질 때** 앱이 어느
+    // 탭으로 라우팅하느냐에 대한 것이다. iOS는 앱으로 던지는 게 아니라 WebView 안에서 웹페이지를
+    // 여는 것이라 그 라우팅 규칙 자체가 적용되지 않는다 — 여기서 hl/gl은 그냥 유튜브 표준 쿼리다.
+    // (안드로이드 쪽 딥링크 URL은 그 주석대로 그대로 둔다.)
+    // persist_hl/persist_gl은 그 값을 PREF 쿠키에 눌러 담아 이후 내부 이동에도 유지시킨다.
+    () => {
+      const { hl, gl } = youtubeLocale();
+      return {
+        uri: `https://www.youtube.com/shorts/${navVideoId}?hl=${hl}&gl=${gl}&persist_hl=1&persist_gl=1`,
+        headers: { Cookie: consentCookie(hl, gl), 'Accept-Language': acceptLanguageHeader() },
+      };
+    },
     [navVideoId]
   );
 

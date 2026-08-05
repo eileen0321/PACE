@@ -1808,16 +1808,32 @@ class PaceOverlayService : Service() {
       if (isDailyLimit) {
         dailyLimitHitCount += 1
         persistDailyLimitHitState()
-        // 한도 도달 3단계(2026-07-23, 사용자 지적 반영 — LimitReachedOverlay.tsx의 3단계를 실제
-        // 시청 중 차단 경로에도 이식). 3차부터는 스펙 원문 그대로 "선택지 없이 1~3초 자동 소멸하는
-        // 담백한 안내만(차단 아님, 그냥 알려주기만)" — 즉 세션을 실제로 멈추지 않는다: EXTEND_MINUTES를
-        // 조용히 더해 카운트다운을 이어가고, 짧은 안내 토스트만 띄운 뒤 평소처럼 다음 틱을 예약한다.
-        if (dailyLimitHitCount >= 3) {
+        // 2026-08-05 사장님 결정(B안, 안드로이드·iOS 통일) — **하루 한도는 차단하지 않는다. 추적하고
+        // 알려주기만 한다.** 예전에는 1·2차에 전체화면 차단 오버레이를 띄우고 3차부터만 비차단이었는데,
+        // 그 차단은 실효가 거의 없었다: 1·2차 모두 [+5분] 버튼으로 그냥 통과할 수 있었고 3차부터는
+        // 어차피 안 막았다(실기기 하루 hitCount 41 관측). 남는 건 "남의 앱을 통째로 덮는 모달"이라는
+        // 가장 설명하기 어려운 표면뿐이라, 티어 구분 없이 전부 비차단 안내로 통일한다.
+        // 진짜 차단이 필요한 사용자는 Hard Block Mode(설정, 기본 OFF)를 직접 켠다 — 그 경우에만
+        // 아래 기존 차단 경로(showBlockOverlay + goHome)로 간다.
+        //
+        // ⚠️ sleepTimerRemainingMinutes == 0이면 여기서 빠져나가면 안 된다 — 그건 하루 한도가 아니라
+        // Sleep Timer 만료(별개 사유, 차단이 맞다)와 같은 틱에 겹친 경우다. 예전 3차 경로에는 이
+        // 가드가 없어서 두 사유가 같은 분에 겹치면 Sleep Timer 차단이 조용히 씹혔다.
+        if (!hardBlockMode && sleepTimerRemainingMinutes != 0) {
           val usageMinutes = dailyLimitOriginalMinutes + (dailyLimitHitCount - 1) * EXTEND_MINUTES
-          Log.d("PaceOverlay", "DAILY LIMIT tier=3+ hitCount=$dailyLimitHitCount usageMinutes=$usageMinutes (non-blocking, auto-extended)")
+          Log.d("PaceOverlay", "DAILY LIMIT hit=$dailyLimitHitCount usageMinutes=$usageMinutes (non-blocking)")
+          // 알림은 **첫 도달에만**. 이후 5분마다 오는 안내는 토스트로 충분하고, 알림까지 5분마다
+          // 반복하면 그 자체가 소음이 된다(차단이 없어진 만큼 반복 빈도가 그대로 드러난다).
+          if (notifyLimit && dailyLimitHitCount == 1) {
+            if (isKoreanLocale()) {
+              sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
+            } else {
+              sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "You've reached today's limit", "Time to put the phone down for a bit.")
+            }
+          }
           remainingMinutes += EXTEND_MINUTES
           persistState()
-          showTier3Toast(usageMinutes, dailyLimitOriginalMinutes, dailyLimitHitCount)
+          showLimitNoticeToast(usageMinutes, dailyLimitOriginalMinutes, dailyLimitHitCount)
           scheduleNextTick(this)
           return
         }
@@ -3257,7 +3273,9 @@ class PaceOverlayService : Service() {
     val isSleepTimer = reason == "sleep_timer_expired"
     val isDailyLimit = reason == "daily_limit_reached"
     // 한도 도달 1차/2차 문구 분기(스펙 §1-E-5 "한도 도달 UI 3단계화" 원문 그대로, 사용자가 재확인한
-    // 정확한 카피) — 3차부터는 여기 안 오고 showTier3Toast()의 비차단 경로로 빠진다(performTick 참고).
+    // 정확한 카피).
+    // ⚠️ 2026-08-05 B안 이후 이 아래 하루 한도 분기는 **Hard Block Mode를 켠 사용자에게만** 도달한다 —
+    // 기본값(OFF)에서는 performTick이 차수와 무관하게 showLimitNoticeToast()의 비차단 경로로 빠진다.
     val isDailyLimitTier2 = isDailyLimit && dailyLimitTier >= 2
     val iconText = when {
       isSleepTimer -> "⏸"
@@ -3384,18 +3402,21 @@ class PaceOverlayService : Service() {
     blockOverlayView = null
   }
 
-  // 한도 도달 3차 이상(스펙 §1-E-5) — 다른 사유들의 showBlockOverlay와 완전히 다른 성격: 이건
-  // "차단"이 아니라 "안내"라 세션을 멈추지 않는다(performTick에서 이 함수를 부르기 전에 이미
-  // EXTEND_MINUTES를 조용히 더하고 다음 틱을 정상 예약해둔 상태). 그래서 이 뷰는 터치를 흡수하지
-  // 않는다(FLAG_NOT_TOUCHABLE) — 그 아래 YouTube가 이 토스트가 떠 있는 동안에도 그대로 조작 가능해야
-  // "차단 아님"이 실제로 성립한다. JS Tier3Toast(LimitReachedOverlay.tsx)와 동일한 4종 문구를
-  // hitCount로 순환하고, 동일한 WCAG 2.2.1(Timing Adjustable) 대응도 미러링한다 — 스크린리더가
-  // 켜져 있으면 자동 소멸 대신 탭으로 닫게 바꾸고 즉시 음성 안내.
+  // 하루 한도 도달 안내(2026-08-05 B안 이후 **모든 차수** 공용 — 예전엔 3차 이상 전용이라 이름이
+  // tier3였다). 다른 사유들의 showBlockOverlay와 완전히 다른 성격: 이건 "차단"이 아니라 "안내"라
+  // 세션을 멈추지 않는다(performTick에서 이 함수를 부르기 전에 이미 EXTEND_MINUTES를 조용히 더하고
+  // 다음 틱을 정상 예약해둔 상태). 그래서 이 뷰는 터치를 흡수하지 않는다(FLAG_NOT_TOUCHABLE) —
+  // 그 아래 YouTube가 이 토스트가 떠 있는 동안에도 그대로 조작 가능해야 "차단 아님"이 실제로 성립한다.
+  // iOS 피드(feed/index.tsx)도 동일한 4종 문구를 같은 순서로 순환한다(translations.ts
+  // limitReached.tier3Title/Body1~4 — 키 이름은 히스토리상 tier3이지만 이제 전 차수 공용).
+  // WCAG 2.2.1(Timing Adjustable) 대응도 그대로 — 스크린리더가 켜져 있으면 자동 소멸 대신 탭으로
+  // 닫게 바꾸고 즉시 음성 안내.
+  // (내부 필드명 tier3*는 히스토리 흔적 — 동작은 전 차수 공용이다.)
   private var tier3ToastView: View? = null
   private val tier3ToastHandler = Handler(Looper.getMainLooper())
   private var tier3DismissRunnable: Runnable? = null
 
-  private fun showTier3Toast(usageMinutes: Int, goalMinutes: Int, hitCount: Int) {
+  private fun showLimitNoticeToast(usageMinutes: Int, goalMinutes: Int, hitCount: Int) {
     // 2026-07-27 감사 발견(크리티컬) — 4개 문구 중 2개(title2/title4)가 한국어로만 하드코딩돼 영어
     // 기기에도 그대로 노출되고 있었다(나머지 2개만 영어라 뒤섞인 상태). JS translations.ts의
     // limitReached.tier3Title/Body1~4와 맞춰 전부 로케일에 맞게 뜨도록 정정.

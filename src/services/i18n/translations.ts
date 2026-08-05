@@ -261,6 +261,9 @@ export const translations = {
       enforcementSection: 'Enforcement',
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: 'When the limit is reached, Pace immediately exits YouTube and other blocked apps for you, in addition to the full-screen block screen.',
+      // 2026-08-05 — iOS는 다른 앱을 종료시킬 수 없다(OS 제약). 시청 자체가 Pace 피드 안에서
+      // 일어나므로 "그 피드를 실제로 멈추는 것"이 iOS에서의 동일 기능이다. 문구를 동작에 맞춘다.
+      hardBlockModeDescIos: 'When the limit is reached, Shorts stop with a full-screen block screen instead of a passing notice.',
       // 2026-07-27 사용자 지시 — 에어팟/블루투스 스피커를 순수 감상용으로 쓰는 사람들을 위한 별도 토글.
       bluetoothSection: 'Bluetooth',
       bluetoothVolumeKeySkip: 'Skip with Volume Keys',
@@ -462,6 +465,12 @@ export const translations = {
       previousShortToast: '⏮ Previous Short',
       notShortsSkippedToast: 'Not a Short — skipped to the next one',
       listEndYoutubeToast: 'End of list — continuing with YouTube',
+      // 2026-08-05 — iOS 피드 전용. 앱 안 WebView는 사파리/유튜브앱 로그인을 못 가져오므로(iOS 샌드박스)
+      // 여기서 한 번 로그인해야 "내 추천"으로 이어진다(YouTubeLoginSheet.tsx 참고).
+      youtubeSignIn: 'Sign in to YouTube',
+      youtubeSignInDesc: 'Sign in once and Shorts will continue with your own recommendations, just like the YouTube app.',
+      youtubeSignInDone: 'Signed in — continuing with your recommendations',
+      close: 'Close',
       // 2026-07-26 사장님 지시("session on은 focus on으로") — Android 네이티브 알약(PaceOverlayService)
       // 라벨과 동기화(대칭 ON/OFF 쌍으로 통일 — 예전엔 "SESSION ON"/"START SESSION"으로 비대칭이었음).
       focusSessionOnBadge: 'FOCUS ON',
@@ -760,6 +769,7 @@ export const translations = {
       enforcementSection: '차단 실행',
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: '한도 도달 시 전체화면 차단에 더해, YouTube 등 차단 대상 앱을 즉시 강제 종료합니다.',
+      hardBlockModeDescIos: '한도 도달 시 지나가는 안내 대신 전체화면 차단으로 쇼츠를 실제로 멈춥니다.',
       bluetoothSection: '블루투스',
       bluetoothVolumeKeySkip: '볼륨키로 영상 넘기기',
       bluetoothVolumeKeySkipDesc: '연결된 블루투스 스피커나 이어폰의 볼륨 버튼으로 다음/이전 영상으로 넘깁니다. 블루투스를 순수 음향 감상용으로만 쓰신다면 꺼주세요.',
@@ -938,6 +948,10 @@ export const translations = {
       previousShortToast: '⏮ Previous Short',
       notShortsSkippedToast: '쇼츠가 아니라 다음 영상으로 건너뛰었어요',
       listEndYoutubeToast: '목록 끝 — 유튜브 추천으로 이어집니다',
+      youtubeSignIn: '유튜브 로그인',
+      youtubeSignInDesc: '한 번만 로그인하면 유튜브 앱처럼 내 추천으로 쇼츠가 이어집니다.',
+      youtubeSignInDone: '로그인됨 — 내 추천으로 이어집니다',
+      close: '닫기',
       // 2026-07-26 사용자 지적("한글 설정이라고 다 한글로 바꾸지 말고, SESSION ON도 유지하라고") —
       // 이 파일 맨 위 원칙(짧은 기능명/상태 배지는 한국어 UI에서도 영문 유지) 그대로, 이 pill
       // 배지는 영문 배지 그대로 둔다(자연어 번역 대상 아님).

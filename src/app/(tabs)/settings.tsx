@@ -387,19 +387,23 @@ export default function SettingsScreen() {
             항상 켜짐(옵트아웃 불가, Android 네이티브에서 자동 처리)이라 여기 토글이 없다. 이 토글은
             그 위에 "YouTube 자체를 강제 종료"까지 할지의 옵트인 스위치 — 기본 OFF, 침해적인 동작이라
             명확한 고지 문구 필수(정책 리서치에서 확인한 요건). */}
-        {Platform.OS === 'android' && (
-          <View>
-            <Text style={styles.sectionLabel}>{t('settings.enforcementSection')}</Text>
-            <GlassSurface style={styles.card}>
-              <NotifRow
-                title={t('settings.hardBlockMode')}
-                desc={t('settings.hardBlockModeDesc')}
-                value={settings.hardBlockMode}
-                onChange={(value) => { update({ hardBlockMode: value }); pushLiveSessionConfig(); }}
-              />
-            </GlassSurface>
-          </View>
-        )}
+        {/* 2026-08-05 사장님 지시("iOS도 동일기능 만들어") — 하루 한도가 B안(차단 없이 안내만)으로
+            바뀌면서, 이 토글이 "진짜 멈추고 싶은 사용자"의 유일한 출구가 됐다. 안드로이드에만 있으면
+            iOS 사용자에겐 그 출구가 아예 없다. 동작은 OS 제약상 다를 수밖에 없어 설명 문구를 나눈다:
+              Android — 전체화면 차단 + 유튜브 등 대상 앱을 홈으로 강제 종료
+              iOS     — 시청이 Pace 피드 안에서 일어나므로 그 피드를 전체화면 차단으로 실제 정지
+            (iOS는 다른 앱을 종료시킬 방법이 없다.) */}
+        <View>
+          <Text style={styles.sectionLabel}>{t('settings.enforcementSection')}</Text>
+          <GlassSurface style={styles.card}>
+            <NotifRow
+              title={t('settings.hardBlockMode')}
+              desc={Platform.OS === 'ios' ? t('settings.hardBlockModeDescIos') : t('settings.hardBlockModeDesc')}
+              value={settings.hardBlockMode}
+              onChange={(value) => { update({ hardBlockMode: value }); pushLiveSessionConfig(); }}
+            />
+          </GlassSurface>
+        </View>
 
         {/* 2026-07-27 사용자 지시로 Bluetooth Volume-Key Skip 토글을 Focus 탭 핸즈프리 섹션(마스터+손짓+블루투스)
             으로 이전 — 설정/집중에 흩어져 있던 걸 집중 한 곳으로 통합. Android는 여기서 bluetoothVolumeKeySkipEnabled를

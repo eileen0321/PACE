@@ -413,7 +413,22 @@ class PaceOverlayService : Service() {
   private fun evaluateSleepStages(isPlaying: Boolean?): Boolean {
     // 재생이 실제로 멈춘 것이 확인되면 수면 판정 자체를 하지 않는다 — 안 보고 있는데 끌 세션이 없다.
     // (isPlaying == null은 "신호 없음/불확실"이라 계속 진행 — remainingMinutes 차감과 동일한 규칙.)
-    if (isPlaying == false) {
+    //
+    // 🔴 2026-08-06 실기기에서 잡은 교착 — 사장님 지적("이 팝업이 계속 떠 있는 게 맞아?").
+    //   PROMPTED 상태는 이 조기 반환에서 **반드시 제외해야 한다.**
+    //   "아직 보고 계세요?" 프롬프트는 전체화면 오버레이라 그 순간 유튜브 창이 getWindows()에서
+    //   사라진다 → isLikelyPlaying()이 false → 여기서 매 틱 AWAKE로 되돌아감 → 아래 PROMPTED
+    //   타임아웃(30초)에 **영원히 도달하지 못한다.** 프롬프트가 스스로를 끝내지 못하게 막는 구조다.
+    //   실측 로그: 03:06:18 PROMPTED → 30초 뒤 종료됐어야 하는데 **12분 넘게 그대로**, 그동안
+    //   SLEEP 로그가 한 줄도 안 남았다(이 줄에서 매번 조기 반환했기 때문).
+    //   ⚠️ 이 교착은 isLikelyPlaying()이 창 조회 결과로 false를 **확정**하게 바뀌면서(2026-08-06,
+    //     "쇼츠 안 보는데 시간이 흐른다" 수정) 처음 생겼다. 그전에는 null이 나와 통과하고 있었다.
+    //     한 곳의 신호를 더 정확하게 만들면 그 신호를 쓰던 다른 곳의 가정이 깨진다 — 같은 신호를
+    //     쓰는 곳을 전수로 확인해야 했다.
+    if (isPlaying == false && sleepStage != SLEEP_STAGE_PROMPTED) {
+      // 프롬프트를 띄운 뒤 사용자가 다른 앱으로 나가버린 경우처럼, 떠 있는 프롬프트가 남아 있을 수
+      // 있다 — AWAKE로 되돌릴 때 같이 치운다(안 떠 있으면 no-op).
+      if (sleepStage != SLEEP_STAGE_AWAKE) hideStillWatchingPrompt()
       sleepStage = SLEEP_STAGE_AWAKE
       return false
     }

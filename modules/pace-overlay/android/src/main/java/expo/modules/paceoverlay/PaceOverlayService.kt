@@ -57,6 +57,10 @@ class PaceOverlayService : Service() {
   private var overlayView: LinearLayout? = null
   // 알약 표시 상태의 직전 값 — 바뀔 때만 로그를 남기기 위한 것(foregroundPollRunnable 주석 참고).
   private var lastPillShouldShow: Boolean? = null
+  // 마지막으로 정산한 틱 시각(elapsedRealtime)과 1분에 못 미치는 잔여 시간 — 아래 startMinuteTicker
+  // 주석 참고. 틱이 언제 오든 "실제로 흐른 시간"만큼만 정확히 깎기 위한 것이다.
+  private var lastTickAtMs = 0L
+  private var tickCarryMs = 0L
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
   // 2026-07-31 사장님 지시(오버레이 P 메뉴) — "화면이 작아지는" 문제(P를 누르면 곧장 앱으로
@@ -829,7 +833,40 @@ class PaceOverlayService : Service() {
     // (위 restoreFocusSessionTimerIfNeeded 선언부 참고): 인메모리 Handler 예약이라 프로세스 복구
     // 시점에 같이 다시 걸어주지 않으면 영영 안 꺼진다.
     restoreFocusSessionTimerIfNeeded(this)
+    startMinuteTicker()
     infraReady = true
+  }
+
+  // 🔴 2026-08-06 실측 — 카운트다운이 알람에만 의존해서 실제로는 제때 안 돌았다.
+  //   틱 간격 실측: 00:33:58 → 00:35:43 (105초), 01:22:36 → 01:24:21 (105초) — 60초가 아니다.
+  //   방치 시: 02:00 세션 시작 → 틱 1회 후 **17분간 0회**(remaining=119 고정, 알람은 dumpsys에
+  //   정상 등록돼 있었음).
+  //   원인은 scheduleNextTick()이 쓰는 setAndAllowWhileIdle()이다 — Doze에서 앱당 약 9분에 1회로
+  //   제한되고, 비Doze에서도 부정확(시스템이 배치)해서 매번 ~45초씩 밀린다(105초 = 60 + 45와 일치).
+  //   알람 자체는 프로세스가 죽어도 살아남는다는 큰 장점이 있어 버리면 안 되지만, **유일한 소스로
+  //   쓰면 시스템 배치에 그대로 끌려다닌다.**
+  // → 서비스가 살아있는 동안은 Handler로 정시(60초)에 돌리고, 알람은 **프로세스 사망 대비 백업**으로만
+  //   남긴다(performTick이 끝날 때마다 알람을 +60초로 다시 밀어두므로, Handler가 살아있는 한 알람은
+  //   사실상 발화하지 않는다). Handler와 알람이 겹쳐 performTick이 두 번 불려도 아래 경과시간 기준
+  //   계산이 "0분 경과"로 처리하므로 이중 차감이 없다.
+  private val minuteTickHandler = Handler(Looper.getMainLooper())
+  private val minuteTickRunnable = object : Runnable {
+    override fun run() {
+      try { performTick() } catch (e: Exception) { Log.w("PaceOverlay", "minute ticker failed", e) }
+      minuteTickHandler.postDelayed(this, TICK_INTERVAL_MS)
+    }
+  }
+  private var minuteTickerRunning = false
+
+  private fun startMinuteTicker() {
+    if (minuteTickerRunning) return
+    minuteTickerRunning = true
+    minuteTickHandler.postDelayed(minuteTickRunnable, TICK_INTERVAL_MS)
+  }
+
+  private fun stopMinuteTicker() {
+    minuteTickerRunning = false
+    minuteTickHandler.removeCallbacks(minuteTickRunnable)
   }
 
   // ACTION_TICK과 intent==null(시스템 START_STICKY 재시작) 둘 다 "이 프로세스 인스턴스에서 아직
@@ -848,6 +885,9 @@ class PaceOverlayService : Service() {
     // add/removeView 오버헤드+깜빡임, 너무 길면 복구 체감이 느림 — 4초로 절충.
     private const val REFRESH_INTERVAL_MS = 4000L
     private const val TICK_INTERVAL_MS = 60_000L
+    // 한 번의 틱에서 몰아서 깎을 수 있는 최대 분(startMinuteTicker/performTick 주석 참고).
+    // 장시간 Doze나 프로세스 사망 뒤 복귀했을 때 보지도 않은 시간까지 한 방에 사라지는 것을 막는다.
+    private const val MAX_CATCHUP_MINUTES = 5
     private const val CHANNEL_ID = "pace_overlay_channel"
     private const val NOTIFICATION_ID = 4201
     private const val ACTION_START = "expo.modules.paceoverlay.START"
@@ -1640,6 +1680,10 @@ class PaceOverlayService : Service() {
         // 기준점이다. 안 하면 이전 세션의 마지막 입력 시각이 남아 새 세션이 시작하자마자 의심 단계로
         // 들어갈 수 있다.
         lastUserInputAtMs = SystemClock.elapsedRealtime()
+        // 2026-08-06 — 새 세션은 경과시간 정산도 지금부터 시작한다. 안 하면 이전 세션이 끝난 뒤
+        // 흐른 시간이 첫 틱에 한꺼번에 깎인다(performTick의 경과시간 계산 주석 참고).
+        lastTickAtMs = SystemClock.elapsedRealtime()
+        tickCarryMs = 0L
         sleepStage = SLEEP_STAGE_AWAKE
         loadDailyLimitHitState() // 날짜 바뀌었으면 한도 히트카운트 리셋(자정 롤오버)
         if (dailyLimitOriginalMinutes <= 0) {
@@ -1699,6 +1743,7 @@ class PaceOverlayService : Service() {
         }
         clearSessionActive()
         cancelScheduledTick(this)
+        stopMinuteTicker()
         stopForegroundAppPolling()
         removeOverlay()
         removeBlockOverlay()
@@ -1745,21 +1790,42 @@ class PaceOverlayService : Service() {
       // isLikelyPlaying()==false(재생 중이 아님이 확인됨)일 때만 건너뛰고, null(접근성 꺼짐 등 판단
       // 불가)이거나 true(실제 재생 중)면 기존처럼 차감 — 신호가 아예 없을 땐 안전하게 항상 차감
       // 쪽으로 폴백한다.
+      // 🔴 2026-08-06 — "틱 1회 = 무조건 1분"이었던 것이 결함이었다. 알람이 105초 만에 오든 9분 만에
+      // 오든 1분만 깎아서, 실측 105초 간격 기준으로 **일일 한도가 약 1.75배로 늘어났다**
+      // (120분 한도가 실제로는 약 210분 시청). 상세 근거는 startMinuteTicker() 주석.
+      // → 흐른 시간을 직접 재서 그만큼 깎는다. 1분에 못 미치는 잔여는 tickCarryMs에 이월해
+      //   버리지 않는다(그래야 잦은 틱에서도 총합이 정확하다).
+      // 이 계산 덕분에 Handler 틱과 백업 알람이 겹쳐 performTick이 두 번 불려도 두 번째는
+      // "0분 경과"가 되어 이중 차감이 없다.
+      val nowMs = SystemClock.elapsedRealtime()
+      val sinceLastMs = if (lastTickAtMs > 0L && nowMs > lastTickAtMs) nowMs - lastTickAtMs else 0L
+      lastTickAtMs = nowMs
+      tickCarryMs += sinceLastMs
+      var elapsedMinutes = (tickCarryMs / 60_000L).toInt()
+      tickCarryMs -= elapsedMinutes * 60_000L
+      // 방어 — 장시간 Doze/프로세스 사망 뒤 한 번에 몰아서 깎으면 사용자가 보지도 않은 시간까지
+      // 한 방에 사라진다. 그 구간은 어차피 시청 중이 아니었을 가능성이 크므로 상한을 둔다.
+      if (elapsedMinutes > MAX_CATCHUP_MINUTES) {
+        Log.w("PaceOverlay", "tick catch-up capped: $elapsedMinutes -> $MAX_CATCHUP_MINUTES minutes")
+        elapsedMinutes = MAX_CATCHUP_MINUTES
+        tickCarryMs = 0L
+      }
+      val remainingBefore = remainingMinutes
       val isPlaying = PaceAccessibilityService.isLikelyPlaying()
-      if (isPlaying != false) {
-        remainingMinutes = (remainingMinutes - 1).coerceAtLeast(0)
+      if (isPlaying != false && elapsedMinutes > 0) {
+        remainingMinutes = (remainingMinutes - elapsedMinutes).coerceAtLeast(0)
         // 2026-08-03 — 통계를 알약과 같은 기준으로 맞추기 위한 "실제 시청 시간" 누적(위 ACTION_START
         // 주석 참고). 차감이 실제로 일어난 틱에서만 더하므로 알약이 보는 시간과 정확히 일치한다.
         // 프로세스가 죽어도 이어지도록 prefs에 쌓는다(메모리 필드로 두면 복구 경로에서 초기화된다).
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putInt(PREF_WATCHED_SECONDS, prefs.getInt(PREF_WATCHED_SECONDS, 0) + 60).apply()
-      } else {
+        prefs.edit().putInt(PREF_WATCHED_SECONDS, prefs.getInt(PREF_WATCHED_SECONDS, 0) + elapsedMinutes * 60).apply()
+      } else if (isPlaying == false) {
         Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
       }
       checkAccessibilityRevoked()
       checkOverlayPermissionRevoked()
-      if (sleepTimerRemainingMinutes > 0) {
-        sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - 1).coerceAtLeast(0)
+      if (sleepTimerRemainingMinutes > 0 && elapsedMinutes > 0) {
+        sleepTimerRemainingMinutes = (sleepTimerRemainingMinutes - elapsedMinutes).coerceAtLeast(0)
       }
       // 2026-07-27 사용자 실기기 지적("쇼츠 안 보고 Pace 화면만 보이는데 왜 휴식 팝업 떠") — 위
       // remainingMinutes 차감은 isPlaying==false(재생 안 함이 확인됨)일 때 건너뛰도록 이미 고쳐져
@@ -1767,8 +1833,8 @@ class PaceOverlayService : Service() {
       // Pace 자체 화면(Home/Focus/Settings)만 보고 있거나 일시정지 중이어도 벽시계 기준으로 계속
       // 흘러가 실제로 안 보고 있을 때도 알림이 떴다. remainingMinutes와 동일한 조건(재생 중이 아님이
       // 확인된 경우만 건너뜀 — 신호 없음/불확실이면 안전하게 계속 차감)으로 통일한다.
-      if (breakIntervalMinutes > 0 && isPlaying != false) {
-        nextBreakInMinutes = (nextBreakInMinutes - 1).coerceAtLeast(0)
+      if (breakIntervalMinutes > 0 && isPlaying != false && elapsedMinutes > 0) {
+        nextBreakInMinutes = (nextBreakInMinutes - elapsedMinutes).coerceAtLeast(0)
         if (nextBreakInMinutes <= 0) {
           if (notifyBreak) {
             if (isKoreanLocale()) {
@@ -1786,13 +1852,23 @@ class PaceOverlayService : Service() {
       applyAutoBadgeStyle()
       updateNotification(remainingMinutes)
       persistState()
-      Log.d("PaceOverlay", "tick remaining=$remainingMinutes sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
+      Log.d("PaceOverlay", "tick remaining=$remainingMinutes elapsed=${elapsedMinutes}m carry=${tickCarryMs}ms sleepTimer=$sleepTimerRemainingMinutes nextBreakIn=$nextBreakInMinutes")
 
-      if (notifyRemaining && (remainingMinutes == 5 || remainingMinutes == 1)) {
-        if (isKoreanLocale()) {
-          sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
-        } else {
-          sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "Time remaining", "$remainingMinutes min left today — take a breather?")
+      // 2026-08-06 — 예전엔 `remainingMinutes == 5 || == 1`(정확히 그 값일 때만)이었다. 경과시간
+      // 기준으로 바뀌면서 한 틱에 2분 이상 지나갈 수 있게 됐고, 그러면 5나 1을 건너뛰어 알림이 영영
+      // 안 뜬다. "그 값을 지나쳤는가"(경계 통과)로 바꾼다 — 정확히 멈추지 않아도 한 번은 뜬다.
+      if (notifyRemaining && elapsedMinutes > 0) {
+        val crossed = when {
+          remainingBefore > 5 && remainingMinutes <= 5 -> 5
+          remainingBefore > 1 && remainingMinutes <= 1 -> 1
+          else -> 0
+        }
+        if (crossed > 0) {
+          if (isKoreanLocale()) {
+            sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "남은 시간", "오늘 ${remainingMinutes}분 남았어요! 잠시 숨을 돌려볼까요.")
+          } else {
+            sendAlertNotification(NOTIFICATION_ID_LOW_TIME, "Time remaining", "$remainingMinutes min left today — take a breather?")
+          }
         }
       }
 
@@ -1894,6 +1970,7 @@ class PaceOverlayService : Service() {
           }
         }
         cancelScheduledTick(this)
+        stopMinuteTicker()
         // 2026-07-19 사용자 제품 결정: "Pace가 만료로 판단했는데 YouTube는 계속 시청 가능"했던 기존
         // 갭(#1/#3)을 여기서 닫는다 — 작은 알약 대신 전체화면 차단(showBlockOverlay)을 항상 띄운다
         // (알림 권한 유무와 무관, notifyLimit 설정과도 무관 — 차단 자체는 옵트아웃 대상이 아님).
@@ -3546,13 +3623,19 @@ class PaceOverlayService : Service() {
     startForegroundAppPolling()
     setupMediaSession()
     registerStillnessSensor()
+    // 2026-08-06 — 재개도 "지금부터" 다시 센다. 만료~재개 사이에 흐른 시간이 첫 틱에 몰려 깎이면
+    // 받은 +5분이 곧바로 사라진다(performTick의 경과시간 계산 주석 참고).
+    lastTickAtMs = SystemClock.elapsedRealtime()
+    tickCarryMs = 0L
     scheduleNextTick(this)
+    startMinuteTicker()
   }
 
   private fun endFromBlockOverlay() {
     removeBlockOverlay()
     openPaceApp()
     cancelScheduledTick(this)
+    stopMinuteTicker()
     infraReady = false
     stopForeground(STOP_FOREGROUND_REMOVE)
     stopSelf()
@@ -3663,6 +3746,7 @@ class PaceOverlayService : Service() {
   }
 
   override fun onDestroy() {
+    stopMinuteTicker()
     stopForegroundAppPolling()
     removeOverlay()
     removeBlockOverlay()

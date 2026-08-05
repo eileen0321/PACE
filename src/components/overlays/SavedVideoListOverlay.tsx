@@ -3,6 +3,7 @@ import { Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } 
 import { Feather } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
+import { useToastStore } from '../../store/useToastStore';
 import { radius, spacing, typography } from '../../constants/theme';
 import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 
@@ -54,16 +55,37 @@ export function SavedVideoListOverlay({
     removeSavedVideo(id).catch(() => {});
   }, []);
 
+  // 2026-08-05 사장님 지적("아이폰에 주소가 있는데도 안 열렸어") — 예전엔 videoId가 없으면 앱 안 재생을
+  // 통째로 건너뛰고 외부 열기로 갔는데, 그 실패를 `.catch(() => {})`로 **조용히 삼켰다**. 그래서 주소가
+  // 멀쩡히 있어도 눌렀을 때 아무 일도 안 일어나는 것처럼 보였다.
+  // url에는 videoId가 들어 있으므로(우리가 저장할 때 .../shorts/<id> 형태로 넣는다) 거기서 뽑아내면
+  // 대부분 앱 안에서 재생할 수 있다 — 굳이 앱 밖으로 내보낼 이유가 없다.
+  const videoIdFromUrl = (url?: string | null): string | null => {
+    if (!url) return null;
+    const m = url.match(/(?:youtu\.be\/|shorts\/|[?&]v=)([\w-]{11})/);
+    return m ? m[1] : null;
+  };
+
   const onOpen = useCallback((item: SavedVideo) => {
-    if (onOpenVideo && item.videoId) {
-      // Favorite 목록(표시 순서)에서 videoId 있는 것만 순서대로 넘겨 피드가 이어서 재생하게 한다.
-      onOpenVideo(item.videoId, items.map((v) => v.videoId).filter((id): id is string => !!id));
+    const vid = item.videoId ?? videoIdFromUrl(item.url);
+    if (onOpenVideo && vid) {
+      // Favorite 목록(표시 순서)에서 videoId를 아는 것만 순서대로 넘겨 피드가 이어서 재생하게 한다.
+      const playlist = items
+        .map((v) => v.videoId ?? videoIdFromUrl(v.url))
+        .filter((id): id is string => !!id);
+      onOpenVideo(vid, playlist);
       onClose();
       return;
     }
-    if (!item.url) return;
-    Linking.openURL(item.url).catch(() => {});
-  }, [onOpenVideo, onClose, items]);
+    if (!item.url) {
+      // 주소도 videoId도 없는 항목 — 왜 안 되는지 알려준다(조용히 무시하지 않는다).
+      useToastStore.getState().show(t('overlay.openFailed'));
+      return;
+    }
+    Linking.openURL(item.url).catch(() => {
+      useToastStore.getState().show(t('overlay.openFailed'));
+    });
+  }, [onOpenVideo, onClose, items, t]);
 
   const onShare = useCallback((item: SavedVideo) => {
     if (!item.url) return;

@@ -2515,16 +2515,36 @@ class PaceOverlayService : Service() {
       setPadding((10 * d).toInt(), (9 * d).toInt(), (10 * d).toInt(), (9 * d).toInt())
       isClickable = true
     }
+    // ⭐ 2026-08-05 사장님 설계 — 안드로이드는 "현재 영상 추가"가 **구조적으로 불가능**하다.
+    //   유튜브 앱은 재생 중인 영상의 주소를 밖으로 안 내놓고(우리가 연 첫 영상만 알 수 있다),
+    //   유튜브 공유창의 "링크 복사"는 접근성 트리에 아예 노출되지 않아 대신 눌러줄 수도 없다
+    //   (전 창 탐색·flagIncludeNotImportantViews까지 시도해 확인. MD 2026-08-05 항목 참고).
+    //   → **사용자가 직접 누르게 하고 우리는 결과만 받는다.** 사용자가 공유 → 링크 복사를 하면
+    //     주소가 클립보드에 들어가고, 이 버튼을 누르면 그걸 읽어 저장한다.
+    //   ⚠️ Android 10+는 포커스를 가진 앱만 클립보드를 읽을 수 있어(오버레이는 포커스가 없다)
+    //     투명 액티비티(PaceShareCaptureActivity)를 순간 띄워 읽는다.
+    //   iOS는 앱 안 웹뷰라 주소를 항상 알므로 기존 "현재 영상 추가" 그대로 둔다(공통 아님).
+    val isFavorite = kind == "favorite"
     addRow.addView(TextView(this).apply {
-      text = "+  Add current video"
+      text = if (isFavorite) "＋  Save copied link" else "+  Add current video"
       textSize = 13f
       setTextColor(Color.WHITE)
       setTypeface(typeface, android.graphics.Typeface.BOLD)
     })
     panel.addView(addRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
       topMargin = (10 * d).toInt()
-      bottomMargin = (10 * d).toInt()
+      bottomMargin = if (isFavorite) (4 * d).toInt() else (10 * d).toInt()
     })
+    if (isFavorite) {
+      // 사용자가 무엇을 해야 하는지 한 줄로 알려준다 — 이게 없으면 버튼만 보고 왜 안 되는지 모른다.
+      panel.addView(TextView(this).apply {
+        text = "In YouTube: Share → Copy link, then tap above"
+        textSize = 11f
+        setTextColor(Color.parseColor("#99FFFFFF"))
+      }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+        bottomMargin = (10 * d).toInt()
+      })
+    }
 
     fun renderList() {
       listContainer.removeAllViews()
@@ -2617,7 +2637,16 @@ class PaceOverlayService : Service() {
         if (kind == "favorite") {
           itemRow.isClickable = true
           itemRow.setOnClickListener {
-            val url = item.url ?: return@setOnClickListener
+            // ⚠️ 2026-08-05 사장님 지적("즐겨찾기에 저장된 쇼츠 링크를 눌러도 왜 이동을 안 해?") —
+            //   예전엔 `item.url ?: return`이라 **url이 없으면 조용히 아무 일도 안 일어났다.**
+            //   videoId는 있는데 url만 비어 있는 항목도 그냥 무시했다(쇼츠 HOT 리스트는 videoId로
+            //   주소를 만들어 여는데 즐겨찾기만 안 그랬다). 같은 규칙으로 맞춘다.
+            val url = item.url ?: item.videoId?.takeIf { it.isNotBlank() }?.let { "https://www.youtube.com/shorts/$it" }
+            if (url == null) {
+              // 주소도 videoId도 없는 항목(예전 광고 저장 버그의 잔재) — 왜 안 되는지 알려주고 끝낸다.
+              Toast.makeText(applicationContext, "This one has no link — remove it with ✕", Toast.LENGTH_SHORT).show()
+              return@setOnClickListener
+            }
             try {
               startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (e: Exception) {
@@ -2646,6 +2675,43 @@ class PaceOverlayService : Service() {
     // 트리에서 즉시 읽을 수 있는 제목/채널로 먼저 낙관적으로 추가해 보여주고(1차 콜백), 공유 결과가
     // 나오면 같은 행을 실제 videoId/url/썸네일로 채운다(2차 콜백) — captureCurrentVideoInfo 참고.
     addRow.setOnClickListener {
+      if (isFavorite) {
+        // 클립보드에서 유튜브 링크를 읽어 저장한다(위 addRow 주석의 근거).
+        PaceShareCaptureActivity.pendingCallback = cb@{ clipText ->
+          foregroundPollHandler.post {
+            val videoId = PaceAccessibilityService.extractYouTubeVideoId(clipText)
+            if (videoId == null) {
+              Toast.makeText(
+                applicationContext,
+                "No YouTube link copied — tap Share → Copy link first",
+                Toast.LENGTH_LONG
+              ).show()
+              return@post
+            }
+            val url = "https://www.youtube.com/shorts/$videoId"
+            // 제목/채널은 접근성 트리에서 지금 보이는 값을 그대로 쓴다(있으면 좋고 없어도 저장된다).
+            val info = PaceAccessibilityService.readVisibleTitleChannel()
+            if (SavedVideosStore.insert(applicationContext, kind, videoId, info?.first, info?.second, url) != null) {
+              Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
+              renderList()
+            } else {
+              Toast.makeText(applicationContext, "Already saved", Toast.LENGTH_SHORT).show()
+            }
+          }
+        }
+        try {
+          startActivity(
+            Intent(this, PaceShareCaptureActivity::class.java)
+              .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
+              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+          )
+        } catch (e: Exception) {
+          PaceShareCaptureActivity.pendingCallback = null
+          Log.w("PaceOverlayService", "클립보드 읽기 액티비티 실행 실패", e)
+          Toast.makeText(applicationContext, "Couldn't read the clipboard", Toast.LENGTH_SHORT).show()
+        }
+        return@setOnClickListener
+      }
       var placeholderId: String? = null
       PaceAccessibilityService.captureCurrentVideoInfo { title, channel, videoId, url, isFinal ->
         foregroundPollHandler.post {

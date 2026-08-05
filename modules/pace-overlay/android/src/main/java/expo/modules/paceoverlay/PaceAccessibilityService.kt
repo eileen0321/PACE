@@ -375,6 +375,32 @@ class PaceAccessibilityService : AccessibilityService() {
     // 있는 제목/채널로 먼저 "낙관적" 추가를 보여주고, 공유 결과(videoId/url)가 나오면 그 항목을
     // 갱신한다 — 콜백이 두 번 불린다: 1차(isFinal=false, videoId/url=null) 즉시, 2차(isFinal=true)
     // 공유 결과 도착 시. 공유 버튼 자체를 못 찾는 등 즉시 실패하는 경우엔 1차 없이 2차만 온다.
+    /**
+     * 2026-08-05 — 지금 화면에 보이는 영상의 (제목, 채널). 공유시트를 건드리지 않고 접근성 트리만 읽는다.
+     * 안드로이드 즐겨찾기가 "클립보드에 복사된 링크 저장" 방식으로 바뀌면서, videoId는 클립보드에서 오고
+     * 제목/채널만 여기서 채운다. 못 읽어도 저장은 진행된다(둘 다 null 가능).
+     */
+    fun readVisibleTitleChannel(): Pair<String?, String?>? {
+      val service = instance ?: return null
+      return try {
+        val texts = mutableListOf<String>()
+        service.collectContentDescriptions(service.trackedAppRootNode(), texts, depth = 0, budget = intArrayOf(400))
+        val channelRaw = texts.firstOrNull { it.endsWith("채널로 이동") }
+        val channel = channelRaw?.removeSuffix(" 채널로 이동")
+        val title = texts.firstOrNull { candidate ->
+          candidate.length > 8 &&
+            candidate != channelRaw &&
+            KNOWN_ACTION_KEYWORDS.none { candidate.contains(it) } &&
+            !candidate.contains("구독합니다") &&
+            extractYouTubeVideoId(candidate) == null
+        }
+        title to channel
+      } catch (e: Exception) {
+        Log.w("PaceAccessibility", "readVisibleTitleChannel 실패", e)
+        null
+      }
+    }
+
     fun captureCurrentVideoInfo(callback: (title: String?, channel: String?, videoId: String?, url: String?, isFinal: Boolean) -> Unit) {
       val service = instance
       if (service == null) {

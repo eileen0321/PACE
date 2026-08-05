@@ -298,6 +298,12 @@ class PaceAccessibilityService : AccessibilityService() {
     // 폴백, 기존 UsageStatsManager 기반 판정만 그대로 적용된다.
     fun isSupportedAppWindowVisible(): Boolean = instance?.supportedAppWindowVisible() ?: false
 
+    // 위와 같지만 "접근성이 안 붙어 있어서 물어볼 수 없음"(null)과 "물어봤더니 없음"(false)을 구분한다.
+    // 알약 표시 판정(PaceOverlayService.foregroundPollRunnable)이 이 구분을 필요로 한다 — 접근성이
+    // 살아 있으면 이 신호 하나만 믿어야 하고(이벤트 신호는 낡아서 깜빡임을 만든다), 접근성이 꺼져
+    // 있을 때만 예전 이벤트/UsageStats 기반 판정으로 폴백해야 하기 때문이다.
+    fun supportedAppWindowVisibleOrNull(): Boolean? = instance?.supportedAppWindowVisible()
+
     // 2026-07-19: Bluetooth Hands-Free Next/Previous — 위 interval 기반 Auto Next 루프와 별개로,
     // 리모컨 버튼 1회 입력에 스와이프 1회로 즉시 응답하는 단발성 트리거. 감시 대상 앱이 포그라운드가
     // 아니어도(예: 사용자가 Pace 쪽을 보고 있어도) 그냥 시도한다 — 리모컨을 눌렀다는 것 자체가 이미

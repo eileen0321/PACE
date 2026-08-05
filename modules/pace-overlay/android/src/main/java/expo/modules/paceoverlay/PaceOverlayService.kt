@@ -55,6 +55,8 @@ import kotlin.math.sqrt
 class PaceOverlayService : Service() {
   private var windowManager: WindowManager? = null
   private var overlayView: LinearLayout? = null
+  // 알약 표시 상태의 직전 값 — 바뀔 때만 로그를 남기기 위한 것(foregroundPollRunnable 주석 참고).
+  private var lastPillShouldShow: Boolean? = null
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
   // 2026-07-31 사장님 지시(오버레이 P 메뉴) — "화면이 작아지는" 문제(P를 누르면 곧장 앱으로
@@ -106,6 +108,13 @@ class PaceOverlayService : Service() {
     val oldView = overlayView
     overlayView = null
     showOverlay(remainingMinutesForRecreate)
+    // 🔴 2026-08-06 — 사장님 "다른 앱 보는데 알약이 떴다 없어졌다 한다"의 두 번째 경로.
+    // showOverlay()가 만드는 새 LinearLayout은 기본값이 VISIBLE인데, 이 함수는 performTick()에서
+    // **shouldShow와 무관하게 60초마다 무조건** 불린다(유령 창 방어용 주기적 강제 재생성).
+    // 숨김 처리는 포그라운드 폴(1초 주기)에서만 하므로, 감시 대상 앱을 보고 있지 않은 상태에서도
+    // 재생성된 알약이 다음 폴까지 **최대 1초간 화면에 보인다** — 60초마다 한 번씩 깜빡이는 정체.
+    // 재생성 직후 마지막으로 판정된 표시 상태를 그대로 물려준다(폴을 기다리지 않는다).
+    if (lastPillShouldShow == false) overlayView?.visibility = View.GONE
     oldView?.let { try { windowManager?.removeView(it) } catch (e: Exception) {} }
   }
 
@@ -150,7 +159,16 @@ class PaceOverlayService : Service() {
         // isSupportedAppWindowVisible()은 이벤트가 아니라 그 순간을 직접 묻는 getWindows() 기반이라
         // 이 문제 자체가 없다(같은 API로 도는 재생시간 폴링이 이 기간 내내 안 끊기고 정상 작동한 걸로
         // 이미 확인됨) — 최후 순위로 덧붙여 위 두 신호가 놓쳐도 알약이 계속 보이게 한다.
-        val windowVisible = PaceAccessibilityService.isSupportedAppWindowVisible()
+        // 🔴 2026-08-06 — 사장님 "쇼츠 안 보고 다른 앱 보는데 알약이 떴다 없어졌다 한다".
+        // 아래 shouldShow가 원래 `이벤트기반 || windowVisible`(OR)이었다. 즉 **셋 중 하나만 유튜브라고
+        // 우기면 알약이 뜬다.** 그런데 그 이벤트 신호(currentForegroundPackage / UsageStatsManager)가
+        // 낡는다는 것은 바로 오늘 isLikelyPlaying()에서 실측으로 확인했다(설정 앱을 보는 3분 20초
+        // 동안 창 게이트는 210회 false였는데 이벤트 필드는 유튜브로 남아 시간이 계속 깎였다).
+        // 낡은 신호가 OR로 들어가 있으면 그 신호가 유튜브↔다른앱 사이를 오갈 때마다 알약이 깜빡인다.
+        // → 접근성이 살아 있으면(=창을 직접 물어볼 수 있으면) **그 답만 믿는다.** 접근성이 꺼져
+        //   있을 때(null)만 예전 이벤트/UsageStats 판정으로 폴백한다 — 그 경우엔 창을 물어볼 방법이
+        //   아예 없으므로 낡은 신호라도 쓰는 게 안 뜨는 것보다 낫다.
+        val windowVisibleOrNull = PaceAccessibilityService.supportedAppWindowVisibleOrNull()
         // 2026-08-03 실기기 녹화로 확인 — P메뉴 "앱으로"로 Pace를 띄운 뒤에도 알약이 Pace 자기 화면
         // 위에 2~3초 더 겹쳐 보였다. openApp()에서 즉시 visibility=GONE 하는데도 그런 이유는, 전환
         // 직후 잠깐 유튜브 창이 아직 getWindows()에 남아 windowVisible=true가 되고 UsageStats도
@@ -158,14 +176,21 @@ class PaceOverlayService : Service() {
         // 알약은 어떤 신호가 뭐라 하든 띄우지 않는다"가 예외 없는 규칙이라 여기서 잘라낸다(사용자가
         // 직접 Pace로 전환한 경우도 같이 해결된다).
         val selfForeground = usageStatsForeground == packageName || accessibilityForeground == packageName
-        val shouldShow = !selfForeground &&
-          ((foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) || windowVisible)
+        val eventBasedVisible = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
+        val shouldShow = !selfForeground && (windowVisibleOrNull ?: eventBasedVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
         // 밀려나 디버깅을 방해했다(실기기 조사 중 반복 확인). 오버레이 표시 로직 자체는 무변경.
         if (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) {
           getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(PREF_LAST_TRACKED_APP_PACKAGE, foregroundPackage).apply()
+        }
+        // 2026-08-06 진단 — 사장님 "쇼츠 안 보고 다른 앱 보는데 알약이 떴다 없어졌다 한다".
+        // 초당 1회 폴이라 매 폴을 찍으면 로그가 폭발하므로 **상태가 바뀔 때만** 한 줄 남긴다.
+        // 세 신호를 함께 찍어야 어느 신호가 깜빡임을 만드는지 구분된다.
+        if (shouldShow != lastPillShouldShow) {
+          lastPillShouldShow = shouldShow
+          Log.i("PaceOverlay", "pill ${if (shouldShow) "SHOW" else "HIDE"} fg=$foregroundPackage a11yFg=$accessibilityForeground usage=$usageStatsForeground win=$windowVisibleOrNull self=$selfForeground")
         }
         if (shouldShow) refreshOverlayIfDue(remainingMinutes)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE

@@ -5751,3 +5751,36 @@ clipboard(focused)=https://youtube.com/shorts/U71XMQIucyw?si=vW1UZDXtcd-iQ2Le
   videoId·썸네일·재생은 모두 정상이라 표시상의 문제. 접근성 트리의 제목 후보 판정을 손봐야 한다.
 - 클립보드를 읽는 순간 **Pace가 잠깐 전면으로 나온다**(투명 액티비티가 포커스를 얻어야 하므로 불가피).
   읽은 뒤 유튜브로 곧장 되돌려주면 더 매끄럽다.
+
+### 2026-08-05 — 🎯 iOS "다음 영상에서 멈췄다가 플레이" **진짜 원인 확정 (웹서치)**
+
+사장님: "스와이프 하면 멈췄다가 재생하는 거 더 찾아봤어? 그게 얼마나 중요한데."
+→ 웹서치를 안 했었다. 하고 나니 **한 방에 나왔다.**
+
+**WKWebView는 사용자가 스크롤하는 동안 미디어 재생을 정지하고, 스크롤이 끝나면 재개한다.**
+WebKit의 알려진 동작이다(apache/cordova-ios#530 외 다수 보고 —
+"Audio/video playback stops when users scroll the webview and resumes when the scroll ends").
+**유튜브 탓도, 우리 재생 코드 탓도 아니다.**
+
+그런데 우리 `doSwipe()`가 **직접 `scrollBy()`를 호출**하고 있었다:
+```js
+(reel && reel.scrollBy ? reel : window).scrollBy(0, dy);   // ← 이게 재생을 멈춘다
+window.scrollBy(0, dy);
+```
+스크롤 시작 → WebKit이 재생 정지 → 스크롤 끝 → 재개. **사장님이 본 그 멈칫이 정확히 이것이다.**
+
+⚠️ **앞서 시도한 두 수정이 왜 안 먹혔는지도 이걸로 설명된다** — `37de245`(중복 attach 제거),
+`2aefe1b`(unmute 순서)는 둘 다 **엉뚱한 층**이었다. 증상만 보고 추측으로 고쳤기 때문이다.
+(그 두 수정 자체는 각각 유효한 개선이라 되돌리지 않는다.)
+
+#### 수정
+`doSwipe(dir, scrollFallback)` — **평상시엔 스크롤을 아예 하지 않는다.** ArrowDown 키(유튜브 자체 단축키)
+만으로 릴을 넘긴다. 키가 안 먹어 450ms 뒤에도 URL이 그대로일 때만 `swipe()`의 재시도에서
+`scrollFallback=true`로 스크롤을 쓴다(기기/유튜브 버전에 따라 키가 안 먹는 경우 대비 — 회귀 방지).
+손가락 스와이프·핸즈프리·볼륨키 전부 이 경로를 공유한다.
+
+#### 🍎 Mac 검증 포인트
+1. 넘길 때 **멈칫이 사라졌는지**(가장 중요).
+2. 그래도 정상적으로 **넘어가는지** — 키만으로 안 넘어가는 기기라면 domlog에
+   `SWIPE-retry dir=… (scroll fallback)`가 찍힌다. 그게 매번 찍히면 그 기기는 키가 안 먹는 것이고,
+   그때는 멈칫과 이동을 맞바꿔야 하므로 다시 판단이 필요하다.

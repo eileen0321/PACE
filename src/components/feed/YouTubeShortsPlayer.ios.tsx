@@ -208,15 +208,25 @@ const INJECTED_JS_SWIPE = `
   var attachSeq = 0;
 
   // 실제 스와이프 동작(여러 전략) — dir>0 다음(아래로), dir<0 이전(위로).
-  function doSwipe(dir) {
+  function doSwipe(dir, scrollFallback) {
     var dy = (dir > 0 ? 1 : -1) * (window.innerHeight || 800), tried = [];
     // ⭐ 첫 손짓 무시 수정 — ArrowDown 키 스와이프는 플레이어에 focus가 있어야 먹히는데 로드 직후 focus가
     //    없어 첫 키가 무시됐다. 매 스와이프 직전 플레이어를 focus해 첫 손짓부터 키가 먹히게 한다.
     var mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player') || document.querySelector('ytd-reel-video-renderer') || document.body;
     try { mp && mp.focus && mp.focus({ preventScroll: true }); tried.push('focus'); } catch (e) {}
-    var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
-    try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
-    try { window.scrollBy(0, dy); } catch (e) {}
+    // ⭐ 2026-08-05 "다음 영상에서 멈췄다가 플레이" 원인 확정(웹서치) — **WKWebView는 사용자가 스크롤하는
+    //   동안 미디어 재생을 정지하고 스크롤이 끝나면 재개한다.** WebKit의 알려진 동작이다
+    //   (apache/cordova-ios#530 등 다수 보고). 유튜브 탓도, 우리 재생 코드 탓도 아니었다.
+    //   그런데 여기서 우리가 **직접 scrollBy를 호출**하고 있었다 → 스크롤 시작에 재생 정지, 끝나면 재개
+    //   = 사장님이 보신 그 멈칫. 앞서 시도한 두 수정(중복 attach 제거, unmute 순서)이 안 먹힌 이유도
+    //   이것이다 — 엉뚱한 층을 고치고 있었다.
+    //   → **평상시엔 스크롤을 아예 하지 않는다.** ArrowDown 키만으로 릴이 넘어간다(유튜브 자체 단축키).
+    //     키가 안 먹어 URL이 안 바뀐 경우에만 swipe()의 재시도에서 scrollBy 폴백을 쓴다(scrollFallback).
+    if (scrollFallback) {
+      var reel = document.querySelector('#shorts-inner-container, ytd-shorts, #shorts-container, ytd-reel-video-renderer, #player-container') || document.scrollingElement || document.documentElement;
+      try { (reel && reel.scrollBy ? reel : window).scrollBy(0, dy); tried.push('scroll'); } catch (e) {}
+      try { window.scrollBy(0, dy); } catch (e) {}
+    }
     try {
       var key = dir > 0 ? 'ArrowDown' : 'ArrowUp', kc = dir > 0 ? 40 : 38;
       var k = new KeyboardEvent('keydown', { key: key, code: key, keyCode: kc, which: kc, bubbles: true });
@@ -229,10 +239,10 @@ const INJECTED_JS_SWIPE = `
   // 실제로 넘어갔으면(href 변경) 재시도 안 함 → 이중 넘김 방지.
   function swipe(dir) {
     var before = '' + location.href;
-    var tried = doSwipe(dir);
+    var tried = doSwipe(dir, false);
     send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + before.slice(-16) });
     setTimeout(function () {
-      if (('' + location.href) === before) { doSwipe(dir); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (priming)' }); }
+      if (('' + location.href) === before) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); }
     }, 450);
   }
   window.paceAdvance = function () { swipe(1); };
@@ -276,7 +286,7 @@ const INJECTED_JS_SWIPE = `
       // ⚠️ 리스트 모드(HOT/즐겨찾기 순서 재생)에선 이동을 하면 안 된다 — 그건 유튜브 피드가 아니라
       //   우리 리스트의 다음 항목으로 리마운트해야 하므로 RN이 처리한다(moved=false로 위임).
       var moved = false;
-      if (!window.__paceListMode) { doSwipe(dir); moved = true; }
+      if (!window.__paceListMode) { doSwipe(dir, false); moved = true; }
       send({ type: 'userswipe', dir: dir, moved: moved });
     }, { capture: true, passive: true });
     // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. 스와이프 모드에선 부모의 current.videoId가 첫 영상에

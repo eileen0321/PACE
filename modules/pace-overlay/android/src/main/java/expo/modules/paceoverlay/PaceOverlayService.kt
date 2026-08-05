@@ -2689,11 +2689,24 @@ class PaceOverlayService : Service() {
               return@post
             }
             val url = "https://www.youtube.com/shorts/$videoId"
-            // 제목/채널은 접근성 트리에서 지금 보이는 값을 그대로 쓴다(있으면 좋고 없어도 저장된다).
+            // 제목/채널은 접근성 트리에서 지금 보이는 값을 먼저 써보고,
             val info = PaceAccessibilityService.readVisibleTitleChannel()
-            if (SavedVideosStore.insert(applicationContext, kind, videoId, info?.first, info?.second, url) != null) {
+            val rowId = SavedVideosStore.insert(applicationContext, kind, videoId, info?.first, info?.second, url)
+            if (rowId != null) {
               Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
               renderList()
+              // 접근성으로 제목을 못 읽었으면(실기기에서 실제로 "—"로 비어 나왔다) **주소로 가서 따온다.**
+              // YouTube oEmbed는 API 키 없이 공개로 제목/채널을 준다. 네트워크라 백그라운드에서 돌리고
+              // 결과가 오면 그 행만 갱신한다 — 저장 자체는 이미 끝났으므로 실패해도 손해가 없다.
+              if (info?.first.isNullOrBlank()) {
+                Thread {
+                  val meta = fetchYouTubeOEmbed(videoId)
+                  if (meta != null) {
+                    SavedVideosStore.updateTitleChannel(applicationContext, rowId, meta.first, meta.second)
+                    foregroundPollHandler.post { renderList() }
+                  }
+                }.start()
+              }
             } else {
               Toast.makeText(applicationContext, "Already saved", Toast.LENGTH_SHORT).show()
             }
@@ -3588,6 +3601,37 @@ class PaceOverlayService : Service() {
 // 살아있단 보장 없이도 동작해야 한다. src/database/schema.ts의 saved_videos 테이블을 그대로
 // 공유(expo-sqlite가 만든 파일을 경로로 직접 열기 — expo-sqlite/android/.../SQLiteModule.kt가
 // "<filesDir>/SQLite/<db>"에 만드는 걸 확인). 컬럼/스키마가 바뀌면 이 object도 같이 갱신해야 한다.
+// YouTube oEmbed로 (제목, 채널)을 가져온다. **API 키가 필요 없는 공개 엔드포인트**라 키를 앱에 넣지
+// 않는다는 원칙(사장님 지시)에 어긋나지 않는다. 실패하면 null — 호출부가 그냥 넘어간다.
+// ⚠️ 네트워크라 반드시 백그라운드 스레드에서 부를 것.
+private fun fetchYouTubeOEmbed(videoId: String): Pair<String?, String?>? {
+  var conn: java.net.HttpURLConnection? = null
+  return try {
+    val u = java.net.URL(
+      "https://www.youtube.com/oembed?url=" +
+        java.net.URLEncoder.encode("https://www.youtube.com/watch?v=$videoId", "UTF-8") +
+        "&format=json"
+    )
+    conn = (u.openConnection() as java.net.HttpURLConnection).apply {
+      connectTimeout = 6000
+      readTimeout = 6000
+      requestMethod = "GET"
+    }
+    if (conn.responseCode != 200) return null
+    val body = conn.inputStream.bufferedReader().use { it.readText() }
+    val o = org.json.JSONObject(body)
+    val title = o.optString("title").takeIf { it.isNotBlank() }
+    val channel = o.optString("author_name").takeIf { it.isNotBlank() }
+    Log.i("PaceOverlay", "oEmbed 제목 확보: $title / $channel")
+    title to channel
+  } catch (e: Exception) {
+    Log.w("PaceOverlay", "oEmbed 실패 videoId=$videoId", e)
+    null
+  } finally {
+    try { conn?.disconnect() } catch (e: Exception) {}
+  }
+}
+
 private object SavedVideosStore {
   data class SavedVideoRow(
     val id: String,
@@ -3677,6 +3721,24 @@ private object SavedVideosStore {
   }
 
   // 공유 결과(videoId/url)가 나중에 도착하면 낙관적으로 만든 행을 실제 값으로 채운다.
+  // 2026-08-05 사장님 지적("제목 없는 쇼츠 봤어? 주소 알면 주소로 가서라도 제목 따와야 할 거 아냐") —
+  // 맞다. videoId를 아는 이상 제목을 못 채울 이유가 없다. YouTube oEmbed는 **API 키 없이** 공개로
+  // 제목/채널을 준다(https://www.youtube.com/oembed?url=…&format=json). 저장 직후 백그라운드로 받아 채운다.
+  fun updateTitleChannel(context: Context, id: String, title: String?, channel: String?): Boolean {
+    if (title.isNullOrBlank() && channel.isNullOrBlank()) return false
+    val db = openDb(context) ?: return false
+    return try {
+      db.execSQL("UPDATE saved_videos SET title=COALESCE(?, title), channel=COALESCE(?, channel) WHERE id=?",
+        arrayOf(title, channel, id))
+      true
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.updateTitleChannel failed", e)
+      false
+    } finally {
+      db.close()
+    }
+  }
+
   fun updateVideoUrl(context: Context, id: String, videoId: String, url: String?): Boolean {
     val db = openDb(context) ?: return false
     return try {

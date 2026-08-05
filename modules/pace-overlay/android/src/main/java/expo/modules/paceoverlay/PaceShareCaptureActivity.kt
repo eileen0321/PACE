@@ -29,6 +29,9 @@ class PaceShareCaptureActivity : Activity() {
 
     /** true면 공유 인텐트가 아니라 **클립보드**에서 URL을 읽는다. */
     const val EXTRA_READ_CLIPBOARD = "pace.readClipboard"
+
+    /** 읽기가 끝나면 이 패키지를 다시 앞으로 가져온다(예: 유튜브). 없으면 복귀하지 않는다. */
+    const val EXTRA_RETURN_TO_PACKAGE = "pace.returnToPackage"
   }
 
   // 클립보드 읽기를 기다리는 중인지 — onCreate에서 세우고 onWindowFocusChanged(true)에서 소비한다.
@@ -36,6 +39,7 @@ class PaceShareCaptureActivity : Activity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    @Suppress("DEPRECATION") overridePendingTransition(0, 0)
     // 공유 인텐트로 들어온 경우는 여기서 끝난다(텍스트가 인텐트에 있으므로 포커스와 무관).
     if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
       val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -83,7 +87,25 @@ class PaceShareCaptureActivity : Activity() {
       Log.e("PaceShareCapture", "콜백 예외", e)
     } finally {
       pendingCallback = null
+      // ⚠️ 2026-08-05 사장님 지적("Pace가 갑자기 열리는데 정상이라고?") — 아니다. 클립보드를 읽으려면
+      //   포커스가 필요해 이 액티비티가 잠깐 앞으로 나오는 건 맞지만, 그 뒤 **사용자를 유튜브에
+      //   돌려놓지 않은 건 그냥 버그다.** 읽자마자 원래 보던 앱으로 되돌린다.
+      //   returnToPackage가 지정돼 있으면 그 앱을 기존 태스크 그대로 앞으로 가져온다(REORDER_TO_FRONT).
+      val back = intent?.getStringExtra(EXTRA_RETURN_TO_PACKAGE)
+      if (!back.isNullOrBlank()) {
+        try {
+          packageManager.getLaunchIntentForPackage(back)?.let {
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            startActivity(it)
+          }
+        } catch (e: Exception) {
+          Log.w("PaceShareCapture", "원래 앱 복귀 실패 pkg=" + back, e)
+        }
+      }
       finish()
+      // 이 액티비티가 뜨고 사라지는 전환 애니메이션까지 없애 "번쩍임"을 최소화한다.
+      @Suppress("DEPRECATION")
+      overridePendingTransition(0, 0)
     }
   }
 }

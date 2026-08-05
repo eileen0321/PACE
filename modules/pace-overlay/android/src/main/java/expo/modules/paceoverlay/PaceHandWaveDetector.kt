@@ -53,6 +53,24 @@ object PaceHandWaveDetector {
   private const val TAG = "PaceHandWaveDetector"
   private const val MODEL_ASSET = "hand_landmarker.task"
   private const val PROCESS_INTERVAL_MS = 150L
+  // 2026-08-05 실측 — "매 넘김마다 첫 손짓이 안 된다"의 정체를 처음으로 숫자로 확인했다.
+  // 실기기 로그(사장님이 실제로 손짓한 구간, WAVE 67회에서 연속 손짓 인접 간격 n=41):
+  //     최소 1.33s / 25% 3.15s / 중앙 4.51s / 75% 5.57s
+  //     1.2초 미만 0회 · 1.2~1.5초 3회 · 1.5~2.0초 2회 · 2.0~3.0초 5회 · 3초 이상 31회
+  // 1.2초 미만이 **단 한 표본도 없다**. 감도 문제라면 바닥이 이렇게 칼같이 잘릴 수 없다 —
+  // 이건 임계값이 아니라 구조적 정전 구간이다. 코드 경로와 정확히 맞는다:
+  //   ① analyzeFrame이 트리거 후 REFRACTORY_MS(1200ms) 동안 detectAsync 자체를 건너뛴다
+  //      → 그 1.2초간 랜드마크가 0개, sizeHistory/xHistory가 텅 빈 채로 유지된다.
+  //   ② 1.2초가 지나 첫 샘플이 들어와도 oldestInWindow == now 라 그 프레임은 건너뛴다(+150ms).
+  //   ③ 즉 물리적으로 가능한 최단 재발화는 1200+150 = 1350ms — 실측 최소값 1.33s와 일치.
+  // 사용자가 넘긴 직후 1.35초 안에 손을 흔들면 **감지가 아니라 처리 자체가 없다.** 연속으로
+  // 스킵할 때 정확히 그 구간에 손짓이 들어가므로 "첫 손짓만 안 된다"로 체감된다.
+  // ⚠️ 그럼에도 이 값을 지금 낮추지 않는다. 낮추면 같은 한 번의 손짓이 두 번 발화할 수 있고
+  //   (handSize는 손목~중지뿌리 거리라 손을 흔드는 동안 회전만으로도 0.6배 아래로 내려갔다
+  //   올라온다 → awaitingRearm이 shrink로 조기 해제됨), 그게 바로 "왜 지맘대로 계속 넘어가"다.
+  //   재무장이 shrink로 풀리는지 timeout으로 풀리는지 실측("rearmed after …ms by=") 없이 만지면
+  //   지금까지 아홉 번 반복한 실패를 열 번째로 반복하는 것이다. 그 로그는 릴리즈 빌드에도
+  //   남으므로, 다음 실사용 세션에서 logcat만 받으면 바로 확정된다.
   private const val REFRACTORY_MS = 1200L
   // 진단 하트비트 주기(2026-08-05) — 프레임이 계속 들어오는지 확인용.
   private const val HEARTBEAT_MS = 3000L

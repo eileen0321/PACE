@@ -17,6 +17,15 @@ type TimerState = {
   lastTickAtMs: number;
   /** 1분에 못 미쳐 아직 반영하지 않은 잔여 시간(ms). 버리지 않고 이월한다. */
   carryMs: number;
+  /**
+   * 이번 세션에서 **실제로 차감된** 시간(초). 남은시간을 깎은 만큼만 쌓이므로 알약이 보여주는 값과
+   * 정확히 같은 기준이다.
+   * 2026-08-06 — iOS 통계 일관성용. 안드로이드는 네이티브가 같은 성격의 값(watched_seconds)을
+   * 들고 있어 세션 종료 시 그걸 기록하는데(2026-08-03 "알약 기준이 맞지 않아?"), iOS는 그 값이
+   * 없어 **벽시계**로 기록했다. 이제 JS 틱이 "앱이 활성일 때만" 깎으므로, 벽시계로 기록하면
+   * 알약은 안 깎였는데 통계에는 쌓이는 그 모순이 iOS에서 그대로 재현된다. 같은 기준으로 맞춘다.
+   */
+  watchedSeconds: number;
   startSession: (params: { sessionId: string; remainingMinutes: number; sleepTimerMinutes: number | null; breakIntervalMinutes: number }) => void;
   tickMinute: () => void;
   resetTickClock: () => void;
@@ -34,6 +43,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
   nextBreakInMinutes: null,
   lastTickAtMs: 0,
   carryMs: 0,
+  watchedSeconds: 0,
 
   startSession: ({ sessionId, remainingMinutes, sleepTimerMinutes, breakIntervalMinutes }) => {
     set({
@@ -45,6 +55,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       // 새 세션은 측정 시계도 지금부터. 안 하면 이전 세션 종료 후 흐른 시간이 첫 틱에 몰려 깎인다.
       lastTickAtMs: Date.now(),
       carryMs: 0,
+      watchedSeconds: 0,
     });
   },
 
@@ -87,6 +98,7 @@ export const useTimerStore = create<TimerState>((set, get) => ({
       nextBreakInMinutes: breakIn,
       lastTickAtMs: now,
       carryMs: carry,
+      watchedSeconds: s.watchedSeconds + elapsedMinutes * 60,
     });
     if (remaining <= 0 || sleep === 0) {
       get().endSession();

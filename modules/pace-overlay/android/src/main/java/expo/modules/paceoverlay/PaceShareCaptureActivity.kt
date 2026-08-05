@@ -32,6 +32,9 @@ class PaceShareCaptureActivity : Activity() {
 
     /** 읽기가 끝나면 이 패키지를 다시 앞으로 가져온다(예: 유튜브). 없으면 복귀하지 않는다. */
     const val EXTRA_RETURN_TO_PACKAGE = "pace.returnToPackage"
+
+    /** 복귀 요청 — 이 액티비티가 아니라 **오래 사는 서비스**가 지연 후 수행한다(위 deliver 주석의 근거). */
+    var onReturnRequested: ((packageName: String) -> Unit)? = null
   }
 
   // 클립보드 읽기를 기다리는 중인지 — onCreate에서 세우고 onWindowFocusChanged(true)에서 소비한다.
@@ -89,19 +92,14 @@ class PaceShareCaptureActivity : Activity() {
       pendingCallback = null
       // ⚠️ 2026-08-05 사장님 지적("Pace가 갑자기 열리는데 정상이라고?") — 아니다. 클립보드를 읽으려면
       //   포커스가 필요해 이 액티비티가 잠깐 앞으로 나오는 건 맞지만, 그 뒤 **사용자를 유튜브에
-      //   돌려놓지 않은 건 그냥 버그다.** 읽자마자 원래 보던 앱으로 되돌린다.
-      //   returnToPackage가 지정돼 있으면 그 앱을 기존 태스크 그대로 앞으로 가져온다(REORDER_TO_FRONT).
+      //   돌려놓지 않은 건 그냥 버그다.**
+      //   ⚠️ 1차 시도(여기서 곧바로 startActivity + finish)는 **실기기에서 안 먹혔다** — 저장 직후
+      //     topResumedActivity가 여전히 com.strides7.pace/.MainActivity였다. finish()가 바로 뒤따르면
+      //     시스템이 우리 태스크를 다시 앞으로 되돌리기 때문이다.
+      //     → 복귀는 **오래 사는 PaceOverlayService**가 약간의 지연 뒤에 수행한다(returnToPackage 콜백).
       val back = intent?.getStringExtra(EXTRA_RETURN_TO_PACKAGE)
-      if (!back.isNullOrBlank()) {
-        try {
-          packageManager.getLaunchIntentForPackage(back)?.let {
-            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            startActivity(it)
-          }
-        } catch (e: Exception) {
-          Log.w("PaceShareCapture", "원래 앱 복귀 실패 pkg=" + back, e)
-        }
-      }
+      if (!back.isNullOrBlank()) onReturnRequested?.invoke(back)
+      onReturnRequested = null
       finish()
       // 이 액티비티가 뜨고 사라지는 전환 애니메이션까지 없애 "번쩍임"을 최소화한다.
       @Suppress("DEPRECATION")

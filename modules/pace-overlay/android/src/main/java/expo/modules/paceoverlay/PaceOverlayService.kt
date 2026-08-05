@@ -2549,6 +2549,19 @@ class PaceOverlayService : Service() {
     fun renderList() {
       listContainer.removeAllViews()
       val items = SavedVideosStore.list(applicationContext, kind)
+      // 2026-08-05 — 제목이 비어 있는데 videoId는 아는 항목(예전에 저장된 것들)도 뒤늦게 채워준다.
+      // 목록을 열 때 한 번만, 백그라운드로. oEmbed는 API 키가 필요 없다. 실패해도 조용히 넘어간다.
+      items.filter { it.title.isNullOrBlank() && !it.videoId.isNullOrBlank() }
+        .take(10) // 한 번에 과하게 때리지 않는다
+        .forEach { row ->
+          val vid = row.videoId ?: return@forEach
+          Thread {
+            val meta = fetchYouTubeOEmbed(vid)
+            if (meta != null && SavedVideosStore.updateTitleChannel(applicationContext, row.id, meta.first, meta.second)) {
+              foregroundPollHandler.post { renderList() }
+            }
+          }.start()
+        }
       if (items.isEmpty()) {
         listContainer.addView(TextView(this@PaceOverlayService).apply {
           text = if (kind == "capture") "Nothing saved yet" else "No favorites yet"
@@ -2676,6 +2689,27 @@ class PaceOverlayService : Service() {
     // 나오면 같은 행을 실제 videoId/url/썸네일로 채운다(2차 콜백) — captureCurrentVideoInfo 참고.
     addRow.setOnClickListener {
       if (isFavorite) {
+        // 저장이 끝나면 사용자를 유튜브로 되돌린다. 액티비티가 스스로 하면 finish()에 밀려 안 먹혀서
+        // (실기기 확인 — 저장 직후 최상단이 Pace MainActivity였다) 여기서 지연 후 수행한다.
+        PaceShareCaptureActivity.onReturnRequested = { pkg ->
+          // ⚠️ 250ms로는 안 먹혔다(실기기: 저장 직후에도 최상단이 Pace MainActivity였다).
+          //   PaceShareCaptureActivity가 사라지면서 같은 태스크의 MainActivity가 드러나는데, 그게
+          //   자리를 잡기 전에 유튜브를 올려서 곧바로 다시 덮인 것으로 보인다. 충분히 늦춘다.
+          foregroundPollHandler.postDelayed({
+            try {
+              val i = packageManager.getLaunchIntentForPackage(pkg)
+              if (i == null) {
+                Log.w("PaceOverlayService", "복귀 인텐트 없음 pkg=" + pkg)
+              } else {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                startActivity(i)
+                Log.i("PaceOverlayService", "유튜브 복귀 요청 보냄")
+              }
+            } catch (e: Exception) {
+              Log.w("PaceOverlayService", "유튜브 복귀 실패", e)
+            }
+          }, 700L)
+        }
         // 클립보드에서 유튜브 링크를 읽어 저장한다(위 addRow 주석의 근거).
         PaceShareCaptureActivity.pendingCallback = cb@{ clipText ->
           foregroundPollHandler.post {
@@ -2716,7 +2750,12 @@ class PaceOverlayService : Service() {
           startActivity(
             Intent(this, PaceShareCaptureActivity::class.java)
               .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
-              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+              // 읽고 나면 사용자를 유튜브로 되돌린다(위 onReturnRequested가 수행).
+              .putExtra(PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE, "com.google.android.youtube")
+              .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                  Intent.FLAG_ACTIVITY_NO_ANIMATION
+              )
           )
         } catch (e: Exception) {
           PaceShareCaptureActivity.pendingCallback = null

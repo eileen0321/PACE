@@ -262,24 +262,35 @@ class PaceAccessibilityService : AccessibilityService() {
       // (초소형 PIP 화면은 보통 그 텍스트 자체가 없음) "재생 중"으로 간주한다. 다른 판정보다 먼저
       // 체크 — 창이 화면에 떠 있다는 것 자체가 이미 강한 증거다.
       if (service.supportedAppWindowVisible()) return true
-      // 2026-07-31 실기기 발견(사용자 지적: "쇼츠 안 틀고 있는데 왜 휴식 알림 떠", "P로 앱 가면 시간
-      // 멈춰야지") — 아래 isTrackingPlayback 체크는 Auto Next(핸즈프리 자동넘김) 기능을 켰을 때만
-      // true가 된다. 이 기능을 안 켠(플레인 Focus Session만 쓰는) 사용자는 항상 null을 받았고,
-      // performTick()의 "신호 없으면 안전하게 차감" 폴백 때문에 유튜브를 완전히 떠나 Pace 자체 화면을
-      // 보고 있어도 남은시간/휴식카운트다운이 계속 깎였다. 포그라운드 앱이 추적 대상(유튜브 등)이
-      // 아님이 확인되면 Auto Next 상태와 무관하게 "재생 중 아님"을 먼저 확정한다.
+      // 🔴 2026-08-06 실측으로 확정 — 사장님 "다른 앱 보고 있는데 왜 '잠시 쉬어갈까요'가 계속 나와",
+      //   "쇼츠를 안 보고 있는데도 시간이 흐르는 거야?". 실기기에서 포그라운드를 설정 앱으로 두고
+      //   3분 20초를 관찰한 결과:
+      //     supportedAppWindowVisible=false 210회   ← 창 게이트는 "유튜브 안 보임"을 정확히 알고 있었다
+      //         (유튜브는 PIP w=357/1080로 정상 제외됨)
+      //     tick remaining=2 → tick remaining=1     ← 그런데 시간은 그대로 깎였다
+      //     "tick skipped decrement" 로그는 0줄
+      //   즉 창 게이트가 false를 냈는데도 이 함수가 false를 반환하지 않았다.
+      //   범인은 아래에 있던 currentForegroundPackage 검사였다. 그 필드는 TYPE_WINDOW_STATE_CHANGED
+      //   **이벤트로만** 갱신되므로 낡을 수 있고(아래 2026-07-31 주석이 이미 그 취약성을 기록해뒀다),
+      //   유튜브로 낡아 있으면 "지원 앱이 아님"에 안 걸려 그대로 통과 → 아래에서 null(판단 불가)을
+      //   반환 → performTick의 "신호 없으면 안전하게 차감" 폴백에 걸려 매분 깎였다.
       //
-      // 2026-07-31 실기기 재발견 — 위 수정에 처음엔 getCurrentForegroundPackage()(3초 신선도 게이트)를
-      // 썼는데 실기기에서 여전히 안 먹혔다: TYPE_WINDOW_STATE_CHANGED는 "전환이 일어날 때"만 오므로,
-      // Pace 홈 화면에 가만히 머물러 있으면(추가 전환 없음) 3초 뒤 이벤트가 stale 판정돼 null로
-      // 폴백하고, 다시 "신호 없음=항상 차감"으로 돌아가 버렸다(실제로 33→27분 등 계속 깎이는 걸
-      // 로그로 확인). "마지막으로 확인된 포그라운드 앱"은 다음 전환이 오기 전까지는 계속 유효한
-      // 사실이므로, 신선도 게이트 없이 원본 필드를 그대로 읽는다.
-      val fgPackage = service.currentForegroundPackage
-      if (fgPackage != null && !SupportedApps.PACKAGES.contains(fgPackage)) return false
-      if (!service.isTrackingPlayback) return null
-      if (service.lastPlaybackAdvanceAtMs == 0L) return null
-      return SystemClock.elapsedRealtime() - service.lastPlaybackAdvanceAtMs <= maxStaleMs
+      // → 창 조회(getWindows(), 이벤트가 아니라 "지금 이 순간"을 직접 묻는다)를 **양쪽 방향 모두**
+      //   신뢰한다. 보이면 재생 중, 안 보이면 재생 중 아님. 이 신호를 긍정 판정에만 쓰고 부정 판정엔
+      //   낡은 이벤트 필드를 쓰던 비대칭이 이 버그의 전부였다.
+      //   (원래 있던 isTrackingPlayback/lastPlaybackAdvanceAtMs 기반 "일시정지 감지"는 위 264줄이
+      //    먼저 true로 단락시키므로 감시 대상 앱이 떠 있는 동안엔 애초에 도달 불가능했다 —
+      //    지우면서 잃는 동작이 없다. 재생위치 추적 자체는 videoAdvanceCount 통계용으로 계속 쓰인다.)
+      // ⛔ 아래는 2026-08-06에 제거한 예전 판정이다(되살리지 말 것 — 위 실측이 그 이유):
+      //   val fgPackage = service.currentForegroundPackage
+      //   if (fgPackage != null && !SupportedApps.PACKAGES.contains(fgPackage)) return false
+      //   if (!service.isTrackingPlayback) return null
+      //   if (service.lastPlaybackAdvanceAtMs == 0L) return null
+      //   return SystemClock.elapsedRealtime() - service.lastPlaybackAdvanceAtMs <= maxStaleMs
+      // 2026-07-31에 두 번 고쳤던 자리인데(둘 다 currentForegroundPackage의 신선도를 어떻게 다룰지의
+      // 문제였다), 근본 원인은 신선도 게이트가 아니라 **이벤트 기반 필드를 신뢰한 것 자체**였다.
+      // getWindows()는 이벤트가 아니라 현재 상태를 직접 묻는 API라 이 문제가 구조적으로 없다.
+      return false
     }
 
     // PaceOverlayService의 오버레이 알약 표시 여부 판정에 쓰는 직접 신호 노출(위 isLikelyPlaying과

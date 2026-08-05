@@ -5536,3 +5536,26 @@ HTTP 200 여부가 아니라 **그 커밋의 동작이 실제로 반영됐는지
 - **`tsconfig.api.json` 신설** — api/ 전용 타입체크. `npx tsc -p tsconfig.api.json --noEmit`
   ⚠️ **api/ 를 고쳤으면 푸시 전에 반드시 이걸 돌릴 것.** 루트 tsc는 api/를 안 본다.
   검증: 인자를 일부러 빼보니 `TS2554: Expected 3 arguments, but got 2`로 정확히 잡힌다.
+
+### 2026-08-05 — ⚠️ 정정: "Vercel 빌드 실패"는 내 오진이었다 (실제로는 전부 success)
+
+바로 위 항목에서 `45581d1`이 TypeScript 에러로 Vercel 빌드를 깨뜨렸다고 적었는데 **틀렸다.**
+GitHub 커밋 상태 API로 최근 14개 커밋을 전수 확인한 결과 **전부 `Vercel = success`**다.
+
+**진짜 원인**: Vercel의 `@vercel/node`는 **타입 검사를 하지 않고 트랜스파일만 한다.**
+그래서 "인자 3개 함수를 2개로 호출"해도 빌드는 통과하고, 런타임에 `hl`이 `undefined`가 되어
+`if (hl) qp.set('hl', hl)`이 거짓 → 파라미터가 안 붙었다. **빌드는 성공했는데 기능만 조용히 죽어 있었다.**
+→ 수정(`ebc90b1`) 자체는 맞고 필요했다. 원인 설명만 틀렸다.
+
+**교훈 2가지**
+1. 타입 에러가 Vercel 빌드를 막아주지 않는다. `tsconfig.api.json`으로 **푸시 전에 직접** 돌려야 한다
+   (`npx tsc -p tsconfig.api.json --noEmit`). 이건 그대로 유효하다 — 오히려 더 중요해졌다.
+2. **배포 성공 여부는 GitHub 커밋 상태 API로 확인할 수 있다. Vercel 토큰 불필요.**
+   ```bash
+   curl -s "https://api.github.com/repos/eileen0321/PACE/commits/<full-sha>/status"
+   ```
+   `statuses[]`에 `Vercel`과 Railway(`carefree-charisma - PACE`) 두 개가 들어온다.
+
+**배포 반영 확인은 캐시를 반드시 우회할 것** — `X-Vercel-Cache: STALE`이면 옛 결과일 수 있다.
+쿼리에 `cb=<timestamp>`를 붙여 `MISS`/`Age: 0`을 확인한 뒤 판단한다. 실제로 STALE 응답을 보고
+"반영됐다"고 한 번 잘못 판단했다.

@@ -277,16 +277,32 @@ export default function OverlaySessionScreen() {
     // 차단) 기존 로직을 그대로 유지.
     const tickInterval = setInterval(() => {
       if (!hasSessionStartedRef.current) return; // 세션 시작 비동기 처리가 아직 안 끝났으면 스킵(0 오판 방지)
+      // 🔴 2026-08-06 사장님 지적("쇼츠를 안 보고 있는데도 시간이 흐르는 거야?") — 안드로이드는
+      //   네이티브에서 "지금 감시 대상 앱 창이 보이는가"로 게이팅하는데(PaceAccessibilityService.
+      //   isLikelyPlaying), iOS는 이 JS 틱이 유일한 카운트다운이면서 **아무 조건도 안 봤다.**
+      //   앱이 활성이 아니면(다른 앱으로 나감/화면 잠금) 보고 있지 않은 것이 확실하므로 차감하지
+      //   않는다. 이때 시계도 함께 리셋해야 한다 — 안 그러면 그 구간이 복귀 첫 틱에 몰려서 깎인다.
+      //   ⚠️ iOS 한정으로만 건다. 안드로이드는 이 JS 값이 화면 표시용이고 실제 카운트다운은
+      //     네이티브가 담당하므로(아래 `Platform.OS === 'android'` 조기 반환) 여기서 또 게이팅하면
+      //     네이티브와 표시가 어긋난다.
+      if (Platform.OS !== 'android' && AppState.currentState !== 'active') {
+        useTimerStore.getState().resetTickClock();
+        return;
+      }
       const before = useTimerStore.getState(); // tick 전 스냅샷 — 종료 사유 판정용(아래 참고)
       useTimerStore.getState().tickMinute();
       if (Platform.OS === 'android') return;
       const fresh = useTimerStore.getState();
 
-      if (fresh.remainingMinutes === 5 || fresh.remainingMinutes === 1) {
+      // 2026-08-06 — 경과시간 기준으로 바뀌면서 한 틱에 2분 이상 지나갈 수 있게 됐다. `=== 5`처럼
+      // 정확한 값만 보면 그 값을 건너뛸 때 알림이 영영 안 뜬다 → 경계 통과 판정으로 바꾼다
+      // (네이티브 performTick의 저시간 알림과 동일한 수정).
+      if ((before.remainingMinutes > 5 && fresh.remainingMinutes <= 5) ||
+          (before.remainingMinutes > 1 && fresh.remainingMinutes <= 1)) {
         notifyLowTime(fresh.remainingMinutes).catch(() => {});
       }
 
-      if (fresh.nextBreakInMinutes === 0 && settings.breakIntervalMinutes > 0) {
+      if (fresh.nextBreakInMinutes != null && fresh.nextBreakInMinutes <= 0 && settings.breakIntervalMinutes > 0) {
         notifyBreakReminder().catch(() => {});
         if (user?.id) logOverlayEvent(user.id, sessionIdRef.current, 'BREAK_REMINDER').catch(() => {});
         useTimerStore.setState({ nextBreakInMinutes: settings.breakIntervalMinutes });

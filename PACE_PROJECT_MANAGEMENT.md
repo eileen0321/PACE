@@ -5813,3 +5813,38 @@ topResumedActivity=com.google.android.youtube/…InternalMainActivity
 #### 💸 EAS 빌드 낭비 (사장님 지적)
 오늘 EAS 빌드를 3번 돌렸고 **2번은 취소해 버렸다**(versionCode 5로 잘못 걸린 것, HOT 수정 전에 걸린 것).
 **앞으로 반복은 로컬 `gradlew assembleDebug`로만 하고 EAS는 전부 검증 끝난 뒤 마지막 한 번만 돌린다.**
+
+### 2026-08-05 — 😴 수면 감지 실기기 검증 완료 (Android)
+
+사장님: "슬립 수면 모드 테스트 했어?" → 안 했었다. 했다.
+
+#### 왜 그냥은 테스트가 안 되는가 (조건 전수)
+`evaluateSleepStages()`가 확정까지 가려면 **넷이 모두** 필요하다:
+1. 무입력 `SLEEP_NO_INPUT_ENTER_MS` = **10분** → SUSPECT
+2. 추가 `SLEEP_CONFIRM_AFTER_MS` = **5분**
+3. 뒷받침 증거: 조도 ≤ `SLEEP_DARK_LUX`(15) **또는** 눕힘 `|gravityZ| ≥ 7.5`
+4. **시간 창: 22:00 ~ 익일 09:00** (`isWithinSleepDetectionWindow`)
+   → 낮에는 15분을 채워도 **절대 발동하지 않는다.**
+그 뒤 `SLEEP_PROMPT_TIMEOUT_MS` = 30초 프롬프트 무응답 → 확정.
+
+#### 테스트 방법 (기기 시각 변경은 실패)
+`adb shell date`는 **root가 필요해 막힌다**(`Operation not permitted`). auto_time만 껐다가 복구했다.
+→ 대신 **코드 상수를 임시로 줄여 상태머신 자체를 검증**했다(30s / 20s / 시간창 0~24).
+⚠️ 테스트 후 **즉시 원복**했고 백업본과 `diff --strip-trailing-cr`로 **내용 100% 동일** 확인,
+`git diff`에도 수면 상수 변경 0건. `TEST-ONLY` 표식 잔존 0건.
+
+#### ✅ 결과 — 전 단계 완주
+```
+SLEEP stage=SUSPECT      noInputMs=105079
+SLEEP stage=PROMPTED     — asking '아직 보고 계세요?'
+SLEEP CONFIRMED          — no response for 105096ms
+SESSION END              reason=sleep_detected tier=0 stillnessElapsedMs=315240
+```
+확정 후 화면 캡처 **27KB = 블랙아웃** 확인. 세션이 `sleep_detected`로 정상 종료됐다.
+뒷받침 증거(3번)도 실제로 충족됐다 — 폰이 책상에 눕혀져 있어 gravityZ 조건이 통과한 것으로 보인다.
+
+#### ❌ 검증 못 한 부분
+- **실제 임계값(10분/5분/22~9시)으로의 검증은 아니다.** 상태머신·프롬프트·블랙아웃·세션종료 경로가
+  올바르게 이어지는 것만 확인했다. 실제 시간으로 돌리려면 밤 10시 이후에 15분 방치가 필요하다.
+- **iOS 수면 감지는 구조가 다르다** — `useSleepGuard`(무진동 `sleepStillnessMinutes`, 기본 10분)와
+  시간 창과 무관한 `sleepTimerMinutes`. **Mac 검증 필요.**

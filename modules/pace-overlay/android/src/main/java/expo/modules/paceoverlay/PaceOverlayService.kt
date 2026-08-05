@@ -2664,11 +2664,24 @@ class PaceOverlayService : Service() {
             if (videoId != null) {
               SavedVideosStore.updateVideoUrl(applicationContext, pid, videoId, url)
               renderList()
+            } else {
+              // ⚠️ 2026-08-05 실기기 재현 — 유튜브 **광고**에서 Add를 누르면 접근성 트리에 제목/채널이
+              //   읽히므로(예: "TikTok" / 채널="광고") 1차 낙관적 추가는 성공하는데, 광고엔 공유 버튼이
+              //   없어 videoId를 영영 못 얻는다("공유 버튼을 못 찾음" 로그). 지금까지는 그 실패를
+              //   **되돌리지 않아** 재생 불가 항목이 목록에 그대로 쌓였다. url이 없으면 항목 탭 핸들러가
+              //   `?: return@setOnClickListener`로 조용히 아무것도 안 하므로, 사용자 눈엔 "저장은 됐는데
+              //   눌러도 반응이 없는 항목"이 된다. 실기기에서 광고 2건이 그렇게 쌓이는 것을 확인했다.
+              //   낙관적 추가는 확정되지 않으면 반드시 되돌린다.
+              SavedVideosStore.remove(applicationContext, pid)
+              renderList()
+              Toast.makeText(applicationContext, "Can't save this one — ads can't be saved", Toast.LENGTH_SHORT).show()
             }
           } else {
-            // 1차 콜백 없이 바로 실패로 끝난 경우(공유 버튼 자체를 못 찾음 등) — 예전 방식대로 처리.
-            val hasCapture = !title.isNullOrEmpty() || !videoId.isNullOrEmpty()
-            if (hasCapture && SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url) != null) {
+            // 1차 콜백 없이 바로 실패로 끝난 경우(공유 버튼 자체를 못 찾음 등).
+            // ⚠️ 2026-08-05 — 예전엔 제목만 있어도 저장했다(`title || videoId`). 그런데 videoId가 없으면
+            //   재생도 공유도 불가능한 껍데기라 저장할 이유가 없다(위와 같은 근거). videoId를 필수로 한다.
+            if (!videoId.isNullOrEmpty() &&
+              SavedVideosStore.insert(applicationContext, kind, videoId, title, channel, url) != null) {
               Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
               renderList()
             } else {

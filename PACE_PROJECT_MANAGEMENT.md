@@ -5559,3 +5559,53 @@ GitHub 커밋 상태 API로 최근 14개 커밋을 전수 확인한 결과 **전
 **배포 반영 확인은 캐시를 반드시 우회할 것** — `X-Vercel-Cache: STALE`이면 옛 결과일 수 있다.
 쿼리에 `cb=<timestamp>`를 붙여 `MISS`/`Age: 0`을 확인한 뒤 판단한다. 실제로 STALE 응답을 보고
 "반영됐다"고 한 번 잘못 판단했다.
+
+### 2026-08-05 — 기능 검증 (실기기, 로그·스크린샷 근거)
+
+#### ✅ 자동 넘김 — 정상
+4연속 전부 성공. 영상 길이가 14·42·66·23초로 제각각인데 전부 끝나기 1초 전에 잡았다.
+```
+VIDEO_ADVANCE reason=near-end current=13s total=14s count=1 isWatching=true
+dispatchGesture accepted=true → gesture onCompleted
+```
+판정 4 / 접수 4 / 완료 4 / **취소 0**.
+⭐ **첫 영상(count=1)에서 바로 성공** — 넘기기 경로는 첫 시도부터 멀쩡하다.
+따라서 "첫 손짓이 안 된다"는 **감지 쪽 문제**가 맞다(스윕 이력 수정 `534b51c`가 맞는 방향).
+
+#### ✅ 광고가 즐겨찾기에 저장되던 버그 — 수정 + 검증 완료
+실기기 재현: 유튜브 **광고**에서 Add를 누르면 "TikTok / 광고", "AI리더스협회 / 광고"가 저장됐다.
+제목이 읽히면 낙관적으로 먼저 저장하는데, 광고엔 공유 버튼이 없어 videoId를 못 얻고 **그 실패를
+되돌리지 않았다.** url이 없으면 항목 탭 핸들러가 `?: return@setOnClickListener`로 조용히 아무것도
+안 하므로 "저장은 됐는데 눌러도 반응 없는 항목"이 쌓인다.
+→ 확정 못 하면 되돌리도록 수정. 재빌드 후 **새 항목이 안 쌓이는 것 확인**.
+
+#### 🔴 즐겨찾기/캡처가 **구조적으로 동작 불가** — YouTube가 자체 공유창을 쓴다
+`captureCurrentVideoInfo`는 시스템 공유시트에서 라벨 "Pace"를 찾아 클릭하는 방식이다.
+그런데 실기기에서 유튜브 쇼츠의 공유창을 열어보니:
+- 최상단 액티비티가 **`com.google.android.youtube/…InternalMainActivity`** — 시스템 공유창
+  (`android/ChooserActivity`, 삼성 `sharelive`)이 **아니라 유튜브 자체 UI**다.
+- 내용물: 다이렉트공유 아이콘(Gmail/메시지/블루투스/Samsung Notes) + `링크 복사` + `Quick Share`.
+  **앱 목록이 아예 없다.** 손잡이를 끌어도 펼쳐지지 않는다.
+- 매니페스트 선언과 시스템 등록은 정상이다(`cmd package query-activities` 결과에
+  `PaceShareCaptureActivity … nonLocalizedLabel=Pace` 존재). **앱 잘못이 아니라 목록 자체가 없다.**
+→ 로그는 매번 `공유 결과 대기 타임아웃`(광고일 땐 `공유 버튼을 못 찾음`).
+
+**대안 후보** — `링크 복사`는 그 창에 **있다.** 그걸 눌러 클립보드에서 URL을 읽는 방식이 유력하다.
+단 Android 10+는 백그라운드 클립보드 읽기를 막으므로, 이미 있는 **투명 액티비티
+(`PaceShareCaptureActivity`, Translucent+noHistory)를 순간적으로 띄워 포커스를 얻고 읽는** 우회가 필요하다.
+⚠️ 미검증(이 세션에선 `cmd clipboard`가 기기에 없어 확인 못 함). 구현 전 실기기 확인 필요.
+
+#### 🔴 앱의 토스트가 시스템에 전부 차단되고 있다
+```
+NotificationService: Suppressing toast from package com.strides7.pace by user request.
+POST_NOTIFICATIONS: granted=false / importance=NONE / userSet=false
+```
+Android 12+는 **알림이 꺼진 앱의 Toast도 같이 막는다.** Android 13+는 알림 권한이 **기본 거부**라,
+사용자가 허용하기 전까지 "Added ✓", "Next Short" 등 **네이티브 토스트 5곳이 전부 안 보인다**
+(휴식 알림·일일 한도 알림도 같이 안 나간다). `userSet=false` = 이 기기는 한 번도 물어본 적이 없다는 뜻 —
+온보딩의 권한 요청이 실제로 사용자에게 도달하지 않았을 가능성.
+
+**대응 후보 2가지 (제품 판단 필요)**
+1. 온보딩에서 알림 권한을 확실히 받게 고친다 — 정공법이지만 사용자가 거부하면 그대로다.
+2. 오버레이로 자체 토스트를 그린다 — 앱이 이미 `SYSTEM_ALERT_WINDOW`로 알약을 그리므로 같은 방식이면
+   시스템 차단과 무관해진다. 확실하지만 작업량이 있다.

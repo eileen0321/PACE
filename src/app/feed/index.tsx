@@ -28,7 +28,6 @@ import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListO
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
-import { YouTubeLoginSheet } from '../../components/feed/YouTubeLoginSheet';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -157,10 +156,6 @@ export default function PaceFeedScreen() {
   const [showPaceMenu, setShowPaceMenu] = useState(false);
   const [activeSavedList, setActiveSavedList] = useState<SavedVideoKind | null>(null);
   const [showShortsHot, setShowShortsHot] = useState(false);
-  // 유튜브 로그인 시트(iOS 전용) — 로그인에 성공하면 새 쿠키로 다시 붙어야 하므로 플레이어를 리마운트한다.
-  // ytSessionNonce를 플레이어 key에 섞어, 로그인 전/후가 같은 영상이어도 WebView가 확실히 새로 뜬다.
-  const [showYtLogin, setShowYtLogin] = useState(false);
-  const [ytSessionNonce, setYtSessionNonce] = useState(0);
   // 스와이프 모드에서 플레이어가 보고하는 실제 재생 중 videoId(현재 영상 즐겨찾기 추가용). current.videoId는
   // 스와이프 모드에선 첫 영상에 고정이라 실제 영상과 다를 수 있어, 플레이어 onVideoChange 보고값을 우선한다.
   const currentVideoIdRef = useRef<string | null>(null);
@@ -614,7 +609,7 @@ export default function PaceFeedScreen() {
           forcedVideoId만으로도 재생할 수 있어야 한다(그게 그 값의 존재 이유다). */}
       {(forcedVideoId || current) && !feedBlocked && !sleepBlackout && (
         <YouTubeShortsPlayer
-          key={`${forcedVideoId ?? current!.videoId}:${ytSessionNonce}`}
+          key={forcedVideoId ?? current!.videoId}
           ref={playerRef}
           videoId={forcedVideoId ?? current!.videoId}
           playing={playing}
@@ -698,16 +693,12 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
-            // 유튜브 로그인은 iOS 피드에서만 의미가 있다 — 안드로이드는 실제 유튜브 앱(이미 로그인된
-            // 계정)으로 넘기므로 이 항목이 필요 없다(YouTubeLoginSheet.tsx 상단 주석 참고).
-            showYouTubeLogin={Platform.OS === 'ios'}
             onSelect={(action) => {
               setShowPaceMenu(false);
               if (action === 'app') { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home'); }
               else if (action === 'capture') setActiveSavedList('capture');
               else if (action === 'favorite') setActiveSavedList('favorite');
               else if (action === 'hot') setShowShortsHot(true);
-              else if (action === 'ytlogin') setShowYtLogin(true);
             }}
           />
         )}
@@ -737,24 +728,6 @@ export default function PaceFeedScreen() {
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}
-
-        {showYtLogin && (
-          <YouTubeLoginSheet
-            onClose={() => setShowYtLogin(false)}
-            onSignedIn={() => {
-              setShowYtLogin(false);
-              // 새 로그인 쿠키로 다시 붙게 플레이어를 리마운트한다(key 교체).
-              setYtSessionNonce((n) => n + 1);
-              useToastStore.getState().show(t('feed.youtubeSignInDone'));
-            }}
-            // 2026-08-06 — 구글이 임베디드 웹뷰 로그인을 disallowed_useragent로 막았을 때 그 날것 에러
-            // 페이지를 계속 보여주는 대신 조용히 닫고 안내 토스트로 대체한다(YouTubeLoginSheet.tsx 참고).
-            onBlocked={() => {
-              setShowYtLogin(false);
-              useToastStore.getState().show(t('feed.youtubeSignInBlocked'));
-            }}
-          />
-        )}
 
         {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
             feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상

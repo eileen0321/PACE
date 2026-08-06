@@ -4,19 +4,16 @@ import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
 import { radius, spacing, typography } from '../../constants/theme';
 
-export type PaceMenuAction = 'app' | 'hot' | 'capture' | 'favorite' | 'ytlogin';
+export type PaceMenuAction = 'app' | 'hot' | 'capture' | 'favorite';
 
 // 2026-07-31 사장님 지시 — 오버레이 우상단 "P" 아이콘을 누르면 이 4개 메뉴(앱으로/Shorts HOT/
 // Saved/Favorite)가 글래스모피즘 투명 박스로 뜬다. 첨부 레퍼런스 이미지(어두운 배경 + 은은한
 // 글로우 외곽선 카드)에 맞춰 GlassSurface(실제 블러, iOS/Android 둘 다 진짜 블러 렌더링 —
 // 2026-07-27 재작성분) 위에 얇은 반투명 테두리만 추가해 "떠 있는 유리판" 느낌을 낸다.
-// showYouTubeLogin — iOS 피드 전용. 안드로이드는 실제 유튜브 앱(=이미 로그인된 계정)으로 넘기므로
-// 이 항목이 필요 없고, 띄우면 오히려 혼란만 준다(오버레이 P메뉴에서는 항상 false).
-export function PaceMenu({ onSelect, onClose, top, showYouTubeLogin = false }: {
+export function PaceMenu({ onSelect, onClose, top }: {
   onSelect: (action: PaceMenuAction) => void;
   onClose: () => void;
   top: number;
-  showYouTubeLogin?: boolean;
 }) {
   const { t } = useTranslation();
   const items: { action: PaceMenuAction; icon: keyof typeof Feather.glyphMap; label: string }[] = [
@@ -25,9 +22,6 @@ export function PaceMenu({ onSelect, onClose, top, showYouTubeLogin = false }: {
     { action: 'app', icon: 'smartphone', label: t('overlay.menuOpenApp') },
     { action: 'hot', icon: 'trending-up', label: t('overlay.menuHot') },
     { action: 'favorite', icon: 'star', label: t('overlay.menuFavorite') },
-    ...(showYouTubeLogin
-      ? [{ action: 'ytlogin' as PaceMenuAction, icon: 'log-in' as keyof typeof Feather.glyphMap, label: t('feed.youtubeSignIn') }]
-      : []),
   ];
   return (
     <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="none">

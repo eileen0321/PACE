@@ -149,25 +149,29 @@ async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[
   } finally {
     clearTimeout(timer);
   }
-  // Shorts 블록에 딸린 videoId만 우선 추출(가로영상 혼입 방지). 구조 변경 시 전체 videoId로 폴백.
+  // Shorts 블록에 딸린 videoId만 추출(가로영상 혼입 방지).
+  //
+  // 2026-08-06 사장님 실기기 발견("쇼츠 아니라 일반 인터뷰 영상이 떴다") — 원래 여기 "구조 변경 시
+  // 전체 videoId로 폴백"하는 안전망이 있었는데, 실기기로 재현해보니 그 폴백이 발동하는 진짜 이유는
+  // "유튜브가 구조를 바꿔서"가 아니라 **유튜브가 이 요청을 CAPTCHA 페이지로 튕긴 것**이었다(직접
+  // curl로 재현 확인 — 응답 본문에 "CAPTCHA" 마커, shortsLockupViewModel 0건). 그 상태에서 "페이지에
+  // 있는 아무 videoId나 긁는" 폴백은 CAPTCHA 페이지에 우연히 박힌 임의 videoId(길이/쇼츠 여부 전혀
+  // 검증 안 됨)를 그대로 반환했다 — 배포된 프록시에서 정상 쇼츠 사이에 제목 없는 일반 영상 3개가
+  // 실제로 섞여 나오는 것으로 재현 확인함.
+  //
+  // 필터 없는 폴백을 없애고 그냥 빈 배열을 반환한다 — 호출부 scrapeWithRetry가 빈 배열이면 자동
+  // 재시도하고(최대 3회, 그 사이 CAPTCHA가 풀릴 수 있음), 그래도 전부 실패하면 handler의
+  // dataApiFallback(실제 길이 필터 있음)으로 안전하게 떨어진다. 병렬로 도는 다른 카테고리가 성공하면
+  // 이 카테고리만 0건이 되고 전체 결과는 오염되지 않는다(핸들러의 카테고리별 Promise.all 구조).
   const scoped = [...html.matchAll(/shortsLockupViewModel[\s\S]{0,900}?"videoId":"([\w-]{11})"/g)];
   const out: Short[] = [];
   const seen = new Set<string>();
-  if (scoped.length) {
-    for (const m of scoped) {
-      const id = m[1];
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const at = m[0].match(/"accessibilityText":"([^"]+)"/);
-      out.push({ videoId: id, title: at ? cleanTitle(at[1]) : '', channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
-    }
-    return out;
-  }
-  for (const m of html.matchAll(/"videoId":"([\w-]{11})"/g)) {
+  for (const m of scoped) {
     const id = m[1];
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ videoId: id, title: '', channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
+    const at = m[0].match(/"accessibilityText":"([^"]+)"/);
+    out.push({ videoId: id, title: at ? cleanTitle(at[1]) : '', channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
   }
   return out;
 }

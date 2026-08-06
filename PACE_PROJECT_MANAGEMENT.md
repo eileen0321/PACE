@@ -107,7 +107,8 @@
 
 ## 3. Android 할 일 리스트 (우선순위순, Windows 세션)
 
-0. [ ] **🔴🔴 최우선(2026-08-01, 공용 백엔드 — Mac이 Java 미설치라 컴파일/배포 검증 못 함) — `backend/ShortsHotService.java` 빌드+배포 확인**
+0. [x] ~~**🔴🔴 최우선(2026-08-01, 공용 백엔드 — Mac이 Java 미설치라 컴파일/배포 검증 못 함) — `backend/ShortsHotService.java` 빌드+배포 확인**~~
+   ✅ 완료(2026-08-03, §3-0 로그 참고) — 이 체크박스가 갱신 안 된 채 남아있던 걸 2026-08-06 재확인 세션에서 정정.
    Mac 세션이 `backend/src/main/java/com/pace/backend/service/ShortsHotService.java`를 두 번 수정했는데(둘 다 push 완료), **Mac엔 Java 런타임이 없어 로컬 컴파일을 못 했다**. Windows 세션이 대신:
    - **① `isPlayableShort()` 추가(커밋 `e7db712`)**: Shorts HOT에서 라이브/프리미어(`contentDetails.duration=="P0D"` → 0초라 기존 ≤60초 필터를 통과하던 버그) 제외 + `parseDurationSeconds`가 미상/실패를 `Long.MAX_VALUE`→`0` 반환으로 변경. (실기기: 로블록스 라이브가 HOT에 떠서 앱 내 피드가 watch로 리다이렉트되던 문제의 근본 수정.)
    - **② 카테고리당 개수 30→50(커밋 `0d84867`)**: `KEEP_COUNT` 30→50, `MAX_PAGES` 4→6, `SEARCH_FALLBACK_RESULTS` 45→50. 필터(≤60초·비라이브)는 그대로. 사장님 지시 "60초내 50개로, 공통으로".

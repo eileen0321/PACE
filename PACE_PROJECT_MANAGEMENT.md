@@ -6731,3 +6731,39 @@ no-op으로 통일하는 편이 맞다(가드를 잊어도 안 죽는다).
 ### 다음 지시
 - **Mac 세션**: B-2(포커스 시간 10 하드코딩) 실화면 확인, C-2의 수면 감지/취침 타이머가 iOS에서 필요한지 제품 판단.
 - **Windows 세션**: B-3(throw → no-op), B-4(플래그 이름 정리)는 안전한 정리라 다음 차례에 처리.
+
+### 2026-08-06 (이어서) — 감사 후속 정리 + 🔴 죽은 UI 발견
+
+#### 🔴 D-1 Settings "Playback Controls" 섹션이 **양 플랫폼 모두에서 안 뜨는 죽은 UI**였다 (삭제함)
+조건이 **두 파일에 나뉘어** 있어 아무도 못 봤다:
+```
+capabilities.ts : supportsHandsFreeControl = Platform.OS !== 'android'   → iOS true / Android false
+settings.tsx    : {supportsHandsFreeControl && Platform.OS !== 'ios' && (…)}  → iOS false / Android true
+결합                                                                      → 양쪽 다 항상 false
+```
+각각의 결정은 그 자체로 옳았다:
+- **2026-07-25** Android — 헤드셋 하드웨어 버튼 라우팅이 OS 레벨에서 불가능(실기기 2회 확인) → UI에서 내림
+- **2026-07-27** iOS — `bluetoothService.ios`가 스텁이라 항상 "Not Connected"로만 떠 오해를 줌 → 인라인으로 숨김
+
+**두 플랫폼이 각자 숨기기로 한 결과 아무 데서도 안 뜨게 됐고, 그때 코드를 안 지워 죽은 채 남았다.**
+두 결정 다 유효하므로 되살리지 않고 삭제. 삭제 자리에 경위 전체를 주석으로 남겨 재발을 막았다.
+→ 부수 확인: 번역키 6개(`settings.playbackControls/handsFreeControl/connectedDevice/playPauseAction/
+  toggleAutoMode/ready`)가 고아가 됐다. 되살릴 때 필요하므로 문자열은 남겨둠(사용처만 0).
+
+#### D-2 `capabilities.bluetoothHardwareVerified` — 소비자 0개 + 이름이 값과 어긋남 (문서화만)
+위 섹션이 유일한 사용처였다. 지우지 않고 남기되, **이름이 사실과 다르다**는 점을 그 자리에 명시했다:
+- Android 값 = `PaceOverlay !== null` = "네이티브 모듈이 링크됐는가"이지 "하드웨어 검증됨"이 아니다.
+  정작 07-25에 Android 하드웨어 버튼은 **불가능**으로 확정됐으니, true인 것이 이름과 반대 사실에 가깝다.
+- iOS 값 = false인데 실제 리모컨은 피드 안에서 동작한다(`useFeedRemoteControl.ios.ts`).
+→ 되살릴 때 이 플래그를 그대로 쓰지 말고 "무엇을 묻고 싶은가"부터 다시 정의할 것.
+
+#### ⚠️ B-3 정정 — 앞선 감사에서 내가 틀리게 적었다
+"`autoNextService.ios.start()`만 throw한다"고 적었는데, **안드로이드도 조건부로 던진다**
+(`ENABLE_AUTO_NEXT=false`인 빌드). 게다가 유일한 호출부(`useAutoNextStore.start()`)는
+`supportsAutoNext` 가드와 `.catch()`를 **둘 다** 하고 있어 실제 결함이 아니었다.
+→ 동작은 바꾸지 않고, 계약(`types.ts`)에 "이 함수는 reject할 수 있다 / 가드+catch 필수"를 명시했다.
+   다음 호출부가 그대로 밟기 쉬운 자리라 계약에 적는 것이 맞는 처치다.
+
+#### 이번 정리에서 안 건드린 것 (의도)
+- 고아 번역키 6개 — 섹션 복구 시 필요, 삭제는 로케일 전체 churn 대비 이득이 적음
+- `supportsHardwareRemote` 자체 — 플랫폼별 사실을 담고 있어 유지(위 D-2 주석으로 오해만 차단)

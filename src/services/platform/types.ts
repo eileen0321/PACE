@@ -10,6 +10,15 @@ export interface AutoNextService {
   /** Android: PaceAccessibilityService가 시스템 설정 > 접근성에 활성화돼 있는지. iOS: 항상 true(no-op). */
   hasPermission(): Promise<boolean>;
   requestPermission(): Promise<void>;
+  /**
+   * ⚠️ 2026-08-06 감사 — **이 함수는 reject할 수 있다. 반드시 `supportsAutoNext`로 가드하고
+   * `.catch()`를 붙일 것.**
+   *   iOS     — 항상 reject(자동 스와이프 자체가 OS 정책상 불가능)
+   *   Android — 빌드 플래그 EXPO_PUBLIC_ENABLE_AUTO_NEXT=false면 reject
+   * (감사 초안에서 "iOS만 던진다"고 적었다가 정정 — 안드로이드도 조건부로 던진다. 현재 유일한
+   *  호출부 useAutoNextStore.start()는 가드+catch를 둘 다 하고 있어 실제 결함은 없지만, 계약에
+   *  안 적혀 있어 다음 호출부가 그대로 밟기 쉬운 자리라 여기 명시한다.)
+   */
   start(): Promise<void>;
   stop(): Promise<void>;
 }

@@ -27,7 +27,22 @@ export type AppCapabilities = {
    * 지금도 실제로 쓰이는 기능이라 끄면 안 됨). iOS는 이 값이 그대로 true라 기존 동작/문구 변경 없음.
    */
   supportsHandsFreeControl: boolean;
-  /** 실제 하드웨어 리모컨(AirPods 등) 신호 수신까지 실기기로 검증됐는가. Android=true, iOS=false(스텁). */
+  /**
+   * ⚠️ 2026-08-06 크로스플랫폼 감사 — **현재 소비자가 0개다.** 유일한 사용처였던 Settings의
+   * "Playback Controls" 섹션이 양 플랫폼 모두에서 렌더되지 않는 죽은 UI로 확인돼 삭제됐다
+   * (settings.tsx의 그 자리 주석에 경위 전체가 있다). 지우지 않고 남기는 이유는 이 값이
+   * "되살릴 때 필요한 사실"을 담고 있어서다 — 다만 지금은 **아무 화면도 이 값을 보지 않는다.**
+   *
+   * ⚠️ 이름이 값과 어긋난다(감사에서 지적된 B-4). "하드웨어 리모컨이 실기기로 검증됐는가"라는
+   * 이름인데 실제 소스는 `bluetoothService.supportsHardwareRemote`이고, 그 값은
+   *   Android: `PaceOverlay !== null` = **네이티브 모듈이 링크됐는가**(검증 여부가 아니다)
+   *   iOS:     `false` 고정 = "스텁이라 미검증"
+   * 인데, 정작 2026-07-25에 **Android는 헤드셋 하드웨어 버튼 라우팅이 OS 레벨에서 불가능**함이
+   * 확정됐다(supportsHandsFreeControl을 false로 내린 근거). 즉 Android에서 이 값이 true인 것은
+   * "모듈이 링크됐다"는 뜻일 뿐이고, 이름이 약속하는 "하드웨어 검증됨"과는 반대 사실에 가깝다.
+   * 반대로 iOS는 false인데 실제 리모컨은 피드 안에서 동작한다(useFeedRemoteControl.ios.ts).
+   * → 되살릴 때는 이 플래그를 그대로 쓰지 말고, 무엇을 묻고 싶은지부터 다시 정의할 것.
+   */
   bluetoothHardwareVerified: boolean;
   /**
    * 2026-07-26 (1차) — 애플이 마이크 기반 핑거스냅 감지를 심사에서 허용하지 않는다고 통보. Android

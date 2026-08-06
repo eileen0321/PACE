@@ -409,31 +409,22 @@ export default function SettingsScreen() {
             으로 이전 — 설정/집중에 흩어져 있던 걸 집중 한 곳으로 통합. Android는 여기서 bluetoothVolumeKeySkipEnabled를
             그 섹션의 "블루투스 리모컨" 하위 토글이 읽고 쓴다. */}
 
-        {/* 5.7 Playback Controls(2026-07-19, 사용자 지시 — Bluetooth Hands-Free) */}
-        {/* 2026-07-27: iOS에선 이 "블루투스 기기 연결 상태" 섹션을 숨김 — bluetoothService.ios.ts가 no-op
-            스텁이라 항상 "Not Connected"로만 떠 오해를 준다. iOS 핸즈프리는 블루투스 페어링이 아니라 피드
-            안의 손짓(카메라)/볼륨키(useFeedRemoteControl.ios)라 그 안내는 온보딩 Hands-Free 가이드가 담당. */}
-        {capabilities.supportsHandsFreeControl && Platform.OS !== 'ios' && (
-        <View>
-          <Text style={styles.sectionLabel}>{t('settings.playbackControls')}</Text>
-          <GlassSurface style={styles.card}>
-            <View style={styles.row}>
-              <Text style={styles.rowTitle}>{t('settings.handsFreeControl')}</Text>
-              <View style={styles.statusTag}>
-                <Text style={styles.statusTagText}>{capabilities.bluetoothHardwareVerified ? t('settings.ready') : 'BETA'}</Text>
-              </View>
-            </View>
-            <View style={[styles.row, styles.rowBordered]}>
-              <Text style={styles.rowTitle}>{t('settings.connectedDevice')}</Text>
-              <Text style={styles.privacyValue}>{bluetooth.isConnected ? (bluetooth.deviceName ?? t('focus.connected')) : t('focus.notConnected')}</Text>
-            </View>
-            <View style={[styles.row, styles.rowBordered]}>
-              <Text style={styles.rowTitle}>{t('settings.playPauseAction')}</Text>
-              <Text style={styles.privacyValue}>{t('settings.toggleAutoMode')}</Text>
-            </View>
-          </GlassSurface>
-        </View>
-        )}
+        {/* 🔴 2026-08-06 크로스플랫폼 감사에서 제거 — "Playback Controls"(블루투스 기기 연결 상태) 섹션은
+            **양 플랫폼 모두에서 절대 렌더되지 않는 죽은 UI**였다. 조건이 두 파일에 나뉘어 있어 아무도
+            눈치채지 못했다:
+              capabilities.supportsHandsFreeControl = Platform.OS !== 'android'   → iOS true / Android false
+              여기에 인라인으로 && Platform.OS !== 'ios'                           → iOS false / Android true
+              결합                                                                → 양쪽 다 항상 false
+            각각의 결정은 그 자체로 옳았다:
+              2026-07-25 — Android는 헤드셋 하드웨어 버튼 라우팅이 OS 레벨에서 불가능(실기기 2회 확인)
+                           하므로 이 약속을 UI에서 내림(supportsHandsFreeControl=false).
+              2026-07-27 — iOS는 bluetoothService.ios.ts가 no-op 스텁이라 항상 "Not Connected"로만 떠
+                           오해를 주므로 인라인으로 한 번 더 숨김.
+            즉 **두 플랫폼이 각자 숨기기로 한 결과 아무 데서도 안 뜨게 된 것**이고, 그때 이 코드를
+            지우지 않아 죽은 채로 남아 있었다. 두 결정 다 유효하므로 되살리지 않고 삭제한다.
+            iOS 핸즈프리 안내는 온보딩 Hands-Free 가이드가, Android 손짓/볼륨키 설정은 Focus 탭이 담당한다.
+            ⚠️ 되살리려면 먼저 bluetoothService.ios가 실제 AVAudioSession 연결 조회를 구현해야 한다
+               (지금은 항상 isConnected=false/deviceName=null인 스텁). */}
 
         {/* 6. Language (Pace 전용) */}
         <View>

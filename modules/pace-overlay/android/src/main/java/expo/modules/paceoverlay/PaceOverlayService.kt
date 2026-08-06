@@ -425,10 +425,20 @@ class PaceOverlayService : Service() {
     //     "쇼츠 안 보는데 시간이 흐른다" 수정) 처음 생겼다. 그전에는 null이 나와 통과하고 있었다.
     //     한 곳의 신호를 더 정확하게 만들면 그 신호를 쓰던 다른 곳의 가정이 깨진다 — 같은 신호를
     //     쓰는 곳을 전수로 확인해야 했다.
+    // 전용 타이머(아래 PROMPTED 분기에서 걸림)가 30초를 채웠으면 이번 틱에서 바로 확정한다.
+    // 종료 처리는 performTick의 기존 SESSION END 경로를 그대로 재사용한다 — 이미 검증된 경로를
+    // 복제하지 않기 위해 "확정됐다"는 신호만 여기로 되돌린다.
+    if (sleepConfirmPending) {
+      sleepConfirmPending = false
+      Log.d("PaceOverlay", "SLEEP CONFIRMED (timer) — no response for ${SystemClock.elapsedRealtime() - sleepPromptedAtMs}ms")
+      hideStillWatchingPrompt()
+      sleepStage = SLEEP_STAGE_AWAKE
+      return true
+    }
     if (isPlaying == false && sleepStage != SLEEP_STAGE_PROMPTED) {
       // 프롬프트를 띄운 뒤 사용자가 다른 앱으로 나가버린 경우처럼, 떠 있는 프롬프트가 남아 있을 수
       // 있다 — AWAKE로 되돌릴 때 같이 치운다(안 떠 있으면 no-op).
-      if (sleepStage != SLEEP_STAGE_AWAKE) hideStillWatchingPrompt()
+      if (sleepStage != SLEEP_STAGE_AWAKE) { hideStillWatchingPrompt(); cancelSleepPromptTimeout() }
       sleepStage = SLEEP_STAGE_AWAKE
       return false
     }
@@ -465,11 +475,19 @@ class PaceOverlayService : Service() {
       sleepPromptedAtMs = now
       Log.d("PaceOverlay", "SLEEP stage=PROMPTED — asking '아직 보고 계세요?'")
       showStillWatchingPrompt()
+      // 2026-08-06 사장님 지시 — 여기서 전용 타이머를 건다. 아래 PROMPTED 분기는 60초 틱에서만
+      // 평가되므로, 30초 타임아웃이 실제로는 최대 90초가 됐다(실측 60,090ms). 팝업이 "잠시 후
+      // 자동 종료"라고 말한 이상 그 잠시가 30초여야 한다.
+      sleepPromptHandler.removeCallbacks(sleepPromptTimeoutRunnable)
+      sleepPromptHandler.postDelayed(sleepPromptTimeoutRunnable, SLEEP_PROMPT_TIMEOUT_MS)
       return false
     }
 
     // PROMPTED — 반응이 있었으면 markUserActivity()가 이미 AWAKE로 되돌렸다. 여기까지 왔다는 건
     // 아직 무반응이라는 뜻이므로, 유예시간이 지나면 확정한다.
+    // ⚠️ 이 틱 기반 판정은 위 전용 타이머의 **백스톱**으로 남겨둔다 — Handler가 어떤 이유로든
+    //   유실되면(프로세스 재시작 등) 여기서라도 확정돼야 팝업이 남지 않는다. 정상 경로에서는
+    //   타이머가 먼저 돌아 여기까지 오지 않는다.
     if (now - sleepPromptedAtMs >= SLEEP_PROMPT_TIMEOUT_MS) {
       Log.d("PaceOverlay", "SLEEP CONFIRMED — no response for ${now - sleepPromptedAtMs}ms")
       hideStillWatchingPrompt()
@@ -873,6 +891,24 @@ class PaceOverlayService : Service() {
   }
   private var minuteTickerRunning = false
 
+  // 2026-08-06 — "아직 보고 계세요?" 팝업의 30초 타임아웃 전용 타이머(evaluateSleepStages 주석 참고).
+  // 60초 틱에만 기대면 실제 종료가 최대 90초로 밀린다(실측 60,090ms).
+  // 확정 처리는 여기서 직접 하지 않고 플래그만 세운 뒤 performTick()을 한 번 돌린다 — 세션 종료는
+  // 알림/goHome/암전/통계까지 얽힌 긴 경로라, 그 경로를 복제하면 두 벌이 갈라진다(이 파일에서 반복해
+  // 겪은 실패 패턴). 경과시간 기준 정산 덕분에 틱을 일찍 한 번 더 돌려도 이중 차감이 없다.
+  @Volatile private var sleepConfirmPending = false
+  private val sleepPromptHandler = Handler(Looper.getMainLooper())
+  private val sleepPromptTimeoutRunnable = Runnable {
+    if (sleepStage != SLEEP_STAGE_PROMPTED) return@Runnable // 이미 사용자가 반응했거나 상태가 바뀜
+    sleepConfirmPending = true
+    try { performTick() } catch (e: Exception) { Log.w("PaceOverlay", "sleep prompt timeout tick failed", e) }
+  }
+
+  private fun cancelSleepPromptTimeout() {
+    sleepConfirmPending = false
+    sleepPromptHandler.removeCallbacks(sleepPromptTimeoutRunnable)
+  }
+
   private fun startMinuteTicker() {
     if (minuteTickerRunning) return
     minuteTickerRunning = true
@@ -882,6 +918,9 @@ class PaceOverlayService : Service() {
   private fun stopMinuteTicker() {
     minuteTickerRunning = false
     minuteTickHandler.removeCallbacks(minuteTickRunnable)
+    // 세션이 끝나는 모든 경로가 이 함수를 거치므로(종료/한도도달/onDestroy/차단화면 종료),
+    // 팝업 자동종료 타이머도 여기서 함께 정리한다 — 세션이 없는데 뒤늦게 발화하면 안 된다.
+    cancelSleepPromptTimeout()
   }
 
   // ACTION_TICK과 intent==null(시스템 START_STICKY 재시작) 둘 다 "이 프로세스 인스턴스에서 아직
@@ -1106,6 +1145,9 @@ class PaceOverlayService : Service() {
       instance?.let {
         it.lastMotionAtMs = now
         it.lastUserInputAtMs = now
+        // 2026-08-06 — 사람이 반응했으니 팝업 자동종료 타이머도 반드시 꺼야 한다. 안 끄면
+        // "계속 볼게요"를 누른 직후에도 예약된 30초 타이머가 그대로 발화해 세션이 끝난다.
+        it.cancelSleepPromptTimeout()
         // 사람이 반응했으므로 진행 중이던 수면 판정을 처음부터 다시 센다. "아직 보고 계세요?"
         // 팝업이 떠 있었다면 그것도 이 시점에 닫아야 하지만, 그 처리는 팝업 쪽에서 한다.
         it.sleepStage = SLEEP_STAGE_AWAKE

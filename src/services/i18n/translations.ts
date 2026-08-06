@@ -470,6 +470,9 @@ export const translations = {
       youtubeSignIn: 'Sign in to YouTube',
       youtubeSignInDesc: 'Sign in once and Shorts will continue with your own recommendations, just like the YouTube app.',
       youtubeSignInDone: 'Signed in — continuing with your recommendations',
+      // 2026-08-06 — Google이 "임베디드 웹뷰에서의 로그인"을 disallowed_useragent로 차단할 수 있다(문서화된
+      // 정책, 2023-07-24부터). 막히면 구글의 날것 에러 페이지를 보여주는 대신 이 메시지로 조용히 닫는다.
+      youtubeSignInBlocked: "YouTube sign-in isn't available in-app right now. Shorts will continue with popular videos in your language instead.",
       close: 'Close',
       // 2026-07-26 사장님 지시("session on은 focus on으로") — Android 네이티브 알약(PaceOverlayService)
       // 라벨과 동기화(대칭 ON/OFF 쌍으로 통일 — 예전엔 "SESSION ON"/"START SESSION"으로 비대칭이었음).
@@ -951,6 +954,7 @@ export const translations = {
       youtubeSignIn: '유튜브 로그인',
       youtubeSignInDesc: '한 번만 로그인하면 유튜브 앱처럼 내 추천으로 쇼츠가 이어집니다.',
       youtubeSignInDone: '로그인됨 — 내 추천으로 이어집니다',
+      youtubeSignInBlocked: '지금은 앱 안에서 유튜브 로그인을 지원하지 않아요. 대신 사용 언어권의 인기 영상으로 계속 이어집니다.',
       close: '닫기',
       // 2026-07-26 사용자 지적("한글 설정이라고 다 한글로 바꾸지 말고, SESSION ON도 유지하라고") —
       // 이 파일 맨 위 원칙(짧은 기능명/상태 배지는 한국어 UI에서도 영문 유지) 그대로, 이 pill

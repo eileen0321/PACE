@@ -34,8 +34,12 @@ type Props = {
   /** 스와이프 모드에서 실제 재생 중인 videoId 변화 통보(현재 영상 즐겨찾기 추가용). */
   onVideoChange?: (videoId: string) => void;
   /** iOS 유저 손가락 스와이프(1=위로/다음, -1=아래로/이전) — WebView JS가 감지해 통보(2026-08-01).
-   *  moved=true면 **WebView가 이미 유튜브 피드를 넘긴 뒤**다(2026-08-05 버벅임 수정) — 부모는 기록/상태만
-   *  맞추고 다시 넘기면 안 된다(이중 이동). moved=false는 리스트 모드라 부모가 이동을 수행해야 한다. */
+   *  moved=true면 **WebView가 이미 유튜브 피드를 넘긴 뒤**다(2026-08-05 버벅임 수정, doSwipe 직접 호출)
+   *  — 부모는 기록/상태만 맞추고 다시 넘기면 안 된다(이중 이동). moved=false는 리스트 모드라 부모가
+   *  이동을 수행해야 한다.
+   *  ⚠️ scrollEnabled=true(네이티브 스크롤이 손가락을 직접 따라오게)로 바꾸는 시도는 실기기에서
+   *  회귀였다(2026-08-05 2차, 되돌림) — 재생 중인 <video>를 실제로 라이브 스크롤하니 드래그 "도중"에도
+   *  버벅여 증상이 더 나빠졌다. 다시 시도하지 말 것. */
   onUserSwipe?: (dir: number, moved: boolean) => void;
   /** HOT/즐겨찾기 순서 재생 중인지 — true면 손가락 스와이프의 이동을 WebView가 하지 않고 부모에 위임한다
    *  (리스트의 다음 항목으로 리마운트해야 하므로). WebView 안의 window.__paceListMode로 전달된다. */
@@ -280,19 +284,69 @@ const INJECTED_JS_SWIPE = `
     } catch (e) {}
     return tried;
   }
+  // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. URL(/shorts/ID)에서 현재 id를 뽑아 부모로 보고한다
+  // (초기 1회 + URL 변할 때마다). pollTick(재부착)에서도 다시 부르므로 top-level로 뺀다(2026-08-05 2차).
+  function reportVideo() {
+    var id = videoIdOf('' + location.href);
+    if (id) send({ type: 'video', videoId: id });
+  }
+
   // 자가치유 — 첫 스와이프가 YouTube를 "깨우는(priming)" 데만 쓰여 URL이 안 바뀌는 경우(사장님: "두 번째
   // 손짓에서 반응")를 잡는다: 스와이프 후 URL이 그대로면 한 번 더 스와이프해 첫 손짓부터 넘어가게 한다.
-  // 실제로 넘어갔으면(href 변경) 재시도 안 함 → 이중 넘김 방지.
+  // 실제로 넘어갔으면(href 변경) 재시도 안 함 → 이중 넘김 방지. 손짓/BT리모컨 전용 — 손가락 스와이프는
+  // 아래 onTouchFinish가 별도 경로(네이티브 스크롤 우선)로 처리한다(2026-08-05 2차).
   function swipe(dir) {
     var before = '' + location.href;
     var tried = doSwipe(dir, false);
     send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + before.slice(-16) });
+    scheduleFastPoll();
     setTimeout(function () {
-      if (('' + location.href) === before) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); }
+      if (('' + location.href) === before) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); scheduleFastPoll(); }
     }, 450);
   }
   window.paceAdvance = function () { swipe(1); };
   window.pacePrevious = function () { swipe(-1); };
+
+  // 2026-08-05(2차) — 전환(스와이프/doSwipe) 직후 새 영상 재부착(음소거 해제·ended 리셋)이 500ms 고정
+  // 폴링을 기다려야 했던 것도 "전환 후 한 박자 있다 소리/재생이 맞아떨어지는" 잔여 버벅임의 한 축이었다.
+  // 전환 트리거 시점에 짧은 간격(60/150/300ms)으로 몇 번 더 확인해 정상 폴링보다 훨씬 빨리 따라잡는다.
+  function scheduleFastPoll() {
+    setTimeout(pollTick, 60);
+    setTimeout(pollTick, 150);
+    setTimeout(pollTick, 300);
+  }
+
+  // 폴링 1틱 — href/영상id 변화 감지 재부착 + 진행률/종료 감지. setInterval(500ms, 상시)과
+  // scheduleFastPoll(전환 직후 버스트) 양쪽이 공유한다(top-level로 빼 양쪽에서 호출 가능).
+  function pollTick() {
+    // ⚠️ 2026-08-05 사장님/맥 진단 — "같은 비디오가 짧은 시간에 두 번 걸려 첫 재생이 두 번째에 끊긴다."
+    //   원인: 재부착 판단을 **href 전체**로 하고 있었다. 유튜브는 같은 쇼츠를 보면서도 URL 뒤쪽을
+    //   손댄다(파라미터 추가/정규화 등). 그때마다 href가 달라져 attach()가 다시 돌고, attach는 끝에서
+    //   v.play()를 걸고 muted를 되돌린다 → 이미 재생 중이던 **같은 영상**이 멈칫하고 다시 시작한다.
+    //   영상 id가 실제로 바뀔 때만 재부착한다. id가 같으면 curHref만 갱신하고 넘어간다.
+    var h = '' + location.href;
+    if (h !== curHref) {
+      var vid = videoIdOf(h);
+      curHref = h;
+      if (vid && vid !== curVid) {
+        curVid = vid;
+        reportedReady = false; reportedEnded = false; lastT = -1;
+        send({ type: 'domlog', text: 'URLCHG reattach ' + vid });
+        reportVideo();
+        attach(40); return;
+      }
+      send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
+    }
+    var v = curV; if (!v) return;
+    if (v.__ok && v.muted) { v.muted = false; v.volume = 1.0; }
+    if (!v.duration || isNaN(v.duration)) return;
+    var t = v.currentTime;
+    if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
+    if (reportedEnded) return;
+    var nearEnd = t >= v.duration - 0.5, loopedBack = lastT > 1 && t < lastT - 1;
+    if (nearEnd || loopedBack) { reportedEnded = true; send({ type: 'ended' }); return; }
+    lastT = t;
+  }
 
   function installGlobalsOnce() {
     if (globalsOn) return; globalsOn = true;
@@ -303,16 +357,19 @@ const INJECTED_JS_SWIPE = `
     //   탭(스와이프가 아닌 모든 touchend/click)에서는 그대로 부른다 — 필요성 자체는 그대로 유효하다.
     function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
     document.addEventListener('click', unmuteOnce, true);
-    // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전). WebView는
-    // scrollEnabled=false라 손가락 스와이프가 YouTube를 직접 안 움직인다. 여기서 수직 스와이프를 감지해
-    // RN에 알리면(userswipe), RN이 goNext/goPrev→player.advance()(=doSwipe)로 실제 이동을 수행한다
-    // (이중 이동 없음). 임계(dy≥60·수직 우세)로 탭은 무시돼 재생/음소거 탭이 그대로 보존된다.
+    // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전).
+    // 2026-08-05(2차, 되돌림) — scrollEnabled=true(네이티브 스크롤이 직접 따라오게)를 실기기에 올렸다가
+    // **회귀 확정**: 실제 재생 중인 <video>가 있는 무거운 페이지를 진짜로 라이브 스크롤하니 드래그
+    // "도중"에도 컴포지팅이 버벅여, 증상이 "손 뗀 뒤 한 박자"에서 "손 대는 순간부터" 버벅임으로
+    // 더 나빠졌다(사장님 실기기 확인). 즉시 되돌린다 — scrollEnabled는 다시 항상 false(아래 RN
+    // 컴포넌트), doSwipe()도 다시 touchend 즉시 호출로 복귀(1차 수정과 동일). scheduleFastPoll()
+    // (전환 직후 재부착을 앞당기는 개선)만 남긴다 — 이건 이 회귀와 무관하게 유효하다.
     var swST = 0, swSY = 0, swSX = 0, swLast = 0;
     document.addEventListener('touchstart', function (e) {
       var tt = e.changedTouches && e.changedTouches[0]; if (!tt) return;
       swST = Date.now(); swSY = tt.clientY; swSX = tt.clientX;
     }, { capture: true, passive: true });
-    document.addEventListener('touchend', function (e) {
+    function onTouchFinish(e) {
       var tt = e.changedTouches && e.changedTouches[0];
       if (!tt || !swST) { unmuteOnce(); return; } // touchstart를 못 잡은 케이스는 안전하게 탭으로 취급.
       var dy = tt.clientY - swSY, dx = tt.clientX - swSX, dt = Date.now() - swST; swST = 0;
@@ -323,56 +380,19 @@ const INJECTED_JS_SWIPE = `
       if (Math.abs(dy) < Math.abs(dx) * 1.3) { unmuteOnce(); return; }   // 수평 우세 — 탭으로 취급
       var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지(스와이프 자체를 버림 — unmuteOnce도 안 부름)
       var dir = dy < 0 ? 1 : -1;                                           // 위로(dy<0)=다음, 아래로=이전
-      // ⚡ 2026-08-05 버벅임 수정의 핵심 — 예전엔 이동을 RN에 위임했다(userswipe → 브릿지 → goNext →
-      //   injectJavaScript → 브릿지 → doSwipe). scrollEnabled=false라 드래그 중 화면이 손가락을 안
-      //   따라오는데 그 왕복 지연까지 얹혀 "손 떼고 한 박자 뒤 툭" 하고 넘어갔다. 이동은 여기서 즉시
-      //   실행하고, RN에는 기록(idle 리셋/상태)용으로만 알린다 — 이동 지연에서 브릿지가 빠진다.
-      //   swipe()가 아니라 doSwipe()를 직접 부른다: swipe()의 450ms 재시도는 핸즈프리 첫 손짓 씹힘용
-      //   자가치유라, 손가락 스와이프에 걸리면 릴 전환 도중 한 번 더 스크롤해 튀거나 두 칸 넘어간다.
       // ⚠️ 리스트 모드(HOT/즐겨찾기 순서 재생)에선 이동을 하면 안 된다 — 그건 유튜브 피드가 아니라
       //   우리 리스트의 다음 항목으로 리마운트해야 하므로 RN이 처리한다(moved=false로 위임).
-      var moved = false;
-      if (!window.__paceListMode) { doSwipe(dir, false); moved = true; }
-      send({ type: 'userswipe', dir: dir, moved: moved });
-    }, { capture: true, passive: true });
-    // 2026-08-01 — "현재 영상 즐겨찾기 추가"용. 스와이프 모드에선 부모의 current.videoId가 첫 영상에
-    // 고정돼 있어(리로드 안 함) 실제 재생 중인 영상 id를 부모가 모른다. URL(/shorts/ID)에서 현재 id를
-    // 뽑아 부모로 보고한다(초기 1회 + URL 변할 때마다).
-    function reportVideo() {
-      var id = videoIdOf('' + location.href);
-      if (id) send({ type: 'video', videoId: id });
+      if (window.__paceListMode) { send({ type: 'userswipe', dir: dir, moved: false }); return; }
+      // ⚡ 이동은 여기서 즉시 실행하고(브릿지 왕복 없음), RN에는 기록용으로만 알린다. scrollFallback=false —
+      //   키 이벤트만으로 넘긴다(scrollBy는 WKWebView 재생을 멈춘다, 2026-08-05 웹서치로 확정된 진짜 원인).
+      doSwipe(dir, false);
+      scheduleFastPoll();
+      send({ type: 'userswipe', dir: dir, moved: true });
     }
+    document.addEventListener('touchend', onTouchFinish, { capture: true, passive: true });
+    document.addEventListener('touchcancel', onTouchFinish, { capture: true, passive: true });
     reportVideo();
-    setInterval(function () {
-      // 스와이프로 새 쇼츠 로드(URL 변화, 리로드 없음) → 새 video에 재부착.
-      // ⚠️ 2026-08-05 사장님/맥 진단 — "같은 비디오가 짧은 시간에 두 번 걸려 첫 재생이 두 번째에 끊긴다."
-      //   원인: 재부착 판단을 **href 전체**로 하고 있었다. 유튜브는 같은 쇼츠를 보면서도 URL 뒤쪽을
-      //   손댄다(파라미터 추가/정규화 등). 그때마다 href가 달라져 attach()가 다시 돌고, attach는 끝에서
-      //   v.play()를 걸고 muted를 되돌린다 → 이미 재생 중이던 **같은 영상**이 멈칫하고 다시 시작한다.
-      //   영상 id가 실제로 바뀔 때만 재부착한다. id가 같으면 curHref만 갱신하고 넘어간다.
-      var h = '' + location.href;
-      if (h !== curHref) {
-        var vid = videoIdOf(h);
-        curHref = h;
-        if (vid && vid !== curVid) {
-          curVid = vid;
-          reportedReady = false; reportedEnded = false; lastT = -1;
-          send({ type: 'domlog', text: 'URLCHG reattach ' + vid });
-          reportVideo();
-          attach(40); return;
-        }
-        send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
-      }
-      var v = curV; if (!v) return;
-      if (v.__ok && v.muted) { v.muted = false; v.volume = 1.0; }
-      if (!v.duration || isNaN(v.duration)) return;
-      var t = v.currentTime;
-      if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
-      if (reportedEnded) return;
-      var nearEnd = t >= v.duration - 0.5, loopedBack = lastT > 1 && t < lastT - 1;
-      if (nearEnd || loopedBack) { reportedEnded = true; send({ type: 'ended' }); return; }
-      lastT = t;
-    }, 500);
+    setInterval(pollTick, 500);
   }
 
   // seq — 이 부착 시도의 세대 번호. 새 attach가 시작되면 attachSeq가 올라가고, 진행 중이던 낡은 재시도
@@ -432,9 +452,23 @@ const INJECTED_JS_SWIPE = `
       if (!v.muted) window.__paceAudioOk = true;
       send({ type: 'audio', tag: v.muted ? 'audible-blocked' : 'audible-ok', muted: v.muted });
     };
+    // ⚡ 2026-08-05(3차, 되돌림) — "처음부터 muted=true로 재생 시작"을 시도했다가 실기기 회귀 확정:
+    //   소리가 완전히 안 났다. 원인 추정 — 유튜브의 오디오 트랙 포함 여부는 **최초 play() 시도 시점의
+    //   muted 상태**로 결정되는 듯하다(적응형 스트림이 그때 오디오 트랙을 붙일지 정함). muted=true로
+    //   시작하면 오디오 트랙 자체가 안 붙어서, 나중에 muted=false로 되돌려도 낼 소리가 없었다. 그래서
+    //   최초 시도는 **원래대로 무음-아님(기본값)**으로 되돌린다 — 이건 실기기 로그상 100% 거부되지만
+    //   (아래 audible-blocked), 거부되더라도 오디오 트랙 자체는 이미 정상적으로 붙는다(그 다음 재생이
+    //   들리는 이유). 실제로 고칠 버그는 그 거부 이후: 예전 코드는 catch에서 무음 재생만 붙잡고
+    //   goAudible()을 안 불러 v.__ok가 영영 true가 안 됐다 — pollTick의 "무음이면 풀어준다" 안전망도
+    //   muted-setter 차단도 전혀 작동을 안 해서 **탭하기 전까진 계속 무음으로 남는** 별개의 진짜
+    //   버그였다. 무음 재생이 실제로 붙잡힌(.then) 뒤에만 goAudible()을 불러 소리를 켠다.
     if (v.paused) {
       v.play().then(goAudible)
-        .catch(function (e) { send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name) }); v.muted = true; v.play().catch(function () {}); });
+        .catch(function (e) {
+          send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name) });
+          v.muted = true;
+          v.play().then(goAudible).catch(function () { v.__ok = true; }); // 그래도 실패하면 __ok만 세워 안전망 가동
+        });
     } else {
       goAudible(); // 이미 재생 중 — play()를 다시 걸지 않는다(그게 멈칫을 만든다)
     }
@@ -612,6 +646,10 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
         domStorageEnabled
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
+        // 2026-08-05(2차) — scrollEnabled=true(네이티브 스크롤이 손가락을 직접 따라오게) 실험을 실기기에
+        // 올렸다가 회귀 확정: 재생 중인 무거운 <video> 페이지를 실제로 라이브 스크롤하니 드래그 "도중"에도
+        // 컴포지팅이 버벅여, 증상이 "손 뗀 뒤 한 박자"에서 "손 대는 순간부터"로 더 나빠졌다(실기기 확인).
+        // 되돌린다 — 항상 false 유지, 이동은 doSwipe()(합성 스크롤/키 이벤트)로 계속 처리.
         scrollEnabled={false}
         sharedCookiesEnabled
         // 리다이렉트 차단: 앱 딥링크(youtube://)/앱스토어 등 non-http 스킴은 막아 WebView가 튕기지 않게.

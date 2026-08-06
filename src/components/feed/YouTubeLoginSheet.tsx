@@ -33,7 +33,49 @@ const LOGIN_URL =
 const SAFARI_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 
-export function YouTubeLoginSheet({ onClose, onSignedIn }: { onClose: () => void; onSignedIn: () => void }) {
+// 2026-08-06 — 구글은 "임베디드 웹뷰에서의 로그인"을 disallowed_useragent로 차단할 수 있다(2023-07-24부터
+// 시행된 문서화된 정책, iOS WKWebView가 명시적 대상). 실기기 검증 전이라 확정은 못 하지만, 막히면 구글의
+// 날것 에러 페이지(예: "This browser or app may not be secure")를 그대로 보여주는 게 "없는 것만 못하다"
+// (핸드오프 문서 §5). 그래서 URL의 에러 파라미터 + 페이지 텍스트 두 신호로 차단을 감지해 조용히 닫고
+// 안내 문구로 대체한다 — 실제로 되면 이 코드는 그냥 아무 일도 안 한다(무해).
+const BLOCK_TEXT_PATTERNS = [
+  'disallowed_useragent',
+  'this browser or app may not be secure',
+  '이 브라우저 또는 앱은 안전하지 않을 수 있습니다',
+];
+const DETECT_BLOCK_JS = `
+(function () {
+  function check() {
+    try {
+      var text = (document.body && document.body.innerText || '').toLowerCase();
+      var href = ('' + location.href).toLowerCase();
+      var patterns = ${JSON.stringify(BLOCK_TEXT_PATTERNS)};
+      for (var i = 0; i < patterns.length; i++) {
+        var p = patterns[i].toLowerCase();
+        if (text.indexOf(p) >= 0 || href.indexOf(p) >= 0) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage('BLOCKED');
+          return;
+        }
+      }
+    } catch (e) {}
+  }
+  check();
+  setTimeout(check, 800);
+  setTimeout(check, 2000);
+})();
+true;
+`;
+
+export function YouTubeLoginSheet({
+  onClose,
+  onSignedIn,
+  onBlocked,
+}: {
+  onClose: () => void;
+  onSignedIn: () => void;
+  /** 구글이 임베디드 웹뷰 로그인을 막은 것으로 보임 — 부모가 안내 토스트를 띄우고 시트를 닫아야 한다. */
+  onBlocked: () => void;
+}) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
 
@@ -54,11 +96,20 @@ export function YouTubeLoginSheet({ onClose, onSignedIn }: { onClose: () => void
             sharedCookiesEnabled
             javaScriptEnabled
             domStorageEnabled
+            injectedJavaScript={DETECT_BLOCK_JS}
             onLoadEnd={() => setLoading(false)}
+            // ⚠️ onHttpError로도 감지하려 했으나 뺐다 — 구글 로그인 페이지는 폰트/추적픽셀/광고스크립트 등
+            // 수십 개의 서브리소스를 로드하고, react-native-webview 문서가 onHttpError를 메인 프레임으로
+            // 한정하는지 명시하지 않는다(확인 불가). 서브리소스 하나만 404여도 오탐으로 정상 로그인 중에
+            // 시트가 닫힐 위험이 있어, URL 패턴 + 페이지 텍스트라는 더 정밀한 신호 두 개만 쓴다.
+            onMessage={(e) => {
+              if (e.nativeEvent.data === 'BLOCKED') onBlocked();
+            }}
             // 로그인이 끝나면 continue= 대상(youtube.com)으로 돌아온다 — 그 순간이 성공 신호다.
             // 여기서 시트를 닫고 부모가 플레이어를 리로드하면 새 쿠키(=계정)로 다시 붙는다.
             onNavigationStateChange={(nav) => {
               if (!nav.url) return;
+              if (nav.url.toLowerCase().includes('disallowed_useragent')) { onBlocked(); return; }
               if (/^https:\/\/(www|m)\.youtube\.com\//.test(nav.url)) onSignedIn();
             }}
           />

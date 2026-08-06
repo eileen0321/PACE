@@ -747,6 +747,12 @@ export default function PaceFeedScreen() {
               setYtSessionNonce((n) => n + 1);
               useToastStore.getState().show(t('feed.youtubeSignInDone'));
             }}
+            // 2026-08-06 — 구글이 임베디드 웹뷰 로그인을 disallowed_useragent로 막았을 때 그 날것 에러
+            // 페이지를 계속 보여주는 대신 조용히 닫고 안내 토스트로 대체한다(YouTubeLoginSheet.tsx 참고).
+            onBlocked={() => {
+              setShowYtLogin(false);
+              useToastStore.getState().show(t('feed.youtubeSignInBlocked'));
+            }}
           />
         )}
 

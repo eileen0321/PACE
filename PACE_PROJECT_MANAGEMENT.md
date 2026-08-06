@@ -6645,3 +6645,89 @@ PROMPTED 상태는 그 조기 반환에서 제외한다(타임아웃이 스스�
 
 검증은 임시 상수(무입력 60초/확정 30초/수면창 종일)로 했고, **복원 후 `git status`가 완전히 비어
 있음**(워킹트리 = 커밋본)을 확인했다. 기기에도 정상 상수 빌드를 다시 설치했다.
+
+## 🔍 2026-08-06 — 크로스플랫폼 감사 (공통화 가능 / iOS 이상 구현 / 안드로이드만 있는 기능)
+
+사장님 지시: "안드와 공통기능화 할 수 있는 것 찾고, 맥 이상하게 구현한 거, 안드는 구현했는데 안 한 거 다 찾아".
+`src/services/platform/*`(공용 계약 vs 실제 구현), 네이티브 모듈(Kotlin 12개 vs Swift 6개), 호출부를 전수 대조했다.
+
+### A. 공통화 — 지금 고친 것 2건
+
+#### A-1 🔴 iOS에서 카메라 권한을 **한 번도 안 묻는 경로**가 있었다 (수정함)
+`bluetoothService.ios.hasCameraPermission()`이 **`true` 하드코딩**, `requestCameraPermission()`도 no-op이었다.
+그런데 **iOS엔 실제 권한 API가 이미 있다** — `modules/pace-gesture/ios/PaceGestureModule.swift`의
+`cameraPermissionStatus()` / `requestCameraPermission()`(AVCaptureDevice 기반, 69·79행).
+
+갈라진 지점:
+| 경로 | iOS에서 무엇을 쓰나 | 결과 |
+|---|---|---|
+| `focus.tsx` 손짓 토글 | iOS 전용 분기로 **PaceGesture 직접 호출** | 정상 — 권한 묻고, 거부면 설정으로 보냄 |
+| `useBluetoothStore.toggleAutoMode()` | 플랫폼 분기 **없이** `bluetoothService` | 🔴 "이미 있다"고 답 → 프롬프트 없음 |
+| `useBluetoothStore.enableAutoModeForSession()` | 위와 동일 | 🔴 동일 |
+
+두 번째·세 번째가 **세션 시작 시 핸즈프리를 켜는 경로**다. 권한이 notDetermined인 iOS 기기에서 이 경로로
+켜면 토글은 ON인데 손짓은 조용히 안 된다 — types.ts가 안드로이드에서 겪었다고 기록한 그 버그
+("권한을 물어본 적 자체가 없어 대부분의 실기기에서 영원히 죽어있었다")와 **완전히 같은 클래스**다.
+→ `bluetoothService.ios`가 PaceGesture에 위임하도록 수정. 공용 호출부는 한 줄도 안 고쳤다(그게 공통화다).
+   모듈 미링크/시뮬레이터에서는 예전처럼 true 폴백(false를 주면 상위가 요청을 무한 반복한다).
+
+#### A-2 🔴 iOS 통계가 **반쪽**이었다 — 닫힌 세션은 실시청, 진행 중은 벽시계 (수정함)
+`overlayService.ios.getWatchedSeconds()`가 무조건 null → `statsRepository`가 벽시계로 폴백.
+그런데 닫힌 세션은 오늘(`3ac55aa`) 실시청 기준으로 바꿔놨다. 같은 "오늘 사용 시간" 숫자 안에 **두 기준이
+섞여** 있었다 — 안드로이드가 2026-08-03에 없앤 그 모순이 iOS에만 남아 있던 셈.
+→ 이제 JS 틱이 실제 차감분을 `useTimerStore.watchedSeconds`에 누적하므로 그 값을 반환한다.
+   `getTodayUsageMinutes`/`getWeeklyStats` 호출부는 무수정 — 안드로이드와 동일 계약이 된다.
+   ⚠️ 세션이 없으면 여전히 null(콜드스타트 고아 정리는 스토어가 비어 있어 0을 주면 "0초 봤다"로 오기록).
+
+### B. iOS 이상 구현 / 낡은 주석 — 지금 고친 것 1건 + 남은 것
+
+#### B-1 (수정함) `consumeExpired()` 주석이 **삭제된 기능**을 근거로 대고 있었다
+"iOS는 Screen Time(ManagedSettings Shield)이 자체적으로 차단을 집행" — 그런데 Screen Time 차단은
+**2026-07-26에 전면 삭제**됐다(types.ts 하단). iOS엔 백그라운드에서 세션을 끝내는 주체가 **아예 없고**
+만료 판정·종료는 전부 JS 틱이 한다. 결과(null)는 같지만 이유가 다르다 — 전자로 읽으면 "iOS에도 집행자가
+있다"고 오해한다. 주석 정정. (types.ts:25, :68에도 같은 문구가 남아 있어 후속 정리 대상.)
+
+#### B-2 (미수정, 확인 필요) `getFocusSessionDurationMinutes()`가 iOS에서 **10 하드코딩**
+프리미엄이 5~60분을 골라도 이 경로는 항상 10을 돌려준다. 호출부는 `useBluetoothStore.ts:53` 한 곳.
+iOS는 이 값을 JS 설정(`settings.focusSessionDurationMinutes`)에서 직접 읽는 구조라 실제 피해가 없을
+가능성이 크지만, **스토어가 표시하는 값과 설정값이 갈라질 수 있다** — Mac 세션이 실제 화면에서 확인 요망.
+
+#### B-3 (미수정, 설계 지뢰) `autoNextService.ios.start()`가 **throw**한다
+안드로이드는 안 던진다. 현재 유일한 호출부(`useAutoNextStore.ts:25`)가 `supportsAutoNext`로 가드하고
+있어 지금은 안전하지만, 계약상 한쪽만 던지는 건 다음 호출부가 생기는 순간 iOS만 크래시하는 지뢰다.
+no-op으로 통일하는 편이 맞다(가드를 잊어도 안 죽는다).
+
+#### B-4 (미수정, 표시 불일치) 하드웨어 리모컨 플래그가 서로 어긋난다
+`bluetoothService.ios.supportsHardwareRemote = false`(스텁이라 정직하게)인데,
+`capabilities.supportsHandsFreeControl = Platform.OS !== 'android'` → **iOS만 true**.
+즉 iOS는 "핸즈프리 준비됨" UI를 보여주면서 서비스는 "하드웨어 미검증"이라고 말한다. 실제 iOS 리모컨은
+`useFeedRemoteControl.ios.ts`(react-native-track-player)가 피드 화면 안에서 처리하므로 동작은 하지만,
+플래그 두 개가 반대 방향을 가리켜 읽는 사람이 매번 헷갈린다. 이름/의미 정리 필요.
+
+### C. 안드로이드는 구현했는데 iOS는 없는 것 (OS 제약 vs 미구현 구분)
+
+**C-1. OS가 막아서 불가능 — iOS에서 영원히 안 됨 (구현 시도 금지)**
+- 다른 앱 위 시스템 오버레이(알약/차단화면) → Live Activity로 대체 중
+- 다른 앱 UI 조작(Auto Next 자동 스와이프) → 접근성 상당 API 자체가 없음
+- 다른 앱의 포그라운드/재생 상태 관찰 → `getVideoWatchCount`, `getSupportedAppForegroundSecondsToday`
+- 다른 앱 사용시간 조회 → Screen Time 데이터는 샌드박스 밖으로 못 나옴(애플 명시 설계)
+- 배터리 최적화 예외, 접근성/오버레이 권한 회수 감지 → 개념 자체가 없음
+
+**C-2. 기술적으로 가능한데 iOS에 없는 것 (진짜 파리티 갭 — 검토 대상)**
+| 기능 | 안드로이드 | iOS | 비고 |
+|---|---|---|---|
+| 수면 감지(무입력→팝업→암전) | ✅ 완성·검증 | ❌ 없음 | `PaceSleepModule.swift`는 CMMotionActivity만. 앱 내 피드 한정이면 JS로 같은 상태기계를 돌릴 수 있다 |
+| 취침 타이머 네이티브 경로 | ✅ | ❌ JS setTimeout | 앱이 백그라운드면 iOS가 타이머를 죽인다 → 실효성 확인 필요 |
+| 세션 설정 라이브 반영(`updateLiveSessionConfig`) | ✅ | no-op | iOS는 JS가 직접 읽어 사실상 동작 — 계약만 비어 있음 |
+| 보상형 광고로 Focus 연장 | ✅ 네이티브 | ❌ | iOS는 RN 모달로 대체 가능(이미 광고 SDK 있음) |
+| 크레딧으로 연장 | ✅ 네이티브 팝업 | ❌ | 위와 동일 |
+| Hard Block Mode | ✅ | no-op | iOS는 강제 종료 수단이 없어 C-1에 가까움 |
+| 핑거스냅 | 구현됨(비활성) | ❌ | 애플 심사 이슈로 **양쪽 다 끔** — 의도된 통일 |
+
+### D. 이번 감사에서 확인된 좋은 점 (되돌리지 말 것)
+- 공용 계약(`types.ts`)이 각 no-op의 **이유**를 전부 적어둬서, 이번 감사가 추측 없이 가능했다.
+- `capabilities.ts`가 supports* 값을 한곳에 모아, 상위 UI가 `Platform.OS`를 직접 안 본다(원칙 유지 중).
+
+### 다음 지시
+- **Mac 세션**: B-2(포커스 시간 10 하드코딩) 실화면 확인, C-2의 수면 감지/취침 타이머가 iOS에서 필요한지 제품 판단.
+- **Windows 세션**: B-3(throw → no-op), B-4(플래그 이름 정리)는 안전한 정리라 다음 차례에 처리.

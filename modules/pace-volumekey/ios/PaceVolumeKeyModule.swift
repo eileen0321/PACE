@@ -1,6 +1,8 @@
 import ExpoModulesCore
 import AVFoundation
+import AudioToolbox
 import MediaPlayer
+import QuartzCore
 import UIKit
 
 // Pace iOS 볼륨키 리모컨 (2026-07-21 사용자 지시, 2026-07-27 재확인).
@@ -32,9 +34,51 @@ public class PaceVolumeKeyModule: Module {
   private var nextTarget: Any?
   private var prevTarget: Any?
 
+  // 2026-08-07 무음스위치 감지("Mute" 라이브러리와 동일 기법 — 웹리서치로 정확한 알고리즘 확인 후 이식).
+  // WKWebView는 <video> 오디오를 재생할 때 물리 무음 스위치를 원천적으로 무시하는 유명한 iOS 버그다
+  // (rdar://28716885, WebKit bug 167788 — AVAudioSession 카테고리를 뭘로 설정해도 소용없음, 애플이
+  // 수년째 안 고침). 그래서 "우리가 카테고리를 잘 관리하면 해결된다"는 접근 자체가 원천적으로 안 된다 —
+  // 대신 무음스위치 "상태"를 직접 감지해서, 무음이면 JS 쪽에서 video.muted를 강제로 켜는 우회가 필요하다.
+  // 감지 원리: AudioServicesPlaySystemSoundWithCompletion으로 정확히 0.2초짜리 시스템 사운드를 재생시켜
+  // 실제 걸린 시간을 잰다. 시스템 사운드는(일반 AVAudioSession 재생과 달리) 무음스위치를 그대로 따르므로,
+  // 무음이면 iOS가 소리 없이 즉시(0.2초보다 훨씬 빠르게) 완료 콜백을 준다. 안 무음이면 실제로 0.2초가
+  // 걸린다 — 그 차이로 스위치 상태를 역산한다.
+  private var muteCheckSoundId: SystemSoundID = 0
+  private var muteCheckStartedAt: CFTimeInterval = 0
+  private var muteCheckPending: Promise?
+
+  // 2026-08-08 사장님 지시 — "무음으로 시작해도, 볼륨키를 누르면(올리든 내리든) 소리가 나야 한다"
+  // (유튜브/인스타그램 실제 동작과 동일한 관행 — 웹서치로 확인: "when you press the volume up or down
+  // button the audio should be unmuted"). 위 볼륨키 리모컨(start/stop)은 "핸즈프리 모드+토글 ON"일
+  // 때만 켜지는 opt-in 기능이라 평소(토글 OFF)엔 물리 볼륨키 입력을 우리가 아예 못 본다 — 그래서 별도
+  // 감시자를 둔다: Shorts 재생 중엔 토글과 무관하게 항상 이 watch를 켜서, 볼륨이 조금이라도 바뀌면(방향
+  // 무관) "무음 해제 신호"로만 이벤트를 쏜다. 리모컨(next/prev)과 달리 **볼륨을 되돌리지 않는다** — 진짜
+  // 볼륨 조절이 목적이므로 그대로 둔다.
+  private var unmuteObserver: NSKeyValueObservation?
+  private var unmuteBaselineVolume: Float = -1
+  // 리모컨 기능(remoteActive)과 이 watch(unmuteWatchActive)가 같은 공유 AVAudioSession을 쓴다 — 세션을
+  // 활성 상태로 유지할지/기본값으로 되돌릴지는 "둘 다 꺼졌을 때만" 판단해야 서로를 안 밟는다.
+  private var remoteActive = false
+  private var unmuteWatchActive = false
+
+  private func ensureSessionActive() {
+    do {
+      try session.setCategory(.ambient, options: [.mixWithOthers])
+      try session.setActive(true)
+    } catch {}
+  }
+
+  private func deactivateSessionIfIdle() {
+    guard !remoteActive && !unmuteWatchActive else { return }
+    do {
+      try session.setCategory(.soloAmbient)
+      try session.setActive(false, options: .notifyOthersOnDeactivation)
+    } catch {}
+  }
+
   public func definition() -> ModuleDefinition {
     Name("PaceVolumeKey")
-    Events("onVolumeButton")
+    Events("onVolumeButton", "onSilentUnmute")
 
     AsyncFunction("start") { (promise: Promise) in
       DispatchQueue.main.async {
@@ -43,10 +87,17 @@ public class PaceVolumeKeyModule: Module {
         // 사용자 실제 볼륨(2=0.125) 대신 0.5 기본값을 반환해 baseline=0.5로 잡히고 볼륨이 5로 강제됐다.
         // → 세션 활성화·뷰 생성 전에 "먼저" 현재 시스템 볼륨을 읽어 baseline으로 삼는다(사용자 2가 그대로 유지).
         let cur = self.session.outputVolume
-        do {
-          try self.session.setCategory(.playback, options: [.mixWithOthers])
-          try self.session.setActive(true)
-        } catch {}
+        // 2026-08-08 사장님 지적("무음이라도 볼륨키를 누르면 소리가 커진다") — 웹서치로 확정: outputVolume
+        // KVO는 .playback이 아니어도 동작한다("you can set the audio session category to
+        // AVAudioSessionCategoryAmbient, which allows you to detect volume changes without requiring
+        // audio playback" — 대표 오픈소스 구현체들의 관행). .playback은 물리 무음 스위치를 무시하고
+        // 하드웨어 볼륨을 "진짜 미디어 볼륨"으로 취급하는 카테고리라, 리모컨 기능이 켜져 있는 동안은
+        // (a) 무음 스위치가 통째로 무시되고 (b) 폰 볼륨키를 누르면 그 순간 실제 출력이 커졌다(리셋 전
+        // 찰나) — 지금까지의 무음스위치 강제(video.muted)와 근본적으로 상충하는 카테고리였다. .ambient는
+        // KVO 감지는 그대로 유지하면서 무음 스위치를 존중하고, "진짜 미디어 세션"으로 취급되지 않아
+        // 볼륨키가 실제 출력을 올리지도 않는다.
+        self.remoteActive = true
+        self.ensureSessionActive()
 
         // ── 방식 A: outputVolume KVO — 싸구려 카메라 BT 리모컨(볼륨키 HID)을 잡는 유일한 길 ──
         if self.volumeView == nil {
@@ -123,18 +174,70 @@ public class PaceVolumeKeyModule: Module {
       DispatchQueue.main.async {
         self.volumeView?.removeFromSuperview()
         self.volumeView = nil
-        // 2026-08-07 사용자 지적("무음일 때 쇼츠 소리가 왜 나, 유튜브랑 정책 맞추라고") — 위 start()가
-        // .playback 카테고리로 세션을 활성화하는데(볼륨키 KVO/MPVolumeView가 안정적으로 동작하려면
-        // 필요), .playback은 물리 무음 스위치를 무시한다(항상 소리 남 — 유튜브 실제 동작과 다름).
-        // 그런데 이 stop()이 지금까지 카테고리를 원래대로 되돌리지 않아서, 볼륨키 리모컨(opt-in, 기본
-        // OFF)을 단 한 번이라도 켰다 껐으면 그 뒤로 앱이 살아있는 내내(토글을 다시 꺼도, 피드를 나가도)
-        // 무음 스위치가 계속 무시됐다 — "내가 안 켰는데 왜 소리가 나"로 보이는 원인이 정확히 이것.
-        // 리모컨 기능이 꺼지면 기본 카테고리(.soloAmbient, 무음 스위치를 존중 — 유튜브 Shorts와 동일
-        // 정책)로 명시적으로 되돌려 하이재킹 범위를 "리모컨이 실제로 켜져 있는 동안"으로만 국한한다.
-        do {
-          try self.session.setCategory(.soloAmbient)
-          try self.session.setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {}
+        // 2026-08-07 사용자 지적("무음일 때 쇼츠 소리가 왜 나, 유튜브랑 정책 맞추라고") — 예전엔 이 stop()이
+        // 세션 카테고리를 원래대로 안 되돌려서, 리모컨(opt-in, 기본 OFF)을 단 한 번이라도 켰다 껐으면 그
+        // 뒤로 앱이 살아있는 내내 무음 스위치가 무시됐다. 2026-08-08 — startSilentUnmuteWatch(항상 켜짐)와
+        // 세션을 공유하게 되며 무조건 되돌리면 그 watch를 밟으므로, 둘 다 꺼졌을 때만 되돌린다.
+        self.remoteActive = false
+        self.deactivateSessionIfIdle()
+      }
+    }
+
+    // 무음스위치가 지금 켜져 있는지(=무음 모드인지) 감지. true=무음, false=무음 아님. 위 클래스 주석의
+    // 0.2초 타이밍 트릭 — WKWebView 자체는 이 스위치를 못 보므로(플랫폼 버그), 매번 직접 재는 수밖에
+    // 없다. 호출부(JS)가 주기적으로 불러 video.muted를 그 결과에 맞춰 강제한다.
+    AsyncFunction("checkSilentSwitch") { (promise: Promise) in
+      DispatchQueue.main.async {
+        // 동시 호출 방지 — 이전 체크가 아직 안 끝났으면 무시(JS가 폴링 주기를 짧게 잡아도 안전).
+        if self.muteCheckPending != nil { promise.resolve(false); return }
+        if self.muteCheckSoundId == 0 {
+          guard let url = Bundle.main.url(forResource: "mute_check", withExtension: "caf") else {
+            promise.resolve(false); return // 파일이 번들에 없으면 항상 "무음 아님"으로 안전하게 폴백
+          }
+          var soundId: SystemSoundID = 0
+          AudioServicesCreateSystemSoundID(url as CFURL, &soundId)
+          self.muteCheckSoundId = soundId
+        }
+        self.muteCheckPending = promise
+        self.muteCheckStartedAt = CACurrentMediaTime()
+        AudioServicesPlaySystemSoundWithCompletion(self.muteCheckSoundId) { [weak self] in
+          guard let self = self else { return }
+          DispatchQueue.main.async {
+            let elapsed = CACurrentMediaTime() - self.muteCheckStartedAt
+            let isMuted = elapsed < 0.19 // 0.2초 파일보다 확실히 빠르면 무음(여유 10ms — 콜백 디스패치 지연 흡수)
+            self.muteCheckPending?.resolve(isMuted)
+            self.muteCheckPending = nil
+          }
+        }
+      }
+    }
+
+    // 2026-08-08 — "무음으로 시작해도 볼륨키를 누르면 소리 나야 한다" 감지. 리모컨(start/stop)과 달리
+    // opt-in 토글과 무관하게 Shorts 재생 중엔 항상 켜둔다(JS쪽에서 playing일 때 호출). 볼륨을 되돌리지
+    // 않고(진짜 볼륨 조절이 목적) 변화 자체만 "무음 해제" 신호로 보고한다.
+    Function("startSilentUnmuteWatch") {
+      DispatchQueue.main.async {
+        if self.unmuteWatchActive { return }
+        self.unmuteWatchActive = true
+        self.ensureSessionActive()
+        self.unmuteBaselineVolume = self.session.outputVolume
+        self.unmuteObserver = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
+          guard let self = self else { return }
+          let v = s.outputVolume
+          if abs(v - self.unmuteBaselineVolume) < 0.01 { return } // 노이즈/리모컨 리셋 왕복 흡수
+          self.unmuteBaselineVolume = v
+          NSLog("PACEVOL onSilentUnmute v=\(v)") // 진단(테스트 후 제거)
+          self.sendEvent("onSilentUnmute", [:])
+        }
+      }
+    }
+
+    Function("stopSilentUnmuteWatch") {
+      self.unmuteObserver?.invalidate()
+      self.unmuteObserver = nil
+      DispatchQueue.main.async {
+        self.unmuteWatchActive = false
+        self.deactivateSessionIfIdle()
       }
     }
   }

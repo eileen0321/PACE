@@ -210,6 +210,12 @@ const INJECTED_JS_SWIPE = `
   // attach는 <video>가 아직 없으면 300ms 간격으로 재시도하는 체인이다. 새 부착이 시작되면 이전 체인은
   // 죽어야 한다 — 안 그러면 낡은 체인이 뒤늦게 살아나 play()를 한 번 더 걸어 재생을 끊는다.
   var attachSeq = 0;
+  // 2026-08-08 — 무음스위치 강제 상태를 **요소(v)가 아니라 전역**에 둔다. 예전엔 v.__paceForceMuted처럼
+  // <video> 요소에 표식을 남겼는데, 스와이프로 다음 Short가 오면 유튜브가 완전히 새 <video> 요소를 만들어
+  // 그 표식이 사라진다 — 그러면 attach()가 새 요소에 v.volume=1.0을 무조건 걸어 무음스위치를 켠 채로도
+  // 소리가 났다(실기기 로그로 확정: paceSetMuted로 vol=0까지 찍고도 직후 audible-ok가 다시 1.0으로 되돌림).
+  // 전역 플래그면 영상이 바뀌어도 살아남아 attach()가 새 요소에도 즉시 반영할 수 있다.
+  window.__paceForceSilent = window.__paceForceSilent || false;
 
   // ⭐ 2026-08-06 "다음 영상 시작 시 멈칫" 3차 수정 — 원인의 마지막 조각.
   //   지금까지의 muted 가로채기는 **요소 단위**(v.__mo)였다. 유튜브가 다음 쇼츠에서 <video> 요소를
@@ -227,15 +233,29 @@ const INJECTED_JS_SWIPE = `
   //   __paceAudioOk가 켜지기 전(=아직 한 번도 소리 재생에 성공하지 못한 상태)에는 가로채지 않는다 —
   //     첫 재생만큼은 유튜브의 무음 자동재생을 그대로 두어 확실히 시작되게 하고, 소리가 한 번 붙은
   //     뒤부터 보호를 건다. 실패 시 최악이라도 예전과 동일한 동작으로 폴백된다.
+  // 2026-08-08 — 웹서치로 확정: **iOS WebKit(Safari/WKWebView 공통)은 HTMLMediaElement.volume을
+  // 아예 무시한다**(값은 그대로 읽히지만 실제 출력엔 반영 안 됨 — Apple의 의도적 정책, 볼륨은 항상
+  // 하드웨어 버튼으로만 조절되게). 그래서 어제 만든 "volume=0으로 무음스위치 강제" 우회는 JS 상태는
+  // 정상(vol=0으로 찍힘)인데 실제로는 계속 소리가 났다 — 근본적으로 안 먹히는 프로퍼티를 썼던 것.
+  // 실제로 유효한 건 **muted**뿐이라 다시 muted로 돌아간다. 문제는 muted를 이미 이중으로 가로채고
+  // 있다는 것(아래 프로토타입 훅 + attach()의 요소별 훅) — 둘 다 "val===true를 막는" 용도라 우리
+  // 자신의 강제음소거 호출도 막아버린다(2026-08-07 "md.set.call 우회 실패"가 바로 이거였다 — 그
+  // 시점에 md가 이미 이 프로토타입 훅으로 감싸인 뒤였다). → 진짜 네이티브 setter(pmd.set, 이 훅이
+  // 설치되기 **이전**에 캡처됨)를 window에 노출해 paceSetMuted가 두 겹 다 건너뛰고 직접 부르게 한다.
   try {
     if (!window.__paceMutedHook) {
       var pmd = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
       if (pmd && pmd.get && pmd.set) {
         window.__paceMutedHook = true;
+        window.__paceNativeMutedSet = pmd.set; // 진짜 네이티브 setter — paceSetMuted 전용, 훅 우회.
         Object.defineProperty(HTMLMediaElement.prototype, 'muted', {
           configurable: true,
           get: function () { return pmd.get.call(this); },
-          set: function (val) { if (window.__paceAudioOk && val === true) return; pmd.set.call(this, val); }
+          set: function (val) {
+            if (window.__paceForceSilent) { if (val === false) return; }
+            else if (window.__paceAudioOk && val === true) { return; }
+            pmd.set.call(this, val);
+          }
         });
       }
     }
@@ -338,7 +358,11 @@ const INJECTED_JS_SWIPE = `
       send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
     }
     var v = curV; if (!v) return;
-    if (v.__ok && v.muted) { v.muted = false; v.volume = 1.0; }
+    if (v.__ok && v.muted && !window.__paceForceSilent) { v.muted = false; }
+    // 안전망: 무음스위치가 켜진 채로 어떤 경로로든 muted가 풀려 있으면 매 500ms마다 네이티브 setter로 되돌린다.
+    if (window.__paceForceSilent && !v.muted) {
+      try { (window.__paceNativeMutedSet || function (val) { v.muted = val; }).call(v, true); } catch (e) {}
+    }
     if (!v.duration || isNaN(v.duration)) return;
     var t = v.currentTime;
     if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
@@ -355,7 +379,9 @@ const INJECTED_JS_SWIPE = `
     //   — 스와이프는 곧 다른 영상으로 넘어간다는 뜻이라 지금 영상(curV, 곧 교체될 대상)에 다시 거는
     //   play()가 유튜브 자신의 비디오 교체 처리와 겹쳐 "멈칫하고 재생"을 만들 수 있다(실측: AbortError).
     //   탭(스와이프가 아닌 모든 touchend/click)에서는 그대로 부른다 — 필요성 자체는 그대로 유효하다.
-    function unmuteOnce() { var v = curV; if (!v) return; v.__ok = true; v.muted = false; v.volume = 1.0; v.play().catch(function () {}); }
+    // __paceForceSilent면 무음스위치가 켜져 있다는 뜻 — 탭해도 안 풀어준다(유튜브 실제 앱과 동일하게
+    // OS 무음스위치가 인앱 조작보다 우선하도록, 2026-08-07).
+    function unmuteOnce() { var v = curV; if (!v || window.__paceForceSilent) return; v.__ok = true; v.muted = false; v.play().catch(function () {}); }
     document.addEventListener('click', unmuteOnce, true);
     // 2026-08-01 사장님 지시 — iOS 피드 유저 손가락 스와이프(위로=다음 Short, 아래로=이전).
     // 2026-08-05(2차, 되돌림) — scrollEnabled=true(네이티브 스크롤이 직접 따라오게)를 실기기에 올렸다가
@@ -428,9 +454,27 @@ const INJECTED_JS_SWIPE = `
       if (md && md.get && md.set && !v.__mo) {
         v.__mo = true;
         Object.defineProperty(v, 'muted', { configurable: true, get: function () { return md.get.call(this); },
-          set: function (val) { if (this.__ok && val === true) return; md.set.call(this, val); } });
+          set: function (val) {
+            if (window.__paceForceSilent) { if (val === false) return; }
+            else if (this.__ok && val === true) { return; }
+            md.set.call(this, val);
+          } });
       }
     } catch (e) {}
+    // 2026-08-08 — 무음스위치 강제 반영, muted 기반으로 재작성. 웹서치로 확정: iOS WebKit은
+    // HTMLMediaElement.volume을 아예 무시한다(JS 상태만 바뀌고 실제 출력엔 반영 안 됨 — Apple 의도적
+    // 정책). 어제의 volume=0 우회는 그래서 로그상 성공(vol=0)인데 실기기에선 계속 소리가 났다. 진짜
+    // 유효한 건 muted뿐 — 위 프로토타입/요소별 두 훅 모두 "무음스위치 켜져있는 동안 val===false를
+    // 거부"하도록 고쳐 어디서도 강제로 안 풀리게 막고, 여기서는 훅을 안 거치는 진짜 네이티브 setter
+    // (window.__paceNativeMutedSet, 훅 설치 전에 캡처)로 직접 muted를 세팅한다.
+    window.paceSetMuted = function (m) {
+      window.__paceForceSilent = !!m;
+      if (!curV) return;
+      try {
+        if (window.__paceNativeMutedSet) { window.__paceNativeMutedSet.call(curV, !!m); }
+        else { curV.muted = !!m; }
+      } catch (e) {}
+    };
     try { var ust = document.createElement('style'); ust.textContent = '.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}'; (document.head || document.documentElement).appendChild(ust); } catch (e) {}
     // ⚠️ 2026-08-05 "다음 영상에서 멈칫" 2차 수정 — **순서**가 원인이다. 예전엔 muted=false를 **먼저**
     //   하고 play()를 했다. 유튜브는 새 쇼츠를 무음 자동재생으로 시작하는데, 유저 제스처 밖에서 무음을
@@ -438,9 +482,14 @@ const INJECTED_JS_SWIPE = `
     //   muted=true로 되돌려 재생 → 정확히 "멈췄다가 플레이". 게다가 이미 재생 중인 영상에 play()를 또
     //   거는 것도 불필요하다. 그래서: **이미 돌고 있으면 건드리지 않고 소리만 켜고**, 멈춰 있을 때만
     //   재생을 먼저 붙잡은 뒤 소리를 켠다.
-    v.volume = 1.0;
+    v.volume = 1.0; // iOS WebKit은 volume을 무시한다(웹서치로 확정) — 무해하게 그대로 두되 무음은 muted로만 제어.
     var goAudible = function () {
-      if (v.muted) {
+      // 2026-08-08 — 무음스위치가 켜져 있으면 여기서 무조건 muted=true로 확정한다(진입 시 상태 무관 —
+      // 이미 재생 중이던 요소가 재사용된 경우까지 커버). 네이티브 setter를 직접 불러 위 두 훅(프로토타입
+      // /요소별)을 다 거치지 않고 확실히 세팅한다.
+      if (window.__paceForceSilent) {
+        try { (window.__paceNativeMutedSet || function (val) { v.muted = val; }).call(v, true); } catch (e) {}
+      } else if (v.muted) {
         v.muted = false;
         // 무음 해제 때문에 멈췄으면 되살린다(소리를 포기하진 않는다 — 다음 터치의 unmuteOnce가 또 시도).
         if (v.paused) v.play().catch(function () {});
@@ -556,7 +605,7 @@ function acceptLanguageHeader(): string {
   }
 }
 
-export type ShortsPlayerHandle = { advance: () => void; previous: () => void };
+export type ShortsPlayerHandle = { advance: () => void; previous: () => void; setMuted: (muted: boolean) => void };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
   { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload, listMode }: Props,
@@ -597,6 +646,13 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
   useImperativeHandle(ref, () => ({
     advance: () => { webRef.current?.injectJavaScript('window.paceAdvance&&window.paceAdvance();true;'); },
     previous: () => { webRef.current?.injectJavaScript('window.pacePrevious&&window.pacePrevious();true;'); },
+    // 2026-08-07 — 무음스위치 강제 반영(위 attach()의 window.paceSetMuted 주석 참고).
+    // 2026-08-08 — window.__paceForceSilent를 직접 먼저 세팅한다. paceSetMuted 함수는 attach()가
+    // <video>를 찾아야 정의되는데, 첫 영상 로드 중(아직 attach 전) 이 호출이 오면 함수가 없어 조용히
+    // 무시됐다 — 실기기 로그로 확정(첫 영상만 소리나고 그다음부터 계속 무음이던 증상의 원인). 전역
+    // 변수는 attach() 전에도 항상 존재하므로(스크립트 최상단에서 초기화) 여기서 먼저 세팅해두면
+    // goAudible()이 첫 영상부터 바로 이 값을 본다.
+    setMuted: (muted) => { webRef.current?.injectJavaScript(`window.__paceForceSilent=${muted};window.paceSetMuted&&window.paceSetMuted(${muted});true;`); },
   }), []);
 
   // reload 모드에서만: videoId가 바뀌면 새 페이지 로드 → ready 리셋. (스와이프 모드는 리로드가 없어 불필요.)

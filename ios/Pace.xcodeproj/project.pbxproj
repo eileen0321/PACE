@@ -10,6 +10,7 @@
 		044FE09C44840D34D9D22A60 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3FE513181ECA951FA6F5F255 /* PrivacyInfo.xcprivacy */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
+		7E7F6483819860826AE75A38 /* mute_check.caf in Resources */ = {isa = PBXBuildFile; fileRef = B3DA03A059232CD9DA6F6EA1 /* mute_check.caf */; };
 		3F5272AA9EA66DAEAC9747F9 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D087C61A92156E23D2F69E3 /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C2AD0A7225CDCDDFAF931C86 /* libPods-Pace.a in Frameworks */ = {isa = PBXBuildFile; fileRef = EDA9A9065114D4B89E1A90F6 /* libPods-Pace.a */; };
@@ -54,6 +55,7 @@
 		1D087C61A92156E23D2F69E3 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Pace/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		3FE513181ECA951FA6F5F255 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Pace/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Pace/SplashScreen.storyboard; sourceTree = "<group>"; };
+		B3DA03A059232CD9DA6F6EA1 /* mute_check.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; name = mute_check.caf; path = Pace/mute_check.caf; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = undefined; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		EDA9A9065114D4B89E1A90F6 /* libPods-Pace.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Pace.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -125,6 +127,7 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				3FE513181ECA951FA6F5F255 /* PrivacyInfo.xcprivacy */,
+				B3DA03A059232CD9DA6F6EA1 /* mute_check.caf */,
 			);
 			name = Pace;
 			sourceTree = "<group>";
@@ -312,6 +315,7 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				044FE09C44840D34D9D22A60 /* PrivacyInfo.xcprivacy in Resources */,
+				7E7F6483819860826AE75A38 /* mute_check.caf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

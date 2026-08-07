@@ -435,6 +435,53 @@ export default function PaceFeedScreen() {
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
   const pauseWaveRef = useRef<(() => void) | null>(null);
   const playerRef = useRef<ShortsPlayerHandle>(null);
+  // 2026-08-08 — 무음스위치가 켜져 있어도 사용자가 볼륨키를 누르면(방향 무관) "소리를 원한다"는 신호로
+  // 보고 그 세션 동안은 강제 무음을 놓아준다(유튜브/인스타그램 관행). 다음에 Shorts를 새로 열면(playing이
+  // false→true로 바뀌면) 다시 스위치를 존중하는 기본 상태로 리셋.
+  const userSilentOverrideRef = useRef(false);
+
+  // 2026-08-07 무음스위치 강제 반영 — WKWebView가 <video> 오디오 재생 시 물리 무음 스위치를 원천적으로
+  // 무시하는 유명한 iOS 플랫폼 버그다(rdar://28716885, WebKit bug 167788 — AVAudioSession 카테고리를
+  // 뭘로 설정해도 소용없다고 애플이 수년째 공식 확인). 그래서 "카테고리를 잘 관리하면 해결"이 아니라
+  // 스위치 "상태"를 직접 재서(PaceVolumeKey.checkSilentSwitch — 0.2초 시스템사운드 타이밍 트릭) 우리가
+  // 매번 video.muted를 강제하는 우회가 필요하다. 재생 중일 때만 2초 간격으로 확인 — 매 확인이 짧은
+  // 시스템사운드를 실제로 재생시키는 부작용이 있어(무음이 아니면 그 0.2초 소리가 실제로 남) 너무 잦게
+  // 돌리면 그 자체가 거슬린다. 2초면 스위치를 막 켠 뒤 체감 지연도 적당하다.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !playing) return;
+    type Mod = {
+      checkSilentSwitch(): Promise<boolean>;
+      startSilentUnmuteWatch(): void;
+      stopSilentUnmuteWatch(): void;
+      addListener(event: 'onSilentUnmute', listener: () => void): { remove: () => void };
+    };
+    let mod: Mod | null;
+    try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
+    if (!mod) return;
+    userSilentOverrideRef.current = false; // 새 세션은 항상 스위치 존중부터 시작.
+    let cancelled = false;
+    const check = () => {
+      mod!.checkSilentSwitch().then((isSilent) => {
+        // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
+        if (!cancelled && !userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);
+      }).catch(() => {});
+    };
+    check();
+    const id = setInterval(check, 2000);
+    // 2026-08-08 — 리모컨 토글(volumeKeyRemote)과 무관하게 재생 중엔 항상 켜서, 볼륨키를 누르면(방향
+    // 무관) 무음스위치가 켜져 있어도 소리를 낸다(위 userSilentOverrideRef 주석 참고).
+    mod.startSilentUnmuteWatch();
+    const sub = mod.addListener('onSilentUnmute', () => {
+      userSilentOverrideRef.current = true;
+      playerRef.current?.setMuted(false);
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      sub.remove();
+      mod!.stopSilentUnmuteWatch();
+    };
+  }, [playing]);
 
   // 2026-07-29 사장님 지시 — "무입력 idle 하드상한". 유튜브는 ~30분 무입력이면 "Continue watching?"으로
   // 스스로 멈추는데, PACE 자동모드의 프로그램 넘김(advance 주입)이 그 idle 타이머를 계속 리셋해 유튜브가

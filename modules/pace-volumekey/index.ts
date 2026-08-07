@@ -11,7 +11,16 @@ type PaceVolumeKeyNativeModule = {
   /** 볼륨 관찰 시작. 이후 up/down 버튼마다 'onVolumeButton' 이벤트 발생. */
   start(): Promise<void>;
   stop(): void;
+  /** 물리 무음 스위치가 지금 켜져 있는지(0.2초 시스템사운드 타이밍 트릭, PaceVolumeKeyModule.swift 참고).
+   *  WKWebView는 이 스위치를 못 보므로(플랫폼 버그, rdar://28716885) 직접 재는 수밖에 없다. */
+  checkSilentSwitch(): Promise<boolean>;
+  /** 2026-08-08 — 리모컨 토글과 무관하게 Shorts 재생 중 항상 켜는 감시자. 볼륨키를 누르면(방향 무관,
+   *  값을 되돌리지 않음) 'onSilentUnmute' 이벤트를 쏜다 — "무음으로 시작해도 볼륨키를 누르면 소리
+   *  나야 한다"(유튜브/인스타그램 관행) 대응용. */
+  startSilentUnmuteWatch(): void;
+  stopSilentUnmuteWatch(): void;
   addListener(event: 'onVolumeButton', listener: (payload: { direction: 'up' | 'down' }) => void): { remove: () => void };
+  addListener(event: 'onSilentUnmute', listener: () => void): { remove: () => void };
 };
 
 export const PaceVolumeKey = requireNativeModule<PaceVolumeKeyNativeModule>('PaceVolumeKey');

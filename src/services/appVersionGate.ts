@@ -15,52 +15,52 @@
 // off — 전부 "통과"로 끝난다. 차단은 **모든 조건이 명확히 성립할 때만** 일어난다.
 
 import { Platform } from 'react-native';
-import type * as UpdatesNS from 'expo-updates';
+import * as Application from 'expo-application';
 import { API_BASE_URL } from './api/client';
 
 const FETCH_TIMEOUT_MS = 4000; // 부팅 경로라 길게 못 기다린다 — 넘으면 그냥 통과시킨다.
 
 export type VersionGateResult =
   | { blocked: false; reason: 'ok' | 'disabled' | 'no-version' | 'fetch-failed' | 'bad-payload' }
-  | { blocked: true; storeUrl: string; currentVersion: string; minSupportedVersion: string };
+  | { blocked: true; storeUrl: string; currentBuild: number; minBuild: number; currentVersion: string | null };
 
 /**
- * 지금 돌고 있는 **네이티브 바이너리**의 앱 버전.
+ * 판정 기준을 **빌드 번호**(Android versionCode / iOS CFBundleVersion)로 잡는다.
  *
- * ⚠️ `Constants.expoConfig.version`을 쓰면 안 된다 — OTA가 적용된 뒤에는 그 값이 **업데이트 번들의
- *   버전**이 되어, 정작 알고 싶은 "설치된 바이너리 버전"과 달라진다.
- *   `Updates.runtimeVersion`은 바이너리에 컴파일돼 들어가고 OTA로 바뀌지 않는다(그게 런타임 버전의
- *   존재 이유다 — 호환되는 업데이트만 걸러내는 기준). 우리 정책이 `{"policy":"appVersion"}`이라
- *   이 값이 곧 빌드 시점의 app.json version("1.0.1")이다.
- * 네이티브 모듈이 없거나(미링크) dev 클라이언트면 null → 호출부가 통과시킨다.
+ * ⚠️ 왜 버전 문자열이 아니라 빌드 번호인가 — 2026-08-08에 실제로 밟은 함정 때문이다.
+ *   처음엔 `Updates.runtimeVersion`을 앱 버전으로 썼는데, 실기기 로그가 `current=1.0`으로 나왔다.
+ *   확인해보니 app.json이 **플랫폼별 runtimeVersion을 명시적으로 고정**하고 있었다:
+ *       ios.runtimeVersion = "1.0.1"   android.runtimeVersion = "1.0"
+ *   안드로이드를 "1.0"에 고정한 건 의도된 선택이다 — 모든 안드로이드 릴리스가 같은 runtimeVersion을
+ *   공유해야 OTA가 구버전 바이너리에도 닿는다. 그래서 안드로이드는 1.0.1이든 1.0.5든 **영원히
+ *   "1.0"을 보고**하고, runtimeVersion으로는 버전을 구분할 수 없다(게이트가 무력해진다).
+ *   더 위험한 건, 누가 minSupportedVersion.android에 스토어 버전("1.0.2")을 넣으면 최신 빌드
+ *   사용자까지 전부 차단된다는 점이다.
+ *
+ * → `expo-application`의 네이티브 값을 쓴다. 빌드 번호는 **단조 증가하는 정수**라
+ *   "1.0.9 vs 1.0.10" 같은 사전순 함정도, 플랫폼별 표기 차이도 없다. 스토어 제출 때 반드시
+ *   올라가는 값이라 "이 바이너리가 그 릴리스보다 오래됐는가"를 가장 정확하게 답한다.
+ *   (`nativeApplicationVersion`은 표시·로그용으로만 쓴다.)
+ *
+ * 값을 못 읽으면(미링크/dev) null → 호출부가 **통과**시킨다.
  */
-function nativeAppVersion(): string | null {
+function nativeBuildNumber(): number | null {
   try {
-    const Updates = require('expo-updates') as typeof UpdatesNS;
-    const v = Updates.runtimeVersion;
-    return typeof v === 'string' && v.length > 0 ? v : null;
+    const raw = Application.nativeBuildVersion; // Android: versionCode, iOS: CFBundleVersion
+    if (typeof raw !== 'string' || raw.length === 0) return null;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
   } catch {
     return null;
   }
 }
 
-/**
- * "1.0.10" vs "1.0.9"를 문자열 비교하면 틀린다(사전순으로 "1.0.10" < "1.0.9"). 숫자 단위로 비교한다.
- * 형식이 이상하면(숫자가 아닌 조각) null — 호출부는 그 경우 **통과**시킨다.
- */
-function compareVersions(a: string, b: string): number | null {
-  const parse = (s: string) => s.trim().split('.').map((x) => Number.parseInt(x, 10));
-  const pa = parse(a);
-  const pb = parse(b);
-  if (pa.length === 0 || pb.length === 0) return null;
-  if (pa.some((n) => !Number.isFinite(n)) || pb.some((n) => !Number.isFinite(n))) return null;
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i += 1) {
-    const x = pa[i] ?? 0;
-    const y = pb[i] ?? 0;
-    if (x !== y) return x < y ? -1 : 1;
+function nativeVersionLabel(): string | null {
+  try {
+    return Application.nativeApplicationVersion ?? null;
+  } catch {
+    return null;
   }
-  return 0;
 }
 
 /**
@@ -68,9 +68,10 @@ function compareVersions(a: string, b: string): number | null {
  * 호출부는 blocked=true일 때만 차단 화면을 띄우면 된다.
  */
 export async function checkVersionGate(): Promise<VersionGateResult> {
-  const currentVersion = nativeAppVersion();
-  // 버전을 못 읽으면(dev 클라이언트/미링크) 판정 자체가 불가능 — 통과.
-  if (!currentVersion) return { blocked: false, reason: 'no-version' };
+  const currentBuild = nativeBuildNumber();
+  const currentVersion = nativeVersionLabel();
+  // 빌드 번호를 못 읽으면(dev 클라이언트/미링크) 판정 자체가 불가능 — 통과.
+  if (currentBuild === null) return { blocked: false, reason: 'no-version' };
 
   let payload: unknown;
   try {
@@ -89,21 +90,24 @@ export async function checkVersionGate(): Promise<VersionGateResult> {
 
   const cfg = payload as {
     enabled?: unknown;
-    minSupportedVersion?: unknown;
+    minBuildNumber?: unknown;
     storeUrl?: unknown;
   } | null;
 
   // 킬 스위치 — 사고 시 서버에서 이것만 false로 바꾸면 즉시 해제된다.
   if (!cfg || cfg.enabled !== true) return { blocked: false, reason: 'disabled' };
 
-  const min = typeof cfg.minSupportedVersion === 'string' ? cfg.minSupportedVersion : null;
-  const storeUrl = typeof cfg.storeUrl === 'string' ? cfg.storeUrl : null;
+  // 정수만 받는다. 문자열/실수/음수/NaN은 전부 "판정 불가"로 보고 통과시킨다 —
+  // 서버 값이 오염됐을 때 사용자를 막는 쪽으로 기울면 안 된다.
+  const minBuild =
+    typeof cfg.minBuildNumber === 'number' && Number.isInteger(cfg.minBuildNumber) && cfg.minBuildNumber >= 0
+      ? cfg.minBuildNumber
+      : null;
+  const storeUrl = typeof cfg.storeUrl === 'string' && cfg.storeUrl.length > 0 ? cfg.storeUrl : null;
   // 스토어 주소가 없으면 막아봐야 사용자가 빠져나갈 길이 없다 — 그런 차단은 하지 않는다.
-  if (!min || !storeUrl) return { blocked: false, reason: 'bad-payload' };
+  if (minBuild === null || !storeUrl) return { blocked: false, reason: 'bad-payload' };
 
-  const cmp = compareVersions(currentVersion, min);
-  if (cmp === null) return { blocked: false, reason: 'bad-payload' };
-  if (cmp >= 0) return { blocked: false, reason: 'ok' };
+  if (currentBuild >= minBuild) return { blocked: false, reason: 'ok' };
 
-  return { blocked: true, storeUrl, currentVersion, minSupportedVersion: min };
+  return { blocked: true, storeUrl, currentBuild, minBuild, currentVersion };
 }

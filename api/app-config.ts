@@ -33,17 +33,27 @@ type VercelResponse = {
 };
 
 // ⚠️ 이 값이 강제 업데이트의 유일한 스위치다. 위 운영 규칙을 반드시 읽고 바꿀 것.
+//
+// ⚠️⚠️ 판정 기준은 **버전 문자열이 아니라 빌드 번호**다(Android versionCode / iOS CFBundleVersion).
+//   2026-08-08에 버전 문자열로 만들었다가 실기기에서 함정을 밟았다: app.json이 플랫폼별
+//   runtimeVersion을 고정하고 있어(android="1.0", ios="1.0.1") 안드로이드는 릴리스가 올라가도
+//   계속 "1.0"을 보고했다 — 버전 문자열로는 안드로이드를 아예 구분할 수 없었다.
+//   빌드 번호는 스토어 제출 때 반드시 올라가는 단조 증가 정수라 그런 모호함이 없다.
+//   (자세한 경위는 src/services/appVersionGate.ts의 nativeBuildNumber 주석에 있다.)
 const CONFIG = {
   // false면 앱은 버전과 무관하게 절대 차단하지 않는다(사고 시 즉시 해제용 킬 스위치).
   enabled: true,
-  // 이 버전 **미만**이면 차단한다. 현재 출시본이 1.0.1이므로 1.0.0으로 둔다
-  // (= 지금은 아무도 차단되지 않는다. 게이트 배선만 살아 있고 실제 차단은 0명).
-  // 다음 네이티브 릴리스가 스토어에 승인·출시된 뒤에 그 버전으로 올린다.
-  minSupportedVersion: {
-    ios: '1.0.0',
-    android: '1.0.0',
+  // 이 빌드 번호 **미만**이면 차단한다.
+  //   Android = versionCode (android/app/build.gradle의 그 값이 진짜다 — app.json이 아니다)
+  //   iOS     = CFBundleVersion (project.pbxproj의 CURRENT_PROJECT_VERSION)
+  // 현재 출시본이 android=6 / ios=5이므로 그보다 낮게 둔다
+  // (= 지금은 아무도 차단되지 않는다. 배선만 살아 있고 실제 차단은 0명).
+  // 다음 네이티브 릴리스가 스토어에 **승인·출시된 뒤에** 그 빌드 번호로 올린다.
+  minBuildNumber: {
+    ios: 1,
+    android: 1,
   },
-  // 참고용(앱은 표시에만 쓴다). 차단 판정에는 쓰지 않는다.
+  // 표시·로그용(앱은 판정에 쓰지 않는다).
   latestVersion: '1.0.1',
   storeUrl: {
     ios: 'https://apps.apple.com/app/id0000000000',
@@ -61,7 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.status(200).json({
     enabled: CONFIG.enabled,
     platform,
-    minSupportedVersion: CONFIG.minSupportedVersion[platform],
+    minBuildNumber: CONFIG.minBuildNumber[platform],
     latestVersion: CONFIG.latestVersion,
     storeUrl: CONFIG.storeUrl[platform],
   });

@@ -520,7 +520,7 @@ export default function RootLayout() {
           if (cancelled) return;
           setVersionGate(r.blocked ? { storeUrl: r.storeUrl } : null);
           if (r.blocked) {
-            console.warn(`[versionGate] blocked current=${r.currentVersion} min=${r.minSupportedVersion}`);
+            console.warn(`[versionGate] blocked build=${r.currentBuild} min=${r.minBuild} version=${r.currentVersion}`);
           }
         })
         .catch(() => {}); // checkVersionGate는 throw하지 않지만 방어적으로 한 겹 더
@@ -652,7 +652,20 @@ export default function RootLayout() {
                 <Text style={styles.forceUpdateBody}>{t('home.forceUpdateBody')}</Text>
                 <Pressable
                   style={styles.forceUpdateButton}
-                  onPress={() => { Linking.openURL(versionGate.storeUrl).catch(() => {}); }}
+                  onPress={() => {
+                    // 2026-08-08 실기기에서 확인 — https://play.google.com/... 로 열면 스토어 앱이
+                    // "항목을 찾을 수 없습니다"를 띄우는 경우가 있다(비공개 테스트 트랙처럼 그 계정에
+                    // 목록이 안 보이는 상태). 네이티브 스킴(market://, itms-apps://)은 스토어 앱을
+                    // 곧바로 열어 이 문제를 덜 겪으므로 **먼저 시도하고, 실패하면 웹 URL로 폴백**한다.
+                    // 어느 쪽도 못 열면 조용히 넘어간다 — 여기서 throw하면 모달이 먹통처럼 보인다.
+                    const web = versionGate.storeUrl;
+                    const native = Platform.OS === 'android'
+                      ? web.replace('https://play.google.com/store/apps/', 'market://')
+                      : web.replace('https://apps.apple.com/', 'itms-apps://apps.apple.com/');
+                    Linking.openURL(native).catch(() => {
+                      Linking.openURL(web).catch(() => {});
+                    });
+                  }}
                 >
                   <Text style={styles.forceUpdateButtonText}>{t('home.forceUpdateButton')}</Text>
                 </Pressable>

@@ -411,6 +411,12 @@ class PaceOverlayModule : Module() {
       appContext.reactContext?.let { context -> PaceOverlayService.setBluetoothVolumeKeySkipEnabled(context, enable) }
     }
 
+    // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생" 옵트인 토글. settings.tsx의
+    // favoriteAutoChain 변경 시 호출(overlayService.android.ts 경유).
+    Function("setFavoriteAutoChainEnabled") { enable: Boolean ->
+      appContext.reactContext?.let { context -> PaceOverlayService.setFavoriteAutoChainEnabled(context, enable) }
+    }
+
     // 2026-07-27 사용자 지시("시간이나 다른 것들도 다 적용 안되는거 아냐? 전수 확인해") — 휴식 간격/
     // 알림 3종/Hard Block을 이미 도는 세션에 즉시 반영.
     Function("updateLiveSessionConfig") { config: LiveSessionConfig ->

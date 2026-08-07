@@ -44,7 +44,14 @@ export function AnimatedSplash({ onComplete, onLayoutReady }: { onComplete: () =
   useEffect(() => {
     iconOpacity.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) });
     glowOpacity.value = withDelay(60, withTiming(1, { duration: 280 }));
-    shimmerX.value = withDelay(120, withRepeat(withTiming(1, { duration: 700, easing: Easing.linear }), -1, false));
+    // 2026-08-07 발견(사장님 지적 "빛 지나가는게 마지막에 버벅거려 같은자리에서") — 위 주석은
+    // "스윕 1회가 온전히 보이게"가 의도였는데 실제 코드는 withRepeat(..., -1, ...)로 무한반복이었다.
+    // 1회차(120~820ms)는 온전히 보이지만, 2회차가 820ms에 바로 시작해 130ms쯤(950ms 컷오프) 진행된
+    // 채로 스플래시가 unmount/FadeOut되면서 "빛이 이동 중이던 프레임"이 그대로 잘렸다 — 매 실행마다
+    // 타이머 기반이라 정확히 같은 지점(2회차의 약 18%)에서 끊겨 "같은 자리에서 버벅"으로 보였다.
+    // 반복 횟수를 의도대로 1회로 고정 — 스윕이 끝나면 화면 밖(오른쪽)에 가만히 머물러 더 이상
+    // "움직이는 중" 상태로 잘릴 일이 없다.
+    shimmerX.value = withDelay(120, withTiming(1, { duration: 700, easing: Easing.linear }));
     textOpacity.value = withDelay(150, withTiming(1, { duration: 220 }));
     textY.value = withDelay(150, withTiming(0, { duration: 220 }));
     barX.value = withRepeat(withSequence(withTiming(1, { duration: 260, easing: Easing.inOut(Easing.ease) }), withTiming(-1, { duration: 0 })), -1, false);

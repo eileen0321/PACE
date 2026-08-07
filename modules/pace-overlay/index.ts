@@ -74,6 +74,11 @@ type PaceOverlayNativeModule = {
   // 다시 탭한 것과 동일하게 기존 태스크를 그 상태 그대로 앞으로 가져온다(constants/supportedApps.ts
   // resumePlatformApp 참고).
   resumeThirdPartyApp(packageName: string): void;
+  // 2026-08-07 Favorite 리스트 "이어서 재생" 옵트인 토글(기본 OFF) — 실제 체이닝 로직은 전부
+  // 네이티브(PaceOverlayService.showSavedFavoriteList + PaceAccessibilityService.startFavoriteChainWatch)
+  // 안에서 끝난다. 이 오버레이는 RN 브릿지가 살아있단 보장이 없는 시점(포그라운드 서비스에서 직접)에
+  // 뜨므로(showSavedFavoriteList 상단 주석 참고) JS와 이벤트를 주고받지 않는다 — JS는 설정값만 넘긴다.
+  setFavoriteAutoChainEnabled(enable: boolean): void;
 };
 
 export const PaceOverlay = requireNativeModule<PaceOverlayNativeModule>('PaceOverlay');

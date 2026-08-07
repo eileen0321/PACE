@@ -38,6 +38,12 @@ export const STORAGE_KEYS = {
   // 2026-07-29 — 인사이트 배너를 탭했을 때 "가끔" 보너스 크레딧을 주는 선물상자 연출. 하루에 한 번만
   // 보상 시도(연속으로 계속 눌러서 파밍하는 것 방지) — 오늘 이미 시도했는지 날짜로 기록.
   insightGiftClaimedDate: 'pace_insight_gift_claimed_date',
+  // 2026-08-07 사용자 지적("닫아도 다른 메뉴 갔다 오면 계속 떠") — 위 insightGiftClaimedDate는
+  // "오늘 보상을 이미 받았는지"만 기록해 배너 자체의 노출 여부와는 무관했다. useFocusEffect가 홈
+  // 탭에 포커스될 때마다(다른 탭 갔다 오는 것 포함) 조건 없이 getTodaysInsightMessage를 다시 불러
+  // todaysInsight를 채워서, X로 닫아도(=setTodaysInsight(null)) 곧바로 되살아났다. "오늘 이미
+  // 닫았는지"를 따로 기록해, 닫힌 뒤에는 같은 날 안에는 다시 채우지 않는다.
+  insightDismissedDate: 'pace_insight_dismissed_date',
   // 2026-08-01 사용자 지시("출시전에" 백엔드로 이전) — 홈 배너 문구 풀을 백엔드(/insights)에서 받아
   // 하루 단위로 캐싱. 날짜가 바뀌거나 캐시가 없으면 재요청, 실패 시 이 캐시(또는 없으면 로컬 폴백
   // insightContent.ts)로 계속 동작 — 앱이 오프라인이거나 백엔드가 잠깐 죽어도 배너가 안 죽는다.

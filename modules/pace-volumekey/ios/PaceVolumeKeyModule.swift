@@ -123,6 +123,18 @@ public class PaceVolumeKeyModule: Module {
       DispatchQueue.main.async {
         self.volumeView?.removeFromSuperview()
         self.volumeView = nil
+        // 2026-08-07 사용자 지적("무음일 때 쇼츠 소리가 왜 나, 유튜브랑 정책 맞추라고") — 위 start()가
+        // .playback 카테고리로 세션을 활성화하는데(볼륨키 KVO/MPVolumeView가 안정적으로 동작하려면
+        // 필요), .playback은 물리 무음 스위치를 무시한다(항상 소리 남 — 유튜브 실제 동작과 다름).
+        // 그런데 이 stop()이 지금까지 카테고리를 원래대로 되돌리지 않아서, 볼륨키 리모컨(opt-in, 기본
+        // OFF)을 단 한 번이라도 켰다 껐으면 그 뒤로 앱이 살아있는 내내(토글을 다시 꺼도, 피드를 나가도)
+        // 무음 스위치가 계속 무시됐다 — "내가 안 켰는데 왜 소리가 나"로 보이는 원인이 정확히 이것.
+        // 리모컨 기능이 꺼지면 기본 카테고리(.soloAmbient, 무음 스위치를 존중 — 유튜브 Shorts와 동일
+        // 정책)로 명시적으로 되돌려 하이재킹 범위를 "리모컨이 실제로 켜져 있는 동안"으로만 국한한다.
+        do {
+          try self.session.setCategory(.soloAmbient)
+          try self.session.setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {}
       }
     }
   }

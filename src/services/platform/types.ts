@@ -147,6 +147,13 @@ export interface OverlayService {
    */
   hasAccessibilityPermission(): Promise<boolean>;
   requestAccessibilityPermission(): Promise<void>;
+  /**
+   * 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(옵트인) 설정을 이미 도는 세션에도 즉시
+   * 반영한다(bluetoothVolumeKeySkipEnabled와 동일 패턴). Android만 실제 동작
+   * (PaceOverlayService.showSavedFavoriteList의 favorite 탭 핸들러가 읽음). iOS는 no-op — iOS는
+   * feed/index.tsx의 forcedListRef로 이미 항상 이어서 재생하므로 이 토글 개념 자체가 없음.
+   */
+  setFavoriteAutoChainEnabled(enable: boolean): Promise<void>;
 }
 
 export type BluetoothState = {

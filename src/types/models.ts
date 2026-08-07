@@ -80,6 +80,14 @@ export type UserSettings = {
    */
   handsFreeEnabled: boolean;
   handsFreeGesture: boolean;
+  /**
+   * 2026-08-07 사용자 지시 — Favorite 리스트 항목을 탭하면 그 리스트를 이어서 재생(Android). iOS는
+   * WebView 안에서 forcedListRef로 이미 하고 있었지만(feed/index.tsx), Android는 실제 유튜브 앱을
+   * 딥링크로 여는 구조라 화면 전환이 뒤따른다(PaceAccessibilityService의 수동적 제목-변경 감지로
+   * 다음 큐 항목을 새로 딥링크) — iOS만큼 매끈하지 않을 수 있어 기본 OFF, 출시 임박 시점 리스크
+   * 최소화를 위해 옵트인으로 둔다. 꺼져 있으면 기존 "탭 = 그 영상 하나만 재생" 동작 그대로.
+   */
+  favoriteAutoChain: boolean;
 };
 
 // 'sleep_detected' — 수면 감지 강제 종료(스펙 §1-B/§4-B, 2026-07-23, Android 네이티브 PaceOverlayService

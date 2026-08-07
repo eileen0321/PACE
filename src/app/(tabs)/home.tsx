@@ -89,6 +89,10 @@ export default function HomeScreen() {
   // 같은 "오늘의 뽑기"를 공유(usageInsight.ts의 날짜 캐시) — 세션당이 아니라 캘린더 날짜 기준이라
   // 앱을 여러 번 재시작해도 같은 날엔 같은 문구, 노티와 배너가 서로 다른 문구를 보여주지 않는다.
   const [todaysInsight, setTodaysInsight] = useState<string | null>(null);
+  // 2026-08-07 — 선물상자(인사이트 배너) 보상이 터졌을 때 보여줄 값. 기존엔 토스트(몇 초 뒤 자동
+  // 소멸)로만 알렸는데, 사용자가 놓치면 다시 확인할 방법이 없었다("바로 사라져서 클릭도 확인도 못
+  // 함") — 출석 보상(DailyCheckInModal)과 동일하게 사용자가 직접 닫아야 사라지는 모달로 바꾼다.
+  const [insightGiftEarned, setInsightGiftEarned] = useState<number | null>(null);
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
@@ -215,6 +219,17 @@ export default function HomeScreen() {
   // 그래서 백그라운드에 머문 시간으로 가른다 — 광고 보고 오기/P메뉴 "앱으로"처럼 수 초짜리 왕복은
   // 문구를 그대로 두어 화면이 미동도 안 하고(사장님이 지적한 그 케이스), 한참 뒤에 다시 열면 그때는
   // 새로 뽑는다. 2026-08-01 지적("왜 계속 같은 것만 띄우냐, 랜덤으로 바뀌어야지")도 그대로 만족한다.
+  // 2026-08-07 사용자 지적("닫아도 다른 메뉴 갔다 오면 계속 떠") — 오늘 이미 X(또는 선물상자 탭)로
+  // 닫았으면, 같은 날 안에는 아래 두 트리거(포그라운드 복귀/탭 재포커스) 어느 쪽이 다시 불러도 배너를
+  // 채우지 않는다. STORAGE_KEYS.insightDismissedDate 참고.
+  const maybeSetTodaysInsight = useCallback(async (uid: string) => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dismissedDate = await AsyncStorage.getItem(STORAGE_KEYS.insightDismissedDate).catch(() => null);
+    if (dismissedDate === todayStr) return;
+    const message = await getTodaysInsightMessage(uid).catch(() => null);
+    if (message) setTodaysInsight(message);
+  }, []);
+
   const backgroundedAtRef = useRef<number | null>(null);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -226,10 +241,10 @@ export default function HomeScreen() {
       backgroundedAtRef.current = null;
       if (leftAt == null) return;
       if (Date.now() - leftAt < INSIGHT_REDRAW_MIN_AWAY_MS) return;
-      if (user?.id) getTodaysInsightMessage(user.id).then(setTodaysInsight).catch(() => {});
+      if (user?.id) maybeSetTodaysInsight(user.id);
     });
     return () => sub.remove();
-  }, [user?.id]);
+  }, [user?.id, maybeSetTodaysInsight]);
 
   // 2026-07-18 실기기 검증 중 발견: mount 시 1회만 refresh하는 useEffect라 세션이 끝나고
   // router.back()으로 Home에 돌아와도(탭 자체는 재마운트되지 않으므로) "오늘 사용" 숫자가 세션
@@ -247,7 +262,7 @@ export default function HomeScreen() {
           await backfillSleepFromHistory(uid);
           // 2026-08-01 사장님 지시 — "오늘의 신조어"가 앱 배너 + 푸시 노티로 중복 노출됐다. 앱 배너만
           // 남기고 푸시 노티는 제거(maybeShowUsageInsight 호출 삭제). 인사이트는 인앱에서만 본다.
-          getTodaysInsightMessage(uid).then(setTodaysInsight).catch(() => {});
+          await maybeSetTodaysInsight(uid);
         })();
       }
       // 2026-07-28 밤 감사 — 배터리 최적화 제외 배너, 1회만. Settings 안에 이미 있는 행(guardRow)과
@@ -263,7 +278,7 @@ export default function HomeScreen() {
           setShowAccessibilityPrompt(!granted);
         }).catch(() => {});
       }
-    }, [user?.id, refresh, refreshBluetooth])
+    }, [user?.id, refresh, refreshBluetooth, maybeSetTodaysInsight])
   );
 
   const dismissBatteryPrompt = useCallback(() => {
@@ -298,13 +313,20 @@ export default function HomeScreen() {
         const bonus = Math.random() < 0.5 ? 5 : 10;
         await addBonusMinutes(bonus);
         await AsyncStorage.setItem(STORAGE_KEYS.insightGiftClaimedDate, todayStr);
-        useToastStore.getState().show(t('home.insightGiftReward', { n: bonus }));
+        // 2026-08-07 사용자 지적("박스가 나왔다 바로 사라져서 클릭도 확인도 못 함") — 토스트는 몇 초면
+        // 스스로 사라져서 놓치면 끝이었다. 출석 보상(DailyCheckInModal)과 동일하게, 사용자가 직접
+        // 닫기 전까지 사라지지 않는 모달로 보여준다(아래 렌더 블록 참고).
+        setInsightGiftEarned(bonus);
       }
     } catch {
       // 조용히 무시 — 부가 기능
     }
+    // 2026-08-07 — 보상 당첨 여부와 무관하게 "오늘은 이미 닫았다"를 기록한다. 이게 없으면 다른 탭
+    // 갔다가 홈으로 돌아올 때마다 useFocusEffect가 배너를 다시 채워, 사실상 무제한으로 재도전할 수
+    // 있었다(파밍 방지 취지 자체가 무력화됨) — 위 STORAGE_KEYS.insightDismissedDate 주석 참고.
+    await AsyncStorage.setItem(STORAGE_KEYS.insightDismissedDate, todayStr).catch(() => {});
     setTodaysInsight(null);
-  }, [addBonusMinutes, t]);
+  }, [addBonusMinutes]);
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
@@ -587,6 +609,23 @@ export default function HomeScreen() {
         visible={showFocusSessionExtend && !celebrationVisible}
         onDismiss={() => setShowFocusSessionExtend(false)}
       />
+
+      {/* 2026-08-07 사용자 지적("랜덤박스가 나왔다 바로 사라져서 클릭도 확인도 못 함") — 인사이트
+          선물상자 당첨을 토스트 대신 출석 보상(DailyCheckInModal)과 같은 방식으로, 사용자가 직접
+          닫기 전까지 사라지지 않게 보여준다. */}
+      {insightGiftEarned != null && (
+        <View style={styles.giftBackdrop} pointerEvents="auto">
+          <View style={styles.giftCard}>
+            <View style={styles.giftIconWrap}>
+              <Feather name="gift" size={18} color={colors.successLight} />
+            </View>
+            <Text style={styles.giftTitle}>{t('home.insightGiftReward', { n: insightGiftEarned })}</Text>
+            <Pressable style={styles.giftBtn} onPress={() => setInsightGiftEarned(null)}>
+              <Text style={styles.giftBtnText}>{t('checkIn.dismiss')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -594,6 +633,20 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: {},
+  // 2026-08-07 — 인사이트 선물상자 당첨 모달(DailyCheckInModal과 동일한 배경/카드 톤).
+  giftBackdrop: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1000,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  giftCard: { width: '100%', maxWidth: 280, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.md, alignItems: 'center', gap: 2 },
+  giftIconWrap: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: colors.successBg, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  giftTitle: { color: colors.textPrimary, fontSize: 15, fontFamily: typography.bodyFontFamilySemibold, textAlign: 'center', marginTop: 2 },
+  giftBtn: { alignSelf: 'stretch', backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 10, alignItems: 'center', marginTop: spacing.sm },
+  giftBtnText: { color: '#FFFFFF', fontFamily: typography.bodyFontFamilyBold, fontSize: 13 },
   sleepInsightBanner: {
     flexDirection: 'row',
     alignItems: 'center',

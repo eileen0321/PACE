@@ -442,6 +442,86 @@ class PaceAccessibilityService : AccessibilityService() {
       val m = YOUTUBE_VIDEO_ID_PATTERN.matcher(text)
       return if (m.find()) m.group(1) else null
     }
+
+    // 2026-08-07 사장님 지시 — Favorite 리스트를 탭하면(Android) 그 리스트를 이어서 재생한다(iOS의
+    // forcedListRef와 동일한 의도, PaceMenu→SavedVideoListOverlay 참고). Android는 실제 유튜브 앱을
+    // 딥링크로 여는 구조라 iOS처럼 WebView 안에서 다음 영상을 대신 붙일 수 없다 — 대신 "지금 보이는
+    // 영상이 바뀌었다"만 조용히 감지해서(readVisibleTitleChannel 재사용, 공유시트처럼 화면을 건드리지
+    // 않음) 콜백을 부르고, 그 콜백(PaceOverlayService.showSavedFavoriteList)이 큐의 다음 videoId로
+    // 새 딥링크를 직접 연다 — 전부 네이티브 안에서 끝난다(이 오버레이는 RN 브릿지가 살아있단 보장이
+    // 없는 시점에도 떠야 해서 JS 이벤트 브릿지를 쓰지 않음). 설정 토글(favoriteAutoChain)이 꺼져
+    // 있으면 이 watch 자체를 시작하지 않으므로 기존 단일 재생 동작에는 영향이 없다.
+    private var chainWatchRunnable: Runnable? = null
+    private var chainWatchLastTitle: String? = null
+    private var chainWatchCallback: (() -> Unit)? = null
+    private val chainWatchHandler = Handler(Looper.getMainLooper())
+    private const val CHAIN_WATCH_INTERVAL_MS = 1500L
+    // ⚠️ 2026-08-07 실기기 재현 — 콜백이 새 딥링크를 연 "직후"의 폴에서 아직 화면 전환이 덜 끝난
+    // 과도기 제목을 그대로 기준(chainWatchLastTitle)으로 확정해버리면, 그 다음 폴이 "실제로 안정된
+    // 새 영상 제목"을 또 다른 변화로 오인해 큐를 연달아 여러 칸 건너뛰었다(사용자가 스와이프 한
+    // 번만 했는데 즐겨찾기 리스트가 통째로 순식간에 소진됨 — 위 startFavoriteChainWatch 최초 호출
+    // 지연(PaceOverlayService.kt 1800ms)과 같은 종류의 버그가 "매 전환마다" 반복된 것). 콜백이
+    // 발동한 뒤 일정 시간은 비교 자체를 쉬고, 그 유예가 끝난 첫 폴은 발동 없이 "기준만 다시 잡는"
+    // 리싱크 폴로 처리해 항상 안정된 값과만 비교하게 한다.
+    private var chainWatchGraceUntilMs = 0L
+    private var chainWatchAwaitingResync = false
+    private const val CHAIN_WATCH_SETTLE_MS = 1800L
+
+    fun startFavoriteChainWatch(onTitleChanged: () -> Unit) {
+      stopFavoriteChainWatch()
+      chainWatchCallback = onTitleChanged
+      chainWatchLastTitle = readVisibleTitleChannel()?.first
+      chainWatchGraceUntilMs = 0L
+      chainWatchAwaitingResync = false
+      Log.i("PaceAccessibility", "CHAIN start baseline='$chainWatchLastTitle'")
+      val runnable = object : Runnable {
+        override fun run() {
+          val now = SystemClock.elapsedRealtime()
+          if (now < chainWatchGraceUntilMs) {
+            // 유예 구간 — 방금 연 딥링크가 아직 로드 중일 수 있어 지금 읽는 값은 못 믿는다.
+            chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
+            return
+          }
+          if (chainWatchAwaitingResync) {
+            // 유예가 막 끝난 첫 폴 — 발동하지 않고 "지금 안정된 값"으로만 기준을 다시 잡는다.
+            chainWatchLastTitle = readVisibleTitleChannel()?.first
+            chainWatchAwaitingResync = false
+            Log.i("PaceAccessibility", "CHAIN resync new baseline='$chainWatchLastTitle'")
+            chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
+            return
+          }
+          val title = readVisibleTitleChannel()?.first
+          if (title != null && title != chainWatchLastTitle) {
+            chainWatchLastTitle = title
+            chainWatchGraceUntilMs = SystemClock.elapsedRealtime() + CHAIN_WATCH_SETTLE_MS
+            chainWatchAwaitingResync = true
+            Log.i("PaceAccessibility", "CHAIN fire callback")
+            chainWatchCallback?.invoke()
+          }
+          // ⚠️ 2026-08-07 실기기 재현 — 큐 마지막 항목의 콜백이 이 run() 안에서 동기적으로
+          // stopFavoriteChainWatch()를 부르면(favoriteChainQueue.isEmpty() 분기) chainWatchRunnable이
+          // null로 비워지지만, 그 직후 무조건 실행되던 이 postDelayed가 'this'(=방금 stop된 바로 그
+          // 러너블)를 다시 스스로 예약해버려 "정지"가 무력화되고 폴링이 영원히 되살아났다(콜백이
+          // null이라 실제로 다음 영상을 열진 않지만, 접근성 트리를 1.5초마다 계속 읽는 낭비가 남음).
+          // 이 인스턴스가 여전히 "현재 활성 러너블"일 때만 스스로 재예약한다.
+          if (chainWatchRunnable === this) {
+            chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
+          }
+        }
+      }
+      chainWatchRunnable = runnable
+      chainWatchHandler.postDelayed(runnable, CHAIN_WATCH_INTERVAL_MS)
+    }
+
+    fun stopFavoriteChainWatch() {
+      Log.i("PaceAccessibility", "CHAIN stop")
+      chainWatchRunnable?.let { chainWatchHandler.removeCallbacks(it) }
+      chainWatchRunnable = null
+      chainWatchCallback = null
+      chainWatchLastTitle = null
+      chainWatchGraceUntilMs = 0L
+      chainWatchAwaitingResync = false
+    }
   }
 
   override fun onServiceConnected() {
@@ -620,6 +700,7 @@ class PaceAccessibilityService : AccessibilityService() {
     isTrackingPlayback = false
     pollingScheduled = false
     handler.removeCallbacks(pollRunnable)
+    stopFavoriteChainWatch() // 서비스가 죽는데 watch만 계속 도는 걸 방지
     // 죽는 시각을 남긴다 — 재바인딩 유예(isAliveOrRebinding)의 기준점이 된다.
     if (instance === this) { lastAliveAtMs = System.currentTimeMillis(); instance = null }
     super.onDestroy()

@@ -264,6 +264,9 @@ export const translations = {
       // 2026-08-05 — iOS는 다른 앱을 종료시킬 수 없다(OS 제약). 시청 자체가 Pace 피드 안에서
       // 일어나므로 "그 피드를 실제로 멈추는 것"이 iOS에서의 동일 기능이다. 문구를 동작에 맞춘다.
       hardBlockModeDescIos: 'When the limit is reached, Shorts stop with a full-screen block screen instead of a passing notice.',
+      // 2026-08-07 사용자 지시 — Android Favorite 리스트 "이어서 재생" 옵트인 토글.
+      favoriteAutoChain: 'Continue Favorite List',
+      favoriteAutoChainDesc: 'Tapping a Favorite plays through the rest of that list before returning to YouTube’s own feed. Off by default.',
       // 2026-07-27 사용자 지시 — 에어팟/블루투스 스피커를 순수 감상용으로 쓰는 사람들을 위한 별도 토글.
       bluetoothSection: 'Bluetooth',
       bluetoothVolumeKeySkip: 'Skip with Volume Keys',
@@ -764,6 +767,8 @@ export const translations = {
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: '한도 도달 시 전체화면 차단에 더해, YouTube 등 차단 대상 앱을 즉시 강제 종료합니다.',
       hardBlockModeDescIos: '한도 도달 시 지나가는 안내 대신 전체화면 차단으로 쇼츠를 실제로 멈춥니다.',
+      favoriteAutoChain: 'Favorite 리스트 이어서 재생',
+      favoriteAutoChainDesc: '즐겨찾기 항목을 탭하면 그 리스트를 끝까지 이어서 보여준 뒤 유튜브 자체 피드로 넘어갑니다. 기본 꺼짐.',
       bluetoothSection: '블루투스',
       bluetoothVolumeKeySkip: '볼륨키로 영상 넘기기',
       bluetoothVolumeKeySkipDesc: '연결된 블루투스 스피커나 이어폰의 볼륨 버튼으로 다음/이전 영상으로 넘깁니다. 블루투스를 순수 음향 감상용으로만 쓰신다면 꺼주세요.',

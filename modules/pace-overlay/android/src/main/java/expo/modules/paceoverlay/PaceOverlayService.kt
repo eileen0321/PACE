@@ -73,6 +73,10 @@ class PaceOverlayService : Service() {
   // 네이티브 오버레이로 그 자리에서 뜬다(유튜브를 벗어나면 자동 PIP가 걸리는 문제 자체를 원천 차단,
   // showSavedFavoriteList 참고).
   private var savedListView: FrameLayout? = null
+  // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(옵트인, PREF_FAVORITE_AUTO_CHAIN_ENABLED).
+  // 탭한 항목 다음부터 남은 videoId를 순서대로 담아둔다. PaceAccessibilityService.startFavoriteChainWatch가
+  // "지금 보이는 영상이 바뀌었다"를 감지할 때마다 여기서 하나씩 꺼내 새 딥링크를 연다(showSavedFavoriteList 참고).
+  private val favoriteChainQueue: java.util.ArrayDeque<String> = java.util.ArrayDeque()
   // 2026-08-01 사장님 지시 — Shorts HOT도 같은 이유로 네이티브 오버레이(showShortsHotList 참고).
   private var shortsHotListView: FrameLayout? = null
   // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
@@ -1022,6 +1026,8 @@ class PaceOverlayService : Service() {
     // 2026-07-27 사용자 지시 — 블루투스 볼륨키로 영상 넘기기 on/off.
     private const val PREF_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED = "bluetooth_volume_key_skip_enabled"
     private const val EXTRA_BLUETOOTH_VOLUME_KEY_SKIP_ENABLED = "bluetoothVolumeKeySkipEnabled"
+    // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생" 옵트인 토글(기본 OFF).
+    private const val PREF_FAVORITE_AUTO_CHAIN_ENABLED = "favorite_auto_chain_enabled"
     // 한도 도달 3단계 히트카운트 영속 키(날짜 스코프) — 위 PREF_LAST_MOTION_AT_MS와 마찬가지로
     // PREFS_NAME 안에 같이 저장(별도 파일 불필요).
     private const val PREF_DAILY_LIMIT_HIT_DATE = "daily_limit_hit_date"
@@ -1518,6 +1524,20 @@ class PaceOverlayService : Service() {
       // 이 인스턴스 필드로 게이팅하게 됐다(위 volumeKeySkipEnabled와 별개 필드였어서 세션 도중 토글이
       // 이 경로엔 전혀 안 먹혔던 버그, 사용자 지적 "블루투스 다 꺼져있었는데" 참고).
       instance?.bluetoothVolumeKeySkipEnabled = enabled
+    }
+
+    // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생" 설정을 이미 도는 세션에도 즉시 반영
+    // (bluetoothVolumeKeySkipEnabled와 동일 패턴). showSavedFavoriteList()의 favorite 탭 핸들러가
+    // 이 인스턴스 필드를 그때그때 읽는다.
+    fun setFavoriteAutoChainEnabled(context: Context, enabled: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_FAVORITE_AUTO_CHAIN_ENABLED, enabled).apply()
+      // 캐시된 인스턴스 필드를 따로 안 둔다 — showSavedFavoriteList()의 favorite 탭 핸들러가 탭할
+      // 때마다 SharedPreferences를 직접 읽으므로(값 하나 읽는 비용은 무시할 수준) 세션 재시작/
+      // 프로세스 복구 시점과 무관하게 항상 최신값을 본다.
+      // 껐을 때는 이미 도는 중인 체이닝도 즉시 멈춘다 — "껐는데 계속 다음 영상으로 넘어간다"는
+      // 혼란을 막는다(안 그러면 다음 영상 전환까지 최대 CHAIN_WATCH_INTERVAL_MS만큼 계속 살아있음).
+      if (!enabled) PaceAccessibilityService.stopFavoriteChainWatch()
     }
 
     // 2026-07-28 사장님 결정("리셋형: 그냥 지금부터 30분 다시 카운트, 경과시간 무시") — 취침 타이머를
@@ -2835,10 +2855,50 @@ class PaceOverlayService : Service() {
               Toast.makeText(applicationContext, "This one has no link — remove it with ✕", Toast.LENGTH_SHORT).show()
               return@setOnClickListener
             }
+            // 2026-08-07 사용자 지시("이어서 재생") — 옵트인 설정이 켜져 있고 이 항목 뒤로 재생 가능한
+            // 항목이 더 있으면 큐에 담아 감시를 시작한다. PaceAccessibilityService가 화면 제목이 바뀐
+            // 걸(스와이프든 이 콜백 자신이 새로 연 딥링크든) 감지할 때마다 큐의 다음 항목을 새로 연다.
+            // 꺼져 있으면(기본값) 기존과 동일하게 이 영상 하나만 열고 끝 — 이전에 남아있을 수 있는
+            // 큐도 여기서 항상 비워 안전하게 만든다.
+            val chainEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+              .getBoolean(PREF_FAVORITE_AUTO_CHAIN_ENABLED, false)
+            favoriteChainQueue.clear()
+            PaceAccessibilityService.stopFavoriteChainWatch()
+            if (chainEnabled) {
+              items.drop(index + 1).forEach { rest ->
+                val restUrl = rest.url ?: rest.videoId?.takeIf { it.isNotBlank() }?.let { "https://www.youtube.com/shorts/$it" }
+                if (restUrl != null) favoriteChainQueue.add(restUrl)
+              }
+            }
+            Log.i("PaceOverlayService", "CHAIN tapped url=$url chainEnabled=$chainEnabled queueSize=${favoriteChainQueue.size}")
             try {
               startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (e: Exception) {
               Log.w("PaceOverlayService", "재생 실패", e)
+            }
+            // ⚠️ 2026-08-07 — startFavoriteChainWatch()의 기준 제목(baseline)은 "지금 화면에 보이는
+            // 영상 제목"을 그 자리에서 즉시 읽는다. 위 startActivity() 직후 바로 부르면 방금 요청한
+            // 딥링크가 아직 로드되기 전(직전 영상 제목이 그대로 화면에 남아있는 순간)을 기준으로 잡아
+            // 버려서, 첫 폴링(≈1.5초 뒤)이 "제목이 바뀌었다"를 방금 탭한 그 영상으로 오인 — 사용자가
+            // 탭한 영상을 보기도 전에 큐 전체가 도미노처럼 연속 재생돼 버렸다(실기기로 재현·확인).
+            // 탭한 영상이 실제로 로드될 시간을 준 뒤에 감시를 시작해 그 영상 자체를 기준으로 삼는다.
+            if (favoriteChainQueue.isNotEmpty()) {
+              foregroundPollHandler.postDelayed({
+                PaceAccessibilityService.startFavoriteChainWatch {
+                  val next = favoriteChainQueue.poll()
+                  Log.i("PaceOverlayService", "CHAIN advance next=$next remaining=${favoriteChainQueue.size}")
+                  if (next == null) {
+                    PaceAccessibilityService.stopFavoriteChainWatch()
+                    return@startFavoriteChainWatch
+                  }
+                  try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  } catch (e: Exception) {
+                    Log.w("PaceOverlayService", "체이닝 재생 실패", e)
+                  }
+                  if (favoriteChainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
+                }
+              }, 1800L)
             }
           }
         }
@@ -3814,6 +3874,8 @@ class PaceOverlayService : Service() {
     // 상태로 계속 도는 일이 없게 같이 정리 — 10분 타이머가 아직 안 끝났어도 취소.
     focusSessionHandler.removeCallbacks(focusSessionAutoStop)
     PaceAccessibilityService.stopWatching()
+    PaceAccessibilityService.stopFavoriteChainWatch()
+    favoriteChainQueue.clear()
     PaceSnapDetector.stop()
     PaceHandWaveDetector.stop()
     infraReady = false

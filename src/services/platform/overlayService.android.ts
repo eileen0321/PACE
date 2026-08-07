@@ -36,6 +36,7 @@ let PaceOverlay: {
   isOverlayServiceAlive(): boolean;
   hasAccessibilityPermission(): boolean;
   requestAccessibilityPermission(): void;
+  setFavoriteAutoChainEnabled(enable: boolean): void;
 } | null = null;
 
 try {
@@ -176,5 +177,9 @@ export const overlayService: OverlayService = {
 
   async isOverlayServiceAlive() {
     return PaceOverlay?.isOverlayServiceAlive() ?? false;
+  },
+
+  async setFavoriteAutoChainEnabled(enable) {
+    PaceOverlay?.setFavoriteAutoChainEnabled(enable);
   },
 };

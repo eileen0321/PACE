@@ -107,4 +107,7 @@ export const overlayService: OverlayService = {
   async requestAccessibilityPermission() {
     // no-op
   },
+  async setFavoriteAutoChainEnabled() {
+    // no-op — iOS는 feed/index.tsx의 forcedListRef로 이미 항상 이어서 재생함
+  },
 };

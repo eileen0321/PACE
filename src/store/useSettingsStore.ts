@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   // 기본 OFF·opt-in 전환(Focus 탭에서 직접 켜야 함). feed/index.tsx의 handsFreeDetectActive 참고.
   // 기존 사용자(이미 로컬에 true로 저장된 값)는 이 기본값 변경의 영향을 안 받음 — 마이그레이션 없음.
   handsFreeGesture: false,
+  // 2026-08-07 — Favorite 리스트 "이어서 재생"(Android, 옵트인). types/models.ts UserSettings 참고.
+  favoriteAutoChain: false,
 };
 
 type SettingsState = {

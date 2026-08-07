@@ -402,6 +402,20 @@ export default function SettingsScreen() {
               value={settings.hardBlockMode}
               onChange={(value) => { update({ hardBlockMode: value }); pushLiveSessionConfig(); }}
             />
+            {/* 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(Android 전용, 옵트인).
+                끄면(기본값) P메뉴 Favorite 탭이 그 영상 하나만 여는 기존 동작 그대로 — overlay/index.tsx
+                playFavoriteQueue 참고. iOS는 이미 forcedListRef로 항상 이어서 재생하므로 토글이 필요 없다. */}
+            {Platform.OS === 'android' && (
+              <NotifRow
+                title={t('settings.favoriteAutoChain')}
+                desc={t('settings.favoriteAutoChainDesc')}
+                value={settings.favoriteAutoChain}
+                onChange={(value) => {
+                  update({ favoriteAutoChain: value });
+                  overlayService.setFavoriteAutoChainEnabled(value).catch(() => {});
+                }}
+              />
+            )}
           </GlassSurface>
         </View>
 

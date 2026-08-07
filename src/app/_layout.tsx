@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
-import { ActivityIndicator, AppState, InteractionManager, LogBox, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, InteractionManager, Linking, LogBox, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 // 개발(LogBox) 전용 소음 억제 — RevenueCat SDK가 시뮬레이터(StoreKit 없음)에서 "issue with your
 // configuration" 경고를 반복 출력해 개발 화면을 덮는다(계정삭제 녹화 등에 방해). LogBox는 프로덕션
@@ -38,6 +38,7 @@ import { DailyCheckInModal } from '../components/ui/DailyCheckInModal';
 import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { checkAndForceUpdate, getUpdateDiagnostics, getUpdateNativeLog, type ForceUpdatePhase } from '../services/updates';
+import { checkVersionGate } from '../services/appVersionGate';
 import { configureAdsForTesting } from '../services/ads/adsConfig';
 import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
@@ -504,6 +505,32 @@ export default function RootLayout() {
   // 절대 사용자를 막지 않는다). 다운로드/재시작 단계에서만 짧게 블로킹 화면을 보여줘 갑자기
   // 화면이 리로드되는 것처럼 보이지 않게 한다(진행 상태 없이 순간 리로드되면 크래시처럼 보임).
   const [updatePhase, setUpdatePhase] = useState<ForceUpdatePhase | null>(null);
+
+  // 2026-08-08 사장님 지시 — 스토어 강제 업데이트 게이트.
+  // OTA는 JS만 고치고, 우리 runtimeVersion 정책이 appVersion이라 **같은 앱 버전 바이너리에만** 도달한다.
+  // 즉 낡은 바이너리(예: 1.0.0)에 머문 사용자는 네이티브 수정도, 그 버전용 OTA도 영영 못 받는다.
+  // 그 사용자를 스토어로 올려보내는 유일한 경로다. 판정은 전부 서버(api/app-config.ts)가 하고,
+  // 실패하면 무조건 통과시킨다(services/appVersionGate.ts의 fail-open 원칙).
+  const [versionGate, setVersionGate] = useState<{ storeUrl: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      checkVersionGate()
+        .then((r) => {
+          if (cancelled) return;
+          setVersionGate(r.blocked ? { storeUrl: r.storeUrl } : null);
+          if (r.blocked) {
+            console.warn(`[versionGate] blocked current=${r.currentVersion} min=${r.minSupportedVersion}`);
+          }
+        })
+        .catch(() => {}); // checkVersionGate는 throw하지 않지만 방어적으로 한 겹 더
+    };
+    run();
+    // 사용자가 스토어에서 업데이트하고 돌아오면 다시 검사해 차단을 스스로 풀어준다
+    // (안 그러면 업데이트를 마치고도 앱을 껐다 켜야 한다).
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') run(); });
+    return () => { cancelled = true; sub.remove(); };
+  }, []);
   useEffect(() => {
     // 2026-08-06 — 지금 돌고 있는 번들의 신원을 부팅 때 한 줄 남긴다. "OTA를 쐈는데 왜 안 와?"는
     // 이 값들(채널/런타임버전/현재 업데이트ID/내장번들 여부)이 없으면 추측만 하게 된다 — 오늘 광고
@@ -591,8 +618,13 @@ export default function RootLayout() {
             {__DEV__ && <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />}
           </Stack>
           <ToastHost />
+          {/* 2026-08-08 사장님 지시 — "업데이트가 필요해요 전에 출석 보상이 뜨면 어떻게 해.
+              업데이트가 필요한 경우 업데이트 후 출석 보상이 나와야 하고".
+              강제 업데이트 안내가 떠 있는 동안에는 출석 축하 팝업을 띄우지 않는다. checkInEarned
+              상태는 그대로 유지되므로, 사용자가 스토어에서 업데이트하고 돌아와 게이트가 풀리면
+              (AppState 'active' 재검사) 그때 자연스럽게 이 팝업이 뜬다 — 보상을 잃지 않는다. */}
           <DailyCheckInModal
-            visible={checkInEarned !== null}
+            visible={checkInEarned !== null && !versionGate}
             earned={checkInEarned ?? 0}
             onDismiss={() => {
               setCheckInEarned(null);
@@ -605,6 +637,26 @@ export default function RootLayout() {
               <Text style={styles.updateText}>
                 {updatePhase === 'downloading' ? t('home.updateDownloading') : t('home.updateApplying')}
               </Text>
+            </View>
+          )}
+          {/* 강제 업데이트 안내 — 2026-08-08 사장님 지시로 **전체화면에서 홈 위 모달로 변경**
+              ("왜 전창이야 앱 홈에서 띄워서 누르면 이동해야지"). 배경을 반투명 딤으로 두어 홈이
+              그대로 보이고, 카드만 떠서 "이게 무슨 앱인지" 맥락이 유지된다.
+              닫기 버튼이 없는 것은 그대로 의도다(그게 "강제"의 정의) — 딤 영역도 터치를 먹어
+              뒤로 빠져나갈 수 없다.
+              ⚠️ 스플래시(zIndex 더 위)보다 아래라 부팅 첫 프레임에 번쩍이지 않는다. */}
+          {versionGate && (
+            <View style={styles.forceUpdateBackdrop} pointerEvents="auto">
+              <View style={styles.forceUpdateCard}>
+                <Text style={styles.forceUpdateTitle}>{t('home.forceUpdateTitle')}</Text>
+                <Text style={styles.forceUpdateBody}>{t('home.forceUpdateBody')}</Text>
+                <Pressable
+                  style={styles.forceUpdateButton}
+                  onPress={() => { Linking.openURL(versionGate.storeUrl).catch(() => {}); }}
+                >
+                  <Text style={styles.forceUpdateButtonText}>{t('home.forceUpdateButton')}</Text>
+                </Pressable>
+              </View>
             </View>
           )}
           {showAnimatedSplash && (
@@ -633,6 +685,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 16,
+  },
+  // 강제 업데이트 안내 — updateOverlay(zIndex 200)보다 위. OTA 적용 중 화면과 겹칠 일은 거의
+  // 없지만, 겹치면 "업데이트하러 가라"는 쪽이 보여야 사용자가 할 일이 명확해진다.
+  // 전체화면이 아니라 **딤 + 카드**다(2026-08-08 지시) — 뒤로 홈이 보여야 맥락이 유지된다.
+  forceUpdateBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 300,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  forceUpdateCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    gap: 12,
+  },
+  forceUpdateTitle: {
+    fontFamily: typography.displayFontFamilyBold,
+    fontSize: 22,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  forceUpdateBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  forceUpdateButton: {
+    marginTop: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  forceUpdateButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   updateText: {
     color: colors.textSecondary,

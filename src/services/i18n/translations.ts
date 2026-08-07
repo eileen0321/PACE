@@ -54,6 +54,9 @@ export const translations = {
       // 안 써서 언어 설정과 무관하게 항상 한국어로만 떴다.
       updateDownloading: 'Downloading update...',
       updateApplying: 'Applying update...',
+      forceUpdateTitle: 'Update required',
+      forceUpdateBody: 'This version is no longer supported. Please update to keep using Pace.',
+      forceUpdateButton: 'Update now',
     },
 
     stats: {
@@ -586,6 +589,9 @@ export const translations = {
       overlayServiceDead: '세션 추적이 예기치 않게 멈췄어요 — 플랫폼을 다시 눌러 이어가세요.',
       updateDownloading: '새 업데이트를 받는 중...',
       updateApplying: '적용하는 중...',
+      forceUpdateTitle: '업데이트가 필요해요',
+      forceUpdateBody: '이 버전은 더 이상 지원되지 않아요. 업데이트하면 계속 사용할 수 있어요.',
+      forceUpdateButton: '지금 업데이트',
     },
 
     stats: {

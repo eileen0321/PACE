@@ -16,7 +16,11 @@
 
 import { Platform } from 'react-native';
 import * as Application from 'expo-application';
-import { API_BASE_URL } from './api/client';
+// ⚠️ 2026-08-08 실기기 검증 중 발견 — 처음엔 `API_BASE_URL`(services/api/client)을 썼는데 그건
+//   **Railway 백엔드**를 가리킨다. 이 파일이 부르는 /api/app-config는 **Vercel 서버리스 함수**라
+//   (api/app-config.ts) 주소가 다르다. 그대로 뒀으면 항상 404 → fail-open으로 **영원히 통과**해
+//   기능이 있는데 없는 것과 같은 상태가 됐다(같은 Vercel 함수인 shorts-entry가 이 주소를 쓴다).
+import { YOUTUBE_PROXY_URL } from './api/youtube';
 
 const FETCH_TIMEOUT_MS = 4000; // 부팅 경로라 길게 못 기다린다 — 넘으면 그냥 통과시킨다.
 
@@ -73,11 +77,14 @@ export async function checkVersionGate(): Promise<VersionGateResult> {
   // 빌드 번호를 못 읽으면(dev 클라이언트/미링크) 판정 자체가 불가능 — 통과.
   if (currentBuild === null) return { blocked: false, reason: 'no-version' };
 
+  // 프록시 주소가 비어 있으면(빌드 환경변수 누락) 물어볼 곳이 없다 — 통과.
+  if (!YOUTUBE_PROXY_URL) return { blocked: false, reason: 'fetch-failed' };
+
   let payload: unknown;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(`${API_BASE_URL}/api/app-config?platform=${Platform.OS}`, {
+    const res = await fetch(`${YOUTUBE_PROXY_URL}/api/app-config?platform=${Platform.OS}`, {
       signal: controller.signal,
     });
     clearTimeout(timer);

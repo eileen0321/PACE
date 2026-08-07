@@ -512,6 +512,7 @@ export default function RootLayout() {
   // 그 사용자를 스토어로 올려보내는 유일한 경로다. 판정은 전부 서버(api/app-config.ts)가 하고,
   // 실패하면 무조건 통과시킨다(services/appVersionGate.ts의 fail-open 원칙).
   const [versionGate, setVersionGate] = useState<{ storeUrl: string } | null>(null);
+  const loggedGateReasonRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
     const run = () => {
@@ -521,6 +522,14 @@ export default function RootLayout() {
           setVersionGate(r.blocked ? { storeUrl: r.storeUrl } : null);
           if (r.blocked) {
             console.warn(`[versionGate] blocked build=${r.currentBuild} min=${r.minBuild} version=${r.currentVersion}`);
+          } else if (!loggedGateReasonRef.current) {
+            // 2026-08-08 — **부팅당 1회만** 판정 사유를 남긴다. 이게 없으면 "차단 안 됨"이
+            // 서버가 통과시킨 것(ok)인지, 서버에 못 닿아 통과한 것(fetch-failed)인지 구분할 수 없어
+            // "게이트가 켜져 있는데 아무도 안 막힌다"를 영영 진단하지 못한다(실제로 이번에 주소를
+            // 잘못 넣어 항상 fetch-failed로 통과하던 상태를 이 구분으로 잡았다).
+            // 포그라운드 복귀마다 찍으면 소음이라 첫 판정에만 남긴다.
+            loggedGateReasonRef.current = true;
+            console.warn(`[versionGate] pass reason=${r.reason}`);
           }
         })
         .catch(() => {}); // checkVersionGate는 throw하지 않지만 방어적으로 한 겹 더

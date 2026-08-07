@@ -68,7 +68,7 @@
 | D3 | ~~iOS Screen Time(Family Controls) entitlement 미승인~~ | ✅ 완료(2026-07-26) — 사장님 결정: (b) 기능 삭제. `screenTimeService.ios/android.ts`, `ScreenTimeService` 타입, `capabilities.supportsScreenTimeControl`/`supportsAppBlocking`, `modules/pace-screentime` 네이티브 모듈 전부 삭제(어차피 UI 어디서도 호출 안 하던 죽은 인프라였음). iOS의 차단 대체 출구는 Pace Feed로 계속 유지. `npx tsc --noEmit` 통과 | QA_FULL_REVIEW B1 |
 | D4 | ~~심사 리뷰어 화이트리스트 빈 배열~~ | ✅ 완료(2026-07-26) — 사장님 결정: jlpt-master(`src/config/reviewers.ts`)가 이미 구글 플레이 콘솔에 제출해둔 실제 테스트 계정(`s7.reviewer@gmail.com`)을 그대로 재사용. `src/constants/reviewers.ts`에 반영 | QA_FULL_REVIEW B4 |
 | D5 | ~~지원 이메일이 placeholder~~ | ✅ 완료(2026-07-26) — `settings.tsx`의 `SUPPORT_EMAIL`을 실제 수신 이메일 `comfortstride7@gmail.com`으로 교체 | QA_FULL_REVIEW B5 |
-| D6 | (B3 조사 중 신규 발견) Daily Limit 추적이 상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 "YouTube with PACE"를 눌러 세션을 시작한 경우에만 동작함 — 유저가 그냥 일반 YouTube 앱을 직접 열어서 보면 Pace는 그 시청을 아예 감지 못함(재부팅 여부와 무관, 앱의 기존 설계) | 제품 결정 필요: (a) 현재 "opt-in 세션" 모델 유지(문서화·마케팅에 명시) vs (b) Android UsageStatsManager 등으로 상시 감시 추가(배터리/권한/Play정책 트레이드오프 있음) | B3 로그, §6 참고 |
+| D6 | (B3 조사 중 신규 발견) Daily Limit 추적이 상시 백그라운드 감시가 아니라 전부 사용자가 명시적으로 "YouTube with PACE"를 눌러 세션을 시작한 경우에만 동작함 — 유저가 그냥 일반 YouTube 앱을 직접 열어서 보면 Pace는 그 시청을 아예 감지 못함(재부팅 여부와 무관, 앱의 기존 설계) | 🟡 **부분 완화됨(이 md엔 그동안 기록 안 돼 있었음, 2026-08-07 코드 감사로 발견)** — 2026-08-03에 `ForegroundAppWatcher.kt`의 `supportedAppForegroundSecondsToday()`가 추가돼, UsageStatsManager로 "오늘 지원 앱을 얼마나 켜뒀는지"를 Stats 화면에 사후 표시함(상시 감시 서비스는 명시적으로 안 띄우는 쪽으로 결정 — 배터리/권한 트레이드오프 회피). ⚠️ 이건 **표시(가시성)용일 뿐 실시간 차단/집행이 아니다** — "opt-in 세션에서만 실제 집행됨" 근본 문제 자체는 여전히 열려있음. 제품 결정은 그대로 필요: (a) 지금처럼 opt-in 집행 + 사후 가시성만 유지 vs (b) 실시간 상시 집행 추가 | B3 로그, §6 참고 |
 | D7 | ~~Google 소셜 로그인 OAuth 클라이언트 미발급~~ | ✅ 완료(2026-07-26) — Google Cloud Console "Pace-Server" 프로젝트(`pace-server-502818`, jlpt-master와 별개, 이미 YouTube Data API용으로 존재하던 프로젝트)에 Pace 전용 OAuth 클라이언트 3종 신규 발급: Android(패키지 `com.strides7.pace` + 로컬 debug 키스토어 SHA-1 + **release SHA-1 추가 완료(2026-07-27, 사장님 확인)** — 구글 클라우드 콘솔 반영은 보통 몇 분 내로 전파되지만, 오늘 밤 릴리즈 빌드에서 실제 구글 로그인 한 번 테스트해서 확인 필요), Web(`...2ihg3c4bj03vj59smd48m8ef007kcrei...`, `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` + 백엔드 `GOOGLE_CLIENT_ID`로 사용 — ID 토큰 audience 검증용), iOS(`...fq9o0uudug7bh60ut88pr6atc97nkdqc...`, 번들ID `com.strides7.pace` + 팀ID `328BF833XS`, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` + `app.json`의 `iosUrlScheme`로 사용). `.env`(로컬, gitignore)와 Railway `GOOGLE_CLIENT_ID`에 반영, 백엔드 재배포 후 `/auth/guest` 정상 재확인. **iOS `iosUrlScheme`는 네이티브 설정(Info.plist)이라 다음 iOS prebuild/빌드부터 실제 반영됨 — 아직 실기기 검증 안 함.** | 2026-07-26 로그 참고 |
 | D8 | ~~"고급 취침모드(Advanced Sleep Mode)"를 프리미엄 전용 기능으로~~ | ✅ 완료(2026-07-26 사장님 결정 — 페이월 문구-게이팅 불일치 감사에서 나온 "(a) 실제로 게이팅" 선택) — 무진동 수면감지 임계값을 프리미엄 전용 5~20분 조절로 구현. `UserSettings.sleepStillnessMinutes`(신규, 무료 기본 10) → `overlayService.startSession()` 새 파라미터로 전달 → `PaceOverlayService.kt`(`sleepStillnessMinutes` 인스턴스 필드, `EXTRA_SLEEP_STILLNESS_MINUTES`, persistState/restoreStateFromPrefs로 프로세스 재시작에도 보존, tick 계산의 `SLEEP_STILLNESS_MS` 고정값 대체, 5~20 `coerceIn` 이중 방어)까지 전체 배선. `_layout.tsx`의 `enforceFreeFocusSessionDuration`을 확장해 무료 전환 시 10분으로 강제 리셋(기존 Focus Session Duration과 동일 패턴). `settings.tsx` Session Defaults에 새 행 추가(무료면 페이월로). **네이티브 Kotlin 변경은 소스 레벨만 — 실제 gradle 빌드/실기기 검증은 아직 안 함**(다른 세션이 android 빌드 폴더를 쓰고 있을 수 있어 보류), 다음 세션에서 `gradlew assembleDebug` + 실기기 확인 필요 | 2026-07-26 로그 참고 |
 | D9 | ~~"리모컨 지원(핸즈프리 컨트롤)"을 프리미엄 전용으로~~ | ✅ 완료(2026-07-26 사장님 결정, "(a) 실제로 게이팅") — 페이월이 이미 광고 중이던 핸즈프리 컨트롤(핑거스냅/손짓/블루투스 리모컨)을 실제로 `isPremium` 게이팅. **Android**: `home.tsx`의 세션 시작 시 Auto Mode 자동 재개(`enableAutoModeForSession`) 앞에 `isPremium` 체크 추가, `BluetoothOnboardingSheet.tsx`의 "Turn On"이 무료면 `onEnable()` 대신 페이월로 이동(+ 프리미엄 락 배지 UI). **iOS**: 별도 발견 — iOS의 손짓/블루투스 리모컨은 이 시트의 토글과 무관하게 `feed/index.tsx`가 Focus Session(`isAutoMode`) 여부만으로 독립적으로 켜고 있어서 무료 사용자도 이미 전부 쓸 수 있었음(플랫폼 간 정책 불일치) — `handsFreeDetectActive`/`useVolumeNext`의 `enabled` 조건에 `isPremium`을 추가해 동일하게 게이팅. 기존 사용자 회귀 우려(grandfather 옵션)는 사장님이 언급 안 해 적용 안 함(전체 게이팅) | 2026-07-26 로그 참고 |
@@ -89,7 +89,7 @@
 | # | 문제 | 상태 |
 |---|---|---|
 | C1 | iOS Sleep Timer 네이티브(`react-native-track-player`) 미구현 — 매 실행 Metro 경고, 호출 시 실패 | 열림 |
-| C2 | Sign in with Apple이 공식 버튼이 아닌 커스텀 텍스트 버튼 — HIG 4.8 리뷰 리스크 | 열림, 수정 여부 미확인 |
+| C2 | ~~Sign in with Apple이 공식 버튼이 아닌 커스텀 텍스트 버튼 — HIG 4.8 리뷰 리스크~~ | ✅ 이미 해결됨(md가 스테일했음, 2026-08-07 코드 감사로 확인) — `src/app/auth/index.tsx`가 `AppleAuthentication.AppleAuthenticationButton`(공식 버튼, `SIGN_IN`/`WHITE`)을 이미 쓰고 있음. 실기기(iOS) 육안 확인은 아직 안 됨 — Mac 세션이 다음에 열 때 한 번 확인 |
 | C3 | Live Activity/다이나믹아일랜드 + 취침감지 블랙아웃 — **실기기 검증 안 됨**(시뮬레이터만 확인) | 진행 중 — 기기 필요 |
 | C4 | 위젯 익스텐션(`targets/widget`) 첫 서명 빌드 미검증 | 진행 중 |
 | C5 | (B1 조사 중 신규 발견) 전역 `useBluetoothStore`/`bluetoothService.ios.ts` 경로(Home/Settings/Stats의 "Bluetooth Hands-Free")가 iOS에서도 100% no-op 스텁 — "Enable"을 눌러도 토스트만 뜨고 실제로 아무것도 안 켜짐. Pace Feed 안의 별개 볼륨키 리모컨(`useFeedRemoteControl.ios.ts`, 07-22 수정으로 실동작 확인됨)과는 다른 죽은 경로 | 열림 — 신규, 정직성 이슈(가짜로 "동작하는 척" UI) |
@@ -7000,10 +7000,59 @@ PACE"를 눌렀는데 일반 영상(Shorts 아닌)이 뜨는 것으로 발견. `
   한번 막혔었고(무관한 별개 이슈, reverse 설정으로 해결), 이후에도 콜드 번들 빌드 자체가 매번
   ~2분 걸리는 걸 확인함(이 프로젝트/기기 환경의 특성으로 보임 — 앱 버그 아님).
 
+### 2026-08-07 (이어서) — "md만 보고 말하는 거 아니냐" 지적에 코드 재감사
+
+사장님이 §2 문제점 리스트의 상태 라벨을 그대로 믿고 답했던 걸 지적 — md 라벨이 아니라 실제 코드를
+다시 열어 재확인함(md는 스냅샷/로그일 뿐 최신 진실이 아닐 수 있다는 걸 실제로 확인한 사례):
+
+- **C2(Apple 공식 버튼)**: md엔 "열림, 수정 여부 미확인"으로 남아있었지만 실제 코드(`src/app/auth/
+  index.tsx`)는 이미 `AppleAuthenticationButton`으로 교체돼 있었음 — **md가 스테일했던 것으로
+  확인, ✅ 완료로 정정**(위 표 참고). 실기기(iOS) 육안 확인만 아직 안 됨.
+- **D6(YouTube 직접 열면 감지 안 됨)**: md엔 없던 사실 발견 — 2026-08-03에 이미
+  `ForegroundAppWatcher.kt`의 `supportedAppForegroundSecondsToday()`(UsageStatsManager 기반)가
+  추가돼 Stats 화면에 "오늘 지원앱 켜둔 시간"을 사후 표시하고 있었음. 다만 이건 표시(가시성)용일
+  뿐 실시간 집행이 아니라서, "opt-in 세션에서만 실제로 집행됨"이라는 근본 문제 자체는 안 풀림 —
+  🟡 부분 완화로 정정(위 표 참고).
+- **B4(수면감지 loopedBack)/C5(iOS 블루투스 스텁)**: 코드 직접 대조 결과 md 라벨 그대로 정확했음 —
+  B4는 `PaceAccessibilityService.kt`에 `totalSec != lastAdvanceTotalSec` 비교가 실제로 있고, C5는
+  `bluetoothService.ios.ts`가 여전히 `supportsHardwareRemote: false` 전체 no-op 스텁.
+
+**교훈**: 이 문서(md)는 각 세션이 끝날 때 남기는 로그/요약이지 실시간 진실 소스가 아니다 — 다음
+세션도 상태 라벨을 그대로 인용하기 전에, 특히 오래됐거나 다른 세션이 마지막으로 건드린 항목은
+실제 코드를 먼저 열어 확인할 것.
+
+### 2026-08-08 (Windows) — "무음인데 쇼츠 소리 남" 재보고 — 코드 재감사, fix는 이미 있음
+
+사장님 재보고: "PACE에서 무음인데 아이폰 쇼츠 틀면 계속 소리나는데 맥이 못잡네." 코드 전체를
+`AVAudioSession`/`setCategory` 기준으로 다시 grep — 무음스위치를 무시하는 카테고리를 세팅하는
+곳은 여전히 `PaceVolumeKeyModule.swift` **하나뿐**(SnapDetector의 `.playAndRecord`는 2026-08-03에
+이미 완전히 삭제된 죽은 코드였음 — 그쪽은 용의선상에서 제외). 그리고 그 모듈의 `start()`는
+`feed/index.tsx:575`에서 `enabled: isAutoMode && volumeKeyRemote`로 게이트돼 있어 "핸즈프리 볼륨키
+리모컨" 설정(기본 OFF)을 켠 상태로 Auto Mode 세션 중일 때만 `.playback`이 걸린다. `stop()`의 카테고리
+복원 fix(어제 커밋 `7603f1a`)는 코드상 정확히 이 상황을 위해 존재함.
+
+**Mac 세션 확인 체크리스트** (이 순서로):
+1. `git log --oneline -5`로 로컬에 커밋 `7603f1a`(스플래시+iOS 무음스위치 fix)가 있는지 확인. 없으면
+   `git pull` 먼저.
+2. ⚠️ **Metro 리로드만으론 반영 안 됨** — `PaceVolumeKeyModule.swift`는 네이티브 코드라 Xcode에서
+   Clean Build(⇧⌘K) 후 완전히 다시 빌드+실기기 설치해야 fix가 실제로 들어간다. 지금까지 "안 잡힌다"는
+   보고가 혹시 옛 빌드 그대로 테스트한 결과는 아닌지부터 확인.
+3. 재빌드 후: 설정에서 "핸즈프리 볼륨키 리모컨"이 켜져 있는지 먼저 확인(꺼져 있으면 애초에 이 경로
+   자체가 안 탄다 — 그 경우는 별개의 새로운 버그이니 아래 4번으로).
+4. 켜져 있었다면: 껐다가 Focus Session/Feed를 완전히 벗어난 뒤 무음 스위치 상태에서 쇼츠 재생 →
+   소리 안 나는지 확인. 계속 나면 fix 자체가 실기기에서 안 먹히는 것 — `stop()`이 실제로 호출되는지
+   `NSLog`(이 파일에 이미 진단 로그 있음)로 확인 필요.
+5. 만약 "핸즈프리 볼륨키 리모컨"을 애초에 켠 적도 없는데 발생한다면 — 이건 지금까지 찾은 원인과
+   다른 별개의 버그다. 그 경우 Mac 세션이 실기기에서 콘솔 로그(Xcode 디바이스 콘솔)로 어느 시점에
+   카테고리가 바뀌는지 직접 잡아야 함(Windows에서는 Swift 빌드/실기기 자체가 불가능해 여기서 더 좁힐
+   방법이 없음).
+
 ### 다음 지시
-- **Mac 세션**: 위 ⑥ iOS 볼륨키 리모컨 무음스위치 fix — 실기기로 (a)(b) 검증 최우선. ①의 유튜브 로그인
+- **Mac 세션**: 위 "무음인데 쇼츠 소리 남" 체크리스트 최우선(사장님이 재보고한 급한 건). 이어서 기존
+  ⑥ iOS 볼륨키 리모컨 무음스위치 fix — 실기기로 (a)(b) 검증. ①의 유튜브 로그인
   버튼 삭제가 iOS 쪽에도 반영됐는지(같은 커밋에 포함) 확인. **추가**: 스플래시 빛 스윕 버벅임 fix는
   플랫폼 공용 코드라 iOS도 같은 버그를 겪고 있었을 것 — iOS 실기기에서도 스플래시가 매끄러운지 확인.
+  C2(Apple 공식 버튼)도 실기기 육안 확인 부탁.
 - **Windows 세션**: ⑤ 선물상자 모달 실기기 당첨 클릭 확인(위 참고). ④ 즐겨찾기 이어서재생 — 이번엔
   로그로 충분히 검증됐다고 판단하지만, 진단용 `Log.i("CHAIN...")` 라인들은 스토어 제출 전에 필요성
   재검토(득 될 게 없다면 정리, 남겨두는 게 향후 디버깅에 유리하다면 유지 — 판단은 다음 세션 재량).

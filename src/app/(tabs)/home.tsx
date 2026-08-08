@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, InteractionManager, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -328,6 +329,25 @@ export default function HomeScreen() {
     setTodaysInsight(null);
   }, [addBonusMinutes]);
 
+  // 🔴 2026-08-08 사장님 지시 — 홈 배너를 알림처럼 "떴다가 스스로 사라지게".
+  //   예전엔 사용자가 ✕나 배너를 누를 때까지 **화면을 계속 차지**했다.
+  //   AUTO_DISMISS_MS는 읽고 탭할 시간은 충분하되 자리를 오래 차지하지 않는 절충값이다
+  //   (문구가 두 줄까지 나올 수 있어 3~4초는 짧다).
+  //   ⚠️ 자동으로 사라질 때도 insightDismissedDate를 기록한다. 안 그러면 다른 탭 갔다 홈으로
+  //     돌아올 때마다 배너가 다시 떠서 선물 확률을 무제한 재시도할 수 있다(2026-08-07에 그 파밍
+  //     구멍을 막으려고 넣은 기록이다 — 자동 해제만 예외로 두면 그 구멍이 그대로 다시 열린다).
+  //     대신 보상 판정(onTapInsightGift)은 타지 않는다 — 사용자가 안 눌렀으니 당첨도 없다.
+  const AUTO_DISMISS_MS = 7000;
+  useEffect(() => {
+    if (!todaysInsight) return;
+    const timer = setTimeout(() => {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      AsyncStorage.setItem(STORAGE_KEYS.insightDismissedDate, todayStr).catch(() => {});
+      setTodaysInsight(null); // Animated.View의 exiting(FadeOut 800ms)이 부드럽게 지운다
+    }, AUTO_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [todaysInsight]);
+
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
   // 2026-07-25 B1 — 이 시트 자체는 Android에서도 그대로 띄운다: "Enable"이 실제로 켜는 건 Bluetooth
@@ -518,7 +538,11 @@ export default function HomeScreen() {
           </Pressable>
         )}
 
+        {/* 🔴 2026-08-08 사장님 지시 — "노티도 보였다 자동으로 천천히 사라지는 방식이지, 저렇게 UI를
+            차지하고 있는 건 아닌 것 같다". 알림처럼 **떴다가 스스로 사라지게** 한다.
+            들어올 때 FadeInDown, 나갈 때 FadeOut(느리게 800ms) — 자동 해제 타이머는 아래 useEffect. */}
         {todaysInsight && !showAccessibilityPrompt && (
+          <Animated.View entering={FadeInDown.duration(420)} exiting={FadeOut.duration(800)}>
           <Pressable style={styles.sleepInsightBanner} onPress={onTapInsightGift}>
             {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
                 회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
@@ -529,6 +553,7 @@ export default function HomeScreen() {
             <Text style={styles.sleepInsightText}>{todaysInsight}</Text>
             <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
           </Pressable>
+          </Animated.View>
         )}
 
         {/* 2026-08-01 사용자 지적("그걸 저렇게 촌스럽게 띄운다고", "노티를 저렇게 줄줄이 띄우는게

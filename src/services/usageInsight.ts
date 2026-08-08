@@ -158,7 +158,15 @@ export async function getTodaysInsightMessage(userId: string): Promise<string | 
       );
     }
     bundle.healing.forEach((_, i) => candidates.push({ source: 'healing', index: i }));
-    bundle.quote.forEach((_, i) => candidates.push({ source: 'quote', index: i }));
+    // 🔴 2026-08-08 사장님 지시 — "홈 상단 랜덤 노티의 **명언은 너무 올드해서 없애는 게 낫겠다**".
+    //   quote 카테고리를 후보에서 통째로 뺀다. 이 한 줄이 진짜 스위치다 —
+    //   **백엔드(insight_item 테이블)가 계속 quote를 내려줘도 앱이 뽑지 않는다.**
+    //   그래서 DB 마이그레이션 없이, 심지어 OTA만으로도 즉시 반영된다.
+    //   (2026-08-01에 신조어 카테고리를 뺀 것과 같은 이유·같은 방식이다 — 유행/톤이 낡는 소재는
+    //    시간이 지날수록 앱을 촌스럽게 만든다.)
+    //   ⚠️ bundle.quote / QUOTE_ITEMS / InsightBundle.quote 자체는 **지우지 않는다** — 백엔드 응답
+    //     스키마와 로컬 폴백 구조를 그대로 두어야 서버가 quote를 계속 보내도 파싱이 깨지지 않고,
+    //     나중에 되살리고 싶으면 이 줄만 되돌리면 된다.
     bundle.tip.forEach((_, i) => candidates.push({ source: 'tip', index: i }));
     if (!candidates.length) return null;
 

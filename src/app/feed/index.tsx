@@ -593,9 +593,15 @@ export default function PaceFeedScreen() {
   };
 
   // Bluetooth 리모컨(iOS만 실제 동작 — .android.ts는 no-op, 상단 주석 참고).
+  // 🔴 2026-08-09 사장님 지시 — "손짓으로 넘길 때 어떤 땐 Next Short가 뜨고 어떤 땐 안 뜨고,
+  //   이럴 거면 안 띄우는 게 낫잖아" → 안드로이드 네이티브 토스트를 제거하면서 **맥(iOS)도 같이**
+  //   없앤다. 한쪽만 남기면 플랫폼 동작이 갈린다.
+  //   이 토스트는 정보가 없다 — 영상이 실제로 넘어가는 것 자체가 이미 확인이다.
+  //   (안드로이드에서 들쭉날쭉했던 이유는 Toast 큐 때문이다 — PaceOverlayService.triggerNext 주석 참고.
+  //    iOS는 인앱 토스트라 그 문제는 없지만, 불필요한 것은 양쪽 다 없애는 게 맞다.)
   const feedRemote = useFeedRemoteControl({
-    onNext: () => { markUserInput(); goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { markUserInput(); if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
+    onNext: () => { markUserInput(); goNext(); },
+    onPrevious: () => { markUserInput(); goPrev(); },
     onToggleAutoMode: toggleAutoMode,
     headDetectActive: handsFreeDetectActive, // iOS 핸즈프리 감지(핑거스냅) ON 조건 — Focus Session 동안만
     // 감사 발견 C1(2026-07-27) — onDiag는 WaveDetector가 초당 ~3회 emit한다. setDiag는 렌더도 안 되는
@@ -620,8 +626,8 @@ export default function PaceFeedScreen() {
   // 으로 하이재킹(토글 OFF면 폰 볼륨 항상 정상). Android는 접근성 오버레이(Kotlin) 별도 — co-session 확인 필요.
   useVolumeNext({
     enabled: isAutoMode && volumeKeyRemote,
-    onNext: () => { markUserInput(); goNext(); useToastStore.getState().show(t('feed.nextShortToast')); },
-    onPrevious: () => { markUserInput(); if (goPrev()) useToastStore.getState().show(t('feed.previousShortToast')); },
+    onNext: () => { markUserInput(); goNext(); },
+    onPrevious: () => { markUserInput(); goPrev(); },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
@@ -675,8 +681,7 @@ export default function PaceFeedScreen() {
               return;
             }
             // moved=false = 리스트 모드(HOT/즐겨찾기) — 이동은 여기서 리스트의 다음/이전 항목으로 수행.
-            if (dir === 1) { goNext(); useToastStore.getState().show(t('feed.nextShortToast')); }
-            else if (goPrev()) { useToastStore.getState().show(t('feed.previousShortToast')); }
+            if (dir === 1) goNext(); else goPrev();
           }}
           listMode={listMode}
           onEnded={onEnded}

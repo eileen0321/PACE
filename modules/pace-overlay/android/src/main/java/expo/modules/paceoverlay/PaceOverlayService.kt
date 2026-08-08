@@ -1207,14 +1207,24 @@ class PaceOverlayService : Service() {
       Log.i("PaceOverlayService", "triggerNext() -> swipeOnce(up=true)")
       PaceAccessibilityService.swipeOnce(up = true)
       bumpBluetoothCounter(context, "bt_next_count")
-      showToast(context, "⏭ Next Short")
+      // 🔴 2026-08-09 사장님 지시 — "손짓으로 넘길 때 어떤 땐 Next Short가 뜨고 어떤 땐 안 뜨고,
+      //   이럴 거면 안 띄우는 게 낫잖아". 맞는 판단이라 제거한다.
+      //   왜 들쭉날쭉했나: 안드로이드 Toast는 **큐**다. LENGTH_SHORT 하나가 약 2초를 점유하는데
+      //   손짓/리모컨은 그보다 빠르게 연속으로 들어온다 → 뒤 것들이 밀리거나 버려져서, 사용자 눈에는
+      //   "어떤 땐 뜨고 어떤 땐 안 뜨는" 무작위로 보인다. 게다가 늦게 뜬 토스트는 **이미 두세 개 뒤
+      //   영상**을 보는 중에 나타나 오히려 헷갈린다.
+      //   무엇보다 이 토스트는 정보가 없다 — 영상이 실제로 넘어가는 것 자체가 이미 확인이다.
+      //   (2026-08-01에 "숏츠 보는 중도 아닌데 왜 토스트가 뜨냐"로 한 번 게이팅했던 것도 같은 계열의
+      //    불만이었다. 그땐 조건을 좁혔지만, 근본은 이 토스트가 필요 없다는 것이었다.)
+      //   ⚠️ bumpBluetoothCounter는 그대로 둔다 — 통계(Stats 탭)가 이 값을 쓴다.
     }
 
     fun triggerPrevious(context: Context) {
       if (!PaceAccessibilityService.isSupportedAppWindowVisible()) return
       PaceAccessibilityService.swipeOnce(up = false)
       bumpBluetoothCounter(context, "bt_previous_count")
-      showToast(context, "⏮ Previous Short")
+      // 위 triggerNext와 같은 이유로 "⏮ Previous Short" 토스트도 제거(같은 큐를 공유하므로 한쪽만
+      // 남기면 들쭉날쭉함이 그대로 남는다).
     }
 
     // 2026-07-20 Focus Session 리디자인(PACE_ARCHITECTURE.md 참고): "자동재생"을 무기한으로 도는
@@ -2771,7 +2781,22 @@ class PaceOverlayService : Service() {
 
     fun renderList() {
       listContainer.removeAllViews()
-      val items = SavedVideosStore.list(applicationContext, kind)
+      var items = SavedVideosStore.list(applicationContext, kind)
+      // 🔴 2026-08-09 사장님 지시("자동으로 지워") — videoId도 url도 없는 "껍데기" 행을 목록을 열 때
+      //   자동으로 지운다. 2026-08-05에 "videoId를 못 얻으면 낙관적 추가를 되돌린다"로 원인은 막았지만,
+      //   **그 이전에 이미 쌓인 행들**은 그대로 남아 있었다(실기기에서 `TikTok/광고`, `AI리더스협회`
+      //   확인). 유튜브 광고에서 Add를 누르면 접근성 트리에 제목/채널은 읽히는데 광고엔 공유 버튼이
+      //   없어 videoId를 영영 못 얻는 경우다.
+      //   이런 행은 **재생도 공유도 불가능**하다 — 탭해도 열 수 없고, 공유해도 보낼 주소가 없다.
+      //   목록에 남아 있을 이유가 전혀 없어서 조용히 정리한다.
+      //   ⚠️ 판정은 videoId와 url이 **둘 다** 없을 때만이다. 하나라도 있으면 서로에게서 복원할 수
+      //     있으므로(공유는 videoId→url, 열기는 url→videoId) 지우면 안 된다.
+      val shells = items.filter { it.videoId.isNullOrBlank() && it.url.isNullOrBlank() }
+      if (shells.isNotEmpty()) {
+        shells.forEach { SavedVideosStore.remove(applicationContext, it.id) }
+        Log.i("PaceOverlayService", "favorite: removed ${shells.size} unplayable row(s) (no videoId/url)")
+        items = SavedVideosStore.list(applicationContext, kind)
+      }
       // 2026-08-05 — 제목이 비어 있는데 videoId는 아는 항목을 뒤늦게 채워준다.
       // 🔴 2026-08-08 확장 — 제목이 **비어 있는 것만** 고쳤더니, 이미 **틀리게** 저장된 행
       //   (제목은 A인데 URL은 B)은 영영 안 고쳐졌다. 사장님이 지적한 "누른 것과 나온 URL이 다르다"의

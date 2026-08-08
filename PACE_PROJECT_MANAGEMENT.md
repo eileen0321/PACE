@@ -7237,8 +7237,13 @@ shorts-entry는 `YOUTUBE_PROXY_URL`을 쓴다). 그대로면 항상 404 → fail
    닫기 버튼이 없어서(강제니까) 스토어 왕복 후에도 내 강제 오버라이드가 계속 다시 차단한 것 — 실제
    크래시가 아니라 "빠져나갈 수 없는 내 테스트 코드"였다. 테스트 코드 제거 후 정상 확인.
 2. **App Store URL 자리표시자(`id0000000000`)** — `eas.json`의 `ascAppId`(6793983617)로 교체,
-   `api/app-config.ts` 커밋·푸시(`5ca2446`). ⚠️ Vercel 자동배포 전제 — shorts-entry 프록시와 같은
-   함수라 지금까지의 배포 방식대로면 자동 반영되겠지만, 직접 확인은 못 했다(대시보드 접근 없음).
+   `api/app-config.ts` 커밋·푸시(`5ca2446`). **Vercel 자동배포 확인 완료**:
+   ```
+   $ curl https://pace-strides7.vercel.app/api/app-config?platform=ios
+   {"enabled":true,"platform":"ios","minBuildNumber":1,"latestVersion":"1.0.1","storeUrl":"https://apps.apple.com/app/id6793983617"}
+   ```
+   push만으로 자동 반영됨, 대시보드 접근 없이도 curl로 직접 확인 가능하다는 것도 확인(다음에 비슷한
+   상황이면 대시보드 없이 이 방법 쓸 것).
 3. **expo-application 네이티브 링크** — `pod install` 실행, `Podfile.lock`에 `EXApplication` 이미
    있었다(`expo-notifications`가 의존성으로 이미 끌어왔음 — 별도 조치 불필요, 재확인만).
 4. iOS 미검증 5건(멈칫/스와이프/측정시간/통계/카메라 권한)은 이번 세션 범위 밖 — 그대로 남음.

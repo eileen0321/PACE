@@ -2334,6 +2334,13 @@ class PaceOverlayService : Service() {
     if (paceMenuView != null) {
       hidePaceMenu()
     } else {
+      // 🔴 2026-08-09 전수 스윕에서 발견 — Shorts HOT(또는 즐겨찾기) 패널이 떠 있는 상태에서 P를
+      //   누르면 메뉴가 **그 위에 겹쳐** 떴다. 둘 다 같은 위치의 반투명 오버레이 창이라 글자가
+      //   포개져 아무것도 못 읽는다(공유 시트에서 잡은 것과 같은 계열의 문제다).
+      //   이 창들은 서로 배타적이다 — 하나를 열면 나머지는 닫는다.
+      hideSavedFavoriteList()
+      hideShortsHotList()
+      hideShareSheet()
       showPaceMenu()
     }
   }
@@ -2708,6 +2715,9 @@ class PaceOverlayService : Service() {
   // 버튼 + 기존 리스트를 같은 창에서 보여주고, 추가를 누른 시점에만 캡처(아직 유튜브가 전경)한다.
   private fun showSavedFavoriteList(kind: String) {
     hideSavedFavoriteList()
+    // 같은 자리에 뜨는 형제 창들과 배타 — togglePaceMenu 주석의 겹침 문제와 같은 근거.
+    hideShortsHotList()
+    hideShareSheet()
     val d = resources.displayMetrics.density
     val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
 
@@ -3542,6 +3552,9 @@ class PaceOverlayService : Service() {
   // 읽기 전용 콘텐츠라 공유/삭제 없이 탭하면 바로 원본 유튜브로 이동한다.
   private fun showShortsHotList(initialCategory: String) {
     hideShortsHotList()
+    // 같은 자리에 뜨는 형제 창들과 배타 — togglePaceMenu 주석의 겹침 문제와 같은 근거.
+    hideSavedFavoriteList()
+    hideShareSheet()
     val d = resources.displayMetrics.density
     val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
 

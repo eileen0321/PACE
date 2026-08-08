@@ -2919,7 +2919,7 @@ class PaceOverlayService : Service() {
             //   만드느라 3초가 걸렸고, 우리가 공식 방식으로 미리 넘겨줘도 삼성 시트가 무시했다.
             //   유튜브 자체 공유 버튼도 같은 이유로 시스템 공유창을 안 쓴다(대조 실험으로 확인).
             //   시스템 공유창 경로는 시트 안의 "다른 방법으로 공유…"에 그대로 남아 있다.
-            showShareSheet(url, item.title, restoreListKind = kind)
+            showShareSheet(url, item.title, item.thumbnailUrl, restoreListKind = kind)
           }
         })
         itemRow.addView(TextView(this@PaceOverlayService).apply {
@@ -3207,7 +3207,7 @@ class PaceOverlayService : Service() {
   //
   //   ⚠️ 잃는 것도 있다 — 삼성 시트의 "추천 사용자"(Direct Share)는 사라진다. 그래서 맨 아래에
   //     "More…"로 시스템 공유창 폴백을 남긴다(거기선 예전과 똑같이 동작한다).
-  private fun showShareSheet(url: String, title: String?, restoreListKind: String? = null) {
+  private fun showShareSheet(url: String, title: String?, thumbnailUrl: String?, restoreListKind: String? = null) {
     hideShareSheet()
     // ⚠️ 실기기에서 처음에 놓친 것 — 두 창 다 같은 위치·같은 반투명 배경이라 **그대로 겹쳐 보였다**.
     //   공유 시트를 띄우는 동안은 목록을 내리고, 사용자가 ✕로 닫으면 되돌린다(목록 재구성은 이제
@@ -3270,7 +3270,7 @@ class PaceOverlayService : Service() {
     if (targets.isEmpty()) {
       // 대상이 하나도 없으면 우리 시트를 보여줄 이유가 없다 — 바로 시스템 공유창으로 넘긴다.
       Log.w("PaceOverlayService", "공유 대상 0개 — 시스템 공유창으로 폴백")
-      startSystemShareChooser(url, title)
+      startSystemShareChooser(url, title, thumbnailUrl)
       return
     }
 
@@ -3335,7 +3335,7 @@ class PaceOverlayService : Service() {
     // 삼성 시트의 "추천 사용자"/Quick Share 통합 등 시스템 기능이 필요할 때를 위한 탈출구.
     addActionRow(if (isKoreanLocale()) "다른 방법으로 공유…" else "More…") {
       hideShareSheet()
-      startSystemShareChooser(url, title)
+      startSystemShareChooser(url, title, thumbnailUrl)
     }
 
     val root = FrameLayout(this).apply { addView(panel, FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)) }
@@ -3361,7 +3361,7 @@ class PaceOverlayService : Service() {
     } catch (e: Exception) {
       Log.w("PaceOverlayService", "showShareSheet 실패 — 시스템 공유창으로 폴백", e)
       shareSheetView = null
-      startSystemShareChooser(url, title)
+      startSystemShareChooser(url, title, thumbnailUrl)
     }
   }
 
@@ -3370,7 +3370,7 @@ class PaceOverlayService : Service() {
   // 그 조합은 실기기에서 수신 앱까지 확인된 상태다(Chrome이 공유한 바로 그 Short를 열었다).
   // 시스템 공유창 폴백 — 우리 시트의 "다른 방법으로 공유…", 대상 0개, 창 생성 실패 시에만 탄다.
   // 예전에 이 경로에서 겪은 문제들의 처치를 **그대로 유지**한다(각 주석이 그 근거다).
-  private fun startSystemShareChooser(url: String, title: String?) {
+  private fun startSystemShareChooser(url: String, title: String?, thumbnailUrl: String? = null) {
     try {
       val share = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
@@ -3381,6 +3381,10 @@ class PaceOverlayService : Service() {
         // ⚠️ type은 "text/plain" 그대로 — ClipData의 URI는 미리보기용이고 수신 앱은 EXTRA_TEXT를 읽는다
         //   (실기기 확인: 이 상태로 Chrome을 고르면 공유한 바로 그 Short가 열린다).
         title?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_TITLE, it) }
+        shareThumbnailUri(thumbnailUrl)?.let { thumbUri ->
+          clipData = android.content.ClipData.newUri(contentResolver, title ?: "thumbnail", thumbUri)
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
       }
       val chooser = Intent.createChooser(share, null).apply {
         // NEW_TASK만 주면 안드로이드가 이 액티비티를 Pace 앱의 기존 태스크(홈이 든)에 붙여버려

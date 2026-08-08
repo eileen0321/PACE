@@ -125,7 +125,17 @@ type Short = { videoId: string; title: string; channelTitle: string; thumbnailUr
 
 function cleanTitle(s: string): string {
   if (!s) return '';
-  const t = s.replace(/\\u0026/g, '&').replace(/\\"/g, '"');
+  // 🔴 2026-08-09 전수 스윕에서 발견 — 배포된 프록시가 첫 항목 제목으로 **역슬래시 한 글자(`\`)**를
+  //   돌려주고 있었다. 원인은 아래 scrapeOnce의 캡처 정규식이 JSON 이스케이프를 몰랐던 것이고,
+  //   여기서도 `\\"`만 되돌리고 나머지 이스케이프(`\\\\`, `\\/`, `\\n`, `\\uXXXX`)는 그대로 남겼다.
+  //   제목에 따옴표가 들어간 영상(한국 쇼츠에 흔하다 — 예: '베텔기우스')에서 깨진다.
+  const t = s
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\n/g, ' ')
+    .replace(/\\\//g, '/')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .trim();
   // accessibilityText는 "<제목>, 조회수 193만회 - Shorts 동영상 재생"(로케일별) 형태 → 뒤 메타 제거.
   const idx = t.lastIndexOf(', ');
   if (idx > 0 && /\d|short|조회|再生|vistas|vues|views/i.test(t.slice(idx))) return t.slice(0, idx);
@@ -170,7 +180,10 @@ async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[
     const id = m[1];
     if (seen.has(id)) continue;
     seen.add(id);
-    const at = m[0].match(/"accessibilityText":"([^"]+)"/);
+    // ⚠️ `[^"]+`로 잡으면 **제목 안의 `\"`에서 캡처가 끊긴다.** 제목이 따옴표로 시작하는 영상은
+    //   캡처 결과가 역슬래시 한 글자가 되어 목록에 `\`만 표시됐다(2026-08-09 스윕에서 실제 발견).
+    //   JSON 문자열 규칙대로 이스케이프 쌍을 하나의 토큰으로 인정해서 끝까지 읽는다.
+    const at = m[0].match(/"accessibilityText":"((?:[^"\\]|\\.)*)"/);
     out.push({ videoId: id, title: at ? cleanTitle(at[1]) : '', channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
   }
   return out;

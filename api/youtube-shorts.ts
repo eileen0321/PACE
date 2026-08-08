@@ -123,20 +123,26 @@ const COUNTRY_TO_LANG: Record<string, string> = {
 
 type Short = { videoId: string; title: string; channelTitle: string; thumbnailUrl: string | null };
 
-function cleanTitle(s: string): string {
+// HTML 안의 JSON 문자열을 그대로 읽어오므로 이스케이프를 직접 되돌려야 한다.
+// 🔴 2026-08-09 전수 스윕에서 발견 — 배포된 프록시가 항목 제목으로 **역슬래시 한 글자(`\`)**를
+//   돌려주고 있었다. 원인 두 개가 겹쳤다: (1) scrapeOnce의 캡처 정규식이 JSON 이스케이프를 몰라
+//   제목 안의 `\"`에서 캡처가 끊겼고, (2) 여기서 `\"`만 되돌리고 `\\`, `\/`, `\n`, `\uXXXX`는
+//   그대로 남겼다. 제목에 따옴표가 들어간 영상(한국 쇼츠에 흔하다)에서 깨진다.
+function unescapeJsonText(s: string): string {
   if (!s) return '';
-  // 🔴 2026-08-09 전수 스윕에서 발견 — 배포된 프록시가 첫 항목 제목으로 **역슬래시 한 글자(`\`)**를
-  //   돌려주고 있었다. 원인은 아래 scrapeOnce의 캡처 정규식이 JSON 이스케이프를 몰랐던 것이고,
-  //   여기서도 `\\"`만 되돌리고 나머지 이스케이프(`\\\\`, `\\/`, `\\n`, `\\uXXXX`)는 그대로 남겼다.
-  //   제목에 따옴표가 들어간 영상(한국 쇼츠에 흔하다 — 예: '베텔기우스')에서 깨진다.
-  const t = s
+  return s
     .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\n/g, ' ')
     .replace(/\\\//g, '/')
     .replace(/\\"/g, '"')
     .replace(/\\\\/g, '\\')
     .trim();
-  // accessibilityText는 "<제목>, 조회수 193만회 - Shorts 동영상 재생"(로케일별) 형태 → 뒤 메타 제거.
+}
+
+// accessibilityText는 "<제목>, 조회수 193만회 - Shorts 동영상 재생"(로케일별) 형태라 뒤 메타를 떼야 한다.
+// ⚠️ 이 휴리스틱은 **폴백 전용**이다. 제목이 원래 ", 2026" 처럼 끝나면 잘못 잘라낸다 —
+//   그래서 아래 scrapeOnce는 이제 메타가 섞이지 않은 primaryText를 1순위로 쓴다.
+function stripAccessibilityMeta(t: string): string {
   const idx = t.lastIndexOf(', ');
   if (idx > 0 && /\d|short|조회|再生|vistas|vues|views/i.test(t.slice(idx))) return t.slice(0, idx);
   return t;
@@ -173,18 +179,38 @@ async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[
   // 재시도하고(최대 3회, 그 사이 CAPTCHA가 풀릴 수 있음), 그래도 전부 실패하면 handler의
   // dataApiFallback(실제 길이 필터 있음)으로 안전하게 떨어진다. 병렬로 도는 다른 카테고리가 성공하면
   // 이 카테고리만 0건이 되고 전체 결과는 오염되지 않는다(핸들러의 카테고리별 Promise.all 구조).
-  const scoped = [...html.matchAll(/shortsLockupViewModel[\s\S]{0,900}?"videoId":"([\w-]{11})"/g)];
+  // 2026-08-09 — lockup 하나를 "이 lockup 시작 ~ 다음 lockup 시작"으로 잘라서 본다.
+  //   videoId는 예전처럼 앞쪽 900자 안에서만 찾는다(그 범위를 넓히면 다른 렌더러의 id가 섞일 수 있다).
+  //   제목은 블록 **뒤쪽**에 있는 overlayMetadata.primaryText에서 가져온다 — 그래서 블록 전체가 필요하다.
+  const starts = [...html.matchAll(/shortsLockupViewModel":\{/g)].map((mm) => mm.index ?? -1).filter((i) => i >= 0);
   const out: Short[] = [];
   const seen = new Set<string>();
-  for (const m of scoped) {
-    const id = m[1];
+  for (let bi = 0; bi < starts.length; bi++) {
+    const block = html.slice(starts[bi], starts[bi + 1] ?? starts[bi] + 9000);
+    const idM = block.slice(0, 900).match(/"videoId":"([\w-]{11})"/);
+    if (!idM) continue;
+    const id = idM[1];
     if (seen.has(id)) continue;
     seen.add(id);
-    // ⚠️ `[^"]+`로 잡으면 **제목 안의 `\"`에서 캡처가 끊긴다.** 제목이 따옴표로 시작하는 영상은
-    //   캡처 결과가 역슬래시 한 글자가 되어 목록에 `\`만 표시됐다(2026-08-09 스윕에서 실제 발견).
-    //   JSON 문자열 규칙대로 이스케이프 쌍을 하나의 토큰으로 인정해서 끝까지 읽는다.
-    const at = m[0].match(/"accessibilityText":"((?:[^"\\]|\\.)*)"/);
-    out.push({ videoId: id, title: at ? cleanTitle(at[1]) : '', channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
+    // 제목 1순위: overlayMetadata.primaryText.content — **메타가 안 섞인 순수 제목**이다.
+    //   실측(2026-08-09, ko/KR): lockup 29개 중 29개에 존재. accessibilityText처럼
+    //   ", 조회수 193만회 - Shorts 동영상 재생"이 붙지 않아 뒤를 잘라내는 휴리스틱 자체가 필요 없다
+    //   (그 휴리스틱은 ", 2026"으로 끝나는 정상 제목을 잘라먹을 수 있었다).
+    // ⚠️ `[^"]+`로 잡으면 제목 안의 `\"`에서 캡처가 끊긴다 — 제목이 따옴표로 시작하는 영상은
+    //   결과가 역슬래시 한 글자가 되어 목록에 `\`만 표시됐다(2026-08-09 스윕에서 실제 발견).
+    //   JSON 문자열 규칙대로 이스케이프 쌍을 하나의 토큰으로 인정해 끝까지 읽는다.
+    const pt = block.match(/"primaryText":\{"content":"((?:[^"\\]|\\.)*)"/);
+    const at = block.match(/"accessibilityText":"((?:[^"\\]|\\.)*)"/);
+    const title = pt
+      ? unescapeJsonText(pt[1])
+      : at
+        ? stripAccessibilityMeta(unescapeJsonText(at[1]))
+        : '';
+    // ⚠️ channelTitle은 여기서 채울 수 없다 — **검색 결과의 Shorts lockup에는 채널 정보가 아예 없다**
+    //   (2026-08-09 실측: 블록 안에 channelId/shortBylineText/ownerText/canonicalBaseUrl 전무).
+    //   유튜브가 안 주는 것이라 파서를 고쳐서 될 일이 아니다. 키 없이 채우려면 videoId별 oEmbed를
+    //   따로 불러야 한다(안드로이드 즐겨찾기에서 쓰는 그 방식) — 별도 작업으로 남긴다.
+    out.push({ videoId: id, title, channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
   }
   return out;
 }

@@ -88,6 +88,8 @@ class PaceOverlayService : Service() {
   // 네이티브 오버레이로 그 자리에서 뜬다(유튜브를 벗어나면 자동 PIP가 걸리는 문제 자체를 원천 차단,
   // showSavedFavoriteList 참고).
   private var savedListView: FrameLayout? = null
+  // 우리가 직접 그리는 공유 시트(showShareSheet 주석 참고) — 시스템 공유창을 대신한다.
+  private var shareSheetView: FrameLayout? = null
   // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(옵트인, PREF_FAVORITE_AUTO_CHAIN_ENABLED).
   // 탭한 항목 다음부터 남은 videoId를 순서대로 담아둔다. PaceAccessibilityService.startFavoriteChainWatch가
   // "지금 보이는 영상이 바뀌었다"를 감지할 때마다 여기서 하나씩 꺼내 새 딥링크를 연다(showSavedFavoriteList 참고).
@@ -241,6 +243,7 @@ class PaceOverlayService : Service() {
           hidePaceMenu()
           hideSavedFavoriteList()
           hideShortsHotList()
+          hideShareSheet() // 위와 같은 이유 — 감시 대상 앱을 벗어나면 우리 창은 전부 정리한다.
         }
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
@@ -2911,68 +2914,12 @@ class PaceOverlayService : Service() {
               showToast(this@PaceOverlayService, if (isKoreanLocale()) "주소를 알 수 없어 공유할 수 없어요" else "No link to share")
               return@setOnClickListener
             }
-            try {
-              val share = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, url)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                // 🔴 2026-08-09 사장님 지적 — "공유창에서 실제 링크와 썸네일 뜨는 게 한참 걸린다".
-                //   실기기 실측: +1.3초엔 생 URL과 기본 아이콘만, 제목·썸네일이 채워지는 건 +4.1초.
-                //   그 ~3초는 **시스템 공유창이 유튜브 페이지를 직접 받아와** 제목과 og:image를
-                //   파싱하는 시간이다(우리 코드가 아니라 공유창의 링크 미리보기 기능).
-                //   → 안드로이드가 공식 문서에서 안내하는 "rich content preview" 방식으로 우리가
-                //     미리 넘겨준다: EXTRA_TITLE(제목) + ClipData에 썸네일 URI.
-                //     이러면 공유창이 네트워크를 탈 이유가 없어져 처음부터 채워진 상태로 뜬다.
-                //   썸네일은 이미 즐겨찾기 목록용으로 cacheDir/pace-thumbs에 캐시해둔 그 파일을
-                //   그대로 재사용한다 — 추가 다운로드 0.
-                //   ⚠️ type은 "text/plain" 그대로 둔다. ClipData의 URI는 공유창 미리보기용이고,
-                //     수신 앱은 규약대로 EXTRA_TEXT(=링크)를 읽는다. type을 이미지로 바꾸면 그때부터
-                //     진짜 이미지 공유가 되어버린다.
-                item.title?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_TITLE, it) }
-                val thumbUri = shareThumbnailUri(item.thumbnailUrl)
-                if (thumbUri != null) {
-                  clipData = android.content.ClipData.newUri(contentResolver, item.title ?: "thumbnail", thumbUri)
-                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                // 진단 로그 — 미리보기가 여전히 느릴 때 "우리가 안 넘긴 것"과 "공유창이 무시한 것"을
-                // 구분하기 위한 것이다. 둘은 처방이 완전히 다르다.
-                Log.i("PaceOverlayService", "share preview: title=${item.title != null} thumbUri=$thumbUri src=${item.thumbnailUrl}")
-              }
-              val chooser = Intent.createChooser(share, null).apply {
-                // 🔴 2026-08-08 사장님 재지적("그러니까 favorite에서 공유하기 누르면 왜 앱 홈으로 가냐고")
-                //   — 위 EXTRA_EXCLUDE_COMPONENTS는 "공유 목록에서 Pace를 고르면 앱으로 가는" 것만
-                //   막았고, **공유 버튼을 누르는 순간 이미 앱 홈이 뜨는** 이 문제는 그대로였다.
-                //   실제로 그때 찍은 스크린샷에도 공유창 뒤에 Pace 홈이 깔려 있었는데 내가 놓쳤다.
-                //
-                //   원인은 2026-08-02에 보상형 광고에서 이미 진단한 것과 **완전히 같다**
-                //   (PaceRewardedAdActivity.start 주석 참고):
-                //   NEW_TASK만 주면 안드로이드가 이 액티비티를 **Pace 앱의 기존 태스크**
-                //   (MainActivity=홈이 들어있는)에 붙여버리고, 그 태스크가 통째로 앞으로 나온다.
-                //   그래서 공유창 뒤가 유튜브가 아니라 Pace 홈이 되고, 공유를 취소하면 홈에 남는다.
-                //   → MULTIPLE_TASK를 함께 줘서 앱 태스크와 분리된 새 태스크로 띄운다.
-                //     그러면 공유창 뒤에는 직전 화면(유튜브)이 그대로 남고, 끝나면 유튜브로 돌아간다.
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-                putExtra(
-                  Intent.EXTRA_EXCLUDE_COMPONENTS,
-                  arrayOf(ComponentName(packageName, PaceShareCaptureActivity::class.java.name))
-                )
-              }
-              startActivity(chooser)
-              // 🔴 2026-08-08 — 위 MULTIPLE_TASK만으론 "앱 홈으로 간다"가 안 고쳐졌다. 실기기
-              //   태스크 스택이 진짜 원인을 보여줬다:
-              //     YouTube task: mode=pinned   ← 공유창이 뜨자 유튜브가 **PIP로 내려간다**
-              //     android task: 공유창(translucent)
-              //     Pace    task: fullscreen visible  ← 유튜브가 빠지자 그 아래 우리 앱이 드러남
-              //   즉 우리가 앱을 앞으로 부른 게 아니라, **유튜브가 스스로 PIP로 빠지면서** 스택에서
-              //   바로 아래 있던 Pace 홈이 노출된 것이다. 반투명 공유창 뒤로 그게 그대로 비친다.
-              //   유튜브의 자동 PIP는 우리가 막을 수 없으므로, 공유가 끝난 뒤 **원래 보던 앱으로
-              //   되돌린다** — 보상형 광고에서 쓰는 것과 같은 처치(returnToLastTrackedApp).
-              //   판정은 포그라운드 폴이 한다: 공유창이 떠 있는 동안 전경은 우리 앱이 아니므로,
-              //   "우리 앱이 전경"이 되는 순간이 곧 공유창이 닫히고 홈에 남겨진 순간이다.
-              pendingReturnAfterShareAtMs = SystemClock.elapsedRealtime()
-            } catch (e: Exception) {
-              Log.w("PaceOverlayService", "share 실패", e)
-            }
+            // 🔴 2026-08-09 — 시스템 공유창 대신 **우리 시트**를 띄운다(showShareSheet 주석에 근거와
+            //   실측이 전부 있다). 시스템 공유창은 URL을 받으면 그 페이지를 스스로 받아와 미리보기를
+            //   만드느라 3초가 걸렸고, 우리가 공식 방식으로 미리 넘겨줘도 삼성 시트가 무시했다.
+            //   유튜브 자체 공유 버튼도 같은 이유로 시스템 공유창을 안 쓴다(대조 실험으로 확인).
+            //   시스템 공유창 경로는 시트 안의 "다른 방법으로 공유…"에 그대로 남아 있다.
+            showShareSheet(url, item.title, restoreListKind = kind)
           }
         })
         itemRow.addView(TextView(this@PaceOverlayService).apply {
@@ -3236,6 +3183,239 @@ class PaceOverlayService : Service() {
     } catch (e: Exception) {
       Log.w("PaceOverlayService", "showSavedFavoriteList 실패", e)
       savedListView = null
+    }
+  }
+
+  private fun hideShareSheet() {
+    shareSheetView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
+    shareSheetView = null
+  }
+
+  // 🔴 2026-08-09 사장님 지시 — 공유 시트를 유튜브처럼 우리가 직접 그린다.
+  //
+  //   왜: 시스템 공유창은 EXTRA_TEXT가 URL이면 **그 페이지를 스스로 받아와** 링크 미리보기를 만든다.
+  //   실기기 실측으로 +1.3초엔 생 URL만, 제목·썸네일이 채워지는 건 +3.3~4.1초였다. 우리가 안드로이드
+  //   공식 방식(EXTRA_TITLE + ClipData 썸네일)으로 미리 넘겨줘도 삼성 One UI 시트는 무시하고 자기
+  //   프리뷰를 우선한다(진단 로그로 "우리가 안 넘긴 것"이 아니라 "무시당한 것"임을 확정했다).
+  //   대조 실험이 결정적이었다 — **유튜브 자체 공유 버튼은 시스템 공유창을 아예 안 쓴다.** 자기 시트를
+  //   그려서 미리보기 지연이 0이다. 같은 길을 간다.
+  //
+  //   덤으로 구조적으로 사라지는 것들(각각 따로 처치했던 것들이다):
+  //   - `EXTRA_EXCLUDE_COMPONENTS`로 막던 "Pace가 자기 공유창에 뜨는" 문제 — 목록을 우리가 만드니 애초에 없다.
+  //   - 유튜브 자동 PIP로 앱 홈이 드러나던 문제 — 공유창 액티비티 자체가 안 뜨므로 전환이 없다.
+  //     (실제로 앱을 고를 때만 그 앱으로 전환된다. 그 뒤 복귀는 기존 pendingReturnAfterShareAtMs가 처리.)
+  //
+  //   ⚠️ 잃는 것도 있다 — 삼성 시트의 "추천 사용자"(Direct Share)는 사라진다. 그래서 맨 아래에
+  //     "More…"로 시스템 공유창 폴백을 남긴다(거기선 예전과 똑같이 동작한다).
+  private fun showShareSheet(url: String, title: String?, restoreListKind: String? = null) {
+    hideShareSheet()
+    // ⚠️ 실기기에서 처음에 놓친 것 — 두 창 다 같은 위치·같은 반투명 배경이라 **그대로 겹쳐 보였다**.
+    //   공유 시트를 띄우는 동안은 목록을 내리고, 사용자가 ✕로 닫으면 되돌린다(목록 재구성은 이제
+    //   썸네일 캐시 덕분에 즉시라 되돌려도 티가 안 난다).
+    if (restoreListKind != null) hideSavedFavoriteList()
+    val d = resources.displayMetrics.density
+    val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
+
+    val panel = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 16f * d
+        // ⚠️ 다른 패널(#59…=35%)보다 진하게 간다. 실기기에서 **밝은 영상 위**에 띄웠을 때 앱 이름
+        //   ("Chrome"/"Gmail"…)이 거의 안 읽혔다. 목록 패널은 썸네일·제목이 커서 견디지만, 이 시트는
+        //   작은 라벨을 읽고 골라야 하는 화면이라 가독성이 곧 기능이다.
+        setColor(Color.parseColor("#CC1A1B22"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+      clipToOutline = true
+      setPadding((14 * d).toInt(), (14 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+    }
+
+    val header = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    header.addView(TextView(this).apply {
+      text = if (isKoreanLocale()) "공유" else "Share"
+      textSize = 15f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    header.addView(TextView(this).apply {
+      text = "✕"
+      textSize = 15f
+      setTextColor(Color.parseColor("#99FFFFFF"))
+      setPadding((10 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
+      isClickable = true
+      setOnClickListener {
+        hideShareSheet()
+        // 취소하면 원래 보던 목록으로 돌아온다 — 공유를 그만둔 것이지 목록을 닫은 게 아니다.
+        restoreListKind?.let { showSavedFavoriteList(it) }
+      }
+    })
+    panel.addView(header)
+
+    // 공유 대상 앱 — 가로 스크롤 아이콘 줄(유튜브 시트와 같은 형태).
+    // ⚠️ Android 11+ 패키지 가시성 — 이 queryIntentActivities가 결과를 돌려주려면 매니페스트에
+    //   <queries><intent> SEND/text-plain 선언이 반드시 있어야 한다(없으면 빈 목록이 온다).
+    val probe = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, url) }
+    val targets = try {
+      packageManager.queryIntentActivities(probe, 0)
+        .filter { it.activityInfo?.packageName != packageName } // 우리 자신은 제외(자기 공유 방지)
+        .sortedBy { it.loadLabel(packageManager)?.toString()?.lowercase() ?: "" }
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "공유 대상 조회 실패", e)
+      emptyList()
+    }
+
+    if (targets.isEmpty()) {
+      // 대상이 하나도 없으면 우리 시트를 보여줄 이유가 없다 — 바로 시스템 공유창으로 넘긴다.
+      Log.w("PaceOverlayService", "공유 대상 0개 — 시스템 공유창으로 폴백")
+      startSystemShareChooser(url, title)
+      return
+    }
+
+    val iconRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(0, (12 * d).toInt(), 0, (10 * d).toInt())
+    }
+    targets.take(12).forEach { ri ->
+      val cell = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding((10 * d).toInt(), 0, (10 * d).toInt(), 0)
+        isClickable = true
+        setOnClickListener {
+          val info = ri.activityInfo ?: return@setOnClickListener
+          hideShareSheet()
+          launchShareTarget(ComponentName(info.packageName, info.name), url)
+        }
+      }
+      cell.addView(ImageView(this).apply {
+        setImageDrawable(try { ri.loadIcon(packageManager) } catch (e: Exception) { null })
+      }, LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt()))
+      cell.addView(TextView(this).apply {
+        text = try { ri.loadLabel(packageManager)?.toString() ?: "" } catch (e: Exception) { "" }
+        textSize = 10f
+        maxLines = 1
+        gravity = Gravity.CENTER
+        setTextColor(Color.parseColor("#CCFFFFFF"))
+        setPadding(0, (5 * d).toInt(), 0, 0)
+      }, LinearLayout.LayoutParams((56 * d).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT))
+      iconRow.addView(cell)
+    }
+    panel.addView(HorizontalScrollView(this).apply {
+      isHorizontalScrollBarEnabled = false
+      addView(iconRow)
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+    fun addActionRow(label: String, onTap: () -> Unit) {
+      panel.addView(View(this).apply {
+        setBackgroundColor(Color.parseColor("#1AFFFFFF"))
+      }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * d).toInt().coerceAtLeast(1)))
+      panel.addView(TextView(this).apply {
+        text = label
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        setPadding(0, (13 * d).toInt(), 0, (13 * d).toInt())
+        isClickable = true
+        setOnClickListener { onTap() }
+      }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    addActionRow(if (isKoreanLocale()) "링크 복사" else "Copy link") {
+      hideShareSheet()
+      try {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText(title ?: "link", url))
+        showToast(this@PaceOverlayService, if (isKoreanLocale()) "링크를 복사했어요" else "Link copied")
+      } catch (e: Exception) {
+        Log.w("PaceOverlayService", "링크 복사 실패", e)
+      }
+    }
+    // 삼성 시트의 "추천 사용자"/Quick Share 통합 등 시스템 기능이 필요할 때를 위한 탈출구.
+    addActionRow(if (isKoreanLocale()) "다른 방법으로 공유…" else "More…") {
+      hideShareSheet()
+      startSystemShareChooser(url, title)
+    }
+
+    val root = FrameLayout(this).apply { addView(panel, FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)) }
+    shareSheetView = root
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * d).toInt()
+      y = 80 + (44 * d).toInt()
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        blurBehindRadius = (28 * d).toInt()
+      }
+    }
+    try {
+      windowManager?.addView(shareSheetView, params)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "showShareSheet 실패 — 시스템 공유창으로 폴백", e)
+      shareSheetView = null
+      startSystemShareChooser(url, title)
+    }
+  }
+
+  // 사용자가 고른 앱으로 **직접** 보낸다(암시적 인텐트가 아니라 명시적 컴포넌트).
+  // 페이로드는 예전 시스템 공유창 경로와 **완전히 동일하게** EXTRA_TEXT 하나만 넣는다 —
+  // 그 조합은 실기기에서 수신 앱까지 확인된 상태다(Chrome이 공유한 바로 그 Short를 열었다).
+  // 시스템 공유창 폴백 — 우리 시트의 "다른 방법으로 공유…", 대상 0개, 창 생성 실패 시에만 탄다.
+  // 예전에 이 경로에서 겪은 문제들의 처치를 **그대로 유지**한다(각 주석이 그 근거다).
+  private fun startSystemShareChooser(url: String, title: String?) {
+    try {
+      val share = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, url)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 안드로이드 공식 "rich content preview" — 삼성 One UI 시트는 무시하지만 AOSP 계열 시트
+        // (픽셀 등)에서는 동작한다. 썸네일은 이미 목록용으로 받아둔 디스크 캐시를 재사용(추가 다운로드 0).
+        // ⚠️ type은 "text/plain" 그대로 — ClipData의 URI는 미리보기용이고 수신 앱은 EXTRA_TEXT를 읽는다
+        //   (실기기 확인: 이 상태로 Chrome을 고르면 공유한 바로 그 Short가 열린다).
+        title?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_TITLE, it) }
+      }
+      val chooser = Intent.createChooser(share, null).apply {
+        // NEW_TASK만 주면 안드로이드가 이 액티비티를 Pace 앱의 기존 태스크(홈이 든)에 붙여버려
+        // 공유창 뒤로 앱 홈이 드러난다 — MULTIPLE_TASK로 분리한다(보상형 광고와 같은 처치).
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        // PaceShareCaptureActivity는 ACTION_SEND(text/plain) 필터를 갖고 있어 **우리 자신의 공유창에도**
+        // 뜬다. 여기서만 제외한다(유튜브 공유시트에서 Pace로 담는 기능은 그대로).
+        putExtra(
+          Intent.EXTRA_EXCLUDE_COMPONENTS,
+          arrayOf(ComponentName(packageName, PaceShareCaptureActivity::class.java.name))
+        )
+      }
+      startActivity(chooser)
+      // 공유창이 뜨면 유튜브가 스스로 PIP로 내려가 그 아래 Pace 홈이 드러난다(유튜브의 자동 PIP는
+      // 막을 수 없다). 공유가 끝나면 원래 보던 앱으로 되돌린다 — 판정은 포그라운드 폴이 한다.
+      pendingReturnAfterShareAtMs = SystemClock.elapsedRealtime()
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "share 실패", e)
+    }
+  }
+
+  private fun launchShareTarget(component: ComponentName, url: String) {
+    try {
+      startActivity(Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, url)
+        this.component = component
+        // MULTIPLE_TASK를 같이 주는 이유는 공유창 때와 같다 — 이게 없으면 안드로이드가 이 액티비티를
+        // Pace 앱의 기존 태스크(홈이 든)에 붙여서 앱 홈이 드러난다.
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+      })
+      pendingReturnAfterShareAtMs = SystemClock.elapsedRealtime()
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "공유 대상 실행 실패 component=$component", e)
+      showToast(this, if (isKoreanLocale()) "이 앱으로는 공유할 수 없어요" else "Can't share to this app")
     }
   }
 
@@ -4098,6 +4278,7 @@ class PaceOverlayService : Service() {
     hidePaceMenu() // 세션 종료 시 P 메뉴가 열려있던 채로 알약만 사라지면 메뉴 창이 고아로 남는다.
     hideSavedFavoriteList() // 위와 동일한 이유로 Saved/Favorite 리스트 창도 같이 정리.
     hideShortsHotList() // 위와 동일한 이유로 Shorts HOT 리스트 창도 같이 정리.
+    hideShareSheet() // 위와 동일한 이유로 공유 시트 창도 같이 정리.
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽

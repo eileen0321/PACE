@@ -30,6 +30,17 @@
        세션 집행(Daily Limit/Sleep Timer)을 담당하는 앱이라 해당 예외에 해당한다. -->
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+  <!-- 2026-08-09 — 우리가 직접 그리는 공유 시트(PaceOverlayService.showShareSheet)가 공유 가능한 앱
+       목록을 만들려면 queryIntentActivities()가 필요하다. Android 11(API 30)부터는 패키지 가시성
+       제한 때문에 **이 선언이 없으면 결과가 빈 목록으로 돌아온다**(권한 오류도 안 나서 조용히 망가진다).
+       범위는 딱 필요한 만큼만 — "text/plain을 ACTION_SEND로 받는 앱"으로 한정한다. -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.SEND" />
+      <data android:mimeType="text/plain" />
+    </intent>
+  </queries>
+
   <application>
     <service
       android:name="expo.modules.paceoverlay.PaceOverlayService"

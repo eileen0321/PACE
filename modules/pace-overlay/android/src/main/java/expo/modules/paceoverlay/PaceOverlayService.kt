@@ -2973,6 +2973,12 @@ class PaceOverlayService : Service() {
               }
             }
             Log.i("PaceOverlayService", "CHAIN tapped url=$url chainEnabled=$chainEnabled queueSize=${favoriteChainQueue.size}")
+            // 🔴 2026-08-09 전수 스윕에서 발견 — 항목을 눌러 재생을 시작해도 **목록이 그대로 남아
+            //   방금 고른 영상을 가렸다**(실기기 스크린샷으로 확인). 보려고 고른 것을 목록이 덮고 있는
+            //   건 명백한 사용성 결함이라 재생 시작과 함께 닫는다.
+            //   "다음 것도 이어서"는 이미 이어서재생(favoriteChainQueue)이 담당하므로 목록을 띄워둘
+            //   이유가 없다. 다시 열려면 P → Favorite 두 번이면 되고, 이제 그 열기는 캐시 덕에 즉시다.
+            hideSavedFavoriteList()
             try {
               startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (e: Exception) {

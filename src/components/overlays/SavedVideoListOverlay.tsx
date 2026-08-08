@@ -37,8 +37,21 @@ export function SavedVideoListOverlay({
   const [items, setItems] = useState<SavedVideo[]>([]);
   const [adding, setAdding] = useState(false);
 
+  // 2026-08-09 파리티 — 안드로이드 PaceOverlayService.renderList()(커밋 2764d0b)와 동일 처치.
+  // videoId도 url도 없는 "껍데기" 행은 재생도(onOpen) 공유도(onShare) 불가능하다(2026-08-05 이전에
+  // videoId를 못 얻는 광고/특수 항목을 추가했을 때 쌓인 잔여). 둘 다 없을 때만 지운다 — 하나라도
+  // 있으면 서로 복원 가능하므로(공유는 videoId→url, 열기는 url→videoId) 지우면 안 된다.
+  const isBlank = (s?: string | null) => !s || s.trim().length === 0;
   const reload = useCallback(() => {
-    getSavedVideos(userId, kind).then(setItems).catch(() => setItems([]));
+    getSavedVideos(userId, kind).then((list) => {
+      const shells = list.filter((v) => isBlank(v.videoId) && isBlank(v.url));
+      if (shells.length > 0) {
+        shells.forEach((v) => removeSavedVideo(v.id).catch(() => {}));
+        setItems(list.filter((v) => !(isBlank(v.videoId) && isBlank(v.url))));
+      } else {
+        setItems(list);
+      }
+    }).catch(() => setItems([]));
   }, [userId, kind]);
 
   useEffect(() => { reload(); }, [reload]);

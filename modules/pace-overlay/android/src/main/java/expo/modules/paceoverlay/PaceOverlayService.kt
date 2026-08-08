@@ -63,6 +63,13 @@ class PaceOverlayService : Service() {
   // 이번 프로세스에서 oEmbed로 제목을 이미 대조한 행 id — renderList ↔ oEmbed 무한 루프 방지용
   // (renderList 안의 보정 블록 주석 참고). 프로세스가 죽으면 비므로 다음 실행에서 한 번 더 확인한다.
   private val oembedCheckedRowIds = mutableSetOf<String>()
+  // 즐겨찾기/Shorts HOT 썸네일 메모리 캐시(loadThumbnailInto 주석 참고). 44dp로 축소 디코드한
+  // 비트맵이라 1장에 대략 50KB 안쪽 — 4MB면 수십 장이 넉넉히 들어간다.
+  private val thumbnailMemoryCache = object : android.util.LruCache<String, Bitmap>(4 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+  }
+  // 내려받는 중인 썸네일 URL → 그 결과를 기다리는 ImageView들(중복 요청 제거용, loadThumbnailInto 참고).
+  private val thumbnailPendingViews = mutableMapOf<String, MutableList<ImageView>>()
   // 알약 표시 상태의 직전 값 — 바뀔 때만 로그를 남기기 위한 것(foregroundPollRunnable 주석 참고).
   private var lastPillShouldShow: Boolean? = null
   // 마지막으로 정산한 틱 시각(elapsedRealtime)과 1분에 못 미치는 잔여 시간 — 아래 startMinuteTicker
@@ -970,6 +977,10 @@ class PaceOverlayService : Service() {
     // 사용자가 실제 공유 대상 앱을 골라 그쪽에 머무는 경우엔 영영 안 걸리므로, 대기 상태를 무한히
     // 들고 있지 않도록 만료시킨다(나중에 엉뚱한 순간에 유튜브가 튀어나오는 것을 막는다).
     private const val SHARE_RETURN_TIMEOUT_MS = 60_000L
+    // 썸네일 연결/읽기 타임아웃. 예전 URL.openStream()은 기본값 0(=무한)이라 네트워크가 나쁘면
+    // 스레드가 영영 매달렸다(목록을 열 때마다 새 스레드라 계속 쌓인다). 썸네일은 실패해도
+    // 플레이스홀더로 끝나면 되는 장식이라 짧게 끊는 편이 낫다.
+    private const val THUMBNAIL_TIMEOUT_MS = 5000
     private const val TICK_INTERVAL_MS = 60_000L
     // 한 번의 틱에서 몰아서 깎을 수 있는 최대 분(startMinuteTicker/performTick 주석 참고).
     // 장시간 Doze나 프로세스 사망 뒤 복귀했을 때 보지도 않은 시간까지 한 방에 사라지는 것을 막는다.
@@ -3207,18 +3218,92 @@ class PaceOverlayService : Service() {
     }
   }
 
+  // 🔴 2026-08-09 사장님 지적 — "즐겨찾기 목록이 아주 느리게 썸네일과 함께 뜬다, 왜 로딩이 걸리냐".
+  //
+  //   원인은 네트워크가 아니었다(기기에서 i.ytimg.com 왕복 실측 48~53ms). **캐시가 하나도 없었다.**
+  //   예전 구현은 렌더할 때마다 이미지마다 새 Thread를 만들어 매번 원본을 다시 받고 다시 디코드했다.
+  //   메모리 캐시도, 디스크 캐시도 없어서 **목록을 열 때마다 전부 다시 받았다.**
+  //
+  //   더 나쁜 건 한 번 열 때 renderList()가 여러 번 돈다는 점이다 — 최초 1회 + oEmbed 제목 보정이
+  //   끝난 행마다 1회씩(그 자리에서 renderList()를 다시 부른다). renderList()는 removeAllViews()로
+  //   행을 통째로 새로 만들기 때문에, 다시 그릴 때마다 **썸네일이 빈 플레이스홀더로 돌아갔다가 또
+  //   새로 받아 채워진다** — 사장님이 보신 "느리게 하나씩 뜨는" 그 모습이 정확히 이거다.
+  //   4행이면 최대 (1+4)×4 = 20회 다운로드 + 20회 디코드다.
+  //
+  //   디코드 낭비도 있었다. hqdefault.jpg는 480×360인데 표시는 44dp(≈116px)다. 옵션 없이 디코드하면
+  //   ARGB_8888로 약 690KB짜리 비트맵이 만들어진다 — 필요한 픽셀의 30배 이상.
+  //
+  //   그리고 URL.openStream()은 **타임아웃이 기본 0(무한)이다.** 네트워크가 나쁘면 스레드가 영원히
+  //   매달린다(열 때마다 새 스레드니 계속 쌓인다).
+  //
+  //   → 처치 4가지: ① 프로세스 메모리 LRU 캐시(같은 세션 내 재렌더/재오픈은 **동기적으로 즉시** 그림
+  //     — 깜빡임 자체가 사라진다), ② cacheDir 디스크 캐시(프로세스가 죽었다 살아나도 유지),
+  //     ③ inSampleSize로 표시 크기에 맞춰 축소 디코드, ④ 연결/읽기 타임아웃.
+  //   ⚠️ ImageView에 URL을 tag로 박아두고 콜백에서 대조한다 — renderList()가 여러 번 도는 구조라
+  //     늦게 도착한 응답이 이미 다른 행이 된 뷰에 그려지는 걸 막아야 한다.
   private fun loadThumbnailInto(imageView: ImageView, url: String) {
+    imageView.tag = url
+    thumbnailMemoryCache.get(url)?.let {
+      // 메모리에 있으면 비동기로 갈 이유가 없다 — 그 자리에서 그린다(재렌더 깜빡임 제거의 핵심).
+      imageView.setImageBitmap(it)
+      return
+    }
+    // 같은 URL이 이미 내려받는 중이면 스레드를 또 만들지 않고 이 뷰만 대기열에 붙인다.
+    //   왜 필요한가: 목록을 처음 열 때 renderList()가 (최초 1회 + oEmbed 보정 행마다 1회) 여러 번
+    //   도는데, 아직 캐시가 안 찼으므로 **같은 4개 주소를 4~5번 중복해서 받게 된다**. 정확히 사장님이
+    //   느린 걸 겪는 그 순간에 요청이 제일 많이 쌓이는 구조였다.
+    //   ⚠️ 이 맵은 메인 스레드에서만 만진다(loadThumbnailInto는 renderList 경유=메인, 완료 콜백도
+    //     foregroundPollHandler=메인 루퍼로 post한다) — 그래서 별도 동기화가 필요 없다.
+    thumbnailPendingViews[url]?.let { it.add(imageView); return }
+    thumbnailPendingViews[url] = mutableListOf(imageView)
+
+    val targetPx = (44 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
     Thread {
-      try {
-        val bitmap: Bitmap = BitmapFactory.decodeStream(URL(url).openStream())
-        foregroundPollHandler.post {
-          if (imageView.isAttachedToWindow) imageView.setImageBitmap(bitmap)
-        }
+      val bitmap = try {
+        loadThumbnailBitmap(url, targetPx)
       } catch (e: Exception) {
-        // 썸네일 실패는 조용히 무시 — 플레이스홀더 배경이 이미 그려져 있음.
+        null // 썸네일 실패는 조용히 무시 — 플레이스홀더 배경이 이미 그려져 있음.
+      }
+      foregroundPollHandler.post {
+        val waiting = thumbnailPendingViews.remove(url) ?: return@post
+        if (bitmap == null) return@post
+        thumbnailMemoryCache.put(url, bitmap)
+        waiting.forEach { v -> if (v.isAttachedToWindow && v.tag == url) v.setImageBitmap(bitmap) }
       }
     }.start()
   }
+
+  // 디스크 캐시 → 없으면 네트워크. 둘 다 표시 크기에 맞춰 축소 디코드한다.
+  private fun loadThumbnailBitmap(url: String, targetPx: Int): Bitmap? {
+    val cacheFile = File(thumbnailCacheDir(), url.hashCode().toString())
+    if (cacheFile.exists()) {
+      decodeScaled(cacheFile.readBytes(), targetPx)?.let { return it }
+      // 깨진 캐시 파일이면 지우고 네트워크로 내려간다.
+      try { cacheFile.delete() } catch (e: Exception) {}
+    }
+    val conn = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+      connectTimeout = THUMBNAIL_TIMEOUT_MS
+      readTimeout = THUMBNAIL_TIMEOUT_MS
+    }
+    val bytes = try { conn.inputStream.use { it.readBytes() } } finally { conn.disconnect() }
+    try {
+      thumbnailCacheDir().mkdirs()
+      cacheFile.writeBytes(bytes)
+    } catch (e: Exception) {
+      // 디스크 캐시 실패는 치명적이지 않다 — 메모리 캐시만으로도 이번 세션은 빨라진다.
+    }
+    return decodeScaled(bytes, targetPx)
+  }
+
+  private fun decodeScaled(bytes: ByteArray, targetPx: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= targetPx && bounds.outHeight / (sample * 2) >= targetPx) sample *= 2
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+  }
+
+  private fun thumbnailCacheDir(): File = File(cacheDir, "pace-thumbs")
 
   private fun hideShortsHotList() {
     shortsHotListView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }

@@ -1,6 +1,7 @@
 package expo.modules.paceoverlay
 
 import android.app.*
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
@@ -2817,14 +2818,39 @@ class PaceOverlayService : Service() {
           minHeight = (48 * d).toInt()
           isClickable = true
           setOnClickListener {
-            val url = item.url ?: return@setOnClickListener
+            // 🔴 2026-08-08 사장님 지적 ① "왜 공유 누르면 쇼츠보다 앱 홈으로 가"
+            //   ② "Pace 앱에서 공유하는데 Pace 앱으로 공유하는 게 되나?"
+            //   원인은 하나다 — PaceShareCaptureActivity가 ACTION_SEND(text/plain) 인텐트 필터를
+            //   갖고 있다(유튜브 공유시트에서 링크를 가로채 즐겨찾기에 담는 기능 때문에 필요하다).
+            //   그 부작용으로 **모든 텍스트 공유창에 Pace가 뜬다 — 우리 자신의 공유창에도.**
+            //   거기서 Pace를 고르면 그 캡처 액티비티가 떠서 "링크를 받아 저장하고 앱으로 돌아가는"
+            //   자기 동작을 수행한다 → 사장님이 보신 "쇼츠가 아니라 앱 홈으로 가는" 그 현상.
+            //   → 우리 공유창에서만 그 컴포넌트를 제외한다(EXTRA_EXCLUDE_COMPONENTS, API 24+, minSdk 24).
+            //     유튜브 공유시트에서 Pace로 담는 기능은 그대로 살아 있다 — 이 제외는 이 창에만 걸린다.
+            //
+            // ③ url이 null이면 예전엔 **아무 반응 없이 끝났다**(silent no-op). videoId만 있는 행이
+            //   실제로 존재한다(스와이프 모드 저장/구버전 행). 즐겨찾기 탭 열기에서 2026-08-05에
+            //   고친 것과 같은 처치를 공유에도 한다 — videoId로 주소를 만들고, 그것도 없을 때만
+            //   토스트로 알린다.
+            val url = item.url ?: item.videoId?.takeIf { it.isNotBlank() }?.let { "https://www.youtube.com/shorts/$it" }
+            if (url == null) {
+              showToast(this@PaceOverlayService, if (isKoreanLocale()) "주소를 알 수 없어 공유할 수 없어요" else "No link to share")
+              return@setOnClickListener
+            }
             try {
               val share = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, url)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
               }
-              startActivity(Intent.createChooser(share, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              val chooser = Intent.createChooser(share, null).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra(
+                  Intent.EXTRA_EXCLUDE_COMPONENTS,
+                  arrayOf(ComponentName(packageName, PaceShareCaptureActivity::class.java.name))
+                )
+              }
+              startActivity(chooser)
             } catch (e: Exception) {
               Log.w("PaceOverlayService", "share 실패", e)
             }

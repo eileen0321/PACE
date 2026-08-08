@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
@@ -87,10 +87,23 @@ export function SavedVideoListOverlay({
     });
   }, [onOpenVideo, onClose, items, t]);
 
+  // 🔴 2026-08-08 사장님 지적("애플 공유 안 되는 것 같다") — 예전엔 `if (!item.url) return;`이라
+  //   url이 없는 행에서 **아무 반응 없이 조용히 끝났다.** 버튼이 죽은 것처럼 보이는데 원인을 알
+  //   방법이 없다. url이 비어 있는 행은 실제로 존재한다(스와이프 모드 저장 등 videoId만 아는 경로,
+  //   구버전 행). 안드로이드 즐겨찾기 "탭해서 열기"에서 2026-08-05에 고친 것과 같은 처치를 한다:
+  //     ① url이 없으면 videoId로 주소를 만들어 쓴다
+  //     ② 둘 다 없을 때만 토스트로 알린다(조용히 끝내지 않는다)
+  //   ⚠️ message와 url을 **동시에 넘기지 않는다.** iOS 공유시트는 둘을 별개 항목으로 취급해
+  //     같은 주소가 두 번 들어가는 앱이 있다(메모/메시지 등). iOS는 url만, 안드로이드는 message만
+  //     쓰는 것이 각 플랫폼의 정상 사용법이다.
   const onShare = useCallback((item: SavedVideo) => {
-    if (!item.url) return;
-    Share.share({ message: item.url, url: item.url }).catch(() => {});
-  }, []);
+    const url = item.url ?? (item.videoId ? `https://www.youtube.com/shorts/${item.videoId}` : null);
+    if (!url) {
+      useToastStore.getState().show(t('overlay.openFailed'));
+      return;
+    }
+    Share.share(Platform.OS === 'ios' ? { url } : { message: url }).catch(() => {});
+  }, [t]);
 
   const title = kind === 'capture' ? t('overlay.captureListTitle') : t('overlay.favoriteListTitle');
   const emptyText = kind === 'capture' ? t('overlay.captureListEmpty') : t('overlay.favoriteListEmpty');
@@ -133,13 +146,18 @@ export function SavedVideoListOverlay({
                   <Text style={styles.rowTitle} numberOfLines={2}>{item.title ?? '—'}</Text>
                   {!!item.channel && <Text style={styles.rowChannel} numberOfLines={1}>{item.channel}</Text>}
                 </View>
-                {kind === 'capture' ? (
-                  <Pressable onPress={() => onShare(item)} hitSlop={8} style={styles.rowAction} accessibilityRole="button" accessibilityLabel={t('overlay.shareAction')}>
-                    <Feather name="share-2" size={16} color="rgba(255,255,255,0.75)" />
-                  </Pressable>
-                ) : (
-                  <Feather name="play-circle" size={16} color="rgba(255,255,255,0.5)" style={styles.rowAction} />
-                )}
+                {/* 🔴 2026-08-08 사장님 지적("Favorite에 있는 리스트 애플 공유 안 되는 것 같다") —
+                    공유가 고장난 게 아니라 **iOS 즐겨찾기에는 공유 버튼이 아예 없었다.** 여기가
+                    `kind === 'capture'`일 때만 공유 아이콘을 그리고, favorite에는 장식용 재생
+                    아이콘만 뒀다.
+                    안드로이드는 2026-07-31 지시("favorite도 공유가 되게")에 따라 **양쪽 리스트 모두**
+                    공유 아이콘을 달아뒀는데(PaceOverlayService의 ⇪ 버튼) iOS만 반영이 안 된
+                    파리티 갭이었다. 안드로이드와 동일하게 맞춘다.
+                    재생 아이콘을 없애도 재생 동작은 그대로다 — 행 자체를 탭하면 재생된다(onOpen).
+                    아이콘을 셋(공유/재생/삭제)으로 늘리면 좁은 행에서 터치 영역이 서로 먹는다. */}
+                <Pressable onPress={() => onShare(item)} hitSlop={8} style={styles.rowAction} accessibilityRole="button" accessibilityLabel={t('overlay.shareAction')}>
+                  <Feather name="share-2" size={16} color="rgba(255,255,255,0.75)" />
+                </Pressable>
                 <Pressable onPress={() => onRemove(item.id)} hitSlop={8} style={styles.rowRemove} accessibilityRole="button" accessibilityLabel={t('overlay.removeAction')}>
                   <Feather name="x" size={14} color="rgba(255,255,255,0.4)" />
                 </Pressable>

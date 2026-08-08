@@ -538,23 +538,6 @@ export default function HomeScreen() {
           </Pressable>
         )}
 
-        {/* 🔴 2026-08-08 사장님 지시 — "노티도 보였다 자동으로 천천히 사라지는 방식이지, 저렇게 UI를
-            차지하고 있는 건 아닌 것 같다". 알림처럼 **떴다가 스스로 사라지게** 한다.
-            들어올 때 FadeInDown, 나갈 때 FadeOut(느리게 800ms) — 자동 해제 타이머는 아래 useEffect. */}
-        {todaysInsight && !showAccessibilityPrompt && (
-          <Animated.View entering={FadeInDown.duration(420)} exiting={FadeOut.duration(800)}>
-          <Pressable style={styles.sleepInsightBanner} onPress={onTapInsightGift}>
-            {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
-                회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
-                2026-07-29 — 이 박스 자체가 이제 "선물상자"라 탭하면 가끔 보너스 크레딧이 나온다. */}
-            <View style={styles.sleepInsightBadge}>
-              <Text style={styles.sleepInsightBadgeText}>P</Text>
-            </View>
-            <Text style={styles.sleepInsightText}>{todaysInsight}</Text>
-            <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
-          </Pressable>
-          </Animated.View>
-        )}
 
         {/* 2026-08-01 사용자 지적("그걸 저렇게 촌스럽게 띄운다고", "노티를 저렇게 줄줄이 띄우는게
             트렌드야?") — 배터리 배너에 이모지(🔋)를 써서 위 인사이트 배너(P 배지)와 톤이 안 맞았고,
@@ -611,6 +594,33 @@ export default function HomeScreen() {
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>
         <QuickControlsGrid />
       </ScrollView>
+
+      {/* 🔴 2026-08-08 사장님 지시 2차 — "노티 떴다 사라지는 게 너무 부자연스럽고, 박스들이 움직이니까
+          버벅거린다. 박스들 홈 화면 고정하고 알림처럼 떴다 사라지는 건?"
+          원인: 이 배너가 **ScrollView 흐름 안에** 있어서 나타나고 사라질 때마다 아래 카드 전체가
+          밀려 올라갔다 내려왔다 했다(레이아웃 리플로우). 페이드는 배너에만 걸리는데 카드 이동은
+          애니메이션 없이 툭 튀니 더 어색했다.
+          → ScrollView **밖으로 빼서 화면에 떠 있는 오버레이**로 만든다(position: absolute).
+            이제 홈 카드들은 배너와 무관하게 **한 픽셀도 움직이지 않는다** — 진짜 알림처럼 위에
+            떴다가 사라진다.
+          ⚠️ pointerEvents="box-none"으로 배너 바깥 영역의 터치는 그대로 아래 화면에 전달된다
+            (오버레이가 홈 상단을 가로막아 스크롤/탭이 막히면 안 된다). */}
+      {todaysInsight && !showAccessibilityPrompt && (
+        <View style={styles.insightOverlay} pointerEvents="box-none">
+          <Animated.View entering={FadeInDown.duration(420)} exiting={FadeOut.duration(800)}>
+            <Pressable style={[styles.sleepInsightBanner, styles.insightFloating]} onPress={onTapInsightGift}>
+              {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
+                  회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
+                  2026-07-29 — 이 박스 자체가 "선물상자"라 탭하면 가끔 보너스 크레딧이 나온다. */}
+              <View style={styles.sleepInsightBadge}>
+                <Text style={styles.sleepInsightBadgeText}>P</Text>
+              </View>
+              <Text style={styles.sleepInsightText}>{todaysInsight}</Text>
+              <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
 
       <BluetoothOnboardingSheet
         visible={pendingPlatform !== null}
@@ -672,6 +682,27 @@ const styles = StyleSheet.create({
   giftTitle: { color: colors.textPrimary, fontSize: 15, fontFamily: typography.bodyFontFamilySemibold, textAlign: 'center', marginTop: 2 },
   giftBtn: { alignSelf: 'stretch', backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 10, alignItems: 'center', marginTop: spacing.sm },
   giftBtnText: { color: '#FFFFFF', fontFamily: typography.bodyFontFamilyBold, fontSize: 13 },
+  // 🔴 2026-08-08 — 인사이트 배너를 ScrollView 밖으로 빼서 띄우는 컨테이너(위 렌더 주석 참고).
+  // 홈 카드가 배너 때문에 밀리지 않게 하는 것이 목적이다. top은 AppHeader 아래에 겹치도록 잡았다.
+  insightOverlay: {
+    position: 'absolute',
+    top: 96,
+    left: 0,
+    right: 0,
+    zIndex: 50,
+  },
+  // 떠 있는 상태라 배경 위에 얹히므로, 인라인일 때보다 불투명도를 올리고 그림자를 줘서
+  // "화면 위에 뜬 알림"으로 읽히게 한다(반투명 그대로면 뒤 카드 글자와 겹쳐 지저분하다).
+  insightFloating: {
+    marginTop: 0,
+    backgroundColor: 'rgba(28,30,42,0.96)',
+    borderColor: 'rgba(129,140,248,0.35)',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
   sleepInsightBanner: {
     flexDirection: 'row',
     alignItems: 'center',

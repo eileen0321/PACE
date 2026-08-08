@@ -4115,7 +4115,18 @@ class PaceOverlayService : Service() {
         "Got other things to do today?" to "You've gone over your $goalMinutes-minute goal."
       )
     }
-    val (msgTitle, msgBody) = messages[(hitCount - 3) % messages.size]
+    // 🔴 2026-08-09 밤샘 전수 스윕에서 잡은 크래시 — 예전 식은 `messages[(hitCount - 3) % size]`였다.
+    //   hitCount는 **1부터** 온다(로그 `DAILY LIMIT hit=1`). 코틀린 `%`는 부호를 유지하므로
+    //     hit=1 → (1-3)%4 = -2,  hit=2 → -1  → **ArrayIndexOutOfBoundsException**
+    //   → performTick의 catch가 삼켜서 앱은 안 죽었지만 **그날의 첫 두 번의 한도 안내가 아예 안 떴다.**
+    //     3번째(=index 0)부터만 떴으니, 정작 사용자가 한도에 막 닿은 순간엔 아무 안내도 못 본 것이다.
+    //   `-3`은 이 기능이 "tier 3"였을 때(hitCount가 3부터 시작하던 시절)의 잔재다 — 호출부가
+    //   1부터 세도록 바뀌었는데 이 식만 안 따라왔다.
+    //   실측 로그(2026-08-09 02:44:10 / 02:49:10):
+    //     DAILY LIMIT hit=1 usageMinutes=120 → length=4; index=-2
+    //     DAILY LIMIT hit=2 usageMinutes=125 → length=4; index=-1
+    //   ⚠️ 음수 방지를 위해 floorMod를 쓴다(단순 `% size`는 위와 같은 함정이 그대로 남는다).
+    val (msgTitle, msgBody) = messages[Math.floorMod(hitCount - 1, messages.size)]
 
     removeTier3Toast() // 이전 토스트가 아직 안 사라졌으면(연속 도달 등) 먼저 치우고 새로 띄움
     windowManager = windowManager ?: getSystemService(Context.WINDOW_SERVICE) as WindowManager

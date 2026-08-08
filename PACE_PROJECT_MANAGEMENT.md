@@ -7751,3 +7751,69 @@ P메뉴/즐겨찾기/Shorts HOT/공유 시트는 전부 같은 위치의 반투�
 2. `channelTitle` 빈 값이 iOS 피드 UI에 실제로 노출되는지(채널명 자리가 비어 보이는지) 확인.
 3. 안드로이드 전용 확인 근거: `capabilities.supportsPaceFeed = Platform.OS === 'ios'`,
    `home.tsx`의 `router.push('/feed')`도 iOS 분기 — 안드로이드 사용자는 RN 피드/RN 공유를 아예 못 본다.
+
+---
+
+### 2026-08-09 (밤샘, 이어서) — 🔴 스윕 최대 수확: **일일 한도 안내가 그날 처음 두 번은 뜬 적이 없었다**
+
+무접촉 소크 로그에서 잡았다. `performTick`이 매번 예외로 죽고 있었다:
+```
+02:44:10.410  SLEEP stage=SUSPECT noInputMs=657148
+02:44:10.412  DAILY LIMIT hit=1 usageMinutes=120 (non-blocking)
+02:44:10.417  E/PaceOverlay: performTick failed, rescheduling anyway
+02:44:10.417  java.lang.ArrayIndexOutOfBoundsException: length=4; index=-2
+02:44:10.417  	at PaceOverlayService.showLimitNoticeToast(PaceOverlayService.kt:4118)
+02:44:10.417  	at PaceOverlayService.performTick(PaceOverlayService.kt:2066)
+...
+02:49:10.695  DAILY LIMIT hit=2 usageMinutes=125 (non-blocking)
+02:49:10.696  java.lang.ArrayIndexOutOfBoundsException: length=4; index=-1
+```
+
+#### 원인
+```kotlin
+val (msgTitle, msgBody) = messages[(hitCount - 3) % messages.size]   // ← 옛 코드
+```
+`hitCount`는 **1부터** 온다. 코틀린 `%`는 피제수의 부호를 유지하므로
+`hit=1 → -2`, `hit=2 → -1` → **인덱스 음수 → 예외**.
+`-3`은 이 기능이 "tier 3"였던 시절(hitCount가 3부터 시작하던 때)의 잔재다 —
+호출부가 1부터 세도록 바뀌었는데 이 식만 안 따라왔다.
+
+#### 왜 아무도 몰랐나
+`performTick`의 `catch`가 예외를 삼키고 "rescheduling anyway"로 넘어간다. 앱은 안 죽고 카운트다운도
+계속 돈다. **조용히 안내만 안 뜬다.** 게다가 3번째 도달(index 0)부터는 정상 동작해서, 오래 쓰면
+"가끔 뜬다"로 보였다. 정작 **사용자가 한도에 막 닿은 그 순간**엔 아무 안내도 못 봤다.
+(한도 도달 알림 자체는 `dailyLimitHitCount == 1`일 때 별도로 나가므로 알림은 떴다 — 화면 위 안내만 죽었다.)
+
+#### 수정 — 커밋 `<이 절 아래 커밋 해시>`
+```kotlin
+val (msgTitle, msgBody) = messages[Math.floorMod(hitCount - 1, messages.size)]
+```
+`floorMod`를 쓴 이유: 단순 `% size`는 같은 함정(음수 인덱스)이 그대로 남는다.
+
+#### 검증
+1. **산술 재현** — 옛 식/새 식을 hit 1~8로 돌려 프로덕션 로그와 대조:
+   | hit | 옛 식 `(hit-3)%4` | 새 식 `floorMod(hit-1,4)` |
+   |---|---|---|
+   | 1 | **CRASH index=-2** (로그와 일치) | 0 |
+   | 2 | **CRASH index=-1** (로그와 일치) | 1 |
+   | 3 | 0 | 2 |
+   | 4 | 1 | 3 |
+   | 5~8 | 2,3,0,1 | 0,1,2,3 |
+2. **실기기(수정본)** — `DAILY LIMIT hit=3`, `hit=4` 모두 **예외 없음**(`performTick failed` 0건).
+3. ⚠️ **못 한 것**: hit=1/2가 실제로 화면에 뜨는 것까지는 이번 밤에 확인 못 했다 —
+   `dailyLimitHitCount`가 그날 누적이라 이미 3 이상으로 올라가 있었고, 되돌리려면 앱 데이터를
+   지워야 해서 하지 않았다. **날짜가 바뀐 뒤 첫 한도 도달 때 육안 확인 권장.**
+
+---
+
+### 2026-08-09 (밤샘) — 🟢 수면 감지 전 구간, 이번 소크에서 실사용 상수로 완주 확인
+
+일일 한도가 **비차단**이라 세션이 계속 돌았고, 덕분에 같은 소크에서 수면 흐름이 끝까지 갔다:
+```
+02:44:10.410  SLEEP stage=SUSPECT noInputMs=657148        ← 무입력 10.95분 (임계 10분)
+02:49:10.667  SLEEP stage=PROMPTED — asking '아직 보고 계세요?'  ← +5분 (임계 5분)
+02:49:40.740  SLEEP CONFIRMED (timer) — no response for 30073ms  ← 30.07초 (임계 30초)
+```
+세 구간 전부 **실사용 상수 그대로**, 축소 없이 확인. 특히 30초 타임아웃이 전용 타이머(`sleepPromptHandler`)
+로 정확히 30.07초에 발화한 것이 확인됐다(2026-08-06 커밋 `0082600`의 수정이 유효함).
+그 뒤 세션이 종료되고 화면이 꺼진 것도 정상 동작이다.

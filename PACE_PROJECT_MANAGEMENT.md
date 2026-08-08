@@ -7357,3 +7357,34 @@ SESSION STATUS글자 #7d88f1 → #818cf8   ← 위치 이동이 아니라 배너
 - 목록: **Quick Share / pace_brief / Chrome** — **Pace 없음 ✓** (`pace_brief`는 별개 앱)
 - 수정 전이었다면 여기 Pace가 떴고, 누르면 앱 홈으로 갔다.
 ⚠️ iOS(favorite 공유 버튼 신규 노출)는 Mac 세션 실기기 확인 필요.
+
+#### ⚠️ 정정 — "공유 누르면 앱 홈으로 간다"의 진짜 원인 (위 ① 수정만으론 부족했다)
+사장님 재지적("그러니까 favorite에서 공유하기 누르면 왜 앱 홈으로 가냐고")을 받고 다시 봤다.
+위 `EXTRA_EXCLUDE_COMPONENTS`는 "공유 목록에서 Pace를 **골랐을 때**" 앱으로 가는 것만 막았고,
+**공유 버튼을 누르는 순간 이미 앱 홈이 뜨는** 문제는 그대로였다.
+(그때 내가 찍은 스크린샷에도 공유창 뒤에 Pace 홈이 깔려 있었는데 못 보고 넘어갔다.)
+
+실기기 태스크 스택이 답이었다:
+```
+YouTube task: mode=pinned              ← 공유창이 뜨자 유튜브가 스스로 PIP로 내려간다
+android task: 공유창(translucent)
+Pace    task: fullscreen visible       ← 유튜브가 빠지자 그 아래 있던 우리 앱이 드러남
+```
+**우리가 앱을 앞으로 부른 게 아니다.** 유튜브가 자동 PIP로 빠지면서, 스택에서 바로 아래 있던 Pace
+홈이 반투명 공유창 뒤로 그대로 비친 것이다. `FLAG_ACTIVITY_MULTIPLE_TASK`를 줘도 안 고쳐진 이유다
+(태스크 분리 문제가 아니었다).
+
+→ 유튜브의 자동 PIP는 우리가 막을 수 없으므로 **공유가 끝나면 원래 보던 앱으로 되돌린다**
+  (보상형 광고에서 쓰는 `returnToLastTrackedApp`과 같은 처치).
+  판정은 포그라운드 폴이 한다 — 공유창이 떠 있는 동안 전경은 우리 앱이 아니므로, **"우리 앱이
+  전경"이 되는 순간이 곧 공유창이 닫히고 홈에 남겨진 순간**이다.
+  - `SHARE_RETURN_MIN_DELAY_MS = 1500` — 띄운 직후 전환 프레임에 잘못 걸려 공유창을 밀어내지 않게
+  - `SHARE_RETURN_TIMEOUT_MS = 60_000` — 사용자가 실제 공유 대상 앱으로 넘어가 머무는 경우엔 영영
+    안 걸리므로 만료시킨다(나중에 엉뚱한 순간 유튜브가 튀어나오지 않게)
+
+**실기기 검증:** 유튜브 → P메뉴 → Favorite → ⇪ → 공유창에서 뒤로(취소)
+```
+share chooser closed -> returning to tracked app
+topResumedActivity = com.google.android.youtube   ✓
+```
+수정 전에는 여기서 Pace 홈에 남았다.

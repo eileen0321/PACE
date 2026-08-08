@@ -56,6 +56,10 @@ import kotlin.math.sqrt
 class PaceOverlayService : Service() {
   private var windowManager: WindowManager? = null
   private var overlayView: LinearLayout? = null
+  // 즐겨찾기 공유창을 띄운 시각(elapsedRealtime). 0이면 대기 중 아님. 아래 foregroundPollRunnable이
+  // "공유창이 닫히고 우리 앱이 전경에 남은 순간"을 잡아 원래 보던 앱으로 되돌리는 데 쓴다
+  // (공유 버튼의 startActivity 직후 주석 참고).
+  private var pendingReturnAfterShareAtMs = 0L
   // 알약 표시 상태의 직전 값 — 바뀔 때만 로그를 남기기 위한 것(foregroundPollRunnable 주석 참고).
   private var lastPillShouldShow: Boolean? = null
   // 마지막으로 정산한 틱 시각(elapsedRealtime)과 1분에 못 미치는 잔여 시간 — 아래 startMinuteTicker
@@ -200,6 +204,20 @@ class PaceOverlayService : Service() {
         if (shouldShow != lastPillShouldShow) {
           lastPillShouldShow = shouldShow
           Log.i("PaceOverlay", "pill ${if (shouldShow) "SHOW" else "HIDE"} fg=$foregroundPackage a11yFg=$accessibilityForeground usage=$usageStatsForeground win=$windowVisibleOrNull self=$selfForeground")
+        }
+        // 공유창을 띄운 뒤 "우리 앱이 전경에 남은" 첫 순간 = 공유창이 닫히고 사용자가 Pace 홈에
+        // 떨어진 순간이다(공유창이 떠 있는 동안 전경은 android/공유 대상 앱이라 여기 안 걸린다).
+        // 그때 원래 보던 앱으로 되돌린다. 사용자가 실제 공유 대상을 골랐다면 전경이 그 앱이라
+        // 여기 안 걸리고, 아래 타임아웃으로 조용히 만료된다(엉뚱한 순간에 유튜브를 띄우지 않게).
+        if (pendingReturnAfterShareAtMs != 0L) {
+          val elapsed = SystemClock.elapsedRealtime() - pendingReturnAfterShareAtMs
+          if (elapsed > SHARE_RETURN_TIMEOUT_MS) {
+            pendingReturnAfterShareAtMs = 0L
+          } else if (selfForeground && elapsed > SHARE_RETURN_MIN_DELAY_MS) {
+            pendingReturnAfterShareAtMs = 0L
+            Log.i("PaceOverlay", "share chooser closed -> returning to tracked app")
+            returnToLastTrackedApp(applicationContext)
+          }
         }
         if (shouldShow) refreshOverlayIfDue(remainingMinutes)
         overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
@@ -943,6 +961,12 @@ class PaceOverlayService : Service() {
     // 2026-07-28 — 오버레이 유령 창(mHasSurface=false) 대응 강제 재생성 주기. 너무 짧으면 매번
     // add/removeView 오버헤드+깜빡임, 너무 길면 복구 체감이 느림 — 4초로 절충.
     private const val REFRESH_INTERVAL_MS = 4000L
+    // 공유창을 띄운 직후엔 아직 전환 중이라 우리 앱이 잠깐 전경으로 잡힐 수 있다 — 그 프레임에
+    // 되돌리면 공유창 자체를 밀어내 버린다. 최소 지연을 둬서 "정말 닫힌 뒤"만 잡는다.
+    private const val SHARE_RETURN_MIN_DELAY_MS = 1500L
+    // 사용자가 실제 공유 대상 앱을 골라 그쪽에 머무는 경우엔 영영 안 걸리므로, 대기 상태를 무한히
+    // 들고 있지 않도록 만료시킨다(나중에 엉뚱한 순간에 유튜브가 튀어나오는 것을 막는다).
+    private const val SHARE_RETURN_TIMEOUT_MS = 60_000L
     private const val TICK_INTERVAL_MS = 60_000L
     // 한 번의 틱에서 몰아서 깎을 수 있는 최대 분(startMinuteTicker/performTick 주석 참고).
     // 장시간 Doze나 프로세스 사망 뒤 복귀했을 때 보지도 않은 시간까지 한 방에 사라지는 것을 막는다.
@@ -2844,13 +2868,37 @@ class PaceOverlayService : Service() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
               }
               val chooser = Intent.createChooser(share, null).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // 🔴 2026-08-08 사장님 재지적("그러니까 favorite에서 공유하기 누르면 왜 앱 홈으로 가냐고")
+                //   — 위 EXTRA_EXCLUDE_COMPONENTS는 "공유 목록에서 Pace를 고르면 앱으로 가는" 것만
+                //   막았고, **공유 버튼을 누르는 순간 이미 앱 홈이 뜨는** 이 문제는 그대로였다.
+                //   실제로 그때 찍은 스크린샷에도 공유창 뒤에 Pace 홈이 깔려 있었는데 내가 놓쳤다.
+                //
+                //   원인은 2026-08-02에 보상형 광고에서 이미 진단한 것과 **완전히 같다**
+                //   (PaceRewardedAdActivity.start 주석 참고):
+                //   NEW_TASK만 주면 안드로이드가 이 액티비티를 **Pace 앱의 기존 태스크**
+                //   (MainActivity=홈이 들어있는)에 붙여버리고, 그 태스크가 통째로 앞으로 나온다.
+                //   그래서 공유창 뒤가 유튜브가 아니라 Pace 홈이 되고, 공유를 취소하면 홈에 남는다.
+                //   → MULTIPLE_TASK를 함께 줘서 앱 태스크와 분리된 새 태스크로 띄운다.
+                //     그러면 공유창 뒤에는 직전 화면(유튜브)이 그대로 남고, 끝나면 유튜브로 돌아간다.
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
                 putExtra(
                   Intent.EXTRA_EXCLUDE_COMPONENTS,
                   arrayOf(ComponentName(packageName, PaceShareCaptureActivity::class.java.name))
                 )
               }
               startActivity(chooser)
+              // 🔴 2026-08-08 — 위 MULTIPLE_TASK만으론 "앱 홈으로 간다"가 안 고쳐졌다. 실기기
+              //   태스크 스택이 진짜 원인을 보여줬다:
+              //     YouTube task: mode=pinned   ← 공유창이 뜨자 유튜브가 **PIP로 내려간다**
+              //     android task: 공유창(translucent)
+              //     Pace    task: fullscreen visible  ← 유튜브가 빠지자 그 아래 우리 앱이 드러남
+              //   즉 우리가 앱을 앞으로 부른 게 아니라, **유튜브가 스스로 PIP로 빠지면서** 스택에서
+              //   바로 아래 있던 Pace 홈이 노출된 것이다. 반투명 공유창 뒤로 그게 그대로 비친다.
+              //   유튜브의 자동 PIP는 우리가 막을 수 없으므로, 공유가 끝난 뒤 **원래 보던 앱으로
+              //   되돌린다** — 보상형 광고에서 쓰는 것과 같은 처치(returnToLastTrackedApp).
+              //   판정은 포그라운드 폴이 한다: 공유창이 떠 있는 동안 전경은 우리 앱이 아니므로,
+              //   "우리 앱이 전경"이 되는 순간이 곧 공유창이 닫히고 홈에 남겨진 순간이다.
+              pendingReturnAfterShareAtMs = SystemClock.elapsedRealtime()
             } catch (e: Exception) {
               Log.w("PaceOverlayService", "share 실패", e)
             }

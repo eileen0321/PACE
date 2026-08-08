@@ -60,6 +60,9 @@ class PaceOverlayService : Service() {
   // "공유창이 닫히고 우리 앱이 전경에 남은 순간"을 잡아 원래 보던 앱으로 되돌리는 데 쓴다
   // (공유 버튼의 startActivity 직후 주석 참고).
   private var pendingReturnAfterShareAtMs = 0L
+  // 이번 프로세스에서 oEmbed로 제목을 이미 대조한 행 id — renderList ↔ oEmbed 무한 루프 방지용
+  // (renderList 안의 보정 블록 주석 참고). 프로세스가 죽으면 비므로 다음 실행에서 한 번 더 확인한다.
+  private val oembedCheckedRowIds = mutableSetOf<String>()
   // 알약 표시 상태의 직전 값 — 바뀔 때만 로그를 남기기 위한 것(foregroundPollRunnable 주석 참고).
   private var lastPillShouldShow: Boolean? = null
   // 마지막으로 정산한 틱 시각(elapsedRealtime)과 1분에 못 미치는 잔여 시간 — 아래 startMinuteTicker
@@ -2769,16 +2772,27 @@ class PaceOverlayService : Service() {
     fun renderList() {
       listContainer.removeAllViews()
       val items = SavedVideosStore.list(applicationContext, kind)
-      // 2026-08-05 — 제목이 비어 있는데 videoId는 아는 항목(예전에 저장된 것들)도 뒤늦게 채워준다.
-      // 목록을 열 때 한 번만, 백그라운드로. oEmbed는 API 키가 필요 없다. 실패해도 조용히 넘어간다.
-      items.filter { it.title.isNullOrBlank() && !it.videoId.isNullOrBlank() }
+      // 2026-08-05 — 제목이 비어 있는데 videoId는 아는 항목을 뒤늦게 채워준다.
+      // 🔴 2026-08-08 확장 — 제목이 **비어 있는 것만** 고쳤더니, 이미 **틀리게** 저장된 행
+      //   (제목은 A인데 URL은 B)은 영영 안 고쳐졌다. 사장님이 지적한 "누른 것과 나온 URL이 다르다"의
+      //   기존 데이터 쪽 절반이다(새로 저장되는 것은 위 updateVideoUrl 직후 보정으로 해결).
+      //   → videoId를 아는 행은 **비어 있든 아니든** oEmbed로 제목/채널을 맞춰준다. 기준은 항상
+      //     videoId(=실제로 공유·재생되는 대상)이고, 제목이 거기에 맞춰져야 한다.
+      //   ⚠️ 무한 렌더 루프 방지 — 보정 후 renderList()를 다시 부르므로, 이미 확인한 행은 다시
+      //     조회하지 않도록 프로세스 수명 동안 id를 기억한다. 이게 없으면 renderList ↔ oEmbed가
+      //     서로를 계속 트리거한다(제목이 채워져도 필터에서 안 빠지기 때문).
+      items.filter { !it.videoId.isNullOrBlank() && !oembedCheckedRowIds.contains(it.id) }
         .take(10) // 한 번에 과하게 때리지 않는다
         .forEach { row ->
           val vid = row.videoId ?: return@forEach
+          oembedCheckedRowIds.add(row.id)
           Thread {
             val meta = fetchYouTubeOEmbed(vid)
-            if (meta != null && SavedVideosStore.updateTitleChannel(applicationContext, row.id, meta.first, meta.second)) {
-              foregroundPollHandler.post { renderList() }
+            // 제목이 이미 같으면 굳이 다시 그리지 않는다(불필요한 깜빡임 방지).
+            if (meta != null && !meta.first.isNullOrBlank() && meta.first != row.title) {
+              if (SavedVideosStore.updateTitleChannel(applicationContext, row.id, meta.first, meta.second)) {
+                foregroundPollHandler.post { renderList() }
+              }
             }
           }.start()
         }
@@ -3091,6 +3105,24 @@ class PaceOverlayService : Service() {
             if (videoId != null) {
               SavedVideosStore.updateVideoUrl(applicationContext, pid, videoId, url)
               renderList()
+              // 🔴 2026-08-08 사장님 지적("리스트에서 공유하려고 누른 것과 실제로 나온 URL이 다르잖아")
+              //   — 이 저장 흐름은 **제목과 URL을 서로 다른 시점·다른 출처에서** 가져온다:
+              //       제목/채널 = 1차 콜백, 접근성 트리에서 "지금 화면에 보이는" 값을 즉시 읽음
+              //       videoId/url = 2차 콜백, 유튜브 공유시트를 거쳐 **최대 8초 뒤**에 확정
+              //     그 사이에 영상이 넘어가면(자동넘김·손짓·사용자 스와이프, 또는 트리 값이 낡은 경우)
+              //     행에는 A의 제목이 남고 URL만 B로 채워진다 → 리스트에서 A를 눌렀는데 B가 공유된다.
+              //     썸네일은 videoId로 만들므로 B가 되어, 제목만 홀로 어긋난 상태가 된다.
+              //   → **URL이 확정되는 이 순간, 그 videoId의 진짜 제목/채널로 덮어쓴다.**
+              //     기준을 URL 하나로 통일하는 것이 핵심이다(제목을 URL에 맞추지, 그 반대가 아니다).
+              //     oEmbed는 API 키 없이 videoId만으로 제목/채널을 주고, 이미 이 파일에서 쓰고 있다.
+              //   ⚠️ 실패해도 조용히 넘어간다 — 못 고쳐도 지금까지와 같은 상태일 뿐 더 나빠지지 않는다.
+              Thread {
+                val meta = fetchYouTubeOEmbed(videoId)
+                if (meta != null && !meta.first.isNullOrBlank()) {
+                  SavedVideosStore.updateTitleChannel(applicationContext, pid, meta.first, meta.second)
+                  foregroundPollHandler.post { renderList() }
+                }
+              }.start()
             } else {
               // ⚠️ 2026-08-05 실기기 재현 — 유튜브 **광고**에서 Add를 누르면 접근성 트리에 제목/채널이
               //   읽히므로(예: "TikTok" / 채널="광고") 1차 낙관적 추가는 성공하는데, 광고엔 공유 버튼이

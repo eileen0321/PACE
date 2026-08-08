@@ -7817,3 +7817,28 @@ val (msgTitle, msgBody) = messages[Math.floorMod(hitCount - 1, messages.size)]
 세 구간 전부 **실사용 상수 그대로**, 축소 없이 확인. 특히 30초 타임아웃이 전용 타이머(`sleepPromptHandler`)
 로 정확히 30.07초에 발화한 것이 확인됐다(2026-08-06 커밋 `0082600`의 수정이 유효함).
 그 뒤 세션이 종료되고 화면이 꺼진 것도 정상 동작이다.
+
+---
+
+### 2026-08-09 (밤샘) — 보상형 광고 경로 재검증 + 🔴 토스트가 약속과 모순되던 문제
+
+#### 🟢 하단 검은 내비바 면역 — 유지됨 (2026-08-06 `setImmersiveMode(true)` 수정이 살아있다)
+시각 확인 + **시스템 로그로도 확정**:
+```
+InsetsSource: {mType=ITYPE_NAVIGATION_BAR, mFrame=[0,2190][1080,2316], mVisible=false, ...}
+     host=com.strides7.pace/expo.modules.paceoverlay.PaceRewardedAdActivity
+```
+광고 액티비티가 떠 있는 동안 내비바가 `mVisible=false`다. 눈으로만 본 게 아니라 인셋 상태로 증명됨.
+
+#### 🔴 "광고 보고 **5분** 더"를 눌렀는데 화면엔 "Focus Session Started (**10m**)"
+실기기 스크린샷으로 발견. 광고 보상 직후 토스트가 **두 개** 떴고 먼저 뜬 것이 10분이라고 알렸다.
+
+**원인:** `extendFocusSession()`은 세션이 꺼져 있으면 워처를 되살리려고 `setAutoMode(true)`를 먼저
+부르는데, 그 안에 "새 세션 시작(설정값 = 10분)" 토스트가 들어 있다. 실제 연장 값은 그 직후
+`extendFocusSession`이 5분으로 덮어쓰고 `+5m` 토스트를 낸다 — **값은 맞고 첫 토스트만 거짓말**이었다.
+게다가 안드로이드 토스트는 큐라 뒤엣것이 밀리면 사용자가 잘못된 쪽만 보고 끝날 수도 있다.
+
+**수정:** `setAutoMode(context, enable, silentToast = false)` 오버로드를 추가하고, 연장 경로에서만
+`silentToast = true`로 부른다(사용자가 직접 켜는 경로는 그대로 알린다).
+
+**검증(수정본 실기기):** 광고 보상 후 토스트가 **`🎯 Focus Session +5m` 하나만** — 팝업의 약속과 일치.

@@ -1392,7 +1392,10 @@ class PaceOverlayService : Service() {
       if (!isBuildAutoNextEnabled(context)) return
       val wasActive = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AUTO_MODE, false)
       if (!wasActive) {
-        setAutoMode(context, true) // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어씀.
+        // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어쓴다.
+        // silentToast=true인 이유는 setAutoMode 안의 토스트 주석 참고 — 여기서 알리면 "Started (10m)"가
+        // 먼저 떠서 방금 약속한 "+5분"과 모순된다. 알림은 아래 "+${extraMinutes}m" 하나로 끝낸다.
+        setAutoMode(context, true, silentToast = true)
       }
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       val extraMs = extraMinutes.coerceAtLeast(1) * 60 * 1000L
@@ -1489,7 +1492,8 @@ class PaceOverlayService : Service() {
     // Play/Pause → Focus Session 토글(기존 "Auto Mode"와 같은 스위치). 켜면 사용자가 설정한 시간만큼
     // 세션 시작(그 안에서는 PaceAccessibilityService의 실제 재생 위치 감지로 자동 진행), 시간이
     // 다 되면 자동 종료 — 그 전에 사용자가 직접 끄면 예약된 자동 종료도 같이 취소한다.
-    fun setAutoMode(context: Context, enable: Boolean) {
+    @JvmOverloads
+    fun setAutoMode(context: Context, enable: Boolean, silentToast: Boolean = false) {
       if (enable && !isBuildAutoNextEnabled(context)) {
         Log.w("PaceOverlayService", "setAutoMode(true) blocked — build flag EXPO_PUBLIC_ENABLE_AUTO_NEXT is off")
         return
@@ -1546,7 +1550,18 @@ class PaceOverlayService : Service() {
         // 그 결과 알약 배지가 실제 상태와 어긋난 채 남았다. 항상 메인 루퍼로 넘겨 실행한다.
         Handler(Looper.getMainLooper()).post { it.applyAutoBadgeStyle() }
       }
-      showToast(context, if (enable) "🎯 Focus Session Started (${getFocusSessionDurationMinutes(context)}m)" else "🎯 Focus Session Ended")
+      // 🔴 2026-08-09 밤샘 스윕에서 발견 — 보상형 광고를 보고 나면 토스트가 **두 개** 떴고,
+      //   먼저 뜬 것이 "🎯 Focus Session Started (10m)"였다. 사용자는 방금 "광고 보고 **5분 더**"를
+      //   눌렀는데 화면엔 10분이라고 뜨는, 약속과 모순되는 메시지다(실기기 스크린샷으로 확인).
+      //   원인: extendFocusSession()이 세션이 꺼져 있으면 워처를 되살리려고 setAutoMode(true)를
+      //   먼저 부르는데, 그 안의 이 토스트가 "새 세션 시작(설정값 10분)"을 그대로 알린 것이다.
+      //   실제 연장은 그 직후 extendFocusSession이 5분으로 덮어쓰고 "+5m" 토스트를 낸다 —
+      //   즉 값은 맞고 **첫 토스트만 거짓말**이었다. 게다가 안드로이드 토스트는 큐라 뒤엣것이 밀려
+      //   사용자가 잘못된 쪽만 보고 끝날 수도 있다.
+      //   → 연장 경로에서 부를 때만 이 토스트를 건너뛴다(직접 켜는 경로는 그대로 알린다).
+      if (!silentToast) {
+        showToast(context, if (enable) "🎯 Focus Session Started (${getFocusSessionDurationMinutes(context)}m)" else "🎯 Focus Session Ended")
+      }
     }
 
     // 2026-07-27 사용자 지시 — 손짓을 마스터(Focus Session)와 독립적으로 켜고 끌 수 있게. 값을

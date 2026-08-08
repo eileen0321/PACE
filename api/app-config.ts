@@ -56,7 +56,7 @@ const CONFIG = {
   // 표시·로그용(앱은 판정에 쓰지 않는다).
   latestVersion: '1.0.1',
   storeUrl: {
-    ios: 'https://apps.apple.com/app/id0000000000',
+    ios: 'https://apps.apple.com/app/id6793983617',
     android: 'https://play.google.com/store/apps/details?id=com.strides7.pace',
   },
 };

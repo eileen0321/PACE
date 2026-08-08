@@ -7449,3 +7449,32 @@ topResumedActivity = com.google.android.youtube   ✓
 트리에 읽히는데 광고엔 공유 버튼이 없어 videoId를 영영 못 얻는 경우다.
 ⚠️ 판정은 **둘 다 없을 때만**이다. 하나라도 있으면 서로에게서 복원 가능하므로(공유는 videoId→url,
   열기는 url→videoId) 지우면 안 된다.
+
+#### 🟢 실기기 검증 (릴리즈 빌드, 2026-08-09 00:32~00:34)
+
+**② 껍데기 자동 삭제 — 관측으로 확인**
+```
+00:32:57.829  PaceOverlayService: favorite: removed 2 unplayable row(s) (no videoId/url)
+00:32:58.107  PaceOverlay: oEmbed 제목 확보: 학교 다닐 때 여자애들 특징ㅋㅋㅋ / 주둥이방송 쇼츠
+00:32:58.108  PaceOverlay: oEmbed 제목 확보: 풀버전 시급한 닝닝 '첨밀밀' 커버 / always_ply
+00:32:58.108  PaceOverlay: oEmbed 제목 확보: 상황극 중독 자매의 황당 실화 #shorts / 김켈리 Kellyfornia
+00:32:58.119  PaceOverlay: oEmbed 제목 확보: 챗GPT가 써준 대본 상황극2탄 / 아이뽀 i4
+```
+지운 2건 = `TikTok/광고`, `AI리더스협회`. 화면 스크린샷에도 **남은 4행 전부 썸네일·제목·채널 정상**.
+
+**① 토스트 제거 — 관측이 아니라 바이너리로 확정했다(그 편이 더 결정적이다)**
+손짓은 adb로 못 만들고, 미디어키(`keyevent 87`)는 **재생 중인 YouTube 세션이 가져간다**:
+```
+MediaSessionService: Sending KEYCODE_MEDIA_NEXT to com.google.android.youtube/YouTube playerlib
+```
+그래서 **기기에 설치된 APK를 그대로 뽑아 dex 문자열을 검사**했다(`pm path` → `pull` → `unzip classes*.dex`):
+| 문자열 | 결과 |
+|---|---|
+| `unplayable row` (대조군) | classes6.dex에 **있음** ✅ |
+| `triggerNext() -> swipeOnce` (대조군) | classes6.dex에 **있음** ✅ |
+| `Next Short` | 8개 dex 전부 **없음** 🟢 |
+| `Previous Short` | 8개 dex 전부 **없음** 🟢 |
+
+문자열이 바이너리에 아예 없으므로 **어떤 경로로도 그 토스트는 뜰 수 없다**. 관측 1회보다 강한 증거다.
+⚠️ 방법 주의 — APK는 zip이라 `.apk`에 바로 grep하면 **대조군까지 0이 나온다**(압축돼서). 반드시
+  `classes*.dex`를 풀고 나서 검사할 것. 또 Git Bash에 `strings`가 없어서 `grep -a`를 썼다.

@@ -119,5 +119,23 @@
       android:noHistory="true"
       android:excludeFromRecents="true"
       android:taskAffinity="" />
+
+    <!-- 2026-08-09 — 즐겨찾기 공유창의 미리보기(제목+썸네일)를 우리가 직접 넘겨주기 위한 provider.
+         이게 없으면 시스템 공유창이 유튜브 페이지를 **스스로 받아와** 제목/og:image를 채우는데,
+         실기기 실측으로 생 URL만 보이다가 채워지기까지 약 3초가 걸렸다(1.3초 → 4.1초).
+         우리는 이미 같은 썸네일을 cacheDir/pace-thumbs에 캐시해두므로 네트워크 없이 즉시 줄 수 있다.
+         exported="false" + grantUriPermissions — 공유창/수신 앱에는 FLAG_GRANT_READ_URI_PERMISSION으로
+         그 URI 하나만 일시 허용된다(앱 내부 파일이 열리는 게 아니다).
+         ⚠️ 다른 라이브러리(RNCWebView/expo-file-system/expo-sharing)도 각자 FileProvider를 갖고 있지만
+           경로 설정이 cacheDir/pace-thumbs를 포함하지 않아 재사용할 수 없다 — 그래서 별도로 둔다. -->
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.paceThumbProvider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/pace_thumb_paths" />
+    </provider>
   </application>
 </manifest>

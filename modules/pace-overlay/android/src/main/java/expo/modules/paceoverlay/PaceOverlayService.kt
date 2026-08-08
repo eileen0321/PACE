@@ -2916,6 +2916,27 @@ class PaceOverlayService : Service() {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, url)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // 🔴 2026-08-09 사장님 지적 — "공유창에서 실제 링크와 썸네일 뜨는 게 한참 걸린다".
+                //   실기기 실측: +1.3초엔 생 URL과 기본 아이콘만, 제목·썸네일이 채워지는 건 +4.1초.
+                //   그 ~3초는 **시스템 공유창이 유튜브 페이지를 직접 받아와** 제목과 og:image를
+                //   파싱하는 시간이다(우리 코드가 아니라 공유창의 링크 미리보기 기능).
+                //   → 안드로이드가 공식 문서에서 안내하는 "rich content preview" 방식으로 우리가
+                //     미리 넘겨준다: EXTRA_TITLE(제목) + ClipData에 썸네일 URI.
+                //     이러면 공유창이 네트워크를 탈 이유가 없어져 처음부터 채워진 상태로 뜬다.
+                //   썸네일은 이미 즐겨찾기 목록용으로 cacheDir/pace-thumbs에 캐시해둔 그 파일을
+                //   그대로 재사용한다 — 추가 다운로드 0.
+                //   ⚠️ type은 "text/plain" 그대로 둔다. ClipData의 URI는 공유창 미리보기용이고,
+                //     수신 앱은 규약대로 EXTRA_TEXT(=링크)를 읽는다. type을 이미지로 바꾸면 그때부터
+                //     진짜 이미지 공유가 되어버린다.
+                item.title?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_TITLE, it) }
+                val thumbUri = shareThumbnailUri(item.thumbnailUrl)
+                if (thumbUri != null) {
+                  clipData = android.content.ClipData.newUri(contentResolver, item.title ?: "thumbnail", thumbUri)
+                  addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                // 진단 로그 — 미리보기가 여전히 느릴 때 "우리가 안 넘긴 것"과 "공유창이 무시한 것"을
+                // 구분하기 위한 것이다. 둘은 처방이 완전히 다르다.
+                Log.i("PaceOverlayService", "share preview: title=${item.title != null} thumbUri=$thumbUri src=${item.thumbnailUrl}")
               }
               val chooser = Intent.createChooser(share, null).apply {
                 // 🔴 2026-08-08 사장님 재지적("그러니까 favorite에서 공유하기 누르면 왜 앱 홈으로 가냐고")
@@ -3275,7 +3296,7 @@ class PaceOverlayService : Service() {
 
   // 디스크 캐시 → 없으면 네트워크. 둘 다 표시 크기에 맞춰 축소 디코드한다.
   private fun loadThumbnailBitmap(url: String, targetPx: Int): Bitmap? {
-    val cacheFile = File(thumbnailCacheDir(), url.hashCode().toString())
+    val cacheFile = thumbnailCacheFile(url)
     if (cacheFile.exists()) {
       decodeScaled(cacheFile.readBytes(), targetPx)?.let { return it }
       // 깨진 캐시 파일이면 지우고 네트워크로 내려간다.
@@ -3304,6 +3325,27 @@ class PaceOverlayService : Service() {
   }
 
   private fun thumbnailCacheDir(): File = File(cacheDir, "pace-thumbs")
+
+  // ⚠️ 확장자 .jpg는 장식이 아니다 — 공유창 미리보기에 이 파일을 FileProvider로 넘기는데,
+  //   FileProvider는 **확장자로 MIME을 정한다.** 확장자가 없으면 application/octet-stream이 되어
+  //   공유창이 이미지로 인식하지 못한다(shareThumbnailUri 참고).
+  private fun thumbnailCacheFile(url: String): File =
+    File(thumbnailCacheDir(), "${url.hashCode()}.jpg")
+
+  // 공유창 미리보기에 넘길 썸네일 content:// URI. **이미 캐시에 있을 때만** 준다 —
+  // 여기서 새로 받아오면 공유창을 띄우는 순간이 오히려 느려져 목적과 반대가 된다.
+  // (즐겨찾기 목록을 한 번이라도 열었으면 그때 캐시가 채워지므로, 공유는 그 뒤에 일어난다.)
+  private fun shareThumbnailUri(thumbnailUrl: String?): Uri? {
+    val src = thumbnailUrl?.takeIf { it.isNotBlank() } ?: return null
+    val file = thumbnailCacheFile(src)
+    if (!file.exists()) return null
+    return try {
+      androidx.core.content.FileProvider.getUriForFile(this, "$packageName.paceThumbProvider", file)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "share 썸네일 URI 생성 실패", e)
+      null
+    }
+  }
 
   private fun hideShortsHotList() {
     shortsHotListView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 즐겨찾기 공유창 미리보기용 FileProvider 경로(AndroidManifest.xml의 provider 주석 참고).
+     노출 범위를 캐시 폴더 중에서도 썸네일 하위 폴더 하나로만 좁힌다 — 여기 들어가는 파일은
+     이미 공개된 유튜브 썸네일(i.ytimg.com)뿐이라 민감 정보가 없다. -->
+<paths>
+  <cache-path name="pace-thumbs" path="pace-thumbs/" />
+</paths>

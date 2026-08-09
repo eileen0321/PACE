@@ -5,7 +5,25 @@ import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
 import { useToastStore } from '../../store/useToastStore';
 import { radius, spacing, typography } from '../../constants/theme';
-import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+import { getSavedVideos, removeSavedVideo, updateSavedVideoMeta, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+
+// 2026-08-09 파리티 — 안드로이드 PaceOverlayService의 oEmbed 제목 보정과 동일 처치(videoId는 아는데
+// title이 비어 저장된 행을 나중에 채운다). API 키 없이 쓸 수 있는 유튜브 공개 엔드포인트.
+// 프로세스 수명 동안 이미 확인한 videoId는 기억해 목록을 다시 열 때마다 재요청하지 않는다.
+const oembedCheckedVideoIds = new Set<string>();
+async function fetchYouTubeOEmbed(videoId: string): Promise<{ title: string; channel: string | null } | null> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { title?: string; author_name?: string };
+    if (!json.title) return null;
+    return { title: json.title, channel: json.author_name ?? null };
+  } catch {
+    return null;
+  }
+}
 
 // 2026-07-31 사장님 지시 — Favorite/Capture 둘 다 같은 모양의 글래스모피즘 리스트 오버레이를 쓴다.
 // Capture는 각 행 옆에 외부 공유 아이콘, Favorite는 행 자체를 탭하면 다시 재생(둘 다 원본 유튜브
@@ -42,17 +60,31 @@ export function SavedVideoListOverlay({
   // videoId를 못 얻는 광고/특수 항목을 추가했을 때 쌓인 잔여). 둘 다 없을 때만 지운다 — 하나라도
   // 있으면 서로 복원 가능하므로(공유는 videoId→url, 열기는 url→videoId) 지우면 안 된다.
   const isBlank = (s?: string | null) => !s || s.trim().length === 0;
+
+  // 2026-08-09 파리티 — videoId는 아는데 title이 빈 행을 oEmbed로 채운다(위 fetchYouTubeOEmbed 참고).
+  // 이미 이번 프로세스에서 확인한 videoId는 건너뛴다(같은 행을 목록 열 때마다 재요청 안 함).
+  const backfillBlankTitles = useCallback((list: SavedVideo[]) => {
+    const targets = list.filter((v) => v.videoId && isBlank(v.title) && !oembedCheckedVideoIds.has(v.videoId));
+    targets.forEach((v) => {
+      const videoId = v.videoId!;
+      oembedCheckedVideoIds.add(videoId);
+      fetchYouTubeOEmbed(videoId).then((meta) => {
+        if (!meta) return;
+        updateSavedVideoMeta(v.id, meta.title, meta.channel).catch(() => {});
+        setItems((prev) => prev.map((row) => (row.id === v.id ? { ...row, title: meta.title, channel: meta.channel } : row)));
+      });
+    });
+  }, []);
+
   const reload = useCallback(() => {
     getSavedVideos(userId, kind).then((list) => {
       const shells = list.filter((v) => isBlank(v.videoId) && isBlank(v.url));
-      if (shells.length > 0) {
-        shells.forEach((v) => removeSavedVideo(v.id).catch(() => {}));
-        setItems(list.filter((v) => !(isBlank(v.videoId) && isBlank(v.url))));
-      } else {
-        setItems(list);
-      }
+      const finalList = shells.length > 0 ? list.filter((v) => !(isBlank(v.videoId) && isBlank(v.url))) : list;
+      if (shells.length > 0) shells.forEach((v) => removeSavedVideo(v.id).catch(() => {}));
+      setItems(finalList);
+      backfillBlankTitles(finalList);
     }).catch(() => setItems([]));
-  }, [userId, kind]);
+  }, [userId, kind, backfillBlankTitles]);
 
   useEffect(() => { reload(); }, [reload]);
 

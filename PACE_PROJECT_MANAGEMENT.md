@@ -7906,3 +7906,25 @@ const remainingMinutes = Math.max(0, effectiveDailyLimitMinutes - todayUsageMinu
   자리에서 띄우므로 안드와 같은 이중토스트 구조 자체가 없음.
 - `2654b5c`(집중탭 카드 라벨 혼동, "포커스 세션" 제목 아래 일일한도 숫자) — `focus.tsx`는 공용
   코드라 iOS도 동일 증상 확인. 사장님 제품 결정 대기 중이라 안드와 마찬가지로 손 안 댐.
+
+### 2026-08-09 (Mac) — 즐겨찾기 제목 빈 항목 — 놓쳤던 파리티 1건 추가 발견
+
+사장님이 실기기에서 직접 발견("지금 기기의 favorite 1건 제목없는데 머야? 안드가 제목없는거
+고친거 같던데"). 위 전수 검토 때 `2764d0b`(껍데기 행 삭제)만 이식하고 **그보다 먼저 있던
+2026-08-05 커밋의 "제목 빈 행 oEmbed 보정"은 놓쳤다** — 같은 파일(`PaceOverlayService.kt`
+`renderList()`)의 다른 블록이라 이번 diff 범위(`17039b0` 이후)에만 집중하다 못 봤음.
+
+- `savedVideosRepository.ts`에 `updateSavedVideoMeta(id, title, channel)` 추가.
+- `SavedVideoListOverlay.tsx`에 안드와 동일한 oEmbed 공개 엔드포인트
+  (`https://www.youtube.com/oembed?url=...&format=json`, API 키 불필요) 호출을 이식 — `reload()`가
+  videoId는 알지만 title이 빈 행을 찾아 백그라운드로 보정, 프로세스 수명 동안 확인한 videoId는
+  `Set`으로 기억해 재요청 방지(안드의 `oembedCheckedRowIds`와 동일 목적).
+- 6fe6145(제목-URL 불일치, 2단계 접근성 트리 캡처 레이스 보정)는 여전히 이식 안 함 — iOS는 그
+  2단계 레이스 구조 자체가 없어 해당 없음(이전 항목에 기록된 판단 그대로 유효).
+
+tsc 통과, 릴리즈 빌드+실기기 설치 완료. **육안 확인 필요**: 그 제목 없던 항목을 다시 열었을 때
+잠깐 뒤 제목이 채워지는지(네트워크 왕복 있어 즉시는 아닐 수 있음).
+
+⚠️ **패턴 노트**: 이번 실수 원인은 "새 커밋 범위만" 본 것 — 같은 함수 안에 이미 있던 로직은 diff에
+안 잡힌다. 다음부터 파리티 점검은 새 커밋뿐 아니라 **그 함수 전체를 훑어 iOS에 없는 로직이 더 있는지**
+같이 확인할 것.

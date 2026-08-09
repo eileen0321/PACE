@@ -99,6 +99,13 @@ export async function getSavedVideos(userId: string, kind: SavedVideoKind): Prom
   return rows.map(rowToSavedVideo);
 }
 
+// 2026-08-09 파리티 — 안드로이드 PaceOverlayService의 oEmbed 제목 보정(2026-08-05)과 동일 목적.
+// videoId는 아는데 title이 비어 저장된 행(접근성 트리 값을 못 읽은 경로 등)의 제목/채널을 나중에 채운다.
+export async function updateSavedVideoMeta(id: string, title: string | null, channel: string | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`UPDATE saved_videos SET title = ?, channel = ? WHERE id = ?`, [title, channel, id]);
+}
+
 export async function removeSavedVideo(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM saved_videos WHERE id = ?`, [id]);

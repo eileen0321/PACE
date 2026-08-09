@@ -8091,3 +8091,19 @@ Task pace    visible=false
 - ⚠️ iOS는 `feed/index.tsx`의 인터벌이 **피드 화면이 떠 있을 때만** 돈다 — 안드로이드처럼 백그라운드
   서비스가 아니다. 그래서 "30분 간격"의 체감이 다를 수 있다(피드를 나갔다 오면 타이머가 새로 뜬다).
   실기기에서 확인하고, 어긋나면 그 차이를 여기에 적어줄 것.
+
+### 2026-08-09 (Mac, /loop 자동 점검) — 새 커밋 2개, 둘 다 이미 iOS 반영됨
+
+`0eada18..57d9ff7`(유튜브 홈탭 진입 버그 fix + 한도 안내 30분/3회 제한) 확인:
+
+- `777c32d`(쇼츠 진입이 홈 탭으로 새던 버그) — `api/shorts-entry.ts`(Vercel 함수, 배포 확인:
+  `curl .../api/shorts-entry?platform=ios` → ID 없는 `/shorts` 폴백 전략 실제로 빠짐) +
+  `src/services/shortsEntry.ts` 둘 다 플랫폼 공용이라 이미 iOS에도 적용됨. 추가 조치 불필요.
+- `57d9ff7`(한도 안내 30분/3회 + 죽은 `LimitReachedOverlay.tsx` 삭제) — 커밋 작성자가 "iOS 동기화"를
+  **같은 커밋 안에서 직접** 해서(`feed/index.tsx`의 `LIMIT_NOTICE_INTERVAL_MINUTES`/
+  `MAX_LIMIT_NOTICES_PER_DAY` 상수, 문구 로직 전부) 이미 반영됨 — 내가 할 이식 작업이 없었다.
+  삭제된 `LimitReachedOverlay.tsx`는 어제 내가 "죽은 코드, hitCount 오프바이원 버그 있음"으로
+  기록해둔 바로 그 파일 — 되살릴 필요 없이 삭제로 정리된 것 확인.
+
+tsc 통과, 릴리즈 빌드+실기기 설치 완료(코드 변경 없이 병합 확인용). **육안 확인 필요**: 위 항목
+그대로(30분 간격 3회, 숫자 없는 문구) — 이번 사이클에서 새로 늘어난 확인 항목은 없음.

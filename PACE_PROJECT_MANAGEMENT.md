@@ -8308,3 +8308,19 @@ HOT_CACHE_HIT cat=all         ← all로 복귀, 캐시 히트
 HOT_CACHE_HIT cat=music       ← music도 캐시 히트
 ```
 의도한 그대로 동작 확인. 진단 코드 제거, 깨끗한 빌드로 재설치 완료.
+
+**추가 실측(사장님: "로딩 느리지 않아? 테스트 안 해봐?")** — TTL 만료 후 재요청 때 스피너 없이
+옛 목록이 먼저 보이는지(stale-while-revalidate)까지 TTL을 5초로 임시로 줄여 실측:
+```
+REVALIDATE_START cat=all staleItemsStillShown=0   ← 최초, 캐시 없음
+REVALIDATE_DONE   cat=all newItems=25
+REVALIDATE_START cat=all staleItemsStillShown=25  ← TTL 만료 후 재요청, 옛 25개가 그대로 화면에 있는 채로 시작
+REVALIDATE_DONE   cat=all newItems=25             ← 165ms만에 갱신, 스피너 없음(렌더 조건이 loading&&items.length===0)
+```
+의도대로 매끈하게 동작. TTL 2시간으로 원복, 진단 코드 제거.
+
+🔴 **부수 발견(iOS 버그 아님, 서버 데이터 이슈)**: 위 실측 중 `music`/`gaming` 카테고리가 둘 다
+**0개**로 나옴(`REVALIDATE_DONE cat=music newItems=0`). 앱 코드는 정상 동작(빈 배열도 정상 처리) —
+원인은 안드가 어제 배포한 채널 화이트리스트 백엔드(`6190cb4`)일 가능성이 높음. 그 커밋 자체가
+"초기 채널 명단은 자동 발견이라 비어있을 수 있다"고 경고했었다. **Windows 세션 확인 요청**: 실제
+운영 DB에서 music/gaming 카테고리 채널 명단이 비어있는지 확인, 비어있으면 채널 큐레이션 필요.

@@ -8297,3 +8297,14 @@ tsc 통과, 코드 변경 없음(전부 이미 반영됐거나 해당 없음이�
 `fetchedAt` 타임스탬프를 추가해 성공한 fetch만 2시간 TTL을 열고(실패는 다음에 다시 시도되게
 fetchedAt을 안 남김), 그 안엔 캐시를 그대로 씀. `force` 파라미터도 남겨둠(지금 UI엔 새로고침
 버튼이 없지만 나중에 필요하면 바로 씀). tsc 통과, 빌드+설치 완료.
+
+**실기기 실측 검증**(사장님이 "확인하라면 안 하려고 한다"고 재지적해서 진단 핑으로 직접 확인) —
+HOT 열기→닫기→다시 열기, 카테고리 탭 전환까지 실측:
+```
+HOT_NETWORK_FETCH cat=all     ← 최초 오픈, 실제 서버 요청
+HOT_CACHE_HIT cat=all         ← 재오픈(3분 뒤), 캐시로 처리 — 서버 요청 없음
+HOT_NETWORK_FETCH cat=music   ← 새 카테고리라 정상적으로 실제 요청
+HOT_CACHE_HIT cat=all         ← all로 복귀, 캐시 히트
+HOT_CACHE_HIT cat=music       ← music도 캐시 히트
+```
+의도한 그대로 동작 확인. 진단 코드 제거, 깨끗한 빌드로 재설치 완료.

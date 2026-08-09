@@ -268,6 +268,10 @@ class PaceRewardedAdActivity : Activity() {
       // 실기기 로그 참고) — 그래서 returnToApp=false로 연장만 하고, 복귀는 광고가 닫힐 때 한다.
       Log.i(TAG, "reward earned -> extendFocusSession($extendMinutes) (복귀는 광고 닫힌 뒤)")
       earnedReward = true
+      // 🔴 2026-08-09 사장님 지시 — 광고 연장은 하루 3회까지. 카운트는 **보상을 실제로 받은 여기서만**
+      //   올린다. 버튼을 누른 시점에 올리면 광고가 안 뜨거나 중간에 닫아 보상을 못 받았을 때도
+      //   횟수가 깎여 억울하다(선택 팝업의 MAX_AD_EXTENDS_PER_DAY 주석 참고).
+      PaceOverlayService.noteAdExtendUsed(applicationContext)
       PaceOverlayService.extendFocusSession(applicationContext, extendMinutes, returnToApp = false)
     }
   }

@@ -999,6 +999,34 @@ class PaceOverlayService : Service() {
     // 플레이스홀더로 끝나면 되는 장식이라 짧게 끊는 편이 낫다.
     // 즐겨찾기 Add의 클립보드 캡처 왕복 동안 패널을 살려두는 시간. 실기기에서 이 왕복은 1초 안쪽이라
     // 넉넉하게 잡되, 콜백이 유실돼도 이 시간이 지나면 평소 규칙(감시 대상 앱을 벗어나면 정리)으로 돌아간다.
+    // 🔴 2026-08-09 사장님 지시 — 보상형 광고로 Focus Session을 연장하는 건 **하루 3회까지**.
+    //   한도를 두는 앱에서 그 한도를 광고로 무한히 밀 수 있으면 앱의 취지가 무너진다.
+    const val MAX_AD_EXTENDS_PER_DAY = 3
+    private const val PREF_AD_EXTEND_DATE = "ad_extend_date"
+    private const val PREF_AD_EXTEND_COUNT = "ad_extend_count"
+
+    private fun todayKey(): String =
+      java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+    /** 오늘 보상광고로 연장한 횟수. 날짜가 바뀌면 자동으로 0부터 다시 센다. */
+    fun adExtendCountToday(context: Context): Int {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      return if (prefs.getString(PREF_AD_EXTEND_DATE, null) == todayKey()) {
+        prefs.getInt(PREF_AD_EXTEND_COUNT, 0)
+      } else 0
+    }
+
+    /** 보상을 **실제로 받은** 순간에만 부른다(광고를 못 보거나 중간에 닫으면 횟수를 깎지 않는다). */
+    fun noteAdExtendUsed(context: Context) {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      val today = todayKey()
+      val next = if (prefs.getString(PREF_AD_EXTEND_DATE, null) == today) {
+        prefs.getInt(PREF_AD_EXTEND_COUNT, 0) + 1
+      } else 1
+      prefs.edit().putString(PREF_AD_EXTEND_DATE, today).putInt(PREF_AD_EXTEND_COUNT, next).apply()
+      Log.i("PaceOverlayService", "ad extend used today=$next/$MAX_AD_EXTENDS_PER_DAY")
+    }
+
     private const val CAPTURE_PANEL_KEEP_MS = 8000L
     // 오버레이 창을 포커스 가능으로 바꾼 뒤 실제로 포커스가 넘어올 때까지 기다리는 시간
     // (WindowManager 왕복이라 즉시 반영되지 않는다). 너무 짧으면 클립보드가 거부되고,
@@ -1411,6 +1439,10 @@ class PaceOverlayService : Service() {
     @JvmOverloads
     fun extendFocusSession(context: Context, extraMinutes: Int, returnToApp: Boolean = true) {
       if (!isBuildAutoNextEnabled(context)) return
+      // 🔴 2026-08-09 — "타임아웃 때문에 꺼졌다"는 플래그는 **연장이 실제로 일어난 여기서만** 소비한다.
+      //   광고/크레딧 버튼을 누르는 시점에 소비하면, 광고가 실패하거나 사용자가 중간에 닫았을 때
+      //   다음 배지 탭이 게이트를 그냥 통과해 광고 없이 켜진다(하루 3회 제한이 통째로 무력화).
+      consumeFocusSessionTimedOut()
       val wasActive = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AUTO_MODE, false)
       if (!wasActive) {
         // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어쓴다.
@@ -2639,11 +2671,45 @@ class PaceOverlayService : Service() {
     val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
       .apply { topMargin = (8 * d).toInt() }
 
-    card.addView(button(if (ko) "광고 보고 ${EXTEND_MINUTES}분 더" else "Watch ad for ${EXTEND_MINUTES} min", "#6C5CE7", Color.WHITE) {
-      hideExtendChoice()
-      consumeFocusSessionTimedOut() // 이 경로로 처리하므로 앱 쪽 중복 모달 방지
-      PaceRewardedAdActivity.start(applicationContext, EXTEND_MINUTES)
-    }, lp)
+    // 🔴 2026-08-09 사장님 지시 — "보상광고 보고 포커스 타임 5분씩 주는 거 **하루 3회로 제한해**".
+    //   그전엔 제한이 아예 없어서 광고만 반복해서 보면 무한정 연장됐다(사장님 질문 "횟수 어떻게 되"의 답:
+    //   무제한이었다). 한도를 두는 앱에서 그 한도를 광고로 무한히 밀 수 있으면 앱의 취지가 무너진다.
+    //   ⚠️ 카운트는 **보상을 실제로 받은 시점**에만 올린다(PaceRewardedAdActivity의 reward 콜백) —
+    //     광고가 안 뜨거나 중간에 닫아서 보상을 못 받은 경우까지 횟수를 깎으면 억울하다.
+    //   ⚠️ 크레딧 경로는 이 제한과 무관하다 — 크레딧은 출석 등으로 이미 번 자원이라 성격이 다르고,
+    //     사장님 지시도 "보상광고"로 한정했다.
+    val adUsed = adExtendCountToday(applicationContext)
+    val adLeft = (MAX_AD_EXTENDS_PER_DAY - adUsed).coerceAtLeast(0)
+    if (adLeft > 0) {
+      card.addView(button(
+        if (ko) "광고 보고 ${EXTEND_MINUTES}분 더 (오늘 $adUsed/$MAX_AD_EXTENDS_PER_DAY)"
+        else "Watch ad for ${EXTEND_MINUTES} min ($adUsed/$MAX_AD_EXTENDS_PER_DAY today)",
+        "#6C5CE7", Color.WHITE
+      ) {
+        hideExtendChoice()
+        // 🔴 2026-08-09 — 여기서 consumeFocusSessionTimedOut()을 부르면 **하루 3회 제한이 통째로
+        //   무력화된다.** 배지 탭 게이트가 `hasPendingFocusSessionTimeout()`에 걸려 있는데, 광고를
+        //   "시작"하는 것만으로 그 플래그를 소비하면 광고가 실패하거나 사용자가 중간에 닫아도
+        //   다음 배지 탭에서 **광고 없이 FOCUS가 그냥 켜진다**(실기기에서 실제로 재현 —
+        //   ad show failed 직후 배지 탭 한 번에 FOCUS 10m이 붙었다).
+        //   → 소비는 **연장이 실제로 일어난 순간**(extendFocusSession)으로 옮겼다.
+        PaceRewardedAdActivity.start(applicationContext, EXTEND_MINUTES)
+      }, lp)
+    } else {
+      // 다 쓴 경우엔 버튼을 없애지 않고 **왜 못 누르는지** 보이게 남긴다(그냥 사라지면 고장으로 오해한다).
+      card.addView(TextView(this).apply {
+        text = if (ko) "오늘 광고 연장은 다 썼어요 ($MAX_AD_EXTENDS_PER_DAY/$MAX_AD_EXTENDS_PER_DAY)"
+               else "No ad extensions left today ($MAX_AD_EXTENDS_PER_DAY/$MAX_AD_EXTENDS_PER_DAY)"
+        textSize = 14f
+        gravity = Gravity.CENTER
+        setTextColor(Color.parseColor("#80FFFFFF"))
+        setPadding(0, (12 * d).toInt(), 0, (12 * d).toInt())
+        background = GradientDrawable().apply {
+          cornerRadius = 999f
+          setColor(Color.parseColor("#2A2A33"))
+        }
+      }, lp)
+    }
 
     if (credits >= EXTEND_MINUTES) {
       card.addView(button(
@@ -2651,7 +2717,8 @@ class PaceOverlayService : Service() {
         "#1F3A2E", Color.parseColor("#4ADE80")
       ) {
         hideExtendChoice()
-        consumeFocusSessionTimedOut()
+        // 소비는 아래 extendFocusSession()이 한다(광고 경로와 동일한 규칙 — "연장이 실제로 일어난
+        // 순간에만 소비"). 여기서 미리 부르면 광고 경로에서 잡은 우회로와 같은 구멍이 생긴다.
         // 실제 잔액 차감은 JS 스토어가 진실원천 — 여기선 "얼마 썼는지"만 남기고 즉시 연장해준다
         // (JS가 다음 포그라운드에 consumePendingCreditSpend로 1회성 소비해 차감).
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

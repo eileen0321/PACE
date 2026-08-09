@@ -8453,3 +8453,34 @@ EAS 서버에도 사본이 있지만, 별도 백업을 권한다.
 3) AAB SHA1이 업로드 키와 같은지 확인
 4) Play Developer API로 alpha 트랙에 제출
 ```
+
+#### ⚠️ 같은 날 사고 — 비공개 테스트에 **실광고**를 넣었다가 되돌림 (versionCode 7→8→9)
+사장님 질문: **"근데 비공개 테스트에 실광고 싣는게 맞아? 웹서치 해봤어?"** → 안 했었고, **틀렸다.**
+
+**경위**
+1. `versionCode 7` 로컬 빌드 → 업로드. 이때 번들에 **테스트 광고**가 들어갔다
+   (`.env`의 `EXPO_PUBLIC_USE_REAL_ADS=false`. `eas.json`의 `true`는 **EAS 빌드 프로필에만** 적용된다 —
+   로컬 gradle 빌드는 `.env`를 읽는다. 로컬 빌드로 전환하면서 처음 드러난 차이다).
+2. AdMob 콘솔에 수익 0인 걸 보고 "실광고가 아니어서"라고 판단해 `8`을 실광고로 빌드해 올렸다.
+3. 사장님 지적으로 검색해보니 **비공개 테스트에는 테스트 광고가 맞다.**
+   - [Invalid traffic](https://support.google.com/admob/answer/3342054): "publishers clicking on their
+     own **live ads**" = 무효 트래픽
+   - [Enable test ads](https://developers.google.com/admob/android/test-ads): 테스트 모드가 아닌 채로
+     클릭이 쌓이면 **계정 정지 위험**
+   - 코드 주석의 "테스트 광고를 실사용자에게 서빙하는 건 위반"은 **프로덕션** 기준인데 그걸 테스트
+     트랙에까지 적용한 것이 오판이었다.
+4. 되돌리려 했으나 **Play가 하위 버전 롤백을 거부한다**:
+   `"You cannot rollout this release because it does not allow any existing users to upgrade"`
+   → 안드로이드는 다운그레이드가 없다. **앞으로 가는 수밖에 없어** `9`(테스트 광고)를 새로 올렸다.
+
+**결론 — 트랙별 광고 기준**
+| 트랙 | 광고 | 이유 |
+|---|---|---|
+| 내부/비공개 테스트 | **테스트 광고** | 테스터 클릭 = 무효 트래픽 = 계정 정지 위험 |
+| 프로덕션 | 실광고 | 실사용자에게 테스트 광고는 정책 위반 |
+
+⚠️ **로컬 빌드로 프로덕션에 올릴 때는 반드시** `.env`의 `EXPO_PUBLIC_USE_REAL_ADS`를 `true`로 바꿔
+빌드하고, AAB 번들에 실 단위 ID(`ca-app-pub-3201481146134957/...`)가 들어갔는지 **까서 확인할 것**.
+환경변수를 gradlew 앞에 붙이는 방식(`EXPO_PUBLIC_USE_REAL_ADS=true ./gradlew ...`)은 **안 먹혔다** —
+Expo가 `.env`를 읽어 인라인하기 때문. 또 번들 태스크가 캐시되므로
+`rm -rf app/build/generated/assets/react app/build/intermediates/assets/release` 후 빌드할 것.

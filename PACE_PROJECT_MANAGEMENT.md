@@ -8021,3 +8021,18 @@ Task pace    visible=false
 도달한 것 — iOS에서 오늘 먼저 확정한 `7efaabd`/`8b4d494`→되돌림과 같은 방향. 공유 아이콘을
 "애플 스타일 얇은 선"으로 새로 그린 것도 iOS는 이미 Feather `share-2`(얇은 선 아이콘)를 쓰고 있어
 처음부터 해당 사항 없음.
+
+### 2026-08-09 (Mac) — 보상광고 Focus 연장 하루 3회 제한, 안드와 독립 구현 교차 확인
+
+사장님 지시("보상광고 5분씩 주는거 하루 3번으로 제한")를 iOS에서 `d0caf4b`로 구현한 직후, 안드도
+독립적으로 `b64b6d8`(같은 지시)를 구현해 올렸다 — **충돌 아님, 확인 완료**:
+
+- 내 구현(`useFocusExtendAdStore` + `FocusSessionExtendModal.tsx`)은 **공용 RN 모달**을 고친 것 —
+  iOS의 Focus Session 타임아웃 경로(`feed/index.tsx` toggleAutoMode)가 정확히 이 모달을 쓴다.
+- 안드 구현(`PaceOverlayService.kt`/`PaceRewardedAdActivity.kt`)은 안드 **자체 네이티브 오버레이의
+  "배지 탭" 광고 연장 플로우** — 이건 RN 모달을 아예 안 쓰는 완전히 다른 코드 경로다(안드의 Shorts
+  시청 UI 자체가 네이티브 오버레이라 RN 화면이 아님).
+- 즉 두 플랫폼이 **서로 다른 트리거 지점**을 각자 막은 것이고, 파일이 안 겹쳐 병합도 충돌 없음.
+  iOS 쪽은 이걸로 완결. 안드가 잡은 "우회로"(광고 시작만 해도 타임아웃 플래그가 소비돼 광고 실패해도
+  공짜로 켜지던 문제)는 안드 고유 아키텍처(hasPendingFocusSessionTimeout 플래그) 얘기라 iOS엔 해당
+  없음(iOS는 그런 플래그 소비 구조 자체가 없음, `showExtendModal` state로 직접 게이팅).

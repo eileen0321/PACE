@@ -8251,3 +8251,20 @@ CHAIN advance next=…0iOL15umhqY remaining=1
   성향을 물려받는다. 목록을 보고 부적합한 채널을 `enabled=false`로 내리거나, 좋은 채널을 `pinned=true`로
   올리면 그때부터 사람 큐레이션이 이긴다.
 - 배포 후 실제 목록을 확인하고 연령대가 여전히 기울면 채널을 직접 정리할 것(앱 배포 불필요).
+
+### 2026-08-10 (Mac, /loop 자동 점검) — 새 커밋 3개, 전부 이식 불필요
+
+`5188ee0..6190cb4` 확인:
+- `8dc1e86`(안드도 즐겨찾기 이어서재생 안 함) — Android 전용 Kotlin, 내가 iOS에서 먼저 정한
+  방향(`e9e5982`)을 안드가 역으로 파리티 맞춘 것. 겸사겸사 내 총 크레딧 추가(`5188ee0`)도
+  Stats/연장모달/네이티브 팝업 세 곳이 flip+attendance 합계로 정합한다고 교차 확인해줌 — 추가 조치 불필요.
+- `ff87312`(한도 로그의 허구 usageMinutes 제거) — Android 전용 Kotlin 로그 정리. iOS
+  `feed/index.tsx`는 애초에 이 변수를 `57d9ff7`에서 이미 완전히 지웠어서(문구에서 숫자 뺄 때 같이
+  삭제됨) 해당 없음 — grep으로 재확인(`usageMinutes` 0건).
+- `6190cb4`(Shorts HOT 채널 화이트리스트 기반 20~40대 타겟팅) — `backend/`(Railway, Java Spring)
+  백엔드 변경 + 안드 Kotlin. iOS `ShortsHotOverlay`도 **같은 백엔드**(`services/api/client.ts`의
+  `/shorts-hot`)를 쓰므로 앱 변경 없이 자동 적용됨(커밋 자체도 "앱은 무변경"이라고 명시).
+  배포 확인: `curl .../shorts-hot?category=all&country=KR` → 서버 응답함(인증 필요라 내용 확인은
+  못 했지만 배포는 확인됨).
+
+tsc 통과, 코드 변경 없음(전부 이미 반영됐거나 해당 없음이라 빌드 재설치 생략).

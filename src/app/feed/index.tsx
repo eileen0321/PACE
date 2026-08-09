@@ -134,15 +134,26 @@ export default function PaceFeedScreen() {
   // 즉시(지연 없이) 불투명 커버를 씌워 그 틈을 없앤다. onReady/onError/onNotShorts 중 아무거나
   // 먼저 오면 벗기고, 혹시 다 안 오는 경로가 있을까 봐 안전망으로 3초 뒤에도 강제로 벗긴다.
   const [forcedTransitionCover, setForcedTransitionCover] = useState(false);
+  // 2026-08-09 사장님 지적("로딩이 왜이리 오래 걸려") — 커버 자체는 옛 프레임 잔상을 없애려고 낸 것뿐
+  // 실제 로드 시간은 그대로인데, 스피너 하나 없이 순수 검정만 떠 있으니 같은 대기시간이 훨씬
+  // 길게 느껴졌다. 플레이어 내부 loadingCover와 같은 관례(450ms 넘게 걸릴 때만 스피너)를 따른다 —
+  // 너무 빨리 뜨면 순간 전환에도 스피너가 깜빡여 오히려 거슬린다.
+  const [forcedTransitionSpinner, setForcedTransitionSpinner] = useState(false);
   const forcedTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const forcedTransitionSpinnerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearForcedTransitionCover = useCallback(() => {
     if (forcedTransitionTimerRef.current) { clearTimeout(forcedTransitionTimerRef.current); forcedTransitionTimerRef.current = null; }
+    if (forcedTransitionSpinnerTimerRef.current) { clearTimeout(forcedTransitionSpinnerTimerRef.current); forcedTransitionSpinnerTimerRef.current = null; }
     setForcedTransitionCover(false);
+    setForcedTransitionSpinner(false);
   }, []);
   const jumpToVideo = useCallback((id: string | null) => {
     setForcedTransitionCover(true);
+    setForcedTransitionSpinner(false);
     if (forcedTransitionTimerRef.current) clearTimeout(forcedTransitionTimerRef.current);
+    if (forcedTransitionSpinnerTimerRef.current) clearTimeout(forcedTransitionSpinnerTimerRef.current);
     forcedTransitionTimerRef.current = setTimeout(() => { forcedTransitionTimerRef.current = null; setForcedTransitionCover(false); }, 3000);
+    forcedTransitionSpinnerTimerRef.current = setTimeout(() => { forcedTransitionSpinnerTimerRef.current = null; setForcedTransitionSpinner(true); }, 450);
     setForcedVideoId(id);
   }, []);
   // 2026-08-01 사장님 지시("쇼츠 리스트에서 유머 카테고리를 골랐다는 건 그 카테고리만 보고 싶다는 거 —
@@ -743,7 +754,11 @@ export default function PaceFeedScreen() {
       {/* 위 forcedTransitionCover 주석 참고 — key 교체로 플레이어가 리마운트되는 순간(HOT/즐겨찾기
           선택, 리스트 소진 등) 옛 프레임이 잠깐 남아 있다 잘리는 것을 막는다. 플레이어의 자체
           loadingCover(450ms 지연)보다 먼저, key 변경과 같은 렌더에서 즉시 뜬다. */}
-      {forcedTransitionCover && <View style={styles.forcedTransitionCover} pointerEvents="auto" />}
+      {forcedTransitionCover && (
+        <View style={styles.forcedTransitionCover} pointerEvents="auto">
+          {forcedTransitionSpinner && <ActivityIndicator size="large" color="#FFFFFF" />}
+        </View>
+      )}
 
       <SafeAreaView style={styles.uiLayer} edges={['bottom']} pointerEvents="box-none">
         {/* uiLayer는 position:absolute라 컨테이너 paddingTop을 무시하고 top:0에 붙는다 → topBar에 명시
@@ -1036,6 +1051,6 @@ const styles = StyleSheet.create({
   // 취침 감지 블랙아웃(§4-B) — 거의 순수 검정, 최상단(zIndex). 아주 흐린 안내 문구만.
   sleepBlackout: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 300, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' },
   // 2026-08-09 — forcedVideoId 리마운트 전환 중 옛 프레임 잔상을 가리는 불투명 커버(위 jumpToVideo 참고).
-  forcedTransitionCover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 250, backgroundColor: '#000000' },
+  forcedTransitionCover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 250, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' },
   sleepBlackoutText: { color: 'rgba(255,255,255,0.65)', fontSize: 22, lineHeight: 30, fontFamily: typography.bodyFontFamilySemibold, textAlign: 'center', paddingHorizontal: 32, letterSpacing: 0.3 },
 });

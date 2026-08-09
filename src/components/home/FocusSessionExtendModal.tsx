@@ -7,6 +7,8 @@ import { isAdFailure, showRewardedAd } from '../../services/ads/rewardedAd';
 import { useToastStore } from '../../store/useToastStore';
 import { useFlipStore } from '../../store/useFlipStore';
 import { useAttendanceStore } from '../../store/useAttendanceStore';
+import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { FOCUS_EXTEND_AD_DAILY_LIMIT, useFocusExtendAdStore } from '../../store/useFocusExtendAdStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 export const FOCUS_SESSION_EXTEND_MINUTES = 5;
@@ -50,13 +52,25 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
   const totalCredits = restCredits + bonusCredits;
   const grant = onExtend ?? ((minutes: number) => { bluetoothService.extendFocusSession(minutes).catch(() => {}); });
 
+  // 2026-08-09 사용자 지시 — 무료 사용자의 보상광고 Focus 연장을 하루 3회로 제한(크레딧 연장은
+  // 별도 자원이라 이 제한 밖). 프리미엄은 애초에 이 모달 자체를 안 보므로(feed/index.tsx의
+  // toggleAutoMode 게이트 참고) 여기 체크는 혹시 다른 경로로 열려도 안전하게 우회시키는 벨트.
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const adWatchCount = useFocusExtendAdStore((s) => s.count);
+  const adLimitReached = !isPremium && adWatchCount >= FOCUS_EXTEND_AD_DAILY_LIMIT;
+
   const onWatchAd = () => {
+    if (adLimitReached) {
+      useToastStore.getState().show(t('home.watchAdDailyLimitReached', { limit: FOCUS_EXTEND_AD_DAILY_LIMIT }));
+      return;
+    }
     setWatchingAd(true);
     onAdVisibilityChange?.(true);
     showRewardedAd().then((result) => {
       setWatchingAd(false);
       onAdVisibilityChange?.(false);
       if (result === 'earned') {
+        if (!isPremium) useFocusExtendAdStore.getState().increment().catch(() => {});
         grant(FOCUS_SESSION_EXTEND_MINUTES);
         useToastStore.getState().show(t('home.focusSessionExtendedToast', { extend: FOCUS_SESSION_EXTEND_MINUTES }));
         onDismiss();
@@ -101,13 +115,21 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
         </View>
         <Text style={styles.title}>{t(titleKey)}</Text>
         <Text style={styles.message}>{t(messageKey, { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
-        <Pressable style={[styles.btn, styles.btnPrimary, watchingAd && styles.btnDisabled]} onPress={onWatchAd} disabled={watchingAd || usingCredits}>
+        <Pressable
+          style={[styles.btn, styles.btnPrimary, (watchingAd || adLimitReached) && styles.btnDisabled]}
+          onPress={onWatchAd}
+          disabled={watchingAd || usingCredits || adLimitReached}
+        >
           {watchingAd ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <>
               <Feather name="play-circle" size={16} color="#FFFFFF" />
-              <Text style={styles.btnPrimaryText}>{t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
+              <Text style={styles.btnPrimaryText}>
+                {adLimitReached
+                  ? t('home.watchAdDailyLimitButton', { limit: FOCUS_EXTEND_AD_DAILY_LIMIT })
+                  : t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}
+              </Text>
             </>
           )}
         </Pressable>

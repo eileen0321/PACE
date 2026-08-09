@@ -31,6 +31,7 @@ import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
+import { useFocusExtendAdStore } from '../store/useFocusExtendAdStore';
 import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
 import { ToastHost } from '../components/ui/ToastHost';
@@ -108,6 +109,7 @@ export default function RootLayout() {
   const syncSettingsFromServer = useSettingsStore((s) => s.syncFromServer);
   const initSubscription = useSubscriptionStore((s) => s.init);
   const loadDailyBonus = useDailyBonusStore((s) => s.load);
+  const loadFocusExtendAdCount = useFocusExtendAdStore((s) => s.load);
 
   // 2026-07-26 사용자 지시("매일 출석하기") — 부팅마다 오늘 처음 앱을 연 것인지 확인, 맞으면 크레딧
   // 지급 + 축하 팝업. checkInIfNeeded()가 내부에서 "오늘 이미 출석했으면 no-op"을 보장하므로 여기서
@@ -336,6 +338,7 @@ export default function RootLayout() {
       enforceFreeFocusSessionDuration(isPremium);
     }).catch(() => {}); // 감사 MED — 체인 rejection 시 unhandled 방지
     loadDailyBonus();
+    loadFocusExtendAdCount();
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).

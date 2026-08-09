@@ -32,6 +32,9 @@ export const translations = {
       watchAdToExtend: 'Watch ad for +{{extend}}m',
       useCreditsToExtend: 'Use {{credits}} credits for +{{extend}}m',
       focusSessionExtendedToast: 'Focus Session extended by {{extend}} minutes',
+      // 2026-08-09 사용자 지시 — 무료 사용자의 보상광고 Focus 연장을 하루 3회로 제한.
+      watchAdDailyLimitReached: "You've used all {{limit}} ad extensions for today — try credits, or come back tomorrow",
+      watchAdDailyLimitButton: 'Daily ad limit reached ({{limit}}/{{limit}})',
       // 2026-08-01 사용자 지시("룰을 다시 정해") — 하루 한도(daily limit)를 다 쓴 뒤 두 번째부터의
       // 연장은 Focus Session 타이머와 같은 광고/크레딧 모달을 재사용한다(FocusSessionExtendModal
       // titleKey/messageKey prop) — 문구만 "오늘 한도"로 바꾼 자매 키.
@@ -579,6 +582,8 @@ export const translations = {
       watchAdToExtend: '광고 보고 +{{extend}}분 받기',
       useCreditsToExtend: '크레딧 {{credits}}개로 +{{extend}}분 받기',
       focusSessionExtendedToast: 'Focus Session이 {{extend}}분 더 이어져요',
+      watchAdDailyLimitReached: '오늘 광고로 연장할 수 있는 횟수({{limit}}회)를 다 썼어요 — 크레딧을 쓰거나 내일 다시 시도해주세요',
+      watchAdDailyLimitButton: '오늘 광고 횟수 다 씀 ({{limit}}/{{limit}})',
       dailyLimitExtendTitle: '오늘 한도를 다 썼어요',
       dailyLimitExtendMessage: '짧은 광고를 보거나 크레딧을 사용하면 {{extend}}분 더 볼 수 있어요.',
       focusSessionEnabledToast: '🎧 Focus Session 켜짐',

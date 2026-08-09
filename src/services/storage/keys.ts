@@ -49,6 +49,10 @@ export const STORAGE_KEYS = {
   // insightContent.ts)로 계속 동작 — 앱이 오프라인이거나 백엔드가 잠깐 죽어도 배너가 안 죽는다.
   insightBundleCache: 'pace_insight_bundle_cache',
   insightBundleCacheDate: 'pace_insight_bundle_cache_date',
+  // 2026-08-09 사용자 지시 — 무료 사용자가 보상형 광고로 Focus Session을 5분씩 늘리는 걸 하루 3회로
+  // 제한. useDailyBonusStore와 동일하게 날짜가 바뀌면 자동 리셋(별도 카운터 — extraMinutes는 광고든
+  // 크레딧이든 합산값이라 "광고 시청 횟수"만 따로 셀 수 없다).
+  focusExtendAdCount: 'pace_focus_extend_ad_count',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

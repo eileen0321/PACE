@@ -108,6 +108,11 @@ export const translations = {
       trackingGapHint: 'Open Shorts from Pace to have the rest counted too.',
       restCredits: 'Credits earned',
       restCreditsSub: '+5 credits per 10 minutes of rest',
+      // 2026-08-09 사용자 지시 — 적립 크레딧(오늘 휴식 기준)과 출석 보너스(누적)를 합친 총계를 한
+      // 곳에서 보여준다. 두 크레딧은 서로 다른 저장소·리셋 주기라 사용자가 "왜 숫자가 다르지"로
+      // 혼동했던 것(2026-08-09) — 합계 + 내역을 같이 보여줘 헷갈리지 않게 한다.
+      totalCredits: 'Total credits',
+      totalCreditsSub: '{{rest}} earned today + {{bonus}} attendance bonus',
       // 2026-07-26 감사 발견 — WeeklyGraphCard.tsx가 t() 없이 통째로 하드코딩돼 있었음(요일 라벨도
       // 자체 영문 배열, stats.day* 기존 키를 안 씀).
       weeklyGraphTitle: 'Weekly Usage Graph',
@@ -635,6 +640,8 @@ export const translations = {
       trackingGapHint: 'Pace에서 쇼츠를 열면 나머지 시간도 함께 기록돼요.',
       restCredits: '적립 크레딧',
       restCreditsSub: '휴식 10분마다 +5 크레딧',
+      totalCredits: '총 크레딧',
+      totalCreditsSub: '오늘 적립 {{rest}} + 출석 보너스 {{bonus}}',
       weeklyGraphTitle: '주간 사용 그래프',
       weeklyAverageLabel: '주간 평균',
       tapBarHint: '막대를 탭하면 상세 정보를 볼 수 있어요',

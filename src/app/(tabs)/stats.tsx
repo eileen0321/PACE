@@ -7,6 +7,7 @@ import { useFocusEffect } from 'expo-router';
 import { useUserStore } from '../../store/useUserStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useFlipStore } from '../../store/useFlipStore';
+import { useAttendanceStore } from '../../store/useAttendanceStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { capabilities, overlayService } from '../../services/platform';
@@ -59,6 +60,10 @@ export default function StatsScreen() {
   const putDownSeconds = useFlipStore((s) => s.putDownSeconds);
   const flipCredits = useFlipStore((s) => s.credits);
   const loadFlip = useFlipStore((s) => s.load);
+  // 2026-08-09 사용자 지시("전체 크레딧은 어디서 확인이 되") — 적립 크레딧(오늘 휴식 기준, 매일 리셋)과
+  // 출석 보너스(누적, 안 쓰면 이월)를 합쳐서 보여줄 곳이 없어서 "왜 숫자가 다르지"로 혼동이 있었다.
+  // FocusSessionExtendModal이 내부적으로만 계산하던 totalCredits를 여기 화면에도 노출.
+  const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   // 2026-08-03 사장님 지시("유튜브 앱으로 열면 시간 측정이 안 되는데 그걸 알려줘야 하지 않냐",
   // "팝업으로 띄우지 말고 분석에 표시") — Pace의 추적은 전부 세션에 묶여 있어서, 사용자가 런처에서
   // 유튜브를 직접 열면 아무것도 기록되지 않고 그 사실조차 알 수 없었다(사용자 눈엔 앱이 고장 난
@@ -192,6 +197,24 @@ export default function StatsScreen() {
             <GlassSurface style={styles.divideCard}>
               <BehaviorRow title={t('stats.restTimeToday')} subtitle={t('stats.restTimeSub')} value={formatMinSec(putDownSeconds)} valueColor={colors.successLight} />
               <BehaviorRow title={t('stats.restCredits')} subtitle={t('stats.restCreditsSub')} value={`${flipCredits}`} valueColor={colors.primary} last />
+            </GlassSurface>
+          </View>
+        )}
+
+        {/* 4-A-2. 총 크레딧 — 적립(오늘, 매일 리셋) + 출석 보너스(누적, 안 쓰면 이월) 합계.
+            위 적립 크레딧 카드와 달리 putDownSeconds 조건 없이 항상 보인다 — 출석 보너스는 오늘
+            안 쉬어도 남아있는 값이라 숨기면 안 된다. FocusSessionExtendModal이 내부적으로만 쓰던
+            totalCredits(휴식+출석 합산)를 화면에도 노출(2026-08-09 사용자 지시). */}
+        {(flipCredits > 0 || bonusCredits > 0) && (
+          <View>
+            <GlassSurface style={styles.divideCard}>
+              <BehaviorRow
+                title={t('stats.totalCredits')}
+                subtitle={t('stats.totalCreditsSub', { rest: flipCredits, bonus: bonusCredits })}
+                value={`${flipCredits + bonusCredits}`}
+                valueColor={colors.successLight}
+                last
+              />
             </GlassSurface>
           </View>
         )}

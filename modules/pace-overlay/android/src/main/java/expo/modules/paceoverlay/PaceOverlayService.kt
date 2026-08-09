@@ -2125,8 +2125,12 @@ class PaceOverlayService : Service() {
         // Sleep Timer 만료(별개 사유, 차단이 맞다)와 같은 틱에 겹친 경우다. 예전 3차 경로에는 이
         // 가드가 없어서 두 사유가 같은 분에 겹치면 Sleep Timer 차단이 조용히 씹혔다.
         if (!hardBlockMode && sleepTimerRemainingMinutes != 0) {
-          val usageMinutes = dailyLimitOriginalMinutes + (dailyLimitHitCount - 1) * LIMIT_NOTICE_INTERVAL_MINUTES
-          Log.d("PaceOverlay", "DAILY LIMIT hit=$dailyLimitHitCount usageMinutes=$usageMinutes (non-blocking)")
+          // ⚠️ 2026-08-09 — 예전엔 여기서 `usageMinutes = 원래한도 + (hit-1)*간격`을 계산해 로그에
+          //   찍었다. 간격이 5→30분이 되면서 이 값이 **완전히 허구**가 됐다(실측: hit=59에서
+          //   usageMinutes=1860 = 31시간. 그날 실제 시청은 그 근처도 아니다).
+          //   화면 표시에서 이미 뺀 숫자를 로그에만 남겨두면 나중에 디버깅하는 사람이 그걸 믿는다 —
+          //   "목표 120분" 오표시와 똑같은 함정이라 아예 없앤다. 진짜 시청 시간은 앱 홈/통계가 진실원천.
+          Log.d("PaceOverlay", "DAILY LIMIT hit=$dailyLimitHitCount (+${LIMIT_NOTICE_INTERVAL_MINUTES}m, non-blocking)")
           // 알림은 **첫 도달에만**. 이후 반복 안내는 화면 위 토스트로 충분하고, 알림까지 반복하면
           // 그 자체가 소음이 된다(차단이 없어진 만큼 반복 빈도가 그대로 드러난다).
           if (notifyLimit && dailyLimitHitCount == 1) {

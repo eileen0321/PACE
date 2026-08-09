@@ -3081,21 +3081,20 @@ class PaceOverlayService : Service() {
               return@setOnClickListener
             }
             // 2026-08-07 사용자 지시("이어서 재생") — 옵트인 설정이 켜져 있고 이 항목 뒤로 재생 가능한
-            // 항목이 더 있으면 큐에 담아 감시를 시작한다. PaceAccessibilityService가 화면 제목이 바뀐
-            // 걸(스와이프든 이 콜백 자신이 새로 연 딥링크든) 감지할 때마다 큐의 다음 항목을 새로 연다.
-            // 꺼져 있으면(기본값) 기존과 동일하게 이 영상 하나만 열고 끝 — 이전에 남아있을 수 있는
-            // 큐도 여기서 항상 비워 안전하게 만든다.
-            val chainEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-              .getBoolean(PREF_FAVORITE_AUTO_CHAIN_ENABLED, false)
+            // 🔴 2026-08-09 사장님 지시(Mac 세션에서 내려온 것, 커밋 e9e5982/6fd8ec8) —
+            //   **"HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생하고 다시 쇼츠로 돌아가야지"**.
+            //   iOS는 이미 반영됐는데(SavedVideoListOverlay.onOpen이 playlist를 안 넘김) 안드로이드만
+            //   `favoriteChainQueue`로 계속 이어서 재생하고 있었다 — 실기기 로그에 `CHAIN advance`가
+            //   그대로 찍혔다. 같은 지시를 양쪽에 맞춘다.
+            //   → 즐겨찾기는 **탭한 그 영상 하나만** 연다. 이후는 유튜브의 정상 쇼츠 피드로 이어진다.
+            //   ⚠️ 이전에 남아 있을 수 있는 큐/감시는 여기서 반드시 정리한다(안 하면 직전 탭의 큐가
+            //     살아남아 엉뚱하게 다음 영상으로 넘어간다).
+            //   ⚠️ 옵트인 토글(PREF_FAVORITE_AUTO_CHAIN_ENABLED)은 더 이상 이 경로를 켜지 못한다 —
+            //     Mac 기록대로 "토글 대신 애초에 안 하는 쪽"으로 정리됐다. Shorts HOT의 이어서재생은
+            //     그대로다(그건 카테고리 전체를 이어 보는 것이 목적).
             favoriteChainQueue.clear()
             PaceAccessibilityService.stopFavoriteChainWatch()
-            if (chainEnabled) {
-              items.drop(index + 1).forEach { rest ->
-                val restUrl = rest.url ?: rest.videoId?.takeIf { it.isNotBlank() }?.let { "https://www.youtube.com/shorts/$it" }
-                if (restUrl != null) favoriteChainQueue.add(restUrl)
-              }
-            }
-            Log.i("PaceOverlayService", "CHAIN tapped url=$url chainEnabled=$chainEnabled queueSize=${favoriteChainQueue.size}")
+            Log.i("PaceOverlayService", "favorite tapped url=$url (단일 재생 — 이어서재생 없음)")
             // 🔴 2026-08-09 전수 스윕에서 발견 — 항목을 눌러 재생을 시작해도 **목록이 그대로 남아
             //   방금 고른 영상을 가렸다**(실기기 스크린샷으로 확인).
             //   근거는 하나뿐이다: **목록을 누른 건 그 영상을 보겠다는 뜻**이니 목록은 비켜야 한다.

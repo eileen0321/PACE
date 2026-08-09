@@ -8161,3 +8161,32 @@ WebView도 전혀 없어 위 사고와는 다른 종류의 개입이라고 판�
 (예: 숨겨진 `about:blank` WKWebView 인스턴스에 `<link rel=preconnect>`를 주입 — 비디오 디코딩은
 없지만 WebView 인스턴스 자체는 하나 더 뜨므로 예전 사고와 완전히 무관하다고 장담은 못 함, 별도
 실기기 검증 필요) 또는 그냥 **1.7초를 감수**하는 것. 사장님 판단 필요.
+
+---
+
+### 2026-08-09 (Windows) — 🔴 파리티 갭: 즐겨찾기 이어서재생이 **안드로이드에만** 남아 있었다
+
+Mac 커밋 `e9e5982`/`6fd8ec8`에서 사장님 지시를 확인했다 —
+**"HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생하고 다시 쇼츠로 돌아가야지"**.
+iOS는 이미 반영됐는데(`SavedVideoListOverlay.onOpen`이 playlist를 안 넘김) **안드로이드 네이티브
+오버레이는 그대로 이어서재생 중이었다.** 같은 날 내 전수 검증 로그에 증거가 그대로 남아 있다:
+```
+CHAIN tapped url=…0LyNc1GLkJg chainEnabled=true queueSize=3
+CHAIN advance next=…0iOL15umhqY remaining=1
+```
+→ 안드로이드도 **탭한 그 영상 하나만** 열고 끝낸다. 이후는 유튜브 정상 쇼츠 피드로 이어진다.
+- `favoriteChainQueue`/`startFavoriteChainWatch`는 진입 시 항상 정리한다(직전 탭의 큐가 살아남아
+  엉뚱하게 넘어가는 것을 막기 위함).
+- 옵트인 토글(`PREF_FAVORITE_AUTO_CHAIN_ENABLED`)은 더 이상 이 경로를 켜지 못한다 — Mac 기록대로
+  "토글 대신 애초에 안 하는 쪽"으로 정리된 결정을 따른다.
+- **Shorts HOT의 이어서재생은 그대로 둔다**(카테고리 전체를 이어 보는 게 목적).
+
+#### 곁들여 확인 — Mac의 총 크레딧 추가(`5188ee0`)는 정합함 🟢
+세 곳이 모두 같은 식을 쓴다:
+| 위치 | 계산 |
+|---|---|
+| Stats 탭(신규) | `flipCredits + bonusCredits` |
+| Focus 연장 모달 | `restCredits + bonusCredits` |
+| 쇼츠 위 **네이티브** 팝업 "보유 N" | `_layout.tsx`가 `flip.credits + attendance.bonusCredits`를 네이티브로 push |
+즉 Stats의 새 숫자가 쇼츠 위 팝업의 "보유 N"과 **같은 값**이다 — 원래 혼동("2일 출석인데 왜 8이지")이
+재발할 여지가 없다.

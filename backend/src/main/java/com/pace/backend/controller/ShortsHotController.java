@@ -47,13 +47,15 @@ public class ShortsHotController {
         return shortsHotService.categories();
     }
 
-    // 2026-08-01 — 매일 새벽 4시 스케줄러를 기다리지 않고 YOUTUBE_API_KEY 배포 직후 바로 검증하려는
-    // 목적의 수동 트리거. 민감 정보 노출은 없고(YouTube API 유닛 몇 개만 소모) 표준 JWT 인증으로
-    // 충분해 별도 admin 권한을 새로 만들지 않는다 — 로그인/게스트 누구나 호출 가능하지만 남용돼도
-    // 피해가 없다(멱등, 같은 카테고리를 다시 채울 뿐).
+    // 2026-08-01 — 스케줄러를 기다리지 않고 배포 직후 바로 검증하려는 목적의 수동 트리거.
+    // 표준 JWT 인증으로 충분해 별도 admin 권한을 새로 만들지 않는다.
+    //
+    // 🔴 2026-08-09 — 원래 주석은 "남용돼도 피해가 없다(멱등)"였는데 그 전제가 이제 틀리다.
+    //   멱등이긴 하지만 **한 번 호출에 YouTube 쿼터가 실제로 나간다**(채널 방식으로 약 160 units).
+    //   루프로 돌리면 무료 쿼터(10,000/일)가 금방 마른다. 서비스 쪽에 최소 간격을 둬서 막는다
+    //   (막힌 호출은 실패가 아니라 "너무 잦음"으로 알려준다 — 호출자가 상태를 오해하지 않게).
     @PostMapping("/refresh")
     public String refresh() {
-        shortsHotService.refreshAll();
-        return "ok";
+        return shortsHotService.refreshManually() ? "ok" : "throttled";
     }
 }

@@ -192,7 +192,11 @@ public class ShortsHotService {
     // 2026-08-04 — 국가가 3개(KR/JP/US)로 늘면서 하루 4회면 7,200 units(무료 10,000의 72%)로 빡빡해진다.
     // 쇼츠 트렌드가 6시간마다 뒤집히지는 않으므로 2회/일로 줄여 3,600 units(36%)로 맞춘다 —
     // 남는 여유로 나중에 국가를 더 늘릴 수 있다(국가당 +1,200 units/일).
-    @Scheduled(cron = "0 0 0,12 * * *")
+    // 🔴 2026-08-09 사장님 승인 — 채널 방식으로 바꾸면서 1회 갱신 비용이 1,800 → 약 160 units가 됐다.
+    //   하루 2회는 그 시절(검색 방식) 기준으로 아낀 값이라 이제는 지나치게 보수적이다.
+    //   **2시간마다(하루 12회)** 로 당긴다 — 12 × 160 ≈ 1,920 units/일(무료 10,000의 약 19%).
+    //   목록이 훨씬 최신이 되고도 예전(3,600)의 절반 수준이다.
+    @Scheduled(cron = "0 0 */2 * * *")
     public void refreshAll() {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("[ShortsHot] YOUTUBE_API_KEY 미설정 — 갱신 스킵");
@@ -259,7 +263,11 @@ public class ShortsHotService {
         //   순서: ① 명단이 비었으면 검색 1회로 채널을 발견해 적재 → ② 그 채널들의 최근 업로드에서
         //   조회수 순으로 목록 구성 → ③ 그래도 모자라면 기존 검색/chart로 보충(목록이 비는 것 방지).
         try {
-            if (channelRepository.countByCountryAndCategoryAndEnabledTrue(country, category) == 0) {
+            // ⚠️ 갱신 주기를 2시간으로 당기면서 생긴 위험 — 어떤 이유로 명단이 계속 비어 있으면
+            //   매 갱신마다 검색(100 units × 6카테고리 × 3국 = 1,800)이 나가 하루 21,600 units가 되어
+            //   무료 쿼터(10,000)를 터뜨린다. 발견은 (국가,카테고리)당 하루 한 번으로 제한한다.
+            if (channelRepository.countByCountryAndCategoryAndEnabledTrue(country, category) == 0
+                    && shouldTryDiscovery(country, category)) {
                 discoverChannels(country, category);
             }
             collectFromChannels(country, category, rows, now);
@@ -408,6 +416,42 @@ public class ShortsHotService {
     //  ⚠️ 업로드 재생목록 ID는 채널 ID의 "UC…"를 "UU…"로 바꾼 값이다(YouTube의 고정 규칙) —
     //    channels.list를 따로 부를 필요가 없어 그만큼 또 아낀다.
     // ─────────────────────────────────────────────────────────────────────────
+
+    // (국가|카테고리) → 마지막 채널 발견 시도 시각. 발견은 검색(100 units)이라 자주 돌면 안 된다.
+    // 인메모리라 재시작하면 비지만, 그때 한 번 더 시도하는 정도는 쿼터에 무해하다.
+    private final Map<String, java.time.Instant> lastDiscoveryAt = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Duration DISCOVERY_MIN_INTERVAL = Duration.ofHours(24);
+
+    // 수동 갱신(POST /shorts-hot/refresh)의 최소 간격. 한 번에 약 160 units가 나가므로 루프 호출을 막는다.
+    private static final Duration MANUAL_REFRESH_MIN_INTERVAL = Duration.ofMinutes(10);
+    private volatile java.time.Instant lastManualRefreshAt = null;
+
+    /**
+     * 수동 갱신. 너무 잦으면 아무것도 안 하고 false를 돌려준다(쿼터 보호).
+     * @return 실제로 갱신을 돌렸으면 true
+     */
+    public synchronized boolean refreshManually() {
+        java.time.Instant now = java.time.Instant.now();
+        if (lastManualRefreshAt != null
+                && Duration.between(lastManualRefreshAt, now).compareTo(MANUAL_REFRESH_MIN_INTERVAL) < 0) {
+            log.info("[ShortsHot] 수동 갱신 스로틀 — 마지막 실행 후 {}분 미만", MANUAL_REFRESH_MIN_INTERVAL.toMinutes());
+            return false;
+        }
+        lastManualRefreshAt = now;
+        refreshAll();
+        return true;
+    }
+
+    /** 같은 (국가,카테고리)에 대해 하루 한 번만 발견을 시도하게 막는다(쿼터 폭주 방지). */
+    private boolean shouldTryDiscovery(String country, String category) {
+        String key = country + "|" + category;
+        java.time.Instant last = lastDiscoveryAt.get(key);
+        if (last != null && Duration.between(last, java.time.Instant.now()).compareTo(DISCOVERY_MIN_INTERVAL) < 0) {
+            return false;
+        }
+        lastDiscoveryAt.put(key, java.time.Instant.now());
+        return true;
+    }
 
     /** 채널 ID(UC…) → 업로드 재생목록 ID(UU…). 규칙 변환이라 API 호출이 0이다. */
     private String uploadsPlaylistId(String channelId) {

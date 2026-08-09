@@ -88,11 +88,14 @@ export function SavedVideoListOverlay({
 
   useEffect(() => { reload(); }, [reload]);
 
+  // 2026-08-09 사장님 지시 — "즐겨찾기에서 add 누르면 즐겨찾기 팝업이 없어지게" 해달라(안드가
+  // Add 후 사용자를 유튜브로 되돌리는 것과 같은 취지 — 추가만 하고 목록을 띄운 채로 두지 않는다).
+  // 추가 끝나면 목록을 새로고침할 필요도 없다(닫히므로) — reload() 대신 onClose().
   const handleAddCurrent = useCallback(async () => {
     if (!onAddCurrent || adding) return;
     setAdding(true);
-    try { await onAddCurrent(); reload(); } finally { setAdding(false); }
-  }, [onAddCurrent, adding, reload]);
+    try { await onAddCurrent(); onClose(); } finally { setAdding(false); }
+  }, [onAddCurrent, adding, onClose]);
 
   const onRemove = useCallback(async (id: string) => {
     // 낙관적 갱신 — 삭제는 실패해도 사용자 경험상 되돌릴 이유가 적다(다시 추가하면 그만).

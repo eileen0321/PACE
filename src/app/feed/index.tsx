@@ -436,8 +436,13 @@ export default function PaceFeedScreen() {
   const pauseWaveRef = useRef<(() => void) | null>(null);
   const playerRef = useRef<ShortsPlayerHandle>(null);
   // 2026-08-08 — 무음스위치가 켜져 있어도 사용자가 볼륨키를 누르면(방향 무관) "소리를 원한다"는 신호로
-  // 보고 그 세션 동안은 강제 무음을 놓아준다(유튜브/인스타그램 관행). 다음에 Shorts를 새로 열면(playing이
-  // false→true로 바뀌면) 다시 스위치를 존중하는 기본 상태로 리셋.
+  // 보고 **이 피드 화면을 나갈 때까지**(앱을 벗어나거나 화면을 벗어날 때, 즉 이 컴포넌트가 새로
+  // 마운트될 때) 강제 무음을 놓아준다(2026-08-09 사장님 지시 — 유튜브/인스타그램 관행과 동일).
+  // ⚠️ 예전엔 아래 무음스위치 폴링 effect(`[playing]` 의존) 안에서 매번 false로 리셋했는데, `playing`은
+  // `current != null && status !== 'PAUSED'`라 스와이프·리스트에서 영상 고르기처럼 `current`가 잠깐
+  // null이 되는 정상 전환에도 false→true로 토글돼 그때마다 리셋됐다 — "스와이프하면 다시 무음된다"는
+  // 사장님 실기기 재현이 바로 이것. ref 초기값(false)은 컴포넌트가 새로 마운트될 때만 자연히 리셋되므로,
+  // 폴링 effect 안에서는 더 이상 건드리지 않는다(아래).
   const userSilentOverrideRef = useRef(false);
 
   // 2026-08-07 무음스위치 강제 반영 — WKWebView가 <video> 오디오 재생 시 물리 무음 스위치를 원천적으로
@@ -458,7 +463,6 @@ export default function PaceFeedScreen() {
     let mod: Mod | null;
     try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
     if (!mod) return;
-    userSilentOverrideRef.current = false; // 새 세션은 항상 스위치 존중부터 시작.
     let cancelled = false;
     const check = () => {
       mod!.checkSilentSwitch().then((isSilent) => {

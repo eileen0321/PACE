@@ -8357,3 +8357,47 @@ REVALIDATE_DONE   cat=all newItems=25             ← 165ms만에 갱신, 스피
 | 측정 구간 | 2.5초 누적 | **0.7초** |
 `speed=0.0`인 건이 수정 후에도 있으나 **오탐 신호가 아니다** — speed는 손이 카메라 쪽으로 다가오는
 속도라 좌우로만 흔들면 원래 0이다(sweep 축이 존재하는 이유). 판단 기준으로 쓰지 말 것.
+
+### 2026-08-10 (Mac) — 로컬 무료 빌드로 App Store Connect 직접 업로드 성공 (build 6, 1.0.2)
+
+사장님 지시: "로컬로 출시버젼 생성해 비용안들게" — `eas build`/`eas submit`(둘 다 유료 클라우드)를
+전혀 안 쓰고, 순수 로컬 Xcode 툴체인만으로 아카이브부터 App Store Connect 업로드까지 CLI로 완주.
+**다음에도 그대로 재사용 가능한 절차**라 여기 남긴다.
+
+#### 절차
+1. 버전 올리기 — `ios/Pace/Info.plist`(CFBundleShortVersionString/CFBundleVersion),
+   `ios/Pace.xcodeproj/project.pbxproj`(MARKETING_VERSION/CURRENT_PROJECT_VERSION, 4곳 전부),
+   `app.json`(version/buildNumber/runtimeVersion) 다 같이 맞출 것.
+2. 로컬 아카이브(무료, 클라우드 없음):
+   ```
+   xcodebuild -workspace ios/Pace.xcworkspace -scheme Pace -configuration Release \
+     -destination "generic/platform=iOS" -archivePath <경로>/Pace.xcarchive \
+     archive -allowProvisioningUpdates
+   ```
+3. IPA로 export(ExportOptions.plist 필요 — method=app-store, teamID=328BF833XS, signingStyle=automatic):
+   ```
+   xcodebuild -exportArchive -archivePath <xcarchive> -exportPath <출력폴더> \
+     -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates
+   ```
+4. 업로드(App-Specific Password 필요 — appleid.apple.com → 로그인 및 보안 → 앱 암호):
+   ```
+   xcrun altool --upload-app -f <ipa경로> -t ios -u <애플ID이메일> -p <앱암호>
+   ```
+
+#### 실전에서 걸린 함정 2개
+- **"No Accounts" / "No signing certificate iOS Distribution" 에러**: 로컬 macOS의 Xcode에 Apple
+  ID가 로그인돼 있어야 배포용 인증서를 자동 발급받는다(`-allowProvisioningUpdates`가 이걸 자동화
+  하지만 계정 자체는 있어야 함). Xcode → Settings → Apple Accounts에서 사장님이 직접 로그인해서
+  해결(나는 GUI를 못 눌러서 이 단계만은 사장님이 직접 해야 했다).
+- **"CFBundleShortVersionString must contain a higher version than approved [90062]" +
+  "Pre-Release Train ... closed for new build submissions [90186]"**: **1.0.1이 이미 Apple 승인
+  완료 상태**라 그 버전엔 새 빌드를 아예 못 올린다(빌드 번호만 올리는 걸론 안 됨). 버전 문자열
+  자체를 1.0.2로 올려야 풀림 — 몰랐으면 계속 삽질했을 부분.
+
+#### 결과
+버전 1.0.2 / build 6, `UPLOAD SUCCEEDED with no errors`로 App Store Connect 업로드 완료. 오늘
+밤 작업한 모든 fix(무음스위치/볼륨키/오버레이 겹침/즐겨찾기 파리티/광고 3회 제한/한도 안내 등) 포함.
+Apple 처리 대기(5~10분) 후 사장님이 직접 "심사에 추가" 눌러야 함(그건 내가 못 함).
+
+⚠️ 참고: 이번에 만든 App-Specific Password는 이 업로드에 실제로 쓰였다 — 보안이 걱정되면
+appleid.apple.com에서 지우고 다음엔 새로 만들어도 된다(재사용 가능하지만 필수는 아님).

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -118,6 +118,25 @@ export default function PaceFeedScreen() {
   // 스와이프로 이어진다(Safari로 안 튕김). 스와이프 모드는 firstVideoIdRef에 첫 영상을 핀하므로 key 교체로
   // 리마운트해야 새 영상이 로드된다.
   const [forcedVideoId, setForcedVideoId] = useState<string | null>(null);
+  // 2026-08-09 사장님 재현 — 멈춘 쇼츠 상태에서 HOT 리스트를 골랐더니 "기존 쇼츠가 보이다 끊기고
+  // 선택한 쇼츠가 보임"(구 프레임이 잠깐 남아 있다 잘림). 원인: 아래 key 교체가 플레이어를 통째로
+  // 리마운트하는데(주석 참고 — "리스트 재생은 항목마다 리로드=리마운트"), 새 플레이어 내부의
+  // loadingCover는 450ms 지연 뒤에야 뜬다(빠른 전환에서 스피너 깜빡임 방지용) — 그 지연 동안은
+  // 옛 WebView가 사라지는 과정의 마지막 프레임이 그대로 보일 수 있다. key 변경과 **같은 렌더**에서
+  // 즉시(지연 없이) 불투명 커버를 씌워 그 틈을 없앤다. onReady/onError/onNotShorts 중 아무거나
+  // 먼저 오면 벗기고, 혹시 다 안 오는 경로가 있을까 봐 안전망으로 3초 뒤에도 강제로 벗긴다.
+  const [forcedTransitionCover, setForcedTransitionCover] = useState(false);
+  const forcedTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearForcedTransitionCover = useCallback(() => {
+    if (forcedTransitionTimerRef.current) { clearTimeout(forcedTransitionTimerRef.current); forcedTransitionTimerRef.current = null; }
+    setForcedTransitionCover(false);
+  }, []);
+  const jumpToVideo = useCallback((id: string | null) => {
+    setForcedTransitionCover(true);
+    if (forcedTransitionTimerRef.current) clearTimeout(forcedTransitionTimerRef.current);
+    forcedTransitionTimerRef.current = setTimeout(() => { forcedTransitionTimerRef.current = null; setForcedTransitionCover(false); }, 3000);
+    setForcedVideoId(id);
+  }, []);
   // 2026-08-01 사장님 지시("쇼츠 리스트에서 유머 카테고리를 골랐다는 건 그 카테고리만 보고 싶다는 거 —
   // 우리 리스트를 이어서 보여주고, 보여줄 게 없으면 그때 유튜브 앱 순서로") — HOT/Favorite에서 항목을
   // 탭하면 그 리스트(카테고리) 순서대로 이어서 재생한다. forcedListRef가 있으면 goNext/goPrev가 유튜브
@@ -142,7 +161,7 @@ export default function PaceFeedScreen() {
       forcedIndexRef.current = 0;
       setListMode(false);
     }
-    setForcedVideoId(videoId);
+    jumpToVideo(videoId);
     setStatus('PLAYING');
   };
   const isFaceDown = useFlipStore((s) => s.isFaceDown); // Flip Mode — 엎어놓으면 영상 정지(슬립 유도)
@@ -511,7 +530,7 @@ export default function PaceFeedScreen() {
       const ni = forcedIndexRef.current + 1;
       if (ni < list.length) {
         forcedIndexRef.current = ni;
-        setForcedVideoId(list[ni]);
+        jumpToVideo(list[ni]);
         return;
       }
       // 리스트 소진 → 유튜브 자동으로 전환. forcedListRef만 비우고(다음부턴 스와이프 경로), 마지막 영상
@@ -534,7 +553,7 @@ export default function PaceFeedScreen() {
       const pi = forcedIndexRef.current - 1;
       if (pi < 0) return false; // 리스트 첫 항목 — 더 이전 없음
       forcedIndexRef.current = pi;
-      setForcedVideoId(list[pi]);
+      jumpToVideo(list[pi]);
       setStatus('PLAYING');
       return true;
     }
@@ -688,8 +707,9 @@ export default function PaceFeedScreen() {
             if (dir === 1) goNext(); else goPrev();
           }}
           listMode={listMode}
+          onReady={clearForcedTransitionCover}
           onEnded={onEnded}
-          onError={handlePlayerError} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
+          onError={() => { clearForcedTransitionCover(); handlePlayerError(); }} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
           onNotShorts={() => {
             // 2026-08-01 사장님 지적 — HOT/Favorite에서 연 항목이 비-쇼츠(라이브/롱폼)라 watch로 리다이렉트되면
             // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔 리마운트한다.
@@ -698,15 +718,19 @@ export default function PaceFeedScreen() {
             const list = forcedListRef.current;
             if (list) {
               const ni = forcedIndexRef.current + 1;
-              if (ni < list.length) { forcedIndexRef.current = ni; setForcedVideoId(list[ni]); return; }
-              forcedListRef.current = null; setListMode(false); setForcedVideoId(null); return;
+              if (ni < list.length) { forcedIndexRef.current = ni; jumpToVideo(list[ni]); return; }
+              forcedListRef.current = null; setListMode(false); jumpToVideo(null); return;
             }
-            if (forcedVideoId) setForcedVideoId(null);
+            if (forcedVideoId) jumpToVideo(null);
             else advance();
           }}
           onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
         />
       )}
+      {/* 위 forcedTransitionCover 주석 참고 — key 교체로 플레이어가 리마운트되는 순간(HOT/즐겨찾기
+          선택, 리스트 소진 등) 옛 프레임이 잠깐 남아 있다 잘리는 것을 막는다. 플레이어의 자체
+          loadingCover(450ms 지연)보다 먼저, key 변경과 같은 렌더에서 즉시 뜬다. */}
+      {forcedTransitionCover && <View style={styles.forcedTransitionCover} pointerEvents="auto" />}
 
       <SafeAreaView style={styles.uiLayer} edges={['bottom']} pointerEvents="box-none">
         {/* uiLayer는 position:absolute라 컨테이너 paddingTop을 무시하고 top:0에 붙는다 → topBar에 명시
@@ -998,5 +1022,7 @@ const styles = StyleSheet.create({
   retryText: { color: '#FFFFFF', fontSize: 13, fontFamily: typography.bodyFontFamilyBold },
   // 취침 감지 블랙아웃(§4-B) — 거의 순수 검정, 최상단(zIndex). 아주 흐린 안내 문구만.
   sleepBlackout: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 300, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' },
+  // 2026-08-09 — forcedVideoId 리마운트 전환 중 옛 프레임 잔상을 가리는 불투명 커버(위 jumpToVideo 참고).
+  forcedTransitionCover: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 250, backgroundColor: '#000000' },
   sleepBlackoutText: { color: 'rgba(255,255,255,0.65)', fontSize: 22, lineHeight: 30, fontFamily: typography.bodyFontFamilySemibold, textAlign: 'center', paddingHorizontal: 32, letterSpacing: 0.3 },
 });

@@ -244,6 +244,11 @@ public class ShortsHotService {
             }
             if (!addedAny) break;
         }
+        // 위 refreshCategory와 같은 이유 — 병합 결과가 비면 기존 all 목록을 지우지 않는다.
+        if (merged.isEmpty()) {
+            log.warn("[ShortsHot] category=all 병합 결과 0건 — 기존 목록 유지(덮어쓰지 않음)");
+            return;
+        }
         repository.deleteByCountryAndCategory(country, "all");
         repository.saveAll(merged);
         log.info("[ShortsHot] category=all(카테고리 집계) 갱신 완료: {}건", merged.size());
@@ -328,6 +333,16 @@ public class ShortsHotService {
         // 2026-08-04 — 예전엔 여기서 searchFallback을 불렀는데, 위에서 주 경로로 이미 돌리므로 제거한다
         // (남겨두면 같은 카테고리에 search.list가 두 번 나가 쿼터만 두 배로 쓴다).
 
+        // 🔴 2026-08-09 사고에서 드러난 결함 — 예전엔 결과가 0건이어도 **지우고 저장**했다.
+        //   그래서 YouTube가 429(쿼터 소진)를 주는 순간 그 카테고리가 통째로 비어버렸다
+        //   (실제로 music 탭이 0건이 됐다). 새로 못 가져온 것과 "볼 게 없다"는 완전히 다른 상태인데
+        //   같은 결과로 처리한 것이다.
+        //   → 새 목록이 비면 **기존 목록을 그대로 둔다.** 조금 오래된 목록이 빈 화면보다 낫고,
+        //     다음 갱신(2시간마다)에 성공하면 자연히 최신으로 덮인다.
+        if (rows.isEmpty()) {
+            log.warn("[ShortsHot] category={} 새 목록 0건 — 기존 목록 유지(덮어쓰지 않음)", category);
+            return rows;
+        }
         repository.deleteByCountryAndCategory(country, category);
         repository.saveAll(rows);
         log.info("[ShortsHot] category={} 갱신 완료: {}건", category, rows.size());

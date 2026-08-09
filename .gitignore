@@ -70,3 +70,8 @@ modules/**/android/.cxx/
 # tool-local state, not project source
 .claude/
 6.5inch
+
+# 2026-08-10 — 로컬 릴리즈 서명용 업로드 키(EAS에서 내려받음). 절대 커밋 금지.
+credentials.json
+credentials/
+android/keystore.properties

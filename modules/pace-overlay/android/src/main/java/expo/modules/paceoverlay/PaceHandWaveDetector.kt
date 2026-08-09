@@ -173,6 +173,35 @@ object PaceHandWaveDetector {
   // ⚠️ 다음에 이 값을 만지려면 반드시 diagEnabled 로그로 "가만히" 구간을 함께 재서 위와 같은 표를
   // 만든 뒤에 정할 것. 손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다.
   private const val SWEEP_RATIO_THRESHOLD = 0.22
+
+  // 🔴 2026-08-09 사장님 지적 — "안 움직이거나 조금만 움직여도 카메라 위치에서 손짓으로 인식해서
+  //   영상이 넘어간다", "카메라 높이에 손이 있으면 살짝만 움직여도 영상이 넘어가네".
+  //
+  //   실기기 로그(릴리즈 빌드, 22:22~22:26)로 원인을 확정했다 — 발동 8건 중 **7건이 by=sweep**이고,
+  //   그중 2건은 **speed=0.0**(손 크기가 전혀 안 변함 = 사실상 정지)인데도 발동했다:
+  //     22:22:08  by=sweep sweep=0.227 speed=0.0 handSize=0.197   ← 문턱 0.22 대비 여유 3%
+  //     22:26:22  by=sweep sweep=0.246 speed=0.0 handSize=0.153
+  //
+  //   진짜 원인은 임계값이 아니라 **sweep에 시간 개념이 없다는 것**이었다.
+  //   sweep = (윈도우 내 x 최대 - 최소) / handSize 인데 그 윈도우가 GROWTH_WINDOW_MS(2.5초)다.
+  //   2.5초는 "훠이" 한 번(0.3~0.6초)보다 훨씬 길어서, 손을 카메라 높이에 들고 있기만 해도 그 사이
+  //   생기는 미세한 드리프트/손떨림이 **누적**되어 손 너비의 22%를 넘긴다. 빠른 손짓과 느린 드리프트가
+  //   같은 값으로 나오니 구분이 원리적으로 불가능했다.
+  //
+  //   → 임계값(0.22)은 그대로 두고 **빠져 있던 시간 조건을 넣는다.** sweep을 짧은 창에서만 재면
+  //     같은 이동폭이라도 "빠르게 움직였을 때"만 값이 살아남는다:
+  //       빠른 손짓  — 한 번의 스윙이 이 창 안에 통째로 들어와 값이 그대로 유지된다
+  //       느린 드리프트 — 어느 700ms를 잘라도 조각만 들어와 값이 확 줄어든다
+  //   SPEED_PEAK_WINDOW_MS(700ms)와 같은 값을 쓴다 — 그쪽도 "손짓 한 번의 시간 규모"로 실측해 정한 값이라
+  //   같은 물리량을 같은 척도로 보게 된다.
+  //
+  //   ⚠️ 이 파일의 경고("SWEEP_RATIO_THRESHOLD를 만지려면 diag로 가만히 구간을 함께 재라")를 지킨다 —
+  //     **임계값은 안 건드렸다.** 축의 정의(측정 구간)를 고친 것이라 그 경고의 대상이 아니다.
+  //     그래도 회귀가 의심되면 위 실측 3줄과 같은 형식으로 by=/sweep=/speed= 로그를 다시 받아 비교할 것.
+  private const val SWEEP_WINDOW_MS = 700L
+  // Apple WWDC20 방식(연속 프레임 증거 누적)의 우리 버전 — 아래 sweptNow/sweepStreak 주석 참고.
+  // PROCESS_INTERVAL_MS(150ms) x 2 = 300ms. 애플 권장 구간(0.1~0.8초) 안이고 실제 손짓보다 짧다.
+  private const val SWEEP_CONFIRM_FRAMES = 2
   // 2026-08-05 — 손이 "정말 나갔다"고 판단하기까지의 유예. 스윕 양 끝의 모션블러/프레임 이탈로
   // 한두 프레임 놓치는 것과, 손을 실제로 내린 것을 구분한다. PROCESS_INTERVAL_MS(150ms) 기준
   // 두세 프레임 분량 — 실제로 손을 내리면 그보다 훨씬 오래 비므로 구분이 확실하다.
@@ -252,6 +281,8 @@ object PaceHandWaveDetector {
   // 뒤에 1.7~3초 간격으로 WAVE가 연달아 찍힘). 시간 기반 냉각만으로는 "손이 안 물러났다"를 못 잡는다 —
   // 트리거 시점 손 크기의 REARM_SIZE_RATIO 이하로 다시 작아져야(=손을 치웠다는 증거) 재무장하도록
   // 게이트를 추가한다. 손이 화면에서 완전히 사라지는 경우(landmarks 없음)도 물러난 것으로 간주.
+  // sweep 조건이 연속으로 몇 프레임 만족됐는지(오탐 방지 — SWEEP_CONFIRM_FRAMES 주석 참고).
+  private var sweepStreak = 0
   private var awaitingRearm = false
   private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
@@ -298,6 +329,7 @@ object PaceHandWaveDetector {
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
     xHistory.clear()
+    sweepStreak = 0
     lastTriggerAtMs = 0L
     lastLandmarkAtMs = 0L // 새 세션 — 이전 세션의 "마지막으로 손을 본 시각"이 남으면 유예 판정이 틀어진다
 
@@ -596,6 +628,7 @@ object PaceHandWaveDetector {
       //     크다 — 그쪽은 실측(rearmed after …ms 로그) 없이 건드리지 않는다.
       sizeHistory.clear()
       xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
+      sweepStreak = 0 // 연속 프레임 증거도 함께 버린다 — 안 그러면 손이 다시 들어오자마자 확정된다
       return
     }
     lastLandmarkAtMs = System.currentTimeMillis()
@@ -635,8 +668,13 @@ object PaceHandWaveDetector {
     while (xHistory.isNotEmpty() && now - xHistory.first().first > GROWTH_WINDOW_MS) {
       xHistory.removeFirst()
     }
-    val sweepRatio = if (xHistory.size >= 2) {
-      (xHistory.maxOf { it.second } - xHistory.minOf { it.second }) / handSize
+    // ⚠️ xHistory 자체는 GROWTH_WINDOW_MS(2.5초)로 유지하되(다른 축이 그 길이를 쓴다),
+    //   sweep은 **최근 SWEEP_WINDOW_MS(700ms) 구간만** 잘라서 잰다 — 위 SWEEP_WINDOW_MS 주석의 근거.
+    //   이게 없으면 2.5초에 걸친 느린 드리프트가 빠른 손짓과 같은 값으로 나온다(실측: speed=0.0인데
+    //   sweep=0.227로 발동).
+    val sweepWindow = xHistory.filter { now - it.first <= SWEEP_WINDOW_MS }
+    val sweepRatio = if (sweepWindow.size >= 2) {
+      (sweepWindow.maxOf { it.second } - sweepWindow.minOf { it.second }) / handSize
     } else 0.0
 
     sizeHistory.addLast(now to handSize)
@@ -698,7 +736,21 @@ object PaceHandWaveDetector {
     }
 
     val grew = growthRatio > GROWTH_RATIO_THRESHOLD
-    val swept = sweepRatio > SWEEP_RATIO_THRESHOLD
+    // 🔴 2026-08-09 사장님 지시("애플 어떻게 하는지도 봐") — Apple의 공식 방식을 확인해 반영했다.
+    //   WWDC20 "Detect Body and Hand Pose with Vision"에서 애플이 제시하는 오탐 방지 규칙은
+    //   임계값 조정이 아니라 **증거 누적(evidence accumulation)** 이다: 조건을 만족한 프레임이
+    //   **연속 3프레임** 쌓여야 그 상태를 확정한다. 일반 CV 통설도 같다 — 오탐은 한 프레임에서만
+    //   튀고 다음 프레임에서 사라지므로, 최소 지속시간(대략 0.1~0.8초) 동안 연속으로 나와야 인정한다.
+    //   우리 감지기는 **단 한 프레임**이 문턱을 넘으면 바로 발동했다. 실측한 오탐 2건이 정확히
+    //   그 모습이다(sweep=0.227 / 0.246, 문턱 0.22를 살짝 넘은 단발).
+    //   → sweep 축에만 연속 프레임 요구를 건다. PROCESS_INTERVAL_MS(150ms) 기준 2프레임 = 300ms로,
+    //     애플이 말하는 구간(0.1~0.8초) 안이고 실제 손짓(0.3~0.6초)보다는 짧아 회수를 안 깎는다.
+    //   ⚠️ growth/growth+speed에는 안 건다 — 그쪽은 이미 두 축(크기·속도)의 AND라 단발 노이즈로
+    //     동시에 만족되기 어렵고, 오탐 로그도 전부 sweep이었다. 필요 이상으로 조이면 2026-08-02처럼
+    //     "안 잡힌다"로 되돌아간다.
+    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD
+    sweepStreak = if (sweptNow) sweepStreak + 1 else 0
+    val swept = sweepStreak >= SWEEP_CONFIRM_FRAMES
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로
     // 잡히고, 놓치던 것 중 일부만 추가로 잡힌다. 기존 축을 조이면서 새 축을 넣었다가 오히려 더
     // 나빠졌던 2026-08-02의 실패를 반복하지 않기 위함이다.
@@ -725,6 +777,7 @@ object PaceHandWaveDetector {
       lastTriggerAtMs = now
       sizeHistory.clear()
       xHistory.clear()
+      sweepStreak = 0
       awaitingRearm = true
       rearmBelowSize = handSize * REARM_SIZE_RATIO
       // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드

@@ -3,7 +3,9 @@ package com.pace.backend.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pace.backend.dto.ShortsHotVideoResponse;
+import com.pace.backend.entity.ShortsHotChannel;
 import com.pace.backend.entity.ShortsHotVideo;
+import com.pace.backend.repository.ShortsHotChannelRepository;
 import com.pace.backend.repository.ShortsHotVideoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +44,10 @@ public class ShortsHotService {
 
     private static final String VIDEOS_API = "https://www.googleapis.com/youtube/v3/videos";
     private static final String SEARCH_API = "https://www.googleapis.com/youtube/v3/search";
+    // 채널 업로드 재생목록 조회 — 1 unit(검색 100 units 대비 100배 쌈).
+    private static final String PLAYLIST_ITEMS_API = "https://www.googleapis.com/youtube/v3/playlistItems";
+    // 채널당 최근 몇 개를 후보로 볼지. 한 채널이 목록을 독점하지 않게 제한하는 손잡이이기도 하다.
+    private static final int PER_CHANNEL_RECENT = 10;
     private static final int MAX_SHORT_SECONDS = 60;
     private static final int FETCH_COUNT = 50;
     // 2026-08-01 사장님 지시 — 클라이언트가 "본 영상"을 뒤로 미루는 대신 아예 목록에서 제외하는
@@ -97,13 +103,25 @@ public class ShortsHotService {
     // 대표하는 한국어 키워드.
     // 2026-08-04 — "all"을 추가한다. 예전엔 chart=mostPopular가 주 경로라 all은 검색어가 필요 없었지만,
     // 이제 search가 주 경로가 되면서 all에도 대표 검색어가 있어야 한다.
+    // 🔴 2026-08-09 사장님 지시 — "20대에서 40대로 제한해서 서버에서 리스트 만들게 해".
+    //   배경: 실기기 HOT 목록에 이찬원 트로트, 1998년 멜론 차트, 전자과 게임, 영어권 강아지 영상이
+    //   한 화면에 섞여 나왔다("너무 다양한 연령대 리스트인데").
+    //
+    //   ⚠️ **YouTube Data API에는 시청자 연령으로 거르는 파라미터가 없다.** 있는 건 지역(regionCode),
+    //     주제(videoCategoryId), 언어(relevanceLanguage)뿐이다. chart=mostPopular는 그 지역에서
+    //     제일 많이 본 것을 그대로 주므로 전 연령이 섞이는 게 당연하다.
+    //     → 서버가 쓸 수 있는 유일한 수단은 **검색어 큐레이션**이다. 아래 질의는 20~40대가 실제로
+    //       찾는 표현으로 바꾸고, 그 밖의 연령대로 확 기우는 소재는 제외 연산자(-)로 뺀다
+    //       (YouTube 검색은 `-키워드` 제외를 지원한다).
+    //   ⚠️ 이건 확률적 조정이지 보장이 아니다. 목록이 다시 기울면 **이 표만 고쳐 배포**하면 되고
+    //     앱 업데이트는 필요 없다(이 프로젝트가 정책을 서버에 두는 이유와 같다).
     private static final Map<String, String> SEARCH_FALLBACK_QUERY = Map.of(
-            "all", "쇼츠",
-            "music", "인기 음악",
-            "gaming", "게임",
-            "comedy", "웃긴 영상",
-            "entertainment", "예능",
-            "pets", "반려동물"
+            "all", "요즘 뜨는 쇼츠 -키즈 -동요 -트로트",
+            "music", "요즘 인기 플레이리스트 -트로트 -동요 -키즈",
+            "gaming", "게임 하이라이트 -키즈",
+            "comedy", "직장인 공감 유머 -키즈",
+            "entertainment", "예능 하이라이트 -트로트",
+            "pets", "반려동물 브이로그"
     );
 
     // 2026-08-04 사장님 결정 — 쇼츠 HOT을 국가별로 나눈다. 아무 국가나 동적으로 만들면 VPN/봇 요청
@@ -118,21 +136,22 @@ public class ShortsHotService {
     // 국가별 검색어 세트가 반드시 함께 있어야 한다(Vercel 쪽 CATEGORIES_BY_LANG와 같은 이유).
     private static final Map<String, Map<String, String>> QUERY_BY_COUNTRY = Map.of(
             "KR", SEARCH_FALLBACK_QUERY,
+            // JP/US도 같은 기준(20~40대)으로 맞춘다 — 한국만 고치면 다른 지역은 그대로 전 연령이 섞인다.
             "JP", Map.of(
-                    "all", "ショート",
-                    "music", "人気 音楽",
-                    "gaming", "ゲーム",
-                    "comedy", "面白い動画",
-                    "entertainment", "バラエティ",
-                    "pets", "ペット"
+                    "all", "話題のショート -キッズ -童謡 -演歌",
+                    "music", "最新 プレイリスト -演歌 -童謡",
+                    "gaming", "ゲーム ハイライト -キッズ",
+                    "comedy", "社会人 あるある -キッズ",
+                    "entertainment", "バラエティ 名場面",
+                    "pets", "ペット 日常"
             ),
             "US", Map.of(
-                    "all", "shorts",
-                    "music", "popular music",
-                    "gaming", "gaming",
-                    "comedy", "funny",
-                    "entertainment", "entertainment",
-                    "pets", "pets"
+                    "all", "trending shorts -kids -nursery",
+                    "music", "new music playlist -kids",
+                    "gaming", "gaming highlights -kids",
+                    "comedy", "relatable work humor",
+                    "entertainment", "tv show highlights",
+                    "pets", "pet vlog"
             )
     );
 
@@ -147,6 +166,7 @@ public class ShortsHotService {
     }
 
     private final ShortsHotVideoRepository repository;
+    private final ShortsHotChannelRepository channelRepository;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
@@ -234,7 +254,20 @@ public class ShortsHotService {
         // 순서를 뒤집었다 — "최근 RECENT_HOURS 안에 올라온 것 중 조회수 높은 순"을 **주 경로**로 쓴다.
         // chart=mostPopular는 그날 인기가 아니라 누적 인기급상승 차트라 며칠씩 그대로였고, 쇼츠 전용도
         // 아니라 일반 영상이 섞였다(카테고리로만 나눔). 이제 chart는 개수가 모자랄 때의 보충용이다.
-        if (SEARCH_FALLBACK_QUERY.containsKey(category)) {
+        // 🔴 2026-08-09 — **주 경로를 채널 화이트리스트로 바꾼다**(사장님 지시: 20~40대 타겟팅,
+        //   그리고 "검색어는 계속 변하는데 검색어로 변화를 준다고?"). 근거·설계는 collectFromChannels 주석 참고.
+        //   순서: ① 명단이 비었으면 검색 1회로 채널을 발견해 적재 → ② 그 채널들의 최근 업로드에서
+        //   조회수 순으로 목록 구성 → ③ 그래도 모자라면 기존 검색/chart로 보충(목록이 비는 것 방지).
+        try {
+            if (channelRepository.countByCountryAndCategoryAndEnabledTrue(country, category) == 0) {
+                discoverChannels(country, category);
+            }
+            collectFromChannels(country, category, rows, now);
+        } catch (Exception e) {
+            log.warn("[ShortsHot] 채널 기반 수집 실패, 검색/chart로 폴백: country={} category={}", country, category, e);
+        }
+
+        if (rows.size() < KEEP_COUNT && SEARCH_FALLBACK_QUERY.containsKey(category)) {
             try {
                 searchFallback(country, category, rows, now);
             } catch (Exception e) {
@@ -356,6 +389,152 @@ public class ShortsHotService {
             String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
             rows.add(new ShortsHotVideo(country, category, rows.size(), videoId, title, channel, thumbnailUrl, now));
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 채널 기반 수집 (2026-08-09 사장님 지시)
+    //
+    //  "20대에서 40대로 제한해서 서버에서 리스트 만들게 해" → 그런데 검색어로 하자 사장님이 바로
+    //  짚었다: **"검색어는 계속 변하는데 검색어로 변화를 준다고?"** 맞는 말이다.
+    //  YouTube API엔 연령 파라미터가 없어 무언가로 대리해야 하는데, 검색어는 유행을 타 몇 주면 낡는다.
+    //  **연령대는 채널의 속성**이다 — 채널의 시청자층은 몇 년 단위로 잘 안 바뀐다.
+    //
+    //  그래서 역할을 나눈다:
+    //    · 채널 명단 만들기 = 가끔(명단이 비었을 때만) 검색 1회 — 검색어가 낡아도 영향이 제한적
+    //    · 평소 목록 만들기 = 그 채널들의 업로드에서 뽑기 — 트렌드는 채널들이 알아서 따라간다
+    //
+    //  쿼터: search.list는 100 units인데 playlistItems.list는 **1 unit**이다. 채널 20개 + 통계 몇 번이면
+    //  카테고리당 25 units 안쪽 — 기존 검색 1회(100)보다 싸다.
+    //  ⚠️ 업로드 재생목록 ID는 채널 ID의 "UC…"를 "UU…"로 바꾼 값이다(YouTube의 고정 규칙) —
+    //    channels.list를 따로 부를 필요가 없어 그만큼 또 아낀다.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** 채널 ID(UC…) → 업로드 재생목록 ID(UU…). 규칙 변환이라 API 호출이 0이다. */
+    private String uploadsPlaylistId(String channelId) {
+        if (channelId == null || !channelId.startsWith("UC") || channelId.length() < 3) return null;
+        return "UU" + channelId.substring(2);
+    }
+
+    /**
+     * 명단이 비어 있을 때만 검색 1회로 채널 후보를 채운다(카테고리당 100 units, 최초/드묾).
+     * 검색 결과의 **영상**이 아니라 그 영상을 올린 **채널**만 가져간다 — 검색어의 유행성이 목록에
+     * 매일 반영되지 않게 하기 위함이다.
+     */
+    private void discoverChannels(String country, String category) throws Exception {
+        String query = QUERY_BY_COUNTRY.getOrDefault(country, SEARCH_FALLBACK_QUERY).get(category);
+        if (query == null) return;
+        String publishedAfter = java.time.Instant.now()
+                .minus(java.time.Duration.ofHours(RECENT_HOURS))
+                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                .toString();
+        String url = SEARCH_API
+                + "?part=snippet&type=video&videoDuration=short&order=viewCount"
+                + "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
+                + "&regionCode=" + country
+                + "&relevanceLanguage=" + LANG_BY_COUNTRY.getOrDefault(country, "en")
+                + "&maxResults=" + SEARCH_FALLBACK_RESULTS
+                + "&q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+        HttpResponse<String> res = httpClient.send(
+                HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() != 200) {
+            throw new IllegalStateException("YouTube search API " + res.statusCode() + ": " + res.body());
+        }
+        int added = 0;
+        for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
+            String channelId = item.path("snippet").path("channelId").asText(null);
+            String channelTitle = item.path("snippet").path("channelTitle").asText(null);
+            if (channelId == null || uploadsPlaylistId(channelId) == null) continue;
+            var existing = channelRepository.findByCountryAndCategoryAndChannelId(country, category, channelId);
+            if (existing.isPresent()) {
+                var ch = existing.get();
+                ch.setHitCount(ch.getHitCount() + 1);
+                channelRepository.save(ch);
+            } else {
+                channelRepository.save(ShortsHotChannel.builder()
+                        .country(country).category(category)
+                        .channelId(channelId).channelTitle(channelTitle)
+                        .hitCount(1).pinned(false).enabled(true)
+                        .discoveredAt(LocalDateTime.now())
+                        .build());
+                added++;
+            }
+        }
+        log.info("[ShortsHot] 채널 발견: country={} category={} 신규={}건", country, category, added);
+    }
+
+    /**
+     * 화이트리스트 채널들의 최근 업로드에서 목록을 만든다.
+     * 채널 방식의 기본은 "최신순"이라 그대로 쓰면 품질 편차가 크다 — 그래서 최근 업로드를 모은 뒤
+     * **조회수로 재정렬**해서 "최근 것 중 인기순"으로 만든다(사장님 질문 "최신 리스트야 인기 리스트야"의 답).
+     */
+    private void collectFromChannels(String country, String category, List<ShortsHotVideo> rows, LocalDateTime now)
+            throws Exception {
+        List<ShortsHotChannel> channels = channelRepository.findByCountryAndCategoryAndEnabledTrue(country, category);
+        if (channels.isEmpty()) return;
+
+        // 1) 채널별 최근 업로드 ID 모으기 (채널당 1 unit)
+        List<String> candidateIds = new ArrayList<>();
+        for (ShortsHotChannel ch : channels) {
+            String playlistId = uploadsPlaylistId(ch.getChannelId());
+            if (playlistId == null) continue;
+            try {
+                String url = PLAYLIST_ITEMS_API
+                        + "?part=contentDetails&maxResults=" + PER_CHANNEL_RECENT
+                        + "&playlistId=" + URLEncoder.encode(playlistId, StandardCharsets.UTF_8)
+                        + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+                HttpResponse<String> res = httpClient.send(
+                        HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofString());
+                if (res.statusCode() != 200) continue; // 채널 하나 실패로 전체를 망치지 않는다
+                for (JsonNode it : objectMapper.readTree(res.body()).path("items")) {
+                    String vid = it.path("contentDetails").path("videoId").asText(null);
+                    if (vid != null) candidateIds.add(vid);
+                }
+            } catch (Exception e) {
+                log.warn("[ShortsHot] 채널 업로드 조회 실패: {} ({})", ch.getChannelId(), e.toString());
+            }
+        }
+        if (candidateIds.isEmpty()) return;
+
+        // 2) 통계·길이를 한꺼번에 받아 Shorts만 남기고 조회수로 정렬 (50개당 1 unit)
+        record Scored(ShortsHotVideo video, long views) {}
+        List<Scored> scored = new ArrayList<>();
+        for (int i = 0; i < candidateIds.size(); i += 50) {
+            List<String> batch = candidateIds.subList(i, Math.min(i + 50, candidateIds.size()));
+            String url = VIDEOS_API
+                    + "?part=snippet,contentDetails,statistics"
+                    + "&id=" + URLEncoder.encode(String.join(",", batch), StandardCharsets.UTF_8)
+                    + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+            HttpResponse<String> res = httpClient.send(
+                    HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) continue;
+            for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
+                if (!isPlayableShort(item)) continue;
+                String videoId = item.path("id").asText(null);
+                JsonNode snippet = item.path("snippet");
+                String title = snippet.path("title").asText(null);
+                if (videoId == null || title == null) continue;
+                long views = item.path("statistics").path("viewCount").asLong(0);
+                String thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+                scored.add(new Scored(new ShortsHotVideo(country, category, 0, videoId, title,
+                        snippet.path("channelTitle").asText(null), thumb, now), views));
+            }
+        }
+        scored.sort((a, b) -> Long.compare(b.views(), a.views()));
+        for (Scored s : scored) {
+            if (rows.size() >= KEEP_COUNT) break;
+            if (!seenVideoIdsAdd(rows, s.video().getVideoId())) continue;
+            s.video().setRank(rows.size());
+            rows.add(s.video());
+        }
+        log.info("[ShortsHot] 채널 수집: country={} category={} 채널={}개 후보={}건 채택={}건",
+                country, category, channels.size(), candidateIds.size(), rows.size());
+    }
+
+    /** rows에 이미 같은 videoId가 있으면 false(중복 방지) — 채널 간 중복 업로드 대비. */
+    private boolean seenVideoIdsAdd(List<ShortsHotVideo> rows, String videoId) {
+        for (ShortsHotVideo r : rows) if (r.getVideoId().equals(videoId)) return false;
+        return true;
     }
 
     // 2026-08-01 사장님 지적("쇼츠타입으로 열어야지") — HOT 항목을 탭하면 앱 내 피드가 youtube.com/shorts/{id}

@@ -93,10 +93,11 @@ class PaceOverlayService : Service() {
   // 즐겨찾기 Add가 클립보드를 읽는 동안(캡처 액티비티가 잠깐 전경) 패널을 닫지 않기 위한 만료시각
   // (elapsedRealtime). 0이면 진행 중 아님 — foregroundPollRunnable의 정리 블록 주석 참고.
   private var captureInFlightUntilMs = 0L
-  // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(옵트인, PREF_FAVORITE_AUTO_CHAIN_ENABLED).
+  // 이어서재생 큐. 2026-08-07엔 Favorite용이었으나 2026-08-09 사장님 지시로 **Shorts HOT 전용**이 됐다
+  // ("HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생하고 다시 쇼츠로 돌아가야지").
   // 탭한 항목 다음부터 남은 videoId를 순서대로 담아둔다. PaceAccessibilityService.startFavoriteChainWatch가
   // "지금 보이는 영상이 바뀌었다"를 감지할 때마다 여기서 하나씩 꺼내 새 딥링크를 연다(showSavedFavoriteList 참고).
-  private val favoriteChainQueue: java.util.ArrayDeque<String> = java.util.ArrayDeque()
+  private val chainQueue: java.util.ArrayDeque<String> = java.util.ArrayDeque()
   // 2026-08-01 사장님 지시 — Shorts HOT도 같은 이유로 네이티브 오버레이(showShortsHotList 참고).
   private var shortsHotListView: FrameLayout? = null
   // 2026-07-25 사용자 지시 — iOS Pace Feed 글래스모피즘 리디자인(feat(feed) 커밋들)과 동일한 톤으로
@@ -3088,7 +3089,7 @@ class PaceOverlayService : Service() {
             // 🔴 2026-08-09 사장님 지시(Mac 세션에서 내려온 것, 커밋 e9e5982/6fd8ec8) —
             //   **"HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생하고 다시 쇼츠로 돌아가야지"**.
             //   iOS는 이미 반영됐는데(SavedVideoListOverlay.onOpen이 playlist를 안 넘김) 안드로이드만
-            //   `favoriteChainQueue`로 계속 이어서 재생하고 있었다 — 실기기 로그에 `CHAIN advance`가
+            //   `chainQueue`로 계속 이어서 재생하고 있었다 — 실기기 로그에 `CHAIN advance`가
             //   그대로 찍혔다. 같은 지시를 양쪽에 맞춘다.
             //   → 즐겨찾기는 **탭한 그 영상 하나만** 연다. 이후는 유튜브의 정상 쇼츠 피드로 이어진다.
             //   ⚠️ 이전에 남아 있을 수 있는 큐/감시는 여기서 반드시 정리한다(안 하면 직전 탭의 큐가
@@ -3096,13 +3097,13 @@ class PaceOverlayService : Service() {
             //   ⚠️ 옵트인 토글(PREF_FAVORITE_AUTO_CHAIN_ENABLED)은 더 이상 이 경로를 켜지 못한다 —
             //     Mac 기록대로 "토글 대신 애초에 안 하는 쪽"으로 정리됐다. Shorts HOT의 이어서재생은
             //     그대로다(그건 카테고리 전체를 이어 보는 것이 목적).
-            favoriteChainQueue.clear()
+            chainQueue.clear()
             PaceAccessibilityService.stopFavoriteChainWatch()
             Log.i("PaceOverlayService", "favorite tapped url=$url (단일 재생 — 이어서재생 없음)")
             // 🔴 2026-08-09 전수 스윕에서 발견 — 항목을 눌러 재생을 시작해도 **목록이 그대로 남아
             //   방금 고른 영상을 가렸다**(실기기 스크린샷으로 확인).
             //   근거는 하나뿐이다: **목록을 누른 건 그 영상을 보겠다는 뜻**이니 목록은 비켜야 한다.
-            //   ⚠️ 2026-08-09 정정 — 처음엔 여기에 "다음 것도 이어서는 이어서재생(favoriteChainQueue)이
+            //   ⚠️ 2026-08-09 정정 — 처음엔 여기에 "다음 것도 이어서는 이어서재생(chainQueue)이
             //     담당하므로 목록을 띄워둘 이유가 없다"고 적었는데, **이어서재생과는 아무 상관이 없다.**
             //     그 토글은 기본이 꺼짐이라, 그 근거대로면 꺼졌을 때 이 동작이 흔들리는 것처럼 읽힌다
             //     (사장님 지적: "이어서재생 토글이 꺼져 있을 때 … 이게 왜 필요하냐고").
@@ -3112,30 +3113,6 @@ class PaceOverlayService : Service() {
               startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (e: Exception) {
               Log.w("PaceOverlayService", "재생 실패", e)
-            }
-            // ⚠️ 2026-08-07 — startFavoriteChainWatch()의 기준 제목(baseline)은 "지금 화면에 보이는
-            // 영상 제목"을 그 자리에서 즉시 읽는다. 위 startActivity() 직후 바로 부르면 방금 요청한
-            // 딥링크가 아직 로드되기 전(직전 영상 제목이 그대로 화면에 남아있는 순간)을 기준으로 잡아
-            // 버려서, 첫 폴링(≈1.5초 뒤)이 "제목이 바뀌었다"를 방금 탭한 그 영상으로 오인 — 사용자가
-            // 탭한 영상을 보기도 전에 큐 전체가 도미노처럼 연속 재생돼 버렸다(실기기로 재현·확인).
-            // 탭한 영상이 실제로 로드될 시간을 준 뒤에 감시를 시작해 그 영상 자체를 기준으로 삼는다.
-            if (favoriteChainQueue.isNotEmpty()) {
-              foregroundPollHandler.postDelayed({
-                PaceAccessibilityService.startFavoriteChainWatch {
-                  val next = favoriteChainQueue.poll()
-                  Log.i("PaceOverlayService", "CHAIN advance next=$next remaining=${favoriteChainQueue.size}")
-                  if (next == null) {
-                    PaceAccessibilityService.stopFavoriteChainWatch()
-                    return@startFavoriteChainWatch
-                  }
-                  try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                  } catch (e: Exception) {
-                    Log.w("PaceOverlayService", "체이닝 재생 실패", e)
-                  }
-                  if (favoriteChainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
-                }
-              }, 1800L)
             }
           }
         }
@@ -3871,10 +3848,51 @@ class PaceOverlayService : Service() {
               setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
               isClickable = true
               setOnClickListener {
+                // 🔴 2026-08-09 사장님 지적("핫 쇼츠에서 항목 누르면 핫쇼츠 팝업 없어지기로 안 했나?
+                //   계속 남아 있는데") — 같은 날 즐겨찾기 목록에는 이 처치를 했는데 **HOT 목록만
+                //   빠뜨렸다.** 근거는 즐겨찾기와 동일하다: 목록을 누른 건 그 영상을 보겠다는 뜻이니
+                //   목록은 비켜야 한다(안 그러면 방금 고른 영상을 목록이 덮는다).
+                //   ⚠️ HOT의 "이어서재생"은 이 패널이 아니라 접근성 서비스가 감시·진행하므로
+                //     패널을 닫아도 그대로 동작한다(즐겨찾기와 달리 HOT은 이어서재생이 맞다는 지시).
+                hideShortsHotList()
+                // 🔴 2026-08-09 사장님 지적("핫쇼츠 음악에서 하나 고르면 끝나면 다음 핫쇼츠 음악
+                //   리스트로 안 이어지고") — 확인해보니 **안드로이드엔 HOT 이어서재생이 아예 없었다.**
+                //   이어서재생 기구(큐 + 접근성 감시)는 즐겨찾기용으로만 있었고, 그건 같은 날 지시대로
+                //   제거했다("HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생"). 즉 지시와 정반대로
+                //   붙어 있었던 셈이라, 같은 기구를 원래 있어야 할 HOT으로 옮긴다.
+                //   탭한 항목 **다음부터** 같은 카테고리의 남은 영상을 순서대로 큐에 담는다.
+                chainQueue.clear()
+                PaceAccessibilityService.stopFavoriteChainWatch()
+                items.drop(index + 1).forEach { rest ->
+                  chainQueue.add("https://www.youtube.com/shorts/${rest.videoId}")
+                }
+                Log.i("PaceOverlayService", "HOT tapped category=$category queueSize=${chainQueue.size}")
                 try {
                   val url = "https://www.youtube.com/shorts/${item.videoId}"
                   startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                   ShortsHotStore.markWatched(applicationContext, category, item.videoId)
+                  // ⚠️ 감시 시작을 늦추는 이유는 즐겨찾기에서 이미 겪은 것과 같다 — startFavoriteChainWatch는
+                  //   "지금 화면에 보이는 제목"을 기준으로 잡는데, startActivity 직후엔 아직 이전 영상
+                  //   제목이 남아 있어 첫 폴링이 "제목이 바뀌었다"를 방금 연 영상으로 오인한다.
+                  //   그러면 사용자가 고른 영상을 보기도 전에 큐가 도미노처럼 넘어간다(실기기 재현 이력).
+                  if (chainQueue.isNotEmpty()) {
+                    foregroundPollHandler.postDelayed({
+                      PaceAccessibilityService.startFavoriteChainWatch {
+                        val next = chainQueue.poll()
+                        Log.i("PaceOverlayService", "HOT chain advance next=$next remaining=${chainQueue.size}")
+                        if (next == null) {
+                          PaceAccessibilityService.stopFavoriteChainWatch()
+                          return@startFavoriteChainWatch
+                        }
+                        try {
+                          startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (e: Exception) {
+                          Log.w("PaceOverlayService", "HOT 체이닝 재생 실패", e)
+                        }
+                        if (chainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
+                      }
+                    }, 1800L)
+                  }
                 } catch (e: Exception) {
                   Log.w("PaceOverlayService", "Shorts HOT 재생 실패", e)
                 }
@@ -4589,7 +4607,7 @@ class PaceOverlayService : Service() {
     focusSessionHandler.removeCallbacks(focusSessionAutoStop)
     PaceAccessibilityService.stopWatching()
     PaceAccessibilityService.stopFavoriteChainWatch()
-    favoriteChainQueue.clear()
+    chainQueue.clear()
     PaceSnapDetector.stop()
     PaceHandWaveDetector.stop()
     infraReady = false

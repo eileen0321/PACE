@@ -3212,6 +3212,11 @@ class PaceOverlayService : Service() {
     }
     val originalFlags = lp.flags
     try {
+      // 🔴 2026-08-09 사장님 지적("add하고 리스트에 추가하고 창 닫지 말라고 했잖아") — 내가 빠뜨렸다.
+      //   팝업 유지 가드(captureInFlightUntilMs)를 **폴백 경로에만** 걸어두고 이 기본 경로엔 안 걸었다.
+      //   이 창을 포커스 가능으로 바꾸는 순간 포그라운드 폴이 "우리 앱이 전경"으로 보고
+      //   hideSavedFavoriteList()를 태워 팝업이 닫혔다. 두 경로 모두에 걸어야 한다.
+      captureInFlightUntilMs = SystemClock.elapsedRealtime() + CAPTURE_PANEL_KEEP_MS
       lp.flags = originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
       wm.updateViewLayout(panel, lp)
     } catch (e: Exception) {

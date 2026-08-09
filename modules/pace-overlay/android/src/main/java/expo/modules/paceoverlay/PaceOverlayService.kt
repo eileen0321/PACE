@@ -90,6 +90,9 @@ class PaceOverlayService : Service() {
   private var savedListView: FrameLayout? = null
   // 우리가 직접 그리는 공유 시트(showShareSheet 주석 참고) — 시스템 공유창을 대신한다.
   private var shareSheetView: FrameLayout? = null
+  // 즐겨찾기 Add가 클립보드를 읽는 동안(캡처 액티비티가 잠깐 전경) 패널을 닫지 않기 위한 만료시각
+  // (elapsedRealtime). 0이면 진행 중 아님 — foregroundPollRunnable의 정리 블록 주석 참고.
+  private var captureInFlightUntilMs = 0L
   // 2026-08-07 사용자 지시 — Favorite 리스트 "이어서 재생"(옵트인, PREF_FAVORITE_AUTO_CHAIN_ENABLED).
   // 탭한 항목 다음부터 남은 videoId를 순서대로 담아둔다. PaceAccessibilityService.startFavoriteChainWatch가
   // "지금 보이는 영상이 바뀌었다"를 감지할 때마다 여기서 하나씩 꺼내 새 딥링크를 연다(showSavedFavoriteList 참고).
@@ -239,7 +242,18 @@ class PaceOverlayService : Service() {
         // 항상 실제 화면 크기로 최상단에 렌더링된다. 세션 종료(removeOverlay) 때만 정리되고 있어서,
         // 세션이 계속 켜진 채로 YouTube를 벗어나면(Recents 포함) 계속 떠 있었다 — 알약과 동일한
         // "지금 감시 대상 앱을 보고 있는가" 신호에 묶어 벗어나면 즉시 닫는다.
-        if (!shouldShow) {
+        // 🔴 2026-08-09 사장님 지시 — "add 누르면 리스트에 추가되고 팝업은 **계속 뜬 상태로** 사용자가
+        //   취소하게 해" (근거: "즐겨찾기 누르면 공유로 이어지지 않나 대부분" — 추가 직후 바로 공유를
+        //   누를 수 있어야 한다).
+        //   그런데 Add는 클립보드를 읽으려고 우리 캡처 액티비티에 잠깐 포커스를 준다(안드로이드 10+는
+        //   포커스가 있어야 클립보드를 읽게 해준다). 그 찰나에 전경이 **우리 앱**이 되므로 위 규칙
+        //   (감시 대상 앱을 벗어나면 창을 전부 닫는다)이 발동해 팝업이 사라졌다.
+        //   → 캡처가 진행 중인 짧은 창 동안만 이 정리를 건너뛴다. 알약 자체는 그대로 숨는다
+        //     (우리 앱이 전경일 땐 알약이 안 보이는 게 맞다).
+        val captureInFlight = captureInFlightUntilMs != 0L &&
+          SystemClock.elapsedRealtime() < captureInFlightUntilMs
+        if (!captureInFlight) captureInFlightUntilMs = 0L
+        if (!shouldShow && !captureInFlight) {
           hidePaceMenu()
           hideSavedFavoriteList()
           hideShortsHotList()
@@ -983,6 +997,13 @@ class PaceOverlayService : Service() {
     // 썸네일 연결/읽기 타임아웃. 예전 URL.openStream()은 기본값 0(=무한)이라 네트워크가 나쁘면
     // 스레드가 영영 매달렸다(목록을 열 때마다 새 스레드라 계속 쌓인다). 썸네일은 실패해도
     // 플레이스홀더로 끝나면 되는 장식이라 짧게 끊는 편이 낫다.
+    // 즐겨찾기 Add의 클립보드 캡처 왕복 동안 패널을 살려두는 시간. 실기기에서 이 왕복은 1초 안쪽이라
+    // 넉넉하게 잡되, 콜백이 유실돼도 이 시간이 지나면 평소 규칙(감시 대상 앱을 벗어나면 정리)으로 돌아간다.
+    private const val CAPTURE_PANEL_KEEP_MS = 8000L
+    // 오버레이 창을 포커스 가능으로 바꾼 뒤 실제로 포커스가 넘어올 때까지 기다리는 시간
+    // (WindowManager 왕복이라 즉시 반영되지 않는다). 너무 짧으면 클립보드가 거부되고,
+    // 너무 길면 Add가 굼떠 보인다 — 실기기에서 확인하며 정한 값.
+    private const val OVERLAY_FOCUS_SETTLE_MS = 250L
     private const val THUMBNAIL_TIMEOUT_MS = 5000
     private const val TICK_INTERVAL_MS = 60_000L
     // 한 번의 틱에서 몰아서 깎을 수 있는 최대 분(startMinuteTicker/performTick 주석 참고).
@@ -2911,13 +2932,17 @@ class PaceOverlayService : Service() {
         // 안드로이드 권장 최소 터치 타깃(48dp)에 한참 못 미쳐서, 근처를 눌러도 행 자체의 재생
         // 클릭리스너로 새서 안 눌리는 것처럼 느껴졌다(실기기 재현). 아이콘 크기+패딩을 키우고
         // minWidth/minHeight로 탭 영역 자체를 48dp 이상 보장.
-        itemRow.addView(TextView(this@PaceOverlayService).apply {
-          text = "⇪"
-          textSize = 26f
-          setTextColor(Color.WHITE)
-          gravity = Gravity.CENTER
-          minWidth = (48 * d).toInt()
-          minHeight = (48 * d).toInt()
+        // 🔴 2026-08-09 사장님 지적 — "즐겨찾기에 공유아이콘이 안드로이드 공식이야? 왜 공유로 인식이
+        //   안되지". 예전엔 유니코드 문자 `⇪`(Caps Lock 화살표)를 TextView로 그렸다 — 공유 아이콘이
+        //   아니라 "위로 올리기" 화살표라 아무도 공유로 못 읽는다. 표준 Material "share" 도형
+        //   (점 3개를 두 선으로 이음)으로 교체한다(res/drawable/ic_pace_share.xml 주석 참고).
+        //   ⚠️ 48dp 최소 탭 영역은 그대로 유지한다(2026-08-01 "공유 아이콘이 너무 작다" 지적의 처치).
+        itemRow.addView(ImageView(this@PaceOverlayService).apply {
+          setImageResource(R.drawable.ic_pace_share)
+          scaleType = ImageView.ScaleType.CENTER_INSIDE
+          minimumWidth = (48 * d).toInt()
+          minimumHeight = (48 * d).toInt()
+          setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
           isClickable = true
           setOnClickListener {
             // 🔴 2026-08-08 사장님 지적 ① "왜 공유 누르면 쇼츠보다 앱 홈으로 가"
@@ -3047,79 +3072,19 @@ class PaceOverlayService : Service() {
     // 나오면 같은 행을 실제 videoId/url/썸네일로 채운다(2차 콜백) — captureCurrentVideoInfo 참고.
     addRow.setOnClickListener {
       if (isFavorite) {
-        // 저장이 끝나면 사용자를 유튜브로 되돌린다. 액티비티가 스스로 하면 finish()에 밀려 안 먹혀서
-        // (실기기 확인 — 저장 직후 최상단이 Pace MainActivity였다) 여기서 지연 후 수행한다.
-        PaceShareCaptureActivity.onReturnRequested = { pkg ->
-          // ⚠️ 250ms로는 안 먹혔다(실기기: 저장 직후에도 최상단이 Pace MainActivity였다).
-          //   PaceShareCaptureActivity가 사라지면서 같은 태스크의 MainActivity가 드러나는데, 그게
-          //   자리를 잡기 전에 유튜브를 올려서 곧바로 다시 덮인 것으로 보인다. 충분히 늦춘다.
-          foregroundPollHandler.postDelayed({
-            try {
-              val i = packageManager.getLaunchIntentForPackage(pkg)
-              if (i == null) {
-                Log.w("PaceOverlayService", "복귀 인텐트 없음 pkg=" + pkg)
-              } else {
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                startActivity(i)
-                Log.i("PaceOverlayService", "유튜브 복귀 요청 보냄")
-              }
-            } catch (e: Exception) {
-              Log.w("PaceOverlayService", "유튜브 복귀 실패", e)
-            }
-          }, 700L)
-        }
-        // 클립보드에서 유튜브 링크를 읽어 저장한다(위 addRow 주석의 근거).
-        PaceShareCaptureActivity.pendingCallback = cb@{ clipText ->
-          foregroundPollHandler.post {
-            val videoId = PaceAccessibilityService.extractYouTubeVideoId(clipText)
-            if (videoId == null) {
-              Toast.makeText(
-                applicationContext,
-                "No YouTube link copied — tap Share → Copy link first",
-                Toast.LENGTH_LONG
-              ).show()
-              return@post
-            }
-            val url = "https://www.youtube.com/shorts/$videoId"
-            // 제목/채널은 접근성 트리에서 지금 보이는 값을 먼저 써보고,
-            val info = PaceAccessibilityService.readVisibleTitleChannel()
-            val rowId = SavedVideosStore.insert(applicationContext, kind, videoId, info?.first, info?.second, url)
-            if (rowId != null) {
-              Toast.makeText(applicationContext, "Added ✓", Toast.LENGTH_SHORT).show()
-              renderList()
-              // 접근성으로 제목을 못 읽었으면(실기기에서 실제로 "—"로 비어 나왔다) **주소로 가서 따온다.**
-              // YouTube oEmbed는 API 키 없이 공개로 제목/채널을 준다. 네트워크라 백그라운드에서 돌리고
-              // 결과가 오면 그 행만 갱신한다 — 저장 자체는 이미 끝났으므로 실패해도 손해가 없다.
-              if (info?.first.isNullOrBlank()) {
-                Thread {
-                  val meta = fetchYouTubeOEmbed(videoId)
-                  if (meta != null) {
-                    SavedVideosStore.updateTitleChannel(applicationContext, rowId, meta.first, meta.second)
-                    foregroundPollHandler.post { renderList() }
-                  }
-                }.start()
-              }
-            } else {
-              Toast.makeText(applicationContext, "Already saved", Toast.LENGTH_SHORT).show()
-            }
-          }
-        }
-        try {
-          startActivity(
-            Intent(this, PaceShareCaptureActivity::class.java)
-              .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
-              // 읽고 나면 사용자를 유튜브로 되돌린다(위 onReturnRequested가 수행).
-              .putExtra(PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE, "com.google.android.youtube")
-              .addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                  Intent.FLAG_ACTIVITY_NO_ANIMATION
-              )
-          )
-        } catch (e: Exception) {
-          PaceShareCaptureActivity.pendingCallback = null
-          Log.w("PaceOverlayService", "클립보드 읽기 액티비티 실행 실패", e)
-          Toast.makeText(applicationContext, "Couldn't read the clipboard", Toast.LENGTH_SHORT).show()
-        }
+        // 🔴 2026-08-09 사장님 지적 — "맥은 쇼츠 보다 즐겨찾기 추가하고 계속 쇼츠를 보는데
+        //   왜 (안드로이드는) 홈 갔다 다시 쇼츠로 와?"
+        //   실기기 태스크 스택으로 원인을 확정했다 — **액티비티를 띄우는 순간 유튜브가 스스로 PIP로
+        //   내려가고(mode=pinned), 그러면 바로 아래 있던 Pace 태스크(MainActivity=홈)가 드러난다.**
+        //   (taskAffinity=""로 캡처 액티비티를 별도 태스크로 분리해도 이건 안 없어진다 — 확인함.
+        //    공유 버튼에서 겪은 것과 완전히 같은 구조다.)
+        //   → 근본 해법은 **액티비티를 아예 안 띄우는 것**이다. 안드로이드 10+가 클립보드 읽기에
+        //     요구하는 건 "액티비티"가 아니라 **포커스**다. 우리는 이미 화면에 오버레이 창을 띄워두고
+        //     있으므로, 그 창을 잠깐 포커스 가능하게 바꿔 우리 프로세스가 창 포커스를 얻으면 된다.
+        //     창 포커스 변경은 태스크 전환이 아니라서 유튜브가 PIP로 내려가지 않는다 → 홈이 안 드러난다.
+        //   ⚠️ 이 방식이 막히는 기기가 있을 수 있으므로(OEM/버전차), 읽기에 실패하면 기존
+        //     캡처 액티비티 경로로 그대로 폴백한다 — 기능이 죽지는 않게 한다.
+        startFavoriteAddFlow(kind) { renderList() }
         return@setOnClickListener
       }
       var placeholderId: String? = null
@@ -3214,6 +3179,153 @@ class PaceOverlayService : Service() {
     } catch (e: Exception) {
       Log.w("PaceOverlayService", "showSavedFavoriteList 실패", e)
       savedListView = null
+    }
+  }
+
+  // 즐겨찾기 "Add" 한 번의 전체 흐름. 두 경로가 있고 **저장 로직은 saveFavoriteFromClipText 하나**를
+  // 공유한다(한쪽만 고치는 실수 방지).
+  //   1) 포커스 오버레이 경로(기본) — 액티비티를 안 띄운다. 아래 주석 참고.
+  //   2) 캡처 액티비티 경로(폴백) — 1)이 막힌 기기에서만.
+  private fun startFavoriteAddFlow(kind: String, onChanged: () -> Unit) {
+    // 🔴 2026-08-09 사장님 지적 — "맥은 쇼츠 보다 즐겨찾기 추가하고 계속 쇼츠를 보는데
+    //   왜 (안드로이드는) 홈 갔다 다시 쇼츠로 와?"
+    //   실기기 태스크 스택으로 원인을 확정했다:
+    //     Task youtube  visible=true  mode=pinned      ← 액티비티가 뜨자 유튜브가 스스로 PIP로 내려감
+    //     Task pace     visible=true  top=MainActivity ← 그 아래 있던 우리 홈이 드러남
+    //   즉 우리가 홈을 부른 게 아니라 **유튜브가 빠지면서 아래가 보인 것**이다(공유 버튼에서 겪은 것과
+    //   완전히 같은 구조). taskAffinity=""로 캡처 액티비티를 별도 태스크로 분리해도 이건 안 없어진다 —
+    //   실기기로 확인했다. 액티비티가 뜨는 한 유튜브는 PIP로 내려간다.
+    //   → 근본 해법은 **액티비티를 아예 안 띄우는 것**이다. 안드로이드 10+가 클립보드 읽기에 요구하는
+    //     건 "액티비티"가 아니라 **창 포커스**다. 우리는 이미 오버레이 창(즐겨찾기 패널)을 띄워두고
+    //     있으니, 그 창을 잠깐 포커스 가능하게 바꾸면 우리 프로세스가 포커스를 얻는다.
+    //     창 포커스 변경은 **태스크 전환이 아니라서 유튜브가 PIP로 안 내려간다** → 홈이 안 드러난다.
+    val panel = savedListView
+    if (panel == null) {
+      startClipboardCaptureActivity(kind, onChanged)
+      return
+    }
+    val wm = windowManager
+    val lp = panel.layoutParams as? WindowManager.LayoutParams
+    if (wm == null || lp == null) {
+      startClipboardCaptureActivity(kind, onChanged)
+      return
+    }
+    val originalFlags = lp.flags
+    try {
+      lp.flags = originalFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+      wm.updateViewLayout(panel, lp)
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "오버레이 포커스 전환 실패 — 캡처 액티비티로 폴백", e)
+      startClipboardCaptureActivity(kind, onChanged)
+      return
+    }
+    // 포커스는 WindowManager 왕복이라 즉시 반영되지 않는다 — 한 박자 뒤에 읽는다.
+    foregroundPollHandler.postDelayed({
+      var clipText: String? = null
+      var denied = false
+      try {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip
+        if (clip == null || clip.itemCount == 0) {
+          // 진짜로 비어 있을 수도 있고, 플랫폼이 막은 것일 수도 있다 — 구분이 안 되므로 폴백한다.
+          denied = true
+        } else {
+          clipText = clip.getItemAt(0).coerceToText(this).toString()
+        }
+      } catch (e: Exception) {
+        Log.w("PaceOverlayService", "포커스 오버레이 클립보드 읽기 실패", e)
+        denied = true
+      }
+      try {
+        lp.flags = originalFlags
+        wm.updateViewLayout(panel, lp)
+      } catch (e: Exception) {
+        Log.w("PaceOverlayService", "오버레이 포커스 복원 실패", e)
+      }
+      if (denied) {
+        Log.i("PaceOverlayService", "clipboard via focused overlay unavailable -> capture activity fallback")
+        startClipboardCaptureActivity(kind, onChanged)
+      } else {
+        Log.i("PaceOverlayService", "clipboard via focused overlay OK (no activity, no home flash)")
+        saveFavoriteFromClipText(kind, clipText, onChanged)
+      }
+    }, OVERLAY_FOCUS_SETTLE_MS)
+  }
+
+  // 폴백 경로 — 예전부터 쓰던 방식 그대로다. 이 경로에서만 홈이 잠깐 드러난다(위 주석의 구조적 이유).
+  private fun startClipboardCaptureActivity(kind: String, onChanged: () -> Unit) {
+    // 저장이 끝나면 사용자를 유튜브로 되돌린다. 액티비티가 스스로 하면 finish()에 밀려 안 먹힌다
+    // (실기기 확인 — 저장 직후 최상단이 Pace MainActivity였다).
+    PaceShareCaptureActivity.onReturnRequested = { pkg ->
+      foregroundPollHandler.postDelayed({
+        try {
+          val i = packageManager.getLaunchIntentForPackage(pkg)
+          if (i == null) {
+            Log.w("PaceOverlayService", "복귀 인텐트 없음 pkg=$pkg")
+          } else {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            startActivity(i)
+            Log.i("PaceOverlayService", "유튜브 복귀 요청 보냄")
+          }
+        } catch (e: Exception) {
+          Log.w("PaceOverlayService", "유튜브 복귀 실패", e)
+        }
+      }, 700L)
+    }
+    PaceShareCaptureActivity.pendingCallback = cb@{ clipText ->
+      foregroundPollHandler.post { saveFavoriteFromClipText(kind, clipText, onChanged) }
+    }
+    try {
+      // 즐겨찾기 팝업이 이 왕복 동안 살아남게 한다(사장님 지시 "팝업은 계속 뜬 상태로") —
+      // foregroundPollRunnable의 captureInFlight 주석 참고.
+      captureInFlightUntilMs = SystemClock.elapsedRealtime() + CAPTURE_PANEL_KEEP_MS
+      startActivity(
+        Intent(this, PaceShareCaptureActivity::class.java)
+          .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
+          .putExtra(PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE, "com.google.android.youtube")
+          .addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+              Intent.FLAG_ACTIVITY_NO_ANIMATION
+          )
+      )
+    } catch (e: Exception) {
+      PaceShareCaptureActivity.pendingCallback = null
+      Log.w("PaceOverlayService", "클립보드 읽기 액티비티 실행 실패", e)
+      showToast(this, if (isKoreanLocale()) "클립보드를 읽지 못했어요" else "Couldn't read the clipboard")
+    }
+  }
+
+  // 클립보드 텍스트 하나로 즐겨찾기 행을 만든다. 두 경로가 공유하는 유일한 저장 지점이다.
+  private fun saveFavoriteFromClipText(kind: String, clipText: String?, onChanged: () -> Unit) {
+    val videoId = PaceAccessibilityService.extractYouTubeVideoId(clipText)
+    if (videoId == null) {
+      showToast(
+        this,
+        if (isKoreanLocale()) "복사된 유튜브 링크가 없어요 — 공유 → 링크 복사를 먼저 하세요"
+        else "No YouTube link copied — tap Share → Copy link first"
+      )
+      return
+    }
+    val url = "https://www.youtube.com/shorts/$videoId"
+    // 제목/채널은 접근성 트리에서 지금 보이는 값을 먼저 써본다.
+    val info = PaceAccessibilityService.readVisibleTitleChannel()
+    val rowId = SavedVideosStore.insert(applicationContext, kind, videoId, info?.first, info?.second, url)
+    if (rowId == null) {
+      showToast(this, if (isKoreanLocale()) "이미 저장된 영상이에요" else "Already saved")
+      return
+    }
+    showToast(this, if (isKoreanLocale()) "추가했어요 ✓" else "Added ✓")
+    onChanged()
+    // 접근성으로 제목을 못 읽었으면(실기기에서 실제로 "—"로 비어 나왔다) 주소로 가서 따온다.
+    // YouTube oEmbed는 API 키 없이 공개로 제목/채널을 준다 — 저장은 이미 끝났으므로 실패해도 손해 없음.
+    if (info?.first.isNullOrBlank()) {
+      Thread {
+        val meta = fetchYouTubeOEmbed(videoId)
+        if (meta != null) {
+          SavedVideosStore.updateTitleChannel(applicationContext, rowId, meta.first, meta.second)
+          foregroundPollHandler.post { onChanged() }
+        }
+      }.start()
     }
   }
 

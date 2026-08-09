@@ -45,7 +45,15 @@ type PlayerStatus = 'IDLE' | 'READY' | 'PLAYING' | 'PAUSED';
 
 // 하루 한도 도달 후 다음 안내까지의 간격(분). 안드로이드 네이티브의 EXTEND_MINUTES(=5)와 반드시
 // 같은 값이어야 두 플랫폼의 안내 주기가 어긋나지 않는다(PaceOverlayService.EXTEND_MINUTES 참고).
-const LIMIT_NOTICE_INTERVAL_MINUTES = 5;
+// 🔴 2026-08-09 사장님 지시 — 하루 한도 초과 안내는 **30분 간격, 하루 3회까지**.
+//   (그전: 5분 간격 무제한. 안드로이드 실기기에서 하루 52회까지 떴다.)
+//   사장님 지적("이 팝업 정책 iOS랑 각각 다르지 않아?")대로 이 규칙은 양 플랫폼에 **따로** 구현돼
+//   있다 — 안드로이드는 네이티브(PaceOverlayService.performTick), iOS는 여기다. 한쪽만 고치면
+//   갈라지므로 값·횟수·문구를 모두 같이 맞춘다.
+//   ⚠️ 안드로이드 쪽 상수 이름도 동일하다(LIMIT_NOTICE_INTERVAL_MINUTES / MAX_LIMIT_NOTICES_PER_DAY) —
+//     한쪽을 고칠 때 다른 쪽을 같이 찾도록 일부러 같은 이름을 쓴다.
+const LIMIT_NOTICE_INTERVAL_MINUTES = 30;
+const MAX_LIMIT_NOTICES_PER_DAY = 3;
 
 // 2026-08-01 사장님 지적 — Focus Session ON일 때 남은시간이 피드에 안 보였다(예전에 시계 리렌더가
 // 영상 "씹힘"을 유발해 통째로 제거됨). 부모(피드/WebView)를 리렌더하지 않도록 자체 타이머를 가진
@@ -186,7 +194,7 @@ export default function PaceFeedScreen() {
   const watchedMinRef = useRef(0);
   const nextBreakInRef = useRef(0);
   // 하루 한도 비차단 안내(2026-08-05 B안) — 안드로이드 네이티브와 같은 규칙으로 맞춘 값들.
-  // limitGraceRef: 한도에 닿을 때마다 5분씩 얹어 다음 안내까지의 간격을 만든다(네이티브의
+  // limitGraceRef: 한도에 닿을 때마다 LIMIT_NOTICE_INTERVAL_MINUTES(30분)씩 얹어 다음 안내까지의 간격을 만든다(네이티브의
   //   `remainingMinutes += EXTEND_MINUTES`와 동일 역할). 이게 없으면 매 분 토스트가 뜬다.
   // limitHitCountRef: 몇 번째 도달인지 — 알림 1회 제한과 4종 문구 순환에 쓴다.
   const limitGraceRef = useRef(0);
@@ -292,7 +300,7 @@ export default function PaceFeedScreen() {
       }
       // 2026-08-05 사장님 결정(B안, 안드로이드와 통일) — 하루 한도는 차단하지 않는다.
       // limitGraceRef는 안드로이드 네이티브의 `remainingMinutes += EXTEND_MINUTES`와 같은 역할:
-      // 한도에 닿을 때마다 5분씩 얹어서, 매 분 반복해서 안내가 뜨는 걸 막고 5분 간격으로만 알린다.
+      // 한도에 닿을 때마다 30분씩 얹어서, 매 분 반복해서 안내가 뜨는 걸 막고 30분 간격으로만 알린다.
       const effectiveDailyLimit = dailyLimitMinutes + bonusMinutes + limitGraceRef.current;
       const remaining = effectiveDailyLimit - todayUsageMinutes - watchedMinRef.current;
       if (remaining === 5 || remaining === 1) notifyLowTime(remaining).catch(() => {}); // 저시간 알림
@@ -304,7 +312,7 @@ export default function PaceFeedScreen() {
         // 예전엔 여기서 setStatus('PAUSED') + 홈으로 강제 이동이었다. 그건 안드로이드보다 오히려 더
         // 강한 개입이었고(보던 게 그냥 사라짐), 정작 연장 수단은 없었다 — 홈의 LimitReachedOverlay가
         // 2026-08-02에 제거되면서 iOS만 "튕겨나가고 끝"으로 남아 있었다.
-        // 이제 안드로이드와 동일하게: 세션은 계속, 5분마다 비차단 안내만.
+        // 이제 안드로이드와 동일하게: 세션은 계속, 30분마다(하루 3회까지) 비차단 안내만.
         limitHitCountRef.current += 1;
         limitGraceRef.current += LIMIT_NOTICE_INTERVAL_MINUTES;
         // Hard Block Mode(설정, 기본 OFF) — 안드로이드의 showBlockOverlay와 동일한 역할.
@@ -318,16 +326,21 @@ export default function PaceFeedScreen() {
           clearInterval(id);
           return;
         }
-        // 알림은 첫 도달에만(안드로이드 performTick과 동일한 규칙) — 5분마다 반복하면 소음이다.
+        // 알림은 첫 도달에만(안드로이드 performTick과 동일한 규칙) — 반복하면 소음이다.
         if (limitHitCountRef.current === 1) notifyLimitReached().catch(() => {});
-        const usageMinutes = dailyLimitMinutes + bonusMinutes + (limitHitCountRef.current - 1) * LIMIT_NOTICE_INTERVAL_MINUTES;
-        // 안드로이드 showLimitNoticeToast와 같은 4종 문구를 같은 순서로 순환한다.
-        const variant = ((limitHitCountRef.current - 1) % 4) + 1;
-        useToastStore.getState().show(
-          `${t(`limitReached.tier3Title${variant}` as TranslationKey)} ${t(`limitReached.tier3Body${variant}` as TranslationKey, {
-            n: variant === 4 ? dailyLimitMinutes + bonusMinutes : usageMinutes,
-          })}`
-        );
+        // 🔴 2026-08-09 사장님 지시 — 하루 3회까지만 안내한다. 그 뒤에도 limitGraceRef는 계속
+        //   얹어야 한다(위) — 안 그러면 매 분 이 블록에 들어와 세션 흐름이 달라진다. **안내만** 멈춘다.
+        if (limitHitCountRef.current <= MAX_LIMIT_NOTICES_PER_DAY) {
+          // 안드로이드 showLimitNoticeToast와 같은 3종 문구를 같은 순서로 순환한다.
+          // ⚠️ 숫자({{n}})는 양쪽에서 뺐다 — 사장님 지시("시간을 표시 안 하면 되잖아").
+          //   근거: 이 수치는 "그날 첫 세션에 붙잡아둔 한도"에서 파생돼, 하루 중간에 일일 한도를
+          //   바꾸면 설정 화면과 어긋난 숫자를 말한다(실기기에서 설정 60분인데 "목표 120분을
+          //   넘겼어요"로 재현). 못 믿을 숫자는 안 보여주는 편이 낫다.
+          const variant = ((limitHitCountRef.current - 1) % 3) + 1;
+          useToastStore.getState().show(
+            `${t(`limitReached.tier3Title${variant}` as TranslationKey)} ${t(`limitReached.tier3Body${variant}` as TranslationKey)}`
+          );
+        }
       }
     }, 60_000);
     return () => clearInterval(id);

@@ -1027,6 +1027,13 @@ class PaceOverlayService : Service() {
       Log.i("PaceOverlayService", "ad extend used today=$next/$MAX_AD_EXTENDS_PER_DAY")
     }
 
+    // 🔴 2026-08-09 사장님 지시 — 하루 한도 초과 안내는 **30분 간격, 하루 3회까지**.
+    //   (그전: 5분 간격 무제한 → 실기기에서 하루 52회까지 떴다.)
+    //   ⚠️ EXTEND_MINUTES(=5)와 분리한 이유: 그 값은 "광고/크레딧으로 5분 더"에도 쓰인다.
+    //     하나로 묶으면 여기를 30으로 올리는 순간 광고 보상까지 30분이 되어버린다.
+    const val LIMIT_NOTICE_INTERVAL_MINUTES = 30
+    const val MAX_LIMIT_NOTICES_PER_DAY = 3
+
     private const val CAPTURE_PANEL_KEEP_MS = 8000L
     // 오버레이 창을 포커스 가능으로 바꾼 뒤 실제로 포커스가 넘어올 때까지 기다리는 시간
     // (WindowManager 왕복이라 즉시 반영되지 않는다). 너무 짧으면 클립보드가 거부되고,
@@ -2118,10 +2125,10 @@ class PaceOverlayService : Service() {
         // Sleep Timer 만료(별개 사유, 차단이 맞다)와 같은 틱에 겹친 경우다. 예전 3차 경로에는 이
         // 가드가 없어서 두 사유가 같은 분에 겹치면 Sleep Timer 차단이 조용히 씹혔다.
         if (!hardBlockMode && sleepTimerRemainingMinutes != 0) {
-          val usageMinutes = dailyLimitOriginalMinutes + (dailyLimitHitCount - 1) * EXTEND_MINUTES
+          val usageMinutes = dailyLimitOriginalMinutes + (dailyLimitHitCount - 1) * LIMIT_NOTICE_INTERVAL_MINUTES
           Log.d("PaceOverlay", "DAILY LIMIT hit=$dailyLimitHitCount usageMinutes=$usageMinutes (non-blocking)")
-          // 알림은 **첫 도달에만**. 이후 5분마다 오는 안내는 토스트로 충분하고, 알림까지 5분마다
-          // 반복하면 그 자체가 소음이 된다(차단이 없어진 만큼 반복 빈도가 그대로 드러난다).
+          // 알림은 **첫 도달에만**. 이후 반복 안내는 화면 위 토스트로 충분하고, 알림까지 반복하면
+          // 그 자체가 소음이 된다(차단이 없어진 만큼 반복 빈도가 그대로 드러난다).
           if (notifyLimit && dailyLimitHitCount == 1) {
             if (isKoreanLocale()) {
               sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "오늘의 한도에 도달했어요", "잠시 휴대폰을 내려놓을 시간이에요.")
@@ -2129,9 +2136,18 @@ class PaceOverlayService : Service() {
               sendAlertNotification(NOTIFICATION_ID_LIMIT_REACHED, "You've reached today's limit", "Time to put the phone down for a bit.")
             }
           }
-          remainingMinutes += EXTEND_MINUTES
+          remainingMinutes += LIMIT_NOTICE_INTERVAL_MINUTES
           persistState()
-          showLimitNoticeToast(usageMinutes, dailyLimitOriginalMinutes, dailyLimitHitCount)
+          // 🔴 2026-08-09 사장님 지시 — "A+B, 30분 단위로 3회 정도만 띄워".
+          //   그전엔 5분마다 **무제한**이었다(오늘 이 기기에서 hit=52까지 갔고, 코드 주석에도
+          //   "실기기 하루 hitCount 41 관측"이 남아 있었다). 한도를 넘긴 뒤로는 볼수록 잔소리가 된다.
+          //   간격은 위 remainingMinutes 가산값이 그대로 정한다(=30분), 횟수는 여기서 막는다.
+          //   ⚠️ 카운트다운 가산 자체는 계속해야 한다 — 여기서 멈추면 세션이 만료 처리되어
+          //     "비차단"이라는 결정이 깨진다. **안내만** 멈추는 것이 맞다.
+          //   문구가 정확히 3개라 hit 1·2·3이 서로 다른 문구를 한 번씩 쓴다.
+          if (dailyLimitHitCount <= MAX_LIMIT_NOTICES_PER_DAY) {
+            showLimitNoticeToast(dailyLimitHitCount)
+          }
           scheduleNextTick(this)
           return
         }
@@ -4298,23 +4314,34 @@ class PaceOverlayService : Service() {
   private val tier3ToastHandler = Handler(Looper.getMainLooper())
   private var tier3DismissRunnable: Runnable? = null
 
-  private fun showLimitNoticeToast(usageMinutes: Int, goalMinutes: Int, hitCount: Int) {
-    // 2026-07-27 감사 발견(크리티컬) — 4개 문구 중 2개(title2/title4)가 한국어로만 하드코딩돼 영어
-    // 기기에도 그대로 노출되고 있었다(나머지 2개만 영어라 뒤섞인 상태). JS translations.ts의
-    // limitReached.tier3Title/Body1~4와 맞춰 전부 로케일에 맞게 뜨도록 정정.
+  private fun showLimitNoticeToast(hitCount: Int) {
+    // 2026-07-27 감사 발견(크리티컬) — 문구 일부가 한국어로만 하드코딩돼 영어 기기에도 그대로
+    // 노출되고 있었다. JS translations.ts와 맞춰 전부 로케일에 맞게 뜨도록 정정.
+    //
+    // 🔴 2026-08-09 사장님 지시 2건 — 실기기에서 이 팝업이 실제로 뜬 화면을 보고 나온 지적이다.
+    //   ① "1번 오늘 다른~ 이 문구 없애 너무 길잖아"
+    //      → "오늘 다른 할일이 있었나요? / 목표 N분을 넘겼어요." 쌍을 통째로 제거했다(4개 → 3개).
+    //   ② "중간에 바꾼 거에 대해 대책 안 되면 목표시간을 넘겼어요로 시간을 표시 안 하면 되잖아"
+    //      → **숫자를 전부 뺐다.** 왜 숫자가 못 미더운가:
+    //        여기 쓰이던 usageMinutes/goalMinutes는 `dailyLimitOriginalMinutes`(그날 첫 세션에
+    //        한 번 붙잡아둔 값)에서 파생된다. 사용자가 하루 중간에 일일 한도를 바꾸면 그 값은
+    //        옛날 그대로라, 설정에는 60분이라고 떠 있는데 팝업은 "목표 120분을 넘겼어요"라고
+    //        말한다(실기기에서 그대로 재현 — 사장님이 "일일한도가 얼만데"라고 물으신 그 불일치).
+    //        시청 분수(usageMinutes)도 같은 기준에서 나오므로 앱 홈의 "오늘 시청"과 어긋난다.
+    //        고칠 수 없는 숫자를 계속 보여주느니 안 보여주는 편이 낫다는 지시가 맞다.
+    //   ⚠️ 그래서 이 함수는 이제 숫자 인자를 받지 않는다. 진단용 수치는 호출부의
+    //     `DAILY LIMIT hit=… usageMinutes=…` 로그에 그대로 남아 있다.
     val messages = if (isKoreanLocale()) {
       listOf(
-        "천천히 가세요." to "지금까지 ${usageMinutes}분 시청했습니다.",
-        "잠시 쉬어갈까요?" to "오늘 ${usageMinutes}분 시청했습니다.",
-        "시간을 알차게 보내셨네요." to "오늘 목표 시간을 초과했습니다.",
-        "오늘 다른 할일이 있었나요?" to "목표 ${goalMinutes}분을 넘겼어요."
+        "천천히 가세요." to "오늘 목표 시간을 넘겼어요.",
+        "잠시 쉬어갈까요?" to "지금이 멈추기 좋은 지점이에요.",
+        "시간을 알차게 보내셨네요." to "오늘 목표 시간을 초과했습니다."
       )
     } else {
       listOf(
-        "Take your pace." to "You've watched $usageMinutes minutes so far.",
-        "Time for a short break?" to "You've watched $usageMinutes minutes today.",
-        "Time well spent." to "You've gone over today's goal.",
-        "Got other things to do today?" to "You've gone over your $goalMinutes-minute goal."
+        "Take your pace." to "You've passed today's goal.",
+        "Time for a short break?" to "This is a good place to stop.",
+        "Time well spent." to "You've gone over today's goal."
       )
     }
     // 🔴 2026-08-09 밤샘 전수 스윕에서 잡은 크래시 — 예전 식은 `messages[(hitCount - 3) % size]`였다.
@@ -4341,16 +4368,25 @@ class PaceOverlayService : Service() {
       background = GradientDrawable().apply { cornerRadius = 20f * d; setColor(Color.parseColor("#F20B0C0F")) }
       setPadding((20 * d).toInt(), (14 * d).toInt(), (20 * d).toInt(), (14 * d).toInt())
     }
+    // 🔴 2026-08-09 실기기 육안 확인에서 발견 — 제목이 **문장 중간에서 잘려** 나왔다
+    //   ("오늘 다른 할일이 있었나요?" → 화면엔 "오늘 다른 할일이"). 창이 WRAP_CONTENT라 폭이
+    //   짧은 본문에 맞춰지고, 그보다 긴 제목이 줄바꿈되지 않고 그대로 클립된 것이다.
+    //   두 TextView에 같은 최대 폭을 줘서 **넘치면 다음 줄로 넘어가게** 한다(잘림 대신 줄바꿈).
+    val textMaxWidth = (resources.displayMetrics.widthPixels - (88 * d)).toInt()
+      .coerceAtMost((300 * d).toInt())
+      .coerceAtLeast((160 * d).toInt())
     pill.addView(TextView(this).apply {
       text = msgTitle
       setTextColor(Color.WHITE)
       textSize = 14f
+      maxWidth = textMaxWidth
       setTypeface(typeface, android.graphics.Typeface.BOLD)
     })
     pill.addView(TextView(this).apply {
       text = msgBody
       setTextColor(Color.parseColor("#9CA3AF"))
       textSize = 12f
+      maxWidth = textMaxWidth
     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = (4 * d).toInt() })
 
     if (screenReaderOn) {

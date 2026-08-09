@@ -47,8 +47,12 @@ export function SavedVideoListOverlay({
   // 넘겨준다. 주어졌을 때만 favorite 리스트 상단에 추가 버튼을 렌더한다. 추가 후 리스트 새로고침.
   onAddCurrent?: () => Promise<void> | void;
   // onOpenVideo(optional) — 제공되면 항목 탭 시 외부 브라우저(Safari) 대신 앱 내 피드에서 재생
-  // (2026-08-01 사장님 지적). 미제공이면 기존 Linking(url) 폴백. playlist(2026-08-01 사장님 지시) —
-  // Favorite 목록(표시 순서)의 videoId들을 함께 넘겨 피드가 이 리스트를 이어서 재생하게 한다(소진되면 유튜브 자동).
+  // (2026-08-01 사장님 지적). 미제공이면 기존 Linking(url) 폴백.
+  // ⚠️ 2026-08-09 — playlist 파라미터는 안 넘긴다(과거엔 Favorite 목록 순서 전체를 넘겨 HOT처럼
+  // 이어서 재생시켰는데, 사장님 지시로 되돌림: "HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만
+  // 재생하고 다시 쇼츠로 돌아가야지" — Favorite 항목들은 하나의 카테고리가 아니라 서로 무관한
+  // 개별 저장물이라 묶어서 이어 볼 이유가 없다). 시그니처 자체는 ShortsHotOverlay와 공유하는
+  // onOpenVideo 콜백 모양을 그대로 두되(playlist는 옵셔널), 여기서는 항상 생략한다.
   onOpenVideo?: (videoId: string, playlist?: string[]) => void;
 }) {
   const { t } = useTranslation();
@@ -117,11 +121,12 @@ export function SavedVideoListOverlay({
   const onOpen = useCallback((item: SavedVideo) => {
     const vid = item.videoId ?? videoIdFromUrl(item.url);
     if (onOpenVideo && vid) {
-      // Favorite 목록(표시 순서)에서 videoId를 아는 것만 순서대로 넘겨 피드가 이어서 재생하게 한다.
-      const playlist = items
-        .map((v) => v.videoId ?? videoIdFromUrl(v.url))
-        .filter((id): id is string => !!id);
-      onOpenVideo(vid, playlist);
+      // 2026-08-09 사장님 지시 — "HOT은 이어서 재생이 맞지만 즐겨찾기는 그것만 재생하고 다시
+      // 쇼츠로 돌아가야지". 예전엔 여기서도 목록 전체를 playlist로 넘겨 HOT과 똑같이 이어서
+      // 재생했다 — 즐겨찾기는 그럴 이유가 없다(각 항목이 서로 무관한 개별 저장물이지 하나의
+      // 카테고리가 아니다). playlist 없이 그 영상 하나만 넘긴다 — 끝나면(혹은 스와이프하면)
+      // forcedListRef가 비어 있어 정상 유튜브 Shorts 흐름으로 자연히 돌아간다.
+      onOpenVideo(vid);
       onClose();
       return;
     }
@@ -133,7 +138,7 @@ export function SavedVideoListOverlay({
     Linking.openURL(item.url).catch(() => {
       useToastStore.getState().show(t('overlay.openFailed'));
     });
-  }, [onOpenVideo, onClose, items, t]);
+  }, [onOpenVideo, onClose, t]);
 
   // 🔴 2026-08-08 사장님 지적("애플 공유 안 되는 것 같다") — 예전엔 `if (!item.url) return;`이라
   //   url이 없는 행에서 **아무 반응 없이 조용히 끝났다.** 버튼이 죽은 것처럼 보이는데 원인을 알

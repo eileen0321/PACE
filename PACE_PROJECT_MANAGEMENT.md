@@ -8401,3 +8401,55 @@ Apple 처리 대기(5~10분) 후 사장님이 직접 "심사에 추가" 눌러�
 
 ⚠️ 참고: 이번에 만든 App-Specific Password는 이 업로드에 실제로 쓰였다 — 보안이 걱정되면
 appleid.apple.com에서 지우고 다음엔 새로 만들어도 된다(재사용 가능하지만 필수는 아님).
+
+---
+
+### 2026-08-10 — 🟢 스토어 AAB를 **로컬에서** 만들어 비공개 테스트에 올렸다 (EAS 0회, 비용 0원)
+
+사장님 지시("로컬로 비용 안 들게 돌려왔잖아") → 그런데 실제로는 **로컬 빌드로 스토어에 올릴 수 없는
+상태**였다. 원인과 해결을 남긴다.
+
+#### 왜 못 올렸나 — release가 **디버그 키로 서명**되고 있었다
+`android/app/build.gradle`의 buildTypes.release가 `signingConfig signingConfigs.debug`였다
+(Expo prebuild가 만드는 기본값, 주석에도 "Caution! generate your own keystore"라고 적혀 있었다).
+→ 기기 설치는 되지만(그래서 밤새 검증에 문제가 없었다) **Play Console은 업로드 키 서명만 받는다.**
+그래서 스토어행은 늘 EAS 빌드에 의존할 수밖에 없었다.
+
+#### 해결 — 업로드 키를 EAS에서 받아 로컬 서명에 연결
+1. `eas credentials -p android` → `credentials.json: Download credentials from EAS`
+   (**빌드가 아니라 자격증명 조회라 무료**)
+2. 받은 값으로 `android/keystore.properties` 생성, build.gradle이 `java.util.Properties`로 읽게 함
+   (JsonSlurper는 IDE/클래스패스 이슈가 있어 피했다)
+3. release 서명을 `signingConfigs.findByName('release') ?: signingConfigs.debug`
+   — 키가 없는 환경(다른 PC/CI/클론 직후)에서는 예전처럼 디버그로 폴백해 빌드가 안 깨진다.
+   ⚠️ 폴백으로 만든 AAB는 스토어에 못 올린다 — 반드시 아래처럼 SHA1을 확인할 것.
+4. versionCode 6 → 7 (**app.json과 build.gradle 양쪽** — bare workflow에선 build.gradle이 진짜다)
+
+⚠️ 함정: buildType 블록 안에서 `doFirst`를 쓰면 평가 시점이 달라 빌드가 깨진다("Could not find method
+doFirst()"). 어느 키로 서명됐는지는 로그가 아니라 **결과물을 까서** 확인하는 게 맞다.
+
+#### 검증 (추정 아님)
+| 항목 | 결과 |
+|---|---|
+| AAB 서명 SHA1 | `B8:FC:9F:58:CC:F8:21:F8:3E:A2:56:07:C5:F9:8D:43:C5:22:F4:C7` |
+| EAS 콘솔 표시값 | **동일** → 진짜 업로드 키 |
+| dex 내용물 | `SWEEP_CONFIRM`(손짓 오탐 수정), `HOT tapped category=`, `단일 재생 — 이어서재생 없음`, `오늘 목표 시간을 넘겼어요` 전부 존재 |
+
+#### 업로드도 EAS 없이 — Google Play API 직접 호출
+`eas submit` 대신 서비스 계정으로 Play Developer API를 직접 쳤다(완전 무료).
+순서는 공식 문서 그대로: `edits.insert → bundles.upload → tracks.update → edits.commit`.
+**commit 전까지는 스토어에 아무 변화가 없다**(edit은 초안) — 실패해도 안전하다.
+결과: `alpha` 트랙 `versionCodes ["7"]`, `status completed`, 한/영 릴리즈 노트 등록.
+
+#### ⚠️ 키 보관 — 잃으면 이 앱을 영영 업데이트할 수 없다
+`credentials/android/keystore.jks`, `credentials.json`, `android/keystore.properties`는
+**전부 .gitignore에 넣어 커밋되지 않는다**(`git check-ignore`로 확인). 즉 **이 PC에만 있다.**
+EAS 서버에도 사본이 있지만, 별도 백업을 권한다.
+
+#### 앞으로의 릴리즈 절차 (EAS 불필요)
+```
+1) versionCode 올리기 (app.json + android/app/build.gradle 둘 다)
+2) cd android && ./gradlew :app:bundleRelease      # 무료 로컬 AAB
+3) AAB SHA1이 업로드 키와 같은지 확인
+4) Play Developer API로 alpha 트랙에 제출
+```

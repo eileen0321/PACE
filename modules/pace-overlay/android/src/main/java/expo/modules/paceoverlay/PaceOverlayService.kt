@@ -3014,10 +3014,13 @@ class PaceOverlayService : Service() {
             }
             Log.i("PaceOverlayService", "CHAIN tapped url=$url chainEnabled=$chainEnabled queueSize=${favoriteChainQueue.size}")
             // 🔴 2026-08-09 전수 스윕에서 발견 — 항목을 눌러 재생을 시작해도 **목록이 그대로 남아
-            //   방금 고른 영상을 가렸다**(실기기 스크린샷으로 확인). 보려고 고른 것을 목록이 덮고 있는
-            //   건 명백한 사용성 결함이라 재생 시작과 함께 닫는다.
-            //   "다음 것도 이어서"는 이미 이어서재생(favoriteChainQueue)이 담당하므로 목록을 띄워둘
-            //   이유가 없다. 다시 열려면 P → Favorite 두 번이면 되고, 이제 그 열기는 캐시 덕에 즉시다.
+            //   방금 고른 영상을 가렸다**(실기기 스크린샷으로 확인).
+            //   근거는 하나뿐이다: **목록을 누른 건 그 영상을 보겠다는 뜻**이니 목록은 비켜야 한다.
+            //   ⚠️ 2026-08-09 정정 — 처음엔 여기에 "다음 것도 이어서는 이어서재생(favoriteChainQueue)이
+            //     담당하므로 목록을 띄워둘 이유가 없다"고 적었는데, **이어서재생과는 아무 상관이 없다.**
+            //     그 토글은 기본이 꺼짐이라, 그 근거대로면 꺼졌을 때 이 동작이 흔들리는 것처럼 읽힌다
+            //     (사장님 지적: "이어서재생 토글이 꺼져 있을 때 … 이게 왜 필요하냐고").
+            //     동작은 토글과 무관하게 항상 같다 — 엉뚱한 근거만 지운다.
             hideSavedFavoriteList()
             try {
               startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

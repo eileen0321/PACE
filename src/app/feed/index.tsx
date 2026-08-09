@@ -734,7 +734,19 @@ export default function PaceFeedScreen() {
               </>
             )}
           </Pressable>
-          <Pressable onPress={() => setShowPaceMenu((v) => !v)} hitSlop={12} style={styles.appIconBtn}>
+          <Pressable
+            onPress={() => {
+              // 2026-08-09 — activeSavedList/showShortsHot이 이미 열려 있는 채로 P를 다시 눌러 메뉴를
+              // 띄우면 그 위에 겹쳐 그려졌다(위 onSelect 주석과 같은 원인). 여기서도 형제를 닫는다.
+              setShowPaceMenu((v) => {
+                const next = !v;
+                if (next) { setActiveSavedList(null); setShowShortsHot(false); }
+                return next;
+              });
+            }}
+            hitSlop={12}
+            style={styles.appIconBtn}
+          >
             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
             <Text style={styles.appIconText}>P</Text>
           </Pressable>
@@ -746,7 +758,13 @@ export default function PaceFeedScreen() {
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
             onSelect={(action) => {
+              // 2026-08-09 파리티 — 안드로이드 ada6c09(같은 자리에 뜨는 오버레이 창들이 서로 겹쳐
+              // 보이던 문제)와 같은 계열 버그가 iOS에도 독립적으로 있었다: HOT이 열린 채로 P를 다시
+              // 눌러 메뉴에서 favorite를 고르면 activeSavedList만 바뀌고 showShortsHot은 안 꺼져
+              // 둘이 겹쳐 그려질 수 있었다. 새 오버레이를 열기 전 형제 오버레이를 전부 닫는다.
               setShowPaceMenu(false);
+              setActiveSavedList(null);
+              setShowShortsHot(false);
               if (action === 'app') { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home'); }
               else if (action === 'capture') setActiveSavedList('capture');
               else if (action === 'favorite') setActiveSavedList('favorite');

@@ -7876,3 +7876,33 @@ const remainingMinutes = Math.max(0, effectiveDailyLimitMinutes - todayUsageMinu
 
 ⚠️ 참고: 일일 한도 선택지는 15/30/45/60/90/**120m**이고 120m이 상한이다(수면 감지 소크 때
 15.5분이 필요한데 잔여가 모자라 못 늘렸던 그 제약과 같은 값).
+
+### 2026-08-09 (Mac, /loop 자동 점검 2회차) — 커밋 8개 전수 검토 + 파리티 1건 발견·수정
+
+`17039b0..2654b5c` 구간(shorts-hot 파서 2건, overlay 겹침, favorite 재생시 목록 닫기, 일일한도
+토스트 크래시, 광고연장 이중토스트, 집중탭 라벨 혼동 기록) 전수 리뷰.
+
+**포팅함 — iOS에 독립적으로 존재하던 같은 계열 버그**
+- 안드 `ada6c09`(같은 자리 오버레이 겹침)와 별개로, iOS `feed/index.tsx`에도 **원인은 다르지만
+  증상이 같은** 버그가 있었다: `showPaceMenu`/`activeSavedList`/`showShortsHot` 세 상태가 서로
+  독립이라, HOT 패널이 열린 채 P 아이콘을 다시 누르면 P메뉴가 그 위에 겹쳐 그려졌다(즐겨찾기/캡처
+  목록도 마찬가지). P 아이콘 onPress와 PaceMenu의 onSelect 양쪽에서 새 오버레이를 열기 전 형제
+  오버레이를 전부 닫도록 수정. tsc 통과, 릴리즈 빌드+실기기 설치 완료. **육안 확인 필요**(HOT 연 채
+  P 재탭 → 메뉴만 보이는지, 반대 방향도).
+
+**포팅 안 함 — 근거 확인**
+- `e3a8d72`+`b8f1450`(shorts-hot 제목 파싱, 따옴표로 시작하면 깨지던 버그) — `api/youtube-shorts.ts`
+  는 iOS/Android 공용 Vercel 함수. curl로 배포 확인:
+  `curl https://pace-strides7.vercel.app/api/youtube-shorts?hl=ko&gl=KR` → 제목 정상, 별도 조치 불필요.
+- `53ef77b`(즐겨찾기 재생 시 목록이 영상을 가림) — iOS `SavedVideoListOverlay.onOpen`은 이미
+  `onOpenVideo` 직후 `onClose()`를 호출하고 있어 처음부터 이 버그가 없었다(우연히 안전).
+- `65c8c24`(일일한도 안내 토스트 hitCount 오프바이원 크래시) — iOS `LimitReachedOverlay.tsx`에
+  **똑같은 패턴**(`messages[(hitCount - 3) % messages.length]`)이 실제로 있지만, 이 컴포넌트는
+  2026-08-02에 팝업 자체가 제거된 뒤 **어디서도 렌더되지 않는 죽은 코드**(`grep '<LimitReachedOverlay'`
+  결과 0건) — 안 건드림. 나중에 되살리면 이 버그도 같이 살아나니 그때 같이 고칠 것.
+- `3929b01`(보상광고 연장 시 세션시작 토스트가 먼저 뜨는 모순) — iOS의 연장 경로(`onExtend` →
+  `setIsAutoMode(true)` 직접 호출)는 애초에 "세션 시작" 토스트를 안 띄운다(그 토스트는
+  `toggleAutoMode`에만 붙어 있음). `FocusSessionExtendModal`이 별도로 정확한 "+Nm" 토스트를 그
+  자리에서 띄우므로 안드와 같은 이중토스트 구조 자체가 없음.
+- `2654b5c`(집중탭 카드 라벨 혼동, "포커스 세션" 제목 아래 일일한도 숫자) — `focus.tsx`는 공용
+  코드라 iOS도 동일 증상 확인. 사장님 제품 결정 대기 중이라 안드와 마찬가지로 손 안 댐.

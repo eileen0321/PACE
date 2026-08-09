@@ -69,8 +69,14 @@ const STRATEGIES: Strategy[] = [
     action: 'com.google.android.youtube.action.open.shorts',
     packageName: 'com.google.android.youtube',
   },
-  // 최후 폴백 — 홈 탭으로 떨어지지만 아무것도 안 열리는 것보다는 낫다(출시본의 기존 동작).
-  { kind: 'url', url: 'https://www.youtube.com/shorts' },
+  // 🔴 2026-08-09 사장님 지적("지금 기기가 왜 유투브 홈을 보여주냐" → "제대로 고쳐") — 여기 있던
+  //   `https://www.youtube.com/shorts`(영상 ID 없음) 최후 폴백을 **제거했다.**
+  //   그 URL은 Shorts 탭이 아니라 **홈 탭을 여는 것이 확정**이라(앱 쪽 shortsEntry.ts 상단 표 ④),
+  //   "아무것도 안 열리는 것보다 낫다"는 근거가 성립하지 않았다 — 바로 위 nativeAction이 시드가
+  //   없어도 진짜 Shorts 탭에 확실히 들어가기 때문이다. 즉 이건 폴백이 아니라 **홈으로 떨어지는
+  //   유일한 경로**였고, 실기기에서 실제로 그렇게 떨어졌다.
+  //   ⚠️ 앱도 sanitize()에서 이 형태를 거부하도록 같이 막았다 — 이미 캐시된 옛 정책이 남아 있는
+  //     기기에서도 홈으로 안 떨어지게 하기 위함(서버만 고치면 캐시된 기기는 안 고쳐진다).
 ];
 
 // 시작 영상 후보를 여러 개 내려준다 — 앱이 그중 하나를 무작위로 고른다. 하나만 주면 같은 캐시

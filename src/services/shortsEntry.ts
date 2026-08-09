@@ -68,7 +68,13 @@ const DEFAULT_POLICY: EntryPolicy = {
       action: 'com.google.android.youtube.action.open.shorts',
       packageName: 'com.google.android.youtube',
     },
-    { kind: 'url', url: 'https://www.youtube.com/shorts' }, // 최후 폴백(홈 탭으로 떨어짐)
+    // 🔴 2026-08-09 사장님 지적("지금 기기가 왜 유투브 홈을 보여주냐" → "제대로 고쳐") —
+    //   예전엔 여기 `https://www.youtube.com/shorts`(영상 ID 없음)가 "최후 폴백"으로 있었다.
+    //   그런데 이 URL은 **확정적으로 홈 탭을 연다**(위 표 ④, 이 파일이 처음부터 그렇게 적어뒀다).
+    //   즉 "폴백"이 아니라 **실패를 보장하는 경로**였다 — 시드를 못 구하면 반드시 홈이 열렸다.
+    //   nativeAction(위 ②)은 시드가 없어도 진짜 Shorts 탭에 확실히 들어간다. 홈으로 떨어질 바에는
+    //   "보던 자리에서 이어보기"가 언제나 낫다. 그래서 홈行 전략을 목록에서 **없앤다**.
+    //   (실기기 A/B 재확인: `www.youtube.com/shorts/<id>`는 지금도 Shorts 전체화면으로 정상 진입.)
   ],
   seedPool: [],
 };
@@ -92,7 +98,16 @@ function sanitize(raw: unknown): EntryPolicy | null {
     const v = s as Record<string, unknown>;
     if (v.kind === 'nativeAction') return typeof v.action === 'string' && typeof v.packageName === 'string';
     // https만 허용 — 서버가 오염돼도 임의 스킴(intent:, file: 등)을 실행하지 않는다.
-    if (v.kind === 'url') return typeof v.url === 'string' && v.url.startsWith('https://');
+    if (v.kind === 'url') {
+      if (typeof v.url !== 'string' || !v.url.startsWith('https://')) return false;
+      // 🔴 2026-08-09 — **영상 ID 없는 Shorts URL은 거부한다.** 그건 Shorts 탭이 아니라 홈 탭을
+      //   여는 것이 확정이라(위 표 ④), 어떤 순서에 있든 "여기까지 오면 홈이 열린다"는 뜻이 된다.
+      //   서버 정책에서 뺐지만 **이미 캐시된 옛 정책**이 기기에 남아 있을 수 있어(STORAGE_KEY가
+      //   같으면 그대로 재사용된다) 여기서도 막는다. 앱 쪽에서 한 번 더 막아야 이미 설치된 기기가
+      //   서버 응답을 못 받는 상황(오프라인/프리페치 실패)에서도 홈으로 안 떨어진다.
+      if (!v.url.includes('{videoId}') && /\/shorts\/?$/.test(v.url)) return false;
+      return true;
+    }
     return false;
   });
   if (!strategies.length) return null;

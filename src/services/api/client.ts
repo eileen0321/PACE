@@ -28,6 +28,9 @@ export const API_BASE_URL = __DEV__
 if (Platform.OS === 'android' && API_BASE_URL) {
   try {
     require('../../../modules/pace-overlay').PaceOverlay?.cacheApiBaseUrl(API_BASE_URL);
+    // 2026-08-10 — 쇼츠 검색은 Vercel 프록시(별개 호스트)를 치므로 그 주소도 같이 밀어준다.
+    const proxy = require('./youtube').YOUTUBE_PROXY_URL;
+    if (proxy) require('../../../modules/pace-overlay').PaceOverlay?.cacheProxyBaseUrl(proxy);
   } catch {
     // 네이티브 미링크(Dev Client 빌드 전) — 조용히 무시.
   }

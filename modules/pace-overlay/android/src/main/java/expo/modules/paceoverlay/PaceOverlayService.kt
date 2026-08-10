@@ -259,6 +259,7 @@ class PaceOverlayService : Service() {
           hideSavedFavoriteList()
           hideShortsHotList()
           hideShareSheet() // 위와 같은 이유 — 감시 대상 앱을 벗어나면 우리 창은 전부 정리한다.
+          hideSearchPanel()
         }
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
@@ -1157,6 +1158,8 @@ class PaceOverlayService : Service() {
     // 2026-08-01 — Shorts HOT 네이티브 오버레이가 백엔드 REST를 직접 호출할 때 필요(위
     // PaceOverlayModule.cacheApiBaseUrl/cacheAuthToken 참고, client.ts가 값 변경마다 채워줌).
     const val PREF_CACHED_API_BASE_URL = "cached_api_base_url"
+    // 2026-08-10 — 쇼츠 검색용 Vercel 프록시 주소(Railway와 다른 호스트, PaceOverlayModule 주석 참고).
+    const val PREF_CACHED_PROXY_BASE_URL = "cached_proxy_base_url"
     const val PREF_CACHED_AUTH_TOKEN = "cached_auth_token"
     // 2026-08-01 사장님 지적 — 보상형 광고로 Focus Session 5분 연장해도 유튜브로 자동 복귀가 안 됨
     // (사용자가 Pace 홈 화면에 남겨져서 직접 다시 스와이프해 돌아가야 했음). foregroundPollRunnable이
@@ -2430,6 +2433,7 @@ class PaceOverlayService : Service() {
       hideSavedFavoriteList()
       hideShortsHotList()
       hideShareSheet()
+      hideSearchPanel()
       showPaceMenu()
     }
   }
@@ -3745,6 +3749,199 @@ class PaceOverlayService : Service() {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 쇼츠 검색 (2026-08-10 사장님 지시)
+  //   구조는 Shorts HOT 패널과 같다 — 상단 프리셋 칩(가로 스크롤) + 결과 목록.
+  //   ShortsSearchStore 주석에 비용/제한 근거가 있다(프리셋 무제한, 자유 검색은 무료 1회/일).
+  // ─────────────────────────────────────────────────────────────────────────
+  private var searchPanelView: FrameLayout? = null
+
+  private fun hideSearchPanel() {
+    searchPanelView?.let { v -> try { windowManager?.removeView(v) } catch (e: Exception) {} }
+    searchPanelView = null
+  }
+
+  private fun showSearchPanel(initialQuery: String? = null) {
+    hideSearchPanel()
+    // 같은 자리에 뜨는 형제 창들과 배타 — 2026-08-09에 겹쳐 보이던 문제와 같은 근거.
+    hideSavedFavoriteList(); hideShortsHotList(); hideShareSheet()
+
+    val d = resources.displayMetrics.density
+    val panelWidth = (resources.displayMetrics.widthPixels - (32 * d)).toInt().coerceAtMost((380 * d).toInt())
+    val panel = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        cornerRadius = 16f * d
+        setColor(Color.parseColor("#CC1A1B22")) // 공유 시트와 같은 진하기 — 작은 글자를 읽고 골라야 하는 화면
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+      clipToOutline = true
+      setPadding((14 * d).toInt(), (14 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+    }
+
+    val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+    header.addView(TextView(this).apply {
+      text = if (isKoreanLocale()) "쇼츠 검색" else "Search Shorts"
+      textSize = 15f; setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    header.addView(TextView(this).apply {
+      text = "✕"; textSize = 15f; setTextColor(Color.parseColor("#99FFFFFF"))
+      setPadding((10 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
+      isClickable = true
+      setOnClickListener { hideSearchPanel() }
+    })
+    panel.addView(header)
+
+    val listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(listContainer) }
+
+    val status = TextView(this).apply {
+      textSize = 12f; setTextColor(Color.parseColor("#99FFFFFF"))
+      setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+      gravity = Gravity.CENTER
+    }
+
+    fun renderResults(items: List<ShortsHotStore.HotVideo>) {
+      listContainer.removeAllViews()
+      if (items.isEmpty()) {
+        status.text = if (isKoreanLocale()) "결과가 없어요" else "No results"
+        status.visibility = View.VISIBLE
+        return
+      }
+      status.visibility = View.GONE
+      items.forEachIndexed { index, item ->
+        val row = LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+          setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+          isClickable = true
+          setOnClickListener {
+            hideSearchPanel()
+            // HOT과 같은 규칙 — 고른 것부터 이어서 본다(즐겨찾기는 단일 재생, HOT/검색은 이어서재생).
+            chainQueue.clear()
+            PaceAccessibilityService.stopFavoriteChainWatch()
+            items.drop(index + 1).forEach { rest -> chainQueue.add("https://www.youtube.com/shorts/${rest.videoId}") }
+            try {
+              startActivity(Intent(Intent.ACTION_VIEW,
+                Uri.parse("https://www.youtube.com/shorts/${item.videoId}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              if (chainQueue.isNotEmpty()) {
+                foregroundPollHandler.postDelayed({
+                  PaceAccessibilityService.startFavoriteChainWatch {
+                    val next = chainQueue.poll()
+                    if (next == null) { PaceAccessibilityService.stopFavoriteChainWatch(); return@startFavoriteChainWatch }
+                    try {
+                      startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (e: Exception) { Log.w("PaceOverlayService", "검색 체이닝 재생 실패", e) }
+                    if (chainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
+                  }
+                }, 1800L)
+              }
+            } catch (e: Exception) { Log.w("PaceOverlayService", "검색 결과 재생 실패", e) }
+          }
+        }
+        val thumb = ImageView(this).apply {
+          scaleType = ImageView.ScaleType.CENTER_CROP
+          background = GradientDrawable().apply { cornerRadius = 8f * d; setColor(Color.parseColor("#14FFFFFF")) }
+        }
+        val ts = (44 * d).toInt()
+        row.addView(thumb, LinearLayout.LayoutParams(ts, ts))
+        loadThumbnailInto(thumb, item.thumbnailUrl)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this).apply {
+          text = item.title; textSize = 12f; maxLines = 2; setTextColor(Color.WHITE)
+        })
+        if (!item.channel.isNullOrBlank()) {
+          col.addView(TextView(this).apply {
+            text = item.channel; textSize = 10f; setTextColor(Color.parseColor("#8CFFFFFF"))
+          })
+        }
+        row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+          leftMargin = (10 * d).toInt()
+        })
+        listContainer.addView(row)
+      }
+      val maxH = (resources.displayMetrics.heightPixels * 0.45f).toInt()
+      scroll.layoutParams = (scroll.layoutParams ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0))
+        .apply { height = ((items.size.coerceAtLeast(1) * (60 * d)).toInt()).coerceAtMost(maxH) }
+    }
+
+    fun runSearch(query: String, isPreset: Boolean) {
+      // 프리셋은 캐시로 도는 공용 검색어라 횟수를 안 센다(ShortsSearchStore 주석의 비용 근거).
+      if (!isPreset && !ShortsSearchStore.consumeFreeSearch(applicationContext, isPremium(applicationContext))) {
+        status.visibility = View.VISIBLE
+        status.text = if (isKoreanLocale())
+          "무료 검색은 하루 ${ShortsSearchStore.FREE_DAILY_SEARCHES}회예요 — 아래 추천 주제는 제한 없이 볼 수 있어요"
+        else "Free search is ${ShortsSearchStore.FREE_DAILY_SEARCHES}/day — the topics below are always free"
+        listContainer.removeAllViews()
+        return
+      }
+      status.visibility = View.VISIBLE
+      status.text = if (isKoreanLocale()) "검색 중…" else "Searching…"
+      listContainer.removeAllViews()
+      Thread {
+        val res = ShortsSearchStore.search(applicationContext, query)
+        foregroundPollHandler.post { if (searchPanelView != null) renderResults(res) }
+      }.start()
+    }
+
+    // 프리셋 칩 — 서버가 국가별로 내려준다. 실패하면 줄 자체를 숨긴다(빈 줄이 남지 않게).
+    val chipRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(0, (10 * d).toInt(), 0, (6 * d).toInt())
+    }
+    val chipScroll = HorizontalScrollView(this).apply {
+      isHorizontalScrollBarEnabled = false; addView(chipRow); visibility = View.GONE
+    }
+    panel.addView(chipScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    panel.addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+    Thread {
+      val presets = ShortsSearchStore.fetchPresets(applicationContext)
+      foregroundPollHandler.post {
+        if (searchPanelView == null || presets.isEmpty()) return@post
+        chipRow.removeAllViews()
+        presets.forEach { p ->
+          chipRow.addView(TextView(this@PaceOverlayService).apply {
+            text = p.label; textSize = 12f; setTextColor(Color.WHITE)
+            setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
+            background = GradientDrawable().apply { cornerRadius = 999f; setColor(Color.parseColor("#33FFFFFF")) }
+            isClickable = true
+            setOnClickListener { runSearch(p.query, isPreset = true) }
+          }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { rightMargin = (8 * d).toInt() })
+        }
+        chipScroll.visibility = View.VISIBLE
+      }
+    }.start()
+
+    status.visibility = View.VISIBLE
+    status.text = if (isKoreanLocale()) "주제를 고르면 바로 보여드려요" else "Pick a topic to start"
+
+    val root = FrameLayout(this).apply { addView(panel, FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)) }
+    searchPanelView = root
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+      else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      gravity = Gravity.TOP or Gravity.END
+      x = (16 * d).toInt(); y = 80 + (44 * d).toInt()
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        blurBehindRadius = (28 * d).toInt()
+      }
+    }
+    try {
+      windowManager?.addView(searchPanelView, params)
+      initialQuery?.let { runSearch(it, isPreset = false) }
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "showSearchPanel 실패", e); searchPanelView = null
+    }
+  }
+
   private fun hideShortsHotList() {
     shortsHotListView?.let { view -> try { windowManager?.removeView(view) } catch (e: Exception) {} }
     shortsHotListView = null
@@ -4037,6 +4234,8 @@ class PaceOverlayService : Service() {
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
       MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
+      // 🔴 2026-08-10 사장님 지시 — "hot 쇼츠 밑에 검색 기능 넣으면 되잖아". HOT 바로 아래 위치도 지시대로.
+      MenuItem("Search", { hidePaceMenu(); showSearchPanel() }, icon = "⌕"),
     )
     // 2026-08-01 사장님 지적("아이콘 정렬해야 할거 아냐") — 아이콘(↗/★)과 배지(HOT)는 폭이
     // 서로 달라서 그냥 붙이면 라벨("Open App"/"Shorts"/"Favorite") 시작 위치가 행마다 어긋나
@@ -4572,6 +4771,7 @@ class PaceOverlayService : Service() {
     hideSavedFavoriteList() // 위와 동일한 이유로 Saved/Favorite 리스트 창도 같이 정리.
     hideShortsHotList() // 위와 동일한 이유로 Shorts HOT 리스트 창도 같이 정리.
     hideShareSheet() // 위와 동일한 이유로 공유 시트 창도 같이 정리.
+    hideSearchPanel()
   }
 
   // 사용량 접근 권한이 없으면 폴링을 건너뛰고 항상 표시(기존 동작으로 폴백) — JS 쪽
@@ -4907,6 +5107,116 @@ private object ShortsHotStore {
       emptyList()
     } finally {
       conn?.disconnect()
+    }
+  }
+}
+
+// 🔴 2026-08-10 사장님 지시 — "hot 쇼츠 밑에 검색 기능 넣고, 야구 축구 등 자주 검색하는 카테고리를
+//   프리셋으로 만들어 캐싱해서 쓰고, 무료 유저는 하루 1회 검색 / 유료는 무제한".
+//
+// ⚠️ 검색은 **YouTube Data API를 쓰지 않는다.** search.list는 100 units/회라 무료 쿼터(10,000/일)로는
+//   하루 100회가 전부다 — 사용자 몇 명이면 오전에 앱 전체가 멈춘다(오늘 실제로 refresh 8회로 쿼터를
+//   태워 HOT이 비는 사고가 났다). 대신 Vercel 프록시(/api/youtube-shorts)를 친다. 그쪽은 검색 페이지
+//   스크래핑이라 **쿼터를 안 쓰고**, 같은 검색어는 CDN에 5분 캐시된다(실측 X-Vercel-Cache HIT).
+//
+// 그래서 비용 구조가 이렇게 갈린다:
+//   · 프리셋  — 전 사용자가 같은 검색어를 공유 → 캐시 적중률이 높아 사실상 공짜 → **횟수 제한 없음**
+//   · 자유 검색 — 검색어가 제각각이라 캐시가 잘 안 먹음 → **무료 하루 1회 / 프리미엄 무제한**
+private object ShortsSearchStore {
+  /** 무료 사용자의 하루 자유 검색 횟수. 프리셋은 여기 안 센다(위 주석의 비용 근거). */
+  const val FREE_DAILY_SEARCHES = 1
+  private const val PREF_DATE = "search_free_date"
+  private const val PREF_COUNT = "search_free_count"
+
+  private fun today(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+  private fun prefs(context: Context) =
+    context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+
+  fun usedToday(context: Context): Int {
+    val p = prefs(context)
+    return if (p.getString(PREF_DATE, null) == today()) p.getInt(PREF_COUNT, 0) else 0
+  }
+
+  /** 자유 검색을 한 번 쓴다. 한도를 넘었으면 false(호출부가 안내를 띄운다). */
+  fun consumeFreeSearch(context: Context, isPremium: Boolean): Boolean {
+    if (isPremium) return true
+    val used = usedToday(context)
+    if (used >= FREE_DAILY_SEARCHES) return false
+    prefs(context).edit().putString(PREF_DATE, today()).putInt(PREF_COUNT, used + 1).apply()
+    return true
+  }
+
+  private fun proxyBase(context: Context): String? =
+    prefs(context).getString(PaceOverlayService.PREF_CACHED_PROXY_BASE_URL, null)?.takeIf { it.isNotBlank() }
+
+  /** 국가는 스토어 지역이 아니라 **언어** 기준 — isKoreanLocale과 같은 근거(폰 지역이 US여도 한국어면 KR). */
+  private fun glHl(context: Context): Pair<String, String> {
+    val loc = context.resources.configuration.locales[0]
+    val lang = loc.language.lowercase()
+    val gl = when (lang) {
+      "ko" -> "KR"
+      "ja" -> "JP"
+      else -> loc.country.uppercase().ifBlank { "US" }
+    }
+    return gl to lang.ifBlank { "en" }
+  }
+
+  data class Preset(val label: String, val query: String)
+
+  /** 프리셋 목록(국가별). 서버가 내려주므로 앱 배포 없이 바꿀 수 있다. 실패하면 빈 목록 → 호출부가 숨긴다. */
+  fun fetchPresets(context: Context): List<Preset> {
+    val base = proxyBase(context) ?: return emptyList()
+    val (gl, hl) = glHl(context)
+    return try {
+      val url = java.net.URL("$base/api/search-presets?gl=$gl&hl=$hl")
+      val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 8000; readTimeout = 8000
+      }
+      if (conn.responseCode != 200) return emptyList()
+      val arr = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        .optJSONArray("presets") ?: return emptyList()
+      (0 until arr.length()).mapNotNull { i ->
+        val o = arr.getJSONObject(i)
+        val l = o.optString("label"); val q = o.optString("query")
+        if (l.isBlank() || q.isBlank()) null else Preset(l, q)
+      }
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "검색 프리셋 조회 실패", e); emptyList()
+    }
+  }
+
+  /** 실제 검색. 응답 모양은 Shorts HOT과 같게 맞춰 결과 목록 UI를 그대로 재사용한다. */
+  fun search(context: Context, query: String): List<ShortsHotStore.HotVideo> {
+    val base = proxyBase(context) ?: return emptyList()
+    val (gl, hl) = glHl(context)
+    return try {
+      val q = java.net.URLEncoder.encode(query, "UTF-8")
+      val url = java.net.URL("$base/api/youtube-shorts?query=$q&gl=$gl&hl=$hl")
+      val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 10000; readTimeout = 10000
+      }
+      if (conn.responseCode != 200) {
+        Log.w("PaceOverlayService", "검색 실패 HTTP ${conn.responseCode}")
+        return emptyList()
+      }
+      val arr = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        .optJSONArray("shorts") ?: return emptyList()
+      (0 until arr.length()).mapNotNull { i ->
+        val o = arr.getJSONObject(i)
+        val vid = o.optString("videoId")
+        if (vid.isBlank()) null
+        else ShortsHotStore.HotVideo(
+          videoId = vid,
+          title = o.optString("title", "—"),
+          channel = o.optString("channelTitle").takeIf { it.isNotBlank() },
+          thumbnailUrl = o.optString("thumbnailUrl").takeIf { it.isNotBlank() }
+            ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+        )
+      }
+    } catch (e: Exception) {
+      Log.w("PaceOverlayService", "검색 실패", e); emptyList()
     }
   }
 }

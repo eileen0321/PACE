@@ -585,6 +585,19 @@ class PaceOverlayModule : Module() {
       }
     }
 
+    // 🔴 2026-08-10 사장님 지시(쇼츠 검색) — 검색은 Railway 백엔드가 아니라 **Vercel 프록시**를 친다
+    //   (YOUTUBE_PROXY_URL, /api/youtube-shorts · /api/search-presets). 두 개는 **서로 다른 호스트**라
+    //   위 cacheApiBaseUrl로는 알 수 없어서 별도로 밀어준다.
+    //   왜 프록시인가: 검색을 YouTube Data API(search.list)로 하면 **100 units/회 = 하루 100회**라
+    //   앱 전체가 오전에 멈춘다. 프록시는 검색 페이지 스크래핑이라 쿼터를 안 쓰고, 같은 검색어는
+    //   CDN에 캐시된다(실측 X-Vercel-Cache HIT).
+    Function("cacheProxyBaseUrl") { proxyUrl: String ->
+      appContext.reactContext?.let { context ->
+        context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+          .edit().putString(PaceOverlayService.PREF_CACHED_PROXY_BASE_URL, proxyUrl).apply()
+      }
+    }
+
     // 2026-08-01 사용자 실기기 지적("작아진 화면 다시 키워야지 왜 새 쇼츠/홈이 보여") — 이미 실행
     // 중인 세션을 재소환할 때 Linking.openURL(딥링크/URL)로는 항상 그 URL의 intent-filter가 매핑된
     // 특정 화면(Shorts 새 진입, 또는 YouTube 기본 홈 탭)으로 새로 내비게이션돼버려서, PIP로 줄어있던

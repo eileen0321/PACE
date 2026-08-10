@@ -735,7 +735,14 @@ public class ShortsHotService {
         long before = channelRepository.countByCountryAndCategoryAndEnabledTrue(
                 country, CATEGORY_BY_YOUTUBE_ID.getOrDefault(categoryId, ""));
         for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
-            if (!isPlayableShort(item)) continue; // 진짜 쇼츠를 올리는 채널만 명단에 넣는다
+            // ⚠️ 2026-08-11 실측 — 처음엔 isPlayableShort를 통과한 것만 적재했는데 **한 채널도 안
+            //   늘었다**. chart=mostPopular에는 60초 이하가 거의 없기 때문이다(이 파일 MAX_PAGES
+            //   주석에 "music 0건, gaming 1건" 실측이 이미 있었는데 그걸 놓쳤다).
+            //   여기서 필요한 건 "쇼츠인 영상"이 아니라 **"그 카테고리에서 활동하는 채널"**이다.
+            //   그 채널이 쇼츠를 올리는지는 collectFromChannels가 업로드 재생목록을 읽어 60초 이하로
+            //   거를 때 판정된다 — 즉 쇼츠 필터는 뒤에 이미 있다. 여기서 또 걸 이유가 없다.
+            //   ⚠️ 쇼츠를 안 올리는 채널이 섞이면 playlistItems 1 unit이 헛돌지만, 명단이 얕아
+            //     목록이 쏠리는 손해가 훨씬 크다. hitCount로 나중에 정리할 수 있다(스키마에 이미 있음).
             harvestChannel(country, item.path("snippet"));
         }
         long after = channelRepository.countByCountryAndCategoryAndEnabledTrue(

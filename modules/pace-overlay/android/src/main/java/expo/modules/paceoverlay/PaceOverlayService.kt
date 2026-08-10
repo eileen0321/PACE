@@ -3931,20 +3931,60 @@ class PaceOverlayService : Service() {
         setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
       }
       setPadding((12 * d).toInt(), (9 * d).toInt(), (12 * d).toInt(), (9 * d).toInt())
-      setOnEditorActionListener { v, actionId, _ ->
-        if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
-          val q = v.text?.toString()?.trim().orEmpty()
-          if (q.isNotEmpty()) {
-            // 키보드를 내려야 결과 목록이 가려지지 않는다.
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
-              ?.hideSoftInputFromWindow(v.windowToken, 0)
-            runSearch(q, isPreset = false)
-          }
-          true
-        } else false
-      }
     }
-    panel.addView(searchInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+    // 🔴 2026-08-11 사장님 지적("글자는 쳤는데 뭘로 엔터 역할을 하는데") — 실행 수단이 키보드
+    //   우측 하단 IME 돋보기 키 **하나뿐**이었다. 키보드를 내리면 검색할 방법이 아예 없고,
+    //   그 키가 검색 버튼이라는 것도 화면만 봐서는 알 수 없다. 입력창 옆에 눈에 보이는 버튼을 둔다.
+    fun submitSearch() {
+      val raw = searchInput.text?.toString()?.trim().orEmpty()
+      if (raw.isEmpty()) return
+      (getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+        ?.hideSoftInputFromWindow(searchInput.windowToken, 0)
+      // 🔴 2026-08-11 사장님 지적("외국 쇼츠까지 찾아보지 않을 듯. cat을 쓰면 우리나라 쇼츠에서
+      //   찾아야 하지 않아?") — 실기기에서 "cat"을 치니 결과가 전부 영어권 쇼츠였다.
+      //   gl/hl은 이미 붙여 보내지만 그건 **편향**일 뿐이고, 영어 단어를 던지면 영어권 결과가 이긴다.
+      //   프리셋이 이미 같은 문제를 같은 방식으로 풀고 있다 — 서버 프리셋 목록이 '축구 쇼츠',
+      //   '먹방 쇼츠'처럼 **로케일 단어를 붙인 검색어**다(api/search-presets.ts). 자유 검색도 같은
+      //   규칙을 따른다: 한국어 로케일이면 "쇼츠"를 덧붙여 국내 결과 쪽으로 강하게 민다.
+      //   ⚠️ 사용자가 이미 그 단어를 넣었으면 중복으로 안 붙인다("고양이 쇼츠 쇼츠" 방지).
+      //   ⚠️ 2026-08-11(2차) 사장님 지적("다른 나라에서도 그 나라 쇼츠에서 검색이 되게 해야지") —
+      //     처음엔 한국어만 "쇼츠", 나머지는 전부 "shorts"로 했는데 그러면 일본 사용자가 일본 쇼츠를
+      //     못 찾는다. 검색 API가 지원하는 시장 기준으로 언어별 단어를 준다(glHl의 ko/ja/else와 같은 구조).
+      val suffix = when (resources.configuration.locales[0].language.lowercase()) {
+        "ko" -> "쇼츠"
+        "ja" -> "ショート"
+        else -> "shorts"
+      }
+      val q = if (raw.contains(suffix, ignoreCase = true)) raw else "$raw $suffix"
+      runSearch(q, isPreset = false)
+    }
+    // 키보드의 돋보기 키로도, 옆의 "검색" 버튼으로도 같은 경로를 탄다.
+    // (submitSearch가 searchInput을 참조하므로 리스너는 그 선언 뒤에 붙인다 — 코틀린 지역 함수 순서.)
+    searchInput.setOnEditorActionListener { _, actionId, _ ->
+      if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) { submitSearch(); true } else false
+    }
+    val inputRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    inputRow.addView(searchInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+    inputRow.addView(TextView(this).apply {
+      text = if (isKoreanLocale()) "검색" else "Go"
+      textSize = 13f
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, android.graphics.Typeface.BOLD)
+      gravity = Gravity.CENTER
+      background = GradientDrawable().apply {
+        cornerRadius = 10f * d
+        setColor(Color.parseColor("#6C5CE7"))
+      }
+      setPadding((14 * d).toInt(), (10 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+      isClickable = true
+      setOnClickListener { submitSearch() }
+    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      marginStart = (8 * d).toInt()
+    })
+    panel.addView(inputRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
       topMargin = (10 * d).toInt()
     })
     // initialQuery로 열렸으면(다른 경로에서 검색어를 들고 들어온 경우) 그대로 채워준다.

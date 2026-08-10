@@ -8622,3 +8622,27 @@ JS 프로세스가 살아있는 한 화면 언마운트/재마운트에 값이 �
 **Android도 같은 값 계산을 확인 필요** — `bluetoothService.extendFocusSession(minutes)` 경로가
 실제로 "지금 세션에 minutes를 더하는" 동작인지, 혹시 iOS와 같은 부류로 "그냥 새 세션을 켜는"
 동작인지 Windows 세션에서 대조 확인 요청.
+
+---
+
+#### ✅ 위 두 항목 — Windows가 더 근본적으로 이미 고침(`982bbf1`, `40ec367`, 병합 `48b6d3f`)
+
+사장님이 "타이머 통합해"라고 지시한 직후 Windows 세션이 같은 두 버그를 **독립적으로 재발견**해서
+(`982bbf1`) 고쳤고, `pendingExtendMinutesRef`(맥, 메모리) vs `useFocusSessionStore`(Windows,
+AsyncStorage 영속) 충돌을 "앱 죽였다 켜도 살아남아야 한다"는 이유로 스토어 쪽으로 병합 채택했다.
+**맥에서 쓴 `pendingExtendMinutesRef`/`sessionTimedOutModule` 접근은 전량 폐기, 새 `useFocusSessionStore`로
+교체 — 위 두 항목의 "iOS 수정" 서술은 이제 히스토리로만 남긴다(실제 코드와 다름).**
+
+이어서 Windows가 한 겹 더 팠다(`40ec367`) — 로컬 영속(AsyncStorage/SharedPreferences)도 **앱을
+지웠다 재설치하면 통째로 사라진다**는 구멍을 사장님이 지적, 백엔드에 `focus_allowance` 테이블을
+추가해 날짜별 광고횟수/timedOut/마감시각을 서버에도 남기고(fail-open, 클라이언트 값으로 덮어쓰지
+않고 max/OR로만 병합) 게스트도 보호되게 함.
+
+**맥(iOS) 확인**: `git merge origin/master`로 fast-forward 반영(`48b6d3f`), `tsc --noEmit` 클린,
+Release 빌드로 실기기 설치 완료. 코드 리뷰로 `feed/index.tsx`가 `useFocusSessionStore`(start/extend/
+markTimedOut/stop)를 정확히 그 의도대로 호출하는 지점 전부 확인함 — 실제 광고 시청 후 "정확히
+5분만" 늘어나는지와 "앱 강제종료 후 재실행"에도 게이트가 살아있는지는 사장님 실기기로 최종 확인 필요.
+
+⚠️ 아직 안 된 것(40ec367에 명시): iOS는 재설치 시 여전히 새 게스트가 된다(DeviceCheck 등 iOS
+전용 재설치-내성 앵커가 없음) — Android는 SSAID로 어느 정도 막히지만 iOS는 서버 기록이 있어도
+"새 사용자"로 인식되면 소용없다. 별도 작업으로 남아 있음.

@@ -508,7 +508,10 @@ class PaceOverlayModule : Module() {
     // 시간이 다 돼서 자동으로 꺼졌는지 1회성 소비 확인(consumeExpired와 동일 패턴). 사용자가 직접
     // 끈 경우는 이 신호가 안 뜸.
     Function("consumeFocusSessionTimedOut") {
-      PaceOverlayService.consumeFocusSessionTimedOut()
+      // 2026-08-10 — 플래그가 prefs로 옮겨가면서(PaceOverlayService.PREF_FOCUS_TIMED_OUT_PENDING)
+      // Context가 필요해졌다. reactContext가 없는 순간(브릿지 정리 중)엔 소비하지 않고 false —
+      // 플래그는 prefs에 남아 있으므로 다음 호출에서 그대로 살아난다(예전 메모리 방식과 달리 안 잃는다).
+      appContext.reactContext?.let { context -> PaceOverlayService.consumeFocusSessionTimedOut(context) } ?: false
     }
 
     // 보상형 광고 시청 완료 후 호출 — Focus Session을 extraMinutes만큼 재개.

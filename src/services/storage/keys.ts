@@ -53,6 +53,11 @@ export const STORAGE_KEYS = {
   // 제한. useDailyBonusStore와 동일하게 날짜가 바뀌면 자동 리셋(별도 카운터 — extraMinutes는 광고든
   // 크레딧이든 합산값이라 "광고 시청 횟수"만 따로 셀 수 없다).
   focusExtendAdCount: 'pace_focus_extend_ad_count',
+  // 🔴 2026-08-10 — Focus Session의 마감시각/타임아웃 여부(useFocusSessionStore). 예전엔 이 둘이
+  // feed 화면의 useState/useRef에만 있어서 화면을 나갔다 오면 사라졌고, 그게 "focus off→on 할 때마다
+  // 10분으로 리셋"과 "광고 없이 무료 10분"의 원인이었다. 안드로이드는 같은 값을 네이티브 prefs에
+  // 이미 저장하고 있다(PaceOverlayService) — iOS를 같은 수명으로 맞춘 것.
+  focusSession: 'pace_focus_session',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

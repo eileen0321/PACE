@@ -31,6 +31,7 @@ import { useUserStore } from '../store/useUserStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useSubscriptionStore } from '../store/useSubscriptionStore';
 import { useDailyBonusStore } from '../store/useDailyBonusStore';
+import { useFocusSessionStore } from '../store/useFocusSessionStore';
 import { useFocusExtendAdStore } from '../store/useFocusExtendAdStore';
 import { useAttendanceStore } from '../store/useAttendanceStore';
 import { useFlipMode } from '../hooks/useFlipMode';
@@ -339,6 +340,11 @@ export default function RootLayout() {
     }).catch(() => {}); // 감사 MED — 체인 rejection 시 unhandled 방지
     loadDailyBonus();
     loadFocusExtendAdCount();
+    // 🔴 2026-08-10 — Focus Session의 마감시각/타임아웃 여부(useFocusSessionStore)를 부팅 시 복원한다.
+    //   피드 화면이 아니라 여기서 부르는 이유: 광고 게이트(toggleAutoMode)가 timedOut을 **동기로**
+    //   읽는데, 피드에서 로드하면 아직 false인 순간에 탭이 들어와 광고 없이 세션이 켜질 수 있다.
+    //   부팅 시점에 끝내두면 사용자가 피드에 도달하기 훨씬 전에 값이 확정된다.
+    useFocusSessionStore.getState().load().catch(() => {});
     // 2026-07-21 밤 감사 발견 — EXPO_PUBLIC_ENABLE_AUTO_NEXT는 JS 전용 플래그라 알약 탭/블루투스
     // 리모컨(네이티브에서 직접 setAutoMode 호출)을 못 막았다. 부팅 시 1회 네이티브에 실제 값을
     // 넘겨 setAutoMode(true) 자체를 게이트한다(services/platform/autoNextService.android.ts 참고).

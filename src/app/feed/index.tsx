@@ -30,6 +30,7 @@ import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverl
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
+import { useFocusSessionStore } from '../../store/useFocusSessionStore';
 import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
@@ -88,7 +89,10 @@ function DailyRemaining() {
 // P메뉴 '앱으로'(router.back())로 이 화면이 언마운트됐다 재진입 시 리마운트되면서 false로
 // 초기화돼 무료 재개 차단 게이트가 통째로 풀렸다. Android b64b6d8과 같은 종류의 "제한을
 // 무력화하던 우회로" — 컴포넌트 바깥(모듈 스코프)으로 옮겨 화면 재마운트에도 값이 살아남게 한다.
-let sessionTimedOutModule = false;
+//
+// 🔴 2026-08-10(Windows) — 모듈 스코프는 화면 재마운트만 견디고 **앱을 껐다 켜면 그대로 false**라
+// 같은 우회로가 남아 있었다(앱 재시작 한 번이면 광고 없이 10분). useFocusSessionStore로 옮겨
+// AsyncStorage에 영속화한다 — 안드로이드가 같은 값을 prefs에 두는 것과 같은 수명.
 
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
@@ -120,15 +124,19 @@ export default function PaceFeedScreen() {
   // 시간 상태바(스펙 §1-E.3) — 몰입형 웹뷰에선 시간 감각을 잃기 쉬워 벽시계 + (Focus Session 중이면)
   // 남은 시간을 상단에 순수 JS로 노출. ⚠️ 감사 발견: iOS는 useTimerStore(오버레이 전용)가 절대 시작되지
   // 않아 남은시간이 죽은 값이었다 → 피드 자체 Focus Session(isAutoMode)의 종료시각에 바인딩한다.
-  const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
-  // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 세션이 "타임아웃으로" 꺼졌는지(수동 off 아님)
-  // 추적. 타임아웃 후 재활성화 시도 시 비프리미엄이면 무료 재개 대신 보상광고 연장 모달로 보낸다.
-  // 2026-08-10 — 값 자체는 모듈 스코프(sessionTimedOutModule)에 두어 화면 언마운트/재마운트(P메뉴로
-  // 앱 나갔다 재진입 등)에도 살아남게 한다(위 우회로 주석 참고). .current 읽기/쓰기 인터페이스만 유지.
-  const sessionTimedOutRef = {
-    get current() { return sessionTimedOutModule; },
-    set current(v: boolean) { sessionTimedOutModule = v; },
-  };
+  // 🔴 2026-08-10 사장님 지적 두 건("focus off에서 on 갈 때마다 타이머가 10분으로 리셋돼",
+  //   "맥은 왜 보상광고 보면 10분을 주는 건데, 5분으로 하기로 한 거 아냐?") — 둘 다 원인이 하나다.
+  //   마감시각을 이 화면이 스스로 계산해서(`Date.now() + focusSessionDurationMinutes`) 들고 있었다.
+  //   그래서 세션이 다시 켜지는 **모든** 경로가 무조건 "10분짜리 새 세션"이 됐다:
+  //     - 백그라운드 갔다 오면(AppState effect가 autoMode를 끈다) 다시 켤 때 10분
+  //     - 광고 보상/크레딧 연장도 onExtend가 minutes 인자를 **버리고** setIsAutoMode(true)만 해서 10분
+  //       (모달은 grant(5)를 넘기고 토스트도 "+5m"라 말하는데 실제 타이머는 10분이었다. 크레딧 5개를
+  //        쓴 사용자도 10분을 받았다.) 안드로이드 네이티브는 정확히 5분만 더한다 — 규칙이 갈렸다.
+  //   → 마감시각과 "타임아웃으로 꺼짐"의 진실원천을 영속 스토어로 옮긴다(useFocusSessionStore).
+  //     화면은 그 값을 읽어 집행만 한다. 안드로이드가 같은 두 값을 네이티브 prefs에 두는 것과 같은 수명.
+  //   2026-08-10(맥) 모듈 스코프(sessionTimedOutModule) 처치는 언마운트만 견디고 앱 재시작엔 날아가서
+  //   같은 우회로가 남아 있었다 — 스토어로 대체한다.
+  const sessionEndsAt = useFocusSessionStore((s) => s.endsAt);
   const [showExtendModal, setShowExtendModal] = useState(false);
   // 광고가 화면을 덮는 동안 재생을 멈췄다가 되돌리기 위해 직전 상태를 기억한다
   // (FocusSessionExtendModal의 onAdVisibilityChange 주석 참고 — 광고는 앱을 백그라운드로
@@ -459,16 +467,24 @@ export default function PaceFeedScreen() {
   // Android는 같은 값을 네이티브 미러에도 반영(설정 화면 참고), iOS는 이 값을 그대로 JS 타이머에 쓴다.
   useEffect(() => {
     if (!isAutoMode) {
-      setSessionEndsAt(null);
       overlayService.endSession().catch(() => {}); // iOS: Live Activity 종료(Android: no-op 아님, 별도 경로)
       return;
+      // ⚠️ 여기서 스토어를 비우지 않는다 — 이 분기는 "사용자가 껐다"만이 아니라 백그라운드 이탈
+      //   (AppState effect)과 첫 마운트에도 탄다. 비우면 잠깐 나갔다 온 사용자의 남은 시간이
+      //   사라져 다시 10분이 시작된다(사장님이 지적한 바로 그 리셋). 실제 종료는 사용자가 직접
+      //   토글한 toggleAutoMode에서 stop()으로만 한다.
     }
-    setSessionEndsAt(Date.now() + focusSessionDurationMinutes * 60 * 1000); // 상태바 남은시간 계산 기준
+    // 마감시각의 진실원천은 스토어다. 살아 있는 세션이 있으면 **이어받고**(백그라운드 복귀,
+    // 광고/크레딧 연장 직후), 없을 때만 새 세션을 시작한다 — 재개가 곧 10분 리셋이 되지 않게.
+    const session = useFocusSessionStore.getState();
+    if (session.endsAt == null || session.endsAt <= Date.now()) session.start(focusSessionDurationMinutes);
+    const endsAt = useFocusSessionStore.getState().endsAt ?? Date.now();
+    const remainingMs = Math.max(0, endsAt - Date.now());
     // iOS Live Activity/다이나믹아일랜드에 Focus Session 카운트다운 표시(스펙 §1-E). remainingMinutes만
     // 실제로 쓰이고 나머지 필드는 iOS overlayService가 무시(인터페이스 호환용 기본값).
     overlayService.startSession({
       dailyLimitMinutes,
-      remainingMinutes: focusSessionDurationMinutes,
+      remainingMinutes: Math.max(1, Math.ceil(remainingMs / 60000)), // 새 세션이면 설정값, 이어받았으면 남은 시간
       autoNext: true,
       sleepTimerMinutes: 0,
       breakIntervalMinutes: 0,
@@ -480,10 +496,11 @@ export default function PaceFeedScreen() {
       bluetoothVolumeKeySkipEnabled: false, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
     }).catch(() => {});
     const timer = setTimeout(() => {
-      sessionTimedOutRef.current = true; // "타임아웃으로 꺼짐" 표시(수동 off와 구분) — 재개 시 광고 유도
+      // "타임아웃으로 꺼짐"(수동 off와 구분) — 재개 시 광고 게이트의 유일한 근거. 스토어가 영속화한다.
+      useFocusSessionStore.getState().markTimedOut();
       setIsAutoMode(false);
       useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
-    }, focusSessionDurationMinutes * 60 * 1000);
+    }, remainingMs);
     return () => clearTimeout(timer);
   }, [isAutoMode, focusSessionDurationMinutes]);
 
@@ -635,11 +652,13 @@ export default function PaceFeedScreen() {
     // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 사용자가 "타임아웃으로" 꺼진 세션을 다시
     // 켜려 하면 무료 재개 대신 보상광고/크레딧 연장 모달로 보낸다(무한 무료 재활성화 구멍 차단).
     // 프리미엄이거나 타임아웃 아닌(수동 off 후) 재개는 그대로 무료로 켠다.
-    if (next && sessionTimedOutRef.current && !useSubscriptionStore.getState().isPremium) {
+    if (next && useFocusSessionStore.getState().timedOut && !useSubscriptionStore.getState().isPremium) {
       setShowExtendModal(true);
-      return; // 아직 재활성화 안 함 — 광고 보상/크레딧 확정 시 onExtended가 켠다
+      return; // 아직 재활성화 안 함 — 광고 보상/크레딧 확정 시 onExtend가 켠다
     }
-    sessionTimedOutRef.current = false; // 수동 재개/종료 시 타임아웃 상태 해제
+    // 사용자가 직접 끈 것은 세션 종료다 — 남은 시간을 버린다(다음 켜기는 새 세션). 백그라운드
+    // 이탈로 꺼지는 경우와 구분되는 유일한 지점이라 stop()은 여기서만 부른다.
+    if (!next) useFocusSessionStore.getState().stop();
     setIsAutoMode(next);
     // 2026-08-01 — 손짓이 opt-in(기본 OFF)으로 바뀌면서, 세션을 켰는데 손짓이 꺼져있는 유저에게
     // Focus 탭에서 켤 수 있다고 짧게 안내(별도 푸시 알림 대신 기존 세션-시작 토스트에 얹는다).
@@ -878,7 +897,13 @@ export default function PaceFeedScreen() {
             시 재활성화 안 함(무료 손해 방지). */}
         <FocusSessionExtendModal
           visible={showExtendModal}
-          onExtend={() => { sessionTimedOutRef.current = false; setIsAutoMode(true); }}
+          // 🔴 2026-08-10 사장님 지적("맥은 왜 보상광고 보면 10분을 주냐, 5분으로 한 거 아냐?") —
+          //   맞는 지적이었다. 예전엔 이 핸들러가 minutes 인자를 **버리고** setIsAutoMode(true)만
+          //   불렀고, 그러면 세션 effect가 설정값(기본 10분)짜리 새 세션을 시작했다. 모달은 5분을
+          //   넘기고 토스트도 "+5m"라 말하는데 실제 타이머만 10분이었다 — 크레딧 5개를 쓴 경우도
+          //   똑같이 10분을 받았다. 안드로이드 네이티브(extendFocusSession)는 정확히 5분만 더한다.
+          //   이제 인자를 그대로 스토어에 넘겨 **남은 시간에 그만큼만** 더한다.
+          onExtend={(minutes) => { useFocusSessionStore.getState().extend(minutes); setIsAutoMode(true); }}
           onDismiss={() => setShowExtendModal(false)}
           onAdVisibilityChange={(adVisible) => {
             if (adVisible) {

@@ -1315,10 +1315,29 @@ class PaceOverlayService : Service() {
     // 2026-07-26 사용자 지시("무료일땐 10분 고정, 보상광고 보면 늘려줘") — 이 Runnable이 실행됐다는
     // 것 자체가 "시간이 다 돼서 자동으로 꺼짐"이라는 뜻(사용자가 직접 끈 경우는 이 경로를 안 탐) —
     // JS가 이 신호를 소비해서 보상형 광고 유도 모달을 띄운다(consumeExpired와 동일한 1회성 패턴).
+    // 🔴 2026-08-10 사장님 지적("focus off에서 on 갈 때마다 타이머가 10분으로 리셋돼") — 이 플래그가
+    //   **메모리에만** 있던 것이 원인의 한 축이다. 배지 탭 게이트(autoBadge onClick)가 이 값 하나로
+    //   "광고를 보여줄지 / 그냥 10분 새로 켤지"를 가르는데, 서비스 프로세스가 죽었다 살아나면
+    //   (START_STICKY/ACTION_TICK 복구, 플레이스토어 업데이트, One UI의 배터리 최적화 회수 — 이 앱이
+    //   실제로 자주 겪는 것들) false로 초기화돼 **배지 한 번에 무료 10분**이 나갔다. 광고 수익이
+    //   그만큼 새는 경로다. 세션 마감시각(PREF_FOCUS_SESSION_DEADLINE_AT_MS)은 이미 같은 이유로
+    //   prefs에 저장하고 있었는데 이 플래그만 빠져 있었다 — 같은 수명으로 맞춘다.
+    //   ⚠️ iOS도 같은 구멍이 있었다(React useRef라 피드 화면을 나갔다 오면 초기화) — 그쪽은
+    //     src/store/useFocusSessionStore.ts로 같이 영속화했다. 규칙이 두 플랫폼에 흩어져 있어
+    //     한쪽만 고치면 반드시 어긋난다.
+    const val PREF_FOCUS_TIMED_OUT_PENDING = "focus_session_timed_out_pending"
     private var focusSessionTimedOutPending = false
+
+    private fun setFocusSessionTimedOutPending(context: Context, pending: Boolean) {
+      focusSessionTimedOutPending = pending
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_FOCUS_TIMED_OUT_PENDING, pending).apply()
+    }
+
     private val focusSessionAutoStop = Runnable {
       focusSessionTimedOutPending = true
       instance?.let {
+        setFocusSessionTimedOutPending(it.applicationContext, true)
         setAutoMode(it.applicationContext, false)
         // 2026-08-01 (번복) 사용자 지시 — "무료여도 시간 만료 시 쇼츠를 막지 않는다, 그냥 추적만
         // 되는 거다. 홈으로 강제로 보내지 말고 쇼츠에 그대로 머물게 하고, 사용자가 FOCUS ON 배지를
@@ -1330,18 +1349,20 @@ class PaceOverlayService : Service() {
       }
     }
 
-    fun consumeFocusSessionTimedOut(): Boolean {
-      if (focusSessionTimedOutPending) {
-        focusSessionTimedOutPending = false
-        return true
-      }
-      return false
+    fun consumeFocusSessionTimedOut(context: Context): Boolean {
+      if (!hasPendingFocusSessionTimeout(context)) return false
+      setFocusSessionTimedOutPending(context, false)
+      return true
     }
 
     // 2026-08-01 — 배지 탭 핸들러가 "지금 껴진 이유가 타임아웃인지"를 소비 없이 미리 봐야 한다
     // (실제 소비는 JS의 checkTimedOut()이 앱 포그라운드 시 그대로 담당 — 여기서 먼저 소비해버리면
     // 앱을 열어도 JS가 이미 늦어 광고 모달을 못 띄운다).
-    fun hasPendingFocusSessionTimeout(): Boolean = focusSessionTimedOutPending
+    // 메모리 값이 살아 있으면 그걸 쓰고, 프로세스가 죽었다 살아난 뒤에는 prefs가 답한다.
+    fun hasPendingFocusSessionTimeout(context: Context): Boolean =
+      focusSessionTimedOutPending ||
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+          .getBoolean(PREF_FOCUS_TIMED_OUT_PENDING, false)
 
     // 2026-08-01 실기기 감사 발견(위 PREF_FOCUS_SESSION_DEADLINE_AT_MS 선언부 참고) — 서비스
     // 프로세스가 죽었다 살아날 때(ensureInfraReady, ACTION_TICK/START_STICKY 복구 경로) 호출한다.
@@ -1453,7 +1474,7 @@ class PaceOverlayService : Service() {
       // 🔴 2026-08-09 — "타임아웃 때문에 꺼졌다"는 플래그는 **연장이 실제로 일어난 여기서만** 소비한다.
       //   광고/크레딧 버튼을 누르는 시점에 소비하면, 광고가 실패하거나 사용자가 중간에 닫았을 때
       //   다음 배지 탭이 게이트를 그냥 통과해 광고 없이 켜진다(하루 3회 제한이 통째로 무력화).
-      consumeFocusSessionTimedOut()
+      consumeFocusSessionTimedOut(context)
       val wasActive = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_AUTO_MODE, false)
       if (!wasActive) {
         // 워처 재시작 — 내부에서 PREF 기반 시간으로 일단 스케줄되지만 바로 아래서 덮어쓴다.
@@ -2355,7 +2376,7 @@ class PaceOverlayService : Service() {
           showAccessibilityRequiredOverlay()
           return@setOnClickListener
         }
-        if (!autoNextEnabled && hasPendingFocusSessionTimeout() && !isPremium(applicationContext)) {
+        if (!autoNextEnabled && hasPendingFocusSessionTimeout(applicationContext) && !isPremium(applicationContext)) {
           showExtendChoiceOverlay()
         } else {
           // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해

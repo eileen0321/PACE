@@ -311,6 +311,24 @@ public class ShortsHotService {
             log.warn("[ShortsHot] 채널 기반 수집 실패, 검색/chart로 폴백: country={} category={}", country, category, e);
         }
 
+        // 🔴 2026-08-11 사장님 지시("밤새 리스트 정상될 때까지 수정해") — 진짜 병목은 필터가 아니라
+        //   **명단이 얕은 것**이다. 실측: music 채널 4개, comedy 6개, entertainment 5개뿐이라 무엇을
+        //   걸러도 같은 채널이 다시 상위를 먹는다(한 채널이 25건 중 10건).
+        //   collectFromChannels는 **이미 명단에 있는 채널에서만** 수집하므로 스스로는 절대 넓어지지
+        //   않는다(자기제한). 넓히는 유일한 외부 경로가 검색인데 그건 100 units라 비싸고, 오늘은
+        //   쿼터도 소진됐다.
+        //   → chart(videos.list, 페이지당 1 unit)는 **검색 쿼터를 안 쓰면서** 그 카테고리의 인기
+        //     영상을 직접 준다. 목록이 이미 다 찼더라도 한 페이지는 읽어 **채널만 적재**한다.
+        //     매 갱신마다 조금씩 명단이 넓어지고, 넓어질수록 조회수 정렬의 모수가 좋아진다.
+        //   ⚠️ 비용: 카테고리당 1 unit. 6카테고리 × 3국 × 12회/일 = 216 units/일(무료 10,000의 2%).
+        if (categoryId != null) {
+            try {
+                harvestChannelsFromChart(country, categoryId);
+            } catch (Exception e) {
+                log.debug("[ShortsHot] 명단 확장(chart) 실패 — 무시: country={} category={}", country, category, e);
+            }
+        }
+
         if (rows.size() < KEEP_COUNT && SEARCH_FALLBACK_QUERY.containsKey(category)) {
             try {
                 searchFallback(country, category, rows, now);
@@ -682,15 +700,49 @@ public class ShortsHotService {
             s.video().setRank(rows.size());
             rows.add(s.video());
         }
-        // 2차 — 상한 때문에 모자라면 남은 것으로 채운다(빈 목록 방지).
+        // 2차 — 상한 때문에 모자라면 채운다. 다만 **상한을 통째로 무시하지는 않는다**:
+        // 2026-08-11 실측에서 1차가 후보 부족으로 거의 못 채우자 2차가 대부분을 채워 쏠림이 그대로
+        // 돌아왔다(comedy 최다 9, entertainment 최다 10). 완화된 상한(2배)까지만 허용한다.
+        final int relaxedCap = perChannelCap * 2;
         for (Scored s : scored) {
             if (rows.size() >= KEEP_COUNT) break;
             if (!seenVideoIdsAdd(rows, s.video().getVideoId())) continue;
+            String ch = s.video().getChannel() == null ? "" : s.video().getChannel();
+            if (perChannel.getOrDefault(ch, 0) >= relaxedCap) continue;
+            perChannel.merge(ch, 1, Integer::sum);
             s.video().setRank(rows.size());
             rows.add(s.video());
         }
         log.info("[ShortsHot] 채널 수집: country={} category={} 채널={}개 후보={}건 채택={}건",
                 country, category, channels.size(), candidateIds.size(), rows.size());
+    }
+
+    /**
+     * 명단 확장 전용 — chart에서 그 카테고리 인기 쇼츠를 한 페이지 읽어 **채널만** 적재한다.
+     * 목록(rows)에는 손대지 않는다. 호출부 주석에 근거/비용이 있다.
+     */
+    private void harvestChannelsFromChart(String country, String categoryId) throws Exception {
+        String url = VIDEOS_API
+                + "?part=snippet,contentDetails"
+                + "&chart=mostPopular"
+                + "&regionCode=" + country
+                + "&videoCategoryId=" + categoryId
+                + "&maxResults=" + FETCH_COUNT
+                + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+        HttpResponse<String> res = httpClient.send(
+                HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() != 200) return;
+        long before = channelRepository.countByCountryAndCategoryAndEnabledTrue(
+                country, CATEGORY_BY_YOUTUBE_ID.getOrDefault(categoryId, ""));
+        for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
+            if (!isPlayableShort(item)) continue; // 진짜 쇼츠를 올리는 채널만 명단에 넣는다
+            harvestChannel(country, item.path("snippet"));
+        }
+        long after = channelRepository.countByCountryAndCategoryAndEnabledTrue(
+                country, CATEGORY_BY_YOUTUBE_ID.getOrDefault(categoryId, ""));
+        if (after > before) {
+            log.info("[ShortsHot] 명단 확장: country={} categoryId={} {}개 → {}개", country, categoryId, before, after);
+        }
     }
 
     /**

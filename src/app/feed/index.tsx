@@ -130,6 +130,11 @@ export default function PaceFeedScreen() {
     set current(v: boolean) { sessionTimedOutModule = v; },
   };
   const [showExtendModal, setShowExtendModal] = useState(false);
+  // 2026-08-10 — 광고/크레딧으로 딴 연장분(FOCUS_SESSION_EXTEND_MINUTES=5, 크레딧은 spent만큼)을
+  // 다음 세션-시작 effect가 읽어가는 다리. 없으면(null) 그 effect는 설정값(focusSessionDurationMinutes,
+  // 기본 10분)으로 "새 세션"을 켠다 — 그래서 광고 봐서 5분 준다고 해놓고 실제로는 10분이 켜지는
+  // 버그가 있었다(사장님 실기기 재현: "5분 주기로 했는데 왜 10분이야").
+  const pendingExtendMinutesRef = useRef<number | null>(null);
   // 광고가 화면을 덮는 동안 재생을 멈췄다가 되돌리기 위해 직전 상태를 기억한다
   // (FocusSessionExtendModal의 onAdVisibilityChange 주석 참고 — 광고는 앱을 백그라운드로
   //  보내지 않아서 AppState 기반 일시정지가 안 걸린다).
@@ -463,12 +468,17 @@ export default function PaceFeedScreen() {
       overlayService.endSession().catch(() => {}); // iOS: Live Activity 종료(Android: no-op 아님, 별도 경로)
       return;
     }
-    setSessionEndsAt(Date.now() + focusSessionDurationMinutes * 60 * 1000); // 상태바 남은시간 계산 기준
+    // 2026-08-10 — 광고/크레딧 연장으로 켜졌으면(pendingExtendMinutesRef) 딱 그 분만큼만, 아니면
+    // "새 세션"이므로 설정된 전체 길이를 쓴다. onExtend가 setIsAutoMode(true)보다 먼저 이 ref를
+    // 채워둔다(아래 FocusSessionExtendModal onExtend 참고).
+    const durationMinutes = pendingExtendMinutesRef.current ?? focusSessionDurationMinutes;
+    pendingExtendMinutesRef.current = null;
+    setSessionEndsAt(Date.now() + durationMinutes * 60 * 1000); // 상태바 남은시간 계산 기준
     // iOS Live Activity/다이나믹아일랜드에 Focus Session 카운트다운 표시(스펙 §1-E). remainingMinutes만
     // 실제로 쓰이고 나머지 필드는 iOS overlayService가 무시(인터페이스 호환용 기본값).
     overlayService.startSession({
       dailyLimitMinutes,
-      remainingMinutes: focusSessionDurationMinutes,
+      remainingMinutes: durationMinutes,
       autoNext: true,
       sleepTimerMinutes: 0,
       breakIntervalMinutes: 0,
@@ -482,9 +492,10 @@ export default function PaceFeedScreen() {
     const timer = setTimeout(() => {
       sessionTimedOutRef.current = true; // "타임아웃으로 꺼짐" 표시(수동 off와 구분) — 재개 시 광고 유도
       setIsAutoMode(false);
-      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
-    }, focusSessionDurationMinutes * 60 * 1000);
+      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: durationMinutes }));
+    }, durationMinutes * 60 * 1000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAutoMode, focusSessionDurationMinutes]);
 
   // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
@@ -878,7 +889,7 @@ export default function PaceFeedScreen() {
             시 재활성화 안 함(무료 손해 방지). */}
         <FocusSessionExtendModal
           visible={showExtendModal}
-          onExtend={() => { sessionTimedOutRef.current = false; setIsAutoMode(true); }}
+          onExtend={(minutes) => { sessionTimedOutRef.current = false; pendingExtendMinutesRef.current = minutes; setIsAutoMode(true); }}
           onDismiss={() => setShowExtendModal(false)}
           onAdVisibilityChange={(adVisible) => {
             if (adVisible) {

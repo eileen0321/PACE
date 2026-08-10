@@ -8602,3 +8602,23 @@ JS 프로세스가 살아있는 한 화면 언마운트/재마운트에 값이 �
 2. Focus Session을 끝내는 모든 경로(수동 off / 타임아웃 / 화면 나갔다 옴 / 광고 시청 후 재개)에서
    "무료 재개 가능 여부" 판정이 iOS와 동일한 결과를 내는지 — 두 플랫폼이 각자 짠 로직이라 엣지
    케이스가 갈릴 수 있음. 가능하면 판정 조건을 문서화해서 이 파일에 표로 남기고 서로 맞추자.
+
+#### 🔴 같은 날 바로 발견된 2번째 버그 — 광고로 5분 연장한다더니 실제로는 10분(전체 새 세션)이 켜짐
+
+**사장님 실기기 재현**: 타임아웃 후 모달에서 "광고 보고 5분 더" 버튼 눌러 광고 시청 완료 → 실제로는
+`focusSessionDurationMinutes`(기본 10분, 설정값) 전체가 새로 켜짐.
+
+**원인**: `FocusSessionExtendModal`은 `onExtend(minutes)`로 정확히 몇 분을 줬는지 넘겨주는데(광고=
+`FOCUS_SESSION_EXTEND_MINUTES`=5, 크레딧=실제 쓴 만큼), `feed/index.tsx`의 onExtend 구현이
+**그 인자를 완전히 무시**하고 `setIsAutoMode(true)`만 호출 → 세션-시작 effect가 "새 세션"과
+"연장"을 구분할 방법이 없어서 매번 설정된 전체 길이로 다시 켰다. 즉 연장 개념 자체가 없었고
+그냥 "타임아웃 후 재개 = 새 10분"이었다(우연히 원래 세션 길이와 비슷해 보여서 지금까지 안 걸렸을 뿐).
+
+**수정**: `pendingExtendMinutesRef`를 새로 두어 onExtend가 `setIsAutoMode(true)` 호출 전에 받은
+`minutes`를 채워두고, 세션-시작 effect가 `pendingExtendMinutesRef.current ?? focusSessionDurationMinutes`로
+길이를 정하게 함(`feed/index.tsx`). 새 세션 시작 경로(토글 on)는 ref가 비어 있으니 그대로 설정값을
+쓰고, 연장 경로만 정확히 grant된 분만큼만 준다. `tsc --noEmit` 클린, Release 빌드 실기기 설치 완료.
+
+**Android도 같은 값 계산을 확인 필요** — `bluetoothService.extendFocusSession(minutes)` 경로가
+실제로 "지금 세션에 minutes를 더하는" 동작인지, 혹시 iOS와 같은 부류로 "그냥 새 세션을 켜는"
+동작인지 Windows 세션에서 대조 확인 요청.

@@ -97,8 +97,18 @@ android {
         // prebuild를 안 돌리므로 무시된다(app.json만 4로 올렸다가 빌드가 또 code 3으로
         // 나온 것을 EAS 빌드 목록에서 확인). 올릴 때 두 곳을 같이 올릴 것.
         // 2026-08-10 — 비공개 테스트 갱신용으로 6 → 7 (app.json도 같이 올렸다, 위 주석의 규칙).
-        versionCode 9
-        versionName "1.0.1"
+        // 2026-08-11 — 9 → 10. 담긴 것 중 실기기 검증 완료:
+        //   · 보상형 광고가 1~2초 만에 사라지던 것(HOT 이어서재생이 광고 위로 유튜브를 열었음, b8d9793)
+        //     검증: 22:53:52 광고 표시 → 22:54:01 reward earned, 그 구간 CHAIN fire 0건
+        //   · 이어서재생이 감시 대상 앱 밖(런처)에서 발동하던 것
+        //     검증: 23:07:14 홈 이동 후 CHAIN resync='null' ×4, fire/advance 0건
+        //   함께 담기지만 미검증: Focus 타임아웃 플래그 prefs 영속화, 재설치 견디는 기기 id(SSAID),
+        //   서버 허용량 연동(실패는 fail-open이라 앱을 깨뜨리지 않는다).
+        // ⚠️ 광고는 **테스트 광고**다(EXPO_PUBLIC_USE_REAL_ADS 미설정). 비공개 테스트 트랙에 실광고를
+        //   실으면 테스터 클릭이 무효 트래픽으로 잡혀 AdMob 계정 정지 위험 — 2026-08-10에 7→8→9로
+        //   되돌린 그 규칙 그대로다. 실광고는 프로덕션 트랙에서만.
+        versionCode 10
+        versionName "1.0.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

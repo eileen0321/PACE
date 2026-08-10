@@ -41,7 +41,7 @@ import { AnimatedSplash } from '../components/ui/AnimatedSplash';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { checkAndForceUpdate, getUpdateDiagnostics, getUpdateNativeLog, type ForceUpdatePhase } from '../services/updates';
 import { checkVersionGate } from '../services/appVersionGate';
-import { configureAdsForTesting } from '../services/ads/adsConfig';
+import { configureAdsForTesting, USE_REAL_ADS } from '../services/ads/adsConfig';
 import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
 import { useAdsConsentStore } from '../store/useAdsConsentStore';
@@ -372,8 +372,11 @@ export default function RootLayout() {
     // 같은 근본 수정(`!__DEV__`, Metro가 굽는 값이라 어떤 빌드 경로든 항상 정확) — 자기 폰 안전
     // 테스트용 탈출구(EXPO_PUBLIC_AD_TEST_DEVICES)도 동일하게 유지.
     if (Platform.OS === 'android') {
-      const forceTestAds = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
-      bluetoothService.setUseRealAds(!__DEV__ && !forceTestAds).catch(() => {});
+      // 🔴 2026-08-11(2차) — 네이티브(PaceRewardedAdActivity)가 쓰는 값도 JS와 **같은 판정**이어야
+      //   한다. 여기에 식을 다시 쓰면 세 번째 복붙이 되어 또 갈라진다 — adsConfig의 단일 판정을 밀어준다.
+      //   ⚠️ 지금 Android는 비공개 테스트 트랙만 있으므로 이 값은 false(테스트 광고)가 정상이다.
+      //     프로덕션 출시 때 EXPO_PUBLIC_ANDROID_REAL_ADS=true로 빌드하면 자동으로 true가 된다.
+      bluetoothService.setUseRealAds(USE_REAL_ADS).catch(() => {});
     }
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
 

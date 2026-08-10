@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { ensureAdsConsent } from './adsConsent';
+import { USE_REAL_ADS } from './adsConfig';
 import { useAdsConsentStore } from '../../store/useAdsConsentStore';
 
 // 2026-07-26 사용자 지시 — 무료 사용자의 Focus Session 자동넘김이 한도(기본 30회)에 도달하면
@@ -33,8 +34,12 @@ try {
 // `!__DEV__` 판정 — Metro가 Release JS 번들에 굽는 값이라 어떤 빌드 경로든 항상 정확하다)으로
 // 통일한다. `EXPO_PUBLIC_AD_TEST_DEVICES`(adsConfig.ts와 동일 플래그, 재사용)로 Release 빌드에서도
 // 안전하게 테스트 광고로 되돌릴 수 있는 탈출구는 유지.
-const FORCE_TEST_ADS = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
-const USE_REAL_ADS = !__DEV__ && !FORCE_TEST_ADS;
+// 🔴 2026-08-11(2차) — 판정을 adsConfig.ts 한 곳으로 모았다. 여기/AdBanner/_layout 세 곳에 같은
+// 식이 복붙돼 있어 한쪽만 고쳐지면 조용히 갈라진다(바로 위 감사가 세 파일을 동시에 고쳐야 했던
+// 이유이고, 오늘 Focus Session 타이머에서도 같은 종류의 사고를 하루 종일 겪었다).
+// ⚠️ `!__DEV__`만으로는 **트랙 구분이 안 된다** — Android 비공개 테스트와 iOS 프로덕션이 둘 다
+//   릴리즈인데 요구가 정반대다(전자는 테스트 광고, 후자는 실광고). adsConfig의 USE_REAL_ADS가
+//   플랫폼별 출시 상태까지 반영한다. 상세 근거는 그 상수 주석 참고.
 // 2026-07-28 사장님 확인 — 보상형 실 ID가 iOS/Android 구분 없이 하나(5534238136=Android)만 박혀 있어
 // iOS에선 잘못된 단위였다. AdMob 콘솔에서 iOS 보상형 단위 = BonusCredit(6596038364) 확인 → 배너처럼 분리.
 const REAL_REWARDED_UNIT_ID = Platform.select({

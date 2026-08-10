@@ -3,6 +3,7 @@ import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native
 import { colors } from '../../constants/theme';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { useAdsConsentStore } from '../../store/useAdsConsentStore';
+import { USE_REAL_ADS } from '../../services/ads/adsConfig';
 
 // 2026-07-25 — react-native-google-mobile-ads는 네이티브 코드가 있는 모듈이라 네이티브 재빌드
 // 전에는(예: 지금처럼 AdMob 라이브러리와 Kotlin 버전 충돌로 빌드가 아직 안 끝난 경우) 설치된 APK에
@@ -28,8 +29,9 @@ try {
 // 판정이 `EXPO_PUBLIC_USE_REAL_ADS` env에 의존했는데 이 세션의 로컬 빌드 파이프라인은 그 값을
 // 어디서도 채워준 적이 없어(eas.json에만 존재, .env엔 없음) 오늘 밤 실기기 빌드가 전부 테스트
 // 배너를 내보내고 있었다. adsConfig.ts가 이미 쓰는 검증된 `!__DEV__` 판정으로 통일.
-const FORCE_TEST_ADS = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
-const USE_REAL_ADS = !__DEV__ && !FORCE_TEST_ADS;
+// 🔴 2026-08-11(2차) — 판정을 adsConfig.ts 한 곳으로 모았다(여기/rewardedAd/_layout 세 곳 복붙 제거).
+//   `!__DEV__`만으로는 Android 비공개 테스트와 iOS 프로덕션을 구분 못 한다 — 둘 다 릴리즈인데
+//   요구가 정반대다. 상세 근거는 adsConfig.ts의 USE_REAL_ADS 주석 참고.
 const REAL_BANNER_UNIT_ID = Platform.select({
   android: 'ca-app-pub-3201481146134957/1435065235',
   ios: 'ca-app-pub-3201481146134957/9222201702',

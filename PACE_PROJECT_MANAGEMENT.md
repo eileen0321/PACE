@@ -8827,5 +8827,7 @@ Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 
 그대로 1.0.2 — 만약 Apple이 "이미 승인됨"으로 거부하면 그때 버전 자체를 올림, 8/10과 같은 패턴).
 `Info.plist`/`project.pbxproj`(4곳)/`app.json` 전부 동기화.
 
-`xcodebuild archive -allowProvisioningUpdates` 진행 중 — 완료되면 export → 업로드는 사장님 확인
-후 진행(App-Specific Password 필요한 단계라 여기서 자동으로 올리지 않음).
+`xcodebuild archive -allowProvisioningUpdates` → **ARCHIVE SUCCEEDED**.
+`xcodebuild -exportArchive`(method=app-store, teamID=328BF833XS) → **EXPORT SUCCEEDED**,
+`Pace.ipa`(~53MB) 스크래치패드에 생성 완료. 업로드(`xcrun altool --upload-app`)는 App-Specific
+Password가 필요한 단계라 사장님 확인 후 진행 — 여기서 자동으로 올리지 않음.

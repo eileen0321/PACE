@@ -3886,16 +3886,14 @@ class PaceOverlayService : Service() {
         .apply { height = ((items.size.coerceAtLeast(1) * (60 * d)).toInt()).coerceAtMost(maxH) }
     }
 
-    fun runSearch(query: String, isPreset: Boolean) {
-      // 프리셋은 캐시로 도는 공용 검색어라 횟수를 안 센다(ShortsSearchStore 주석의 비용 근거).
-      if (!isPreset && !ShortsSearchStore.consumeFreeSearch(applicationContext, isPremium(applicationContext))) {
-        status.visibility = View.VISIBLE
-        status.text = if (isKoreanLocale())
-          "무료 검색은 하루 ${ShortsSearchStore.FREE_DAILY_SEARCHES}회예요 — 아래 추천 주제는 제한 없이 볼 수 있어요"
-        else "Free search is ${ShortsSearchStore.FREE_DAILY_SEARCHES}/day — the topics below are always free"
-        listContainer.removeAllViews()
-        return
-      }
+    fun runSearch(query: String) {
+      // 🔴 2026-08-11 사장님 지시("통일해 비용구조 공용으로 만들어 놓은거 쓰고") — 자유 검색에
+      // 하루 1회 제한(consumeFreeSearch)이 걸려 있었는데, 그 근거였던 "search.list는 비싸다"는
+      // 애초에 틀린 전제였다 — ShortsSearchStore.search(바로 아래)는 프리셋과 완전히 같은
+      // 경로(Vercel 스크레이핑 프록시, 쿼터 0)를 탄다. iOS는 처음부터 이 제한이 없었다(같은 프록시
+      // 재사용) — 안드만 옛 설계(Data API 직접 호출) 시절 제한이 리팩터 뒤에도 안 지워진 것.
+      // 비용이 실제로 0이므로 제한을 없애 두 플랫폼을 통일한다(FREE_DAILY_SEARCHES/consumeFreeSearch
+      // 삭제, 아래 ShortsSearchStore 참고).
       status.visibility = View.VISIBLE
       status.text = if (isKoreanLocale()) "검색 중…" else "Searching…"
       listContainer.removeAllViews()
@@ -3907,10 +3905,9 @@ class PaceOverlayService : Service() {
 
     // 🔴 2026-08-11 사장님 지적("검색어 입력 기능 넣자고 했는데 너 뭐 했어?") — 맞는 지적이다.
     //   Search 패널은 지금까지 **프리셋 칩을 고르는 것뿐**이었고 검색어를 직접 칠 자리가 없었다.
-    //   실행 경로(runSearch / ShortsSearchStore.search)와 하루 횟수 제한까지 다 만들어져 있는데
-    //   **입력창만 빠져 있던 상태**다 — 그 마지막 한 조각을 붙인다.
-    //   ⚠️ 자유 검색은 search.list(100 units)라 프리셋(캐시)과 달리 비싸다. 그래서 isPreset=false로
-    //     넘겨 기존 하루 제한(FREE_DAILY_SEARCHES)을 그대로 태운다 — 제한 로직은 이미 있던 것을 쓴다.
+    //   실행 경로(runSearch / ShortsSearchStore.search)는 다 만들어져 있는데 **입력창만 빠져
+    //   있던 상태**다 — 그 마지막 한 조각을 붙인다. (하루 횟수 제한은 이후 "통일해" 지시로 제거 —
+    //   위 runSearch 주석 참고, 프리셋과 자유 검색이 같은 무료 프록시를 탄다.)
     //   ⚠️ 이 창은 TYPE_APPLICATION_OVERLAY다. 처음엔 "이미 포커스 가능한 flags라 그냥 된다"고 적었는데
     //     **틀렸다** — 실기기에서 키보드가 안 떴고 확인해보니 FLAG_NOT_FOCUSABLE이 걸려 있었다.
     //     아래 WindowManager.LayoutParams에서 그 플래그를 빼고 NOT_TOUCH_MODAL로 바꿨다(그쪽 주석 참고).
@@ -3938,7 +3935,7 @@ class PaceOverlayService : Service() {
             // 키보드를 내려야 결과 목록이 가려지지 않는다.
             (getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
               ?.hideSoftInputFromWindow(v.windowToken, 0)
-            runSearch(q, isPreset = false)
+            runSearch(q)
           }
           true
         } else false
@@ -3973,7 +3970,7 @@ class PaceOverlayService : Service() {
             setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
             background = GradientDrawable().apply { cornerRadius = 999f; setColor(Color.parseColor("#33FFFFFF")) }
             isClickable = true
-            setOnClickListener { runSearch(p.query, isPreset = true) }
+            setOnClickListener { runSearch(p.query) }
           }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { rightMargin = (8 * d).toInt() })
         }
@@ -4012,7 +4009,7 @@ class PaceOverlayService : Service() {
     }
     try {
       windowManager?.addView(searchPanelView, params)
-      initialQuery?.let { runSearch(it, isPreset = false) }
+      initialQuery?.let { runSearch(it) }
     } catch (e: Exception) {
       Log.w("PaceOverlayService", "showSearchPanel 실패", e); searchPanelView = null
     }
@@ -5195,34 +5192,14 @@ private object ShortsHotStore {
 //   태워 HOT이 비는 사고가 났다). 대신 Vercel 프록시(/api/youtube-shorts)를 친다. 그쪽은 검색 페이지
 //   스크래핑이라 **쿼터를 안 쓰고**, 같은 검색어는 CDN에 5분 캐시된다(실측 X-Vercel-Cache HIT).
 //
-// 그래서 비용 구조가 이렇게 갈린다:
-//   · 프리셋  — 전 사용자가 같은 검색어를 공유 → 캐시 적중률이 높아 사실상 공짜 → **횟수 제한 없음**
-//   · 자유 검색 — 검색어가 제각각이라 캐시가 잘 안 먹음 → **무료 하루 1회 / 프리미엄 무제한**
+// 🔴 2026-08-11 사장님 지시("통일해 비용구조 공용으로 만들어 놓은거 쓰고") — 처음엔 "프리셋은 캐시
+//   적중률이 높아 공짜, 자유 검색은 검색어가 제각각이라 하루 1회로 제한"이라고 갈랐었다. 그런데
+//   실제로는 자유 검색도 **똑같은 프록시**를 탄다 — 캐시 적중률이 낮을 뿐 쿼터 비용 자체는
+//   프리셋과 동일하게 0이다("적중률이 낮다"와 "돈이 든다"를 혼동했었다). iOS는 애초에 이 구분을
+//   안 두고 자유 검색도 무제한으로 만들었는데 그게 맞았다 — 안드도 제한을 없애 통일한다.
 private object ShortsSearchStore {
-  /** 무료 사용자의 하루 자유 검색 횟수. 프리셋은 여기 안 센다(위 주석의 비용 근거). */
-  const val FREE_DAILY_SEARCHES = 1
-  private const val PREF_DATE = "search_free_date"
-  private const val PREF_COUNT = "search_free_count"
-
-  private fun today(): String =
-    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-
   private fun prefs(context: Context) =
     context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
-
-  fun usedToday(context: Context): Int {
-    val p = prefs(context)
-    return if (p.getString(PREF_DATE, null) == today()) p.getInt(PREF_COUNT, 0) else 0
-  }
-
-  /** 자유 검색을 한 번 쓴다. 한도를 넘었으면 false(호출부가 안내를 띄운다). */
-  fun consumeFreeSearch(context: Context, isPremium: Boolean): Boolean {
-    if (isPremium) return true
-    val used = usedToday(context)
-    if (used >= FREE_DAILY_SEARCHES) return false
-    prefs(context).edit().putString(PREF_DATE, today()).putInt(PREF_COUNT, used + 1).apply()
-    return true
-  }
 
   private fun proxyBase(context: Context): String? =
     prefs(context).getString(PaceOverlayService.PREF_CACHED_PROXY_BASE_URL, null)?.takeIf { it.isNotBlank() }

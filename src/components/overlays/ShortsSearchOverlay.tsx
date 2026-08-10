@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
@@ -8,8 +8,11 @@ import { useShortsSearchStore } from '../../store/useShortsSearchStore';
 import type { YouTubeShort } from '../../types/models';
 
 // 2026-08-10 파리티 — 안드 커밋 dd4dd06(P메뉴 → Search)의 iOS 이식. ShortsHotOverlay와 같은 뼈대
-// (프리셋 칩 가로 스크롤 + 결과 목록) — 안드도 같은 구조로 만들었다. 자유 텍스트 검색 입력창은
-// 안드도 아직 없다(오버레이가 FLAG_NOT_FOCUSABLE이라 IME 포커스 문제) — 프리셋만 이식.
+// (프리셋 칩 가로 스크롤 + 결과 목록) — 안드도 같은 구조로 만들었다.
+// 🔴 2026-08-11 — 자유 텍스트 검색 입력창을 양쪽 다 붙였다(사장님 지적 "검색어 입력 기능 넣자고
+// 했는데 너 뭐 했어?"). 위 주석은 "안드도 아직 없다"였는데 그건 이제 사실이 아니다 — 안드는
+// PaceOverlayService.showSearchPanel에 EditText가 들어갔다(오버레이 IME는 그 창이 이미
+// 포커스 가능한 flags로 떠 있어서 문제가 없었다).
 export function ShortsSearchOverlay({ onClose, onOpenVideo }: {
   onClose: () => void;
   onOpenVideo?: (videoId: string, playlist?: string[]) => void;
@@ -46,6 +49,23 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo }: {
               <Feather name="x" size={18} color="rgba(255,255,255,0.7)" />
             </Pressable>
           </View>
+
+          {/* 🔴 2026-08-11 사장님 지적("검색어 입력 기능 넣자고 했는데 너 뭐 했어?") — 지금까지
+              프리셋 칩만 있고 검색어를 직접 칠 자리가 없었다. 실행 경로(useShortsSearchStore.search)는
+              이미 있었고 **입력창만** 빠져 있던 것이라 그 조각을 붙인다. 안드도 같은 날 같이 붙였다
+              (PaceOverlayService.showSearchPanel의 EditText). */}
+          <TextInput
+            style={styles.searchInput}
+            placeholder={t('overlay.searchPlaceholder')}
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            onSubmitEditing={(e) => {
+              const q = e.nativeEvent.text.trim();
+              if (q.length > 0) onPickPreset(q); // 프리셋과 같은 경로(setActiveQuery + search)
+            }}
+          />
 
           {presetsLoading && presets.length === 0 ? (
             <ActivityIndicator color="rgba(255,255,255,0.6)" style={{ paddingVertical: spacing.md }} />
@@ -108,6 +128,18 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  searchInput: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: typography.bodyFontFamily,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    borderRadius: radius.card,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 9,
+    marginBottom: spacing.sm,
+  },
   headerTitle: { color: '#FFFFFF', fontSize: 16, fontFamily: typography.bodyFontFamilyExtrabold },
   tabs: { flexGrow: 0, marginBottom: spacing.sm },
   tabsContent: { gap: 8, paddingRight: spacing.md },

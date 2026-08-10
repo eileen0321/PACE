@@ -3905,6 +3905,51 @@ class PaceOverlayService : Service() {
       }.start()
     }
 
+    // 🔴 2026-08-11 사장님 지적("검색어 입력 기능 넣자고 했는데 너 뭐 했어?") — 맞는 지적이다.
+    //   Search 패널은 지금까지 **프리셋 칩을 고르는 것뿐**이었고 검색어를 직접 칠 자리가 없었다.
+    //   실행 경로(runSearch / ShortsSearchStore.search)와 하루 횟수 제한까지 다 만들어져 있는데
+    //   **입력창만 빠져 있던 상태**다 — 그 마지막 한 조각을 붙인다.
+    //   ⚠️ 자유 검색은 search.list(100 units)라 프리셋(캐시)과 달리 비싸다. 그래서 isPreset=false로
+    //     넘겨 기존 하루 제한(FREE_DAILY_SEARCHES)을 그대로 태운다 — 제한 로직은 이미 있던 것을 쓴다.
+    //   ⚠️ 이 창은 TYPE_APPLICATION_OVERLAY다. 처음엔 "이미 포커스 가능한 flags라 그냥 된다"고 적었는데
+    //     **틀렸다** — 실기기에서 키보드가 안 떴고 확인해보니 FLAG_NOT_FOCUSABLE이 걸려 있었다.
+    //     아래 WindowManager.LayoutParams에서 그 플래그를 빼고 NOT_TOUCH_MODAL로 바꿨다(그쪽 주석 참고).
+    val searchInput = android.widget.EditText(this).apply {
+      hint = if (isKoreanLocale()) "검색어를 입력하세요" else "Type a search term"
+      setHintTextColor(Color.parseColor("#66FFFFFF"))
+      setTextColor(Color.WHITE)
+      textSize = 14f
+      // ⚠️ 순서가 중요하다 — inputType을 나중에 대입하면 singleLine 설정이 리셋된다(실기기 확인:
+      //   IME 액션 키가 돋보기에서 엔터로 바뀌고 검색이 안 걸렸다). inputType을 **먼저** 준다.
+      inputType = android.text.InputType.TYPE_CLASS_TEXT
+      isSingleLine = true
+      maxLines = 1
+      imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+      background = GradientDrawable().apply {
+        cornerRadius = 10f * d
+        setColor(Color.parseColor("#1FFFFFFF"))
+        setStroke((1 * d).toInt().coerceAtLeast(1), Color.parseColor("#33FFFFFF"))
+      }
+      setPadding((12 * d).toInt(), (9 * d).toInt(), (12 * d).toInt(), (9 * d).toInt())
+      setOnEditorActionListener { v, actionId, _ ->
+        if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+          val q = v.text?.toString()?.trim().orEmpty()
+          if (q.isNotEmpty()) {
+            // 키보드를 내려야 결과 목록이 가려지지 않는다.
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+              ?.hideSoftInputFromWindow(v.windowToken, 0)
+            runSearch(q, isPreset = false)
+          }
+          true
+        } else false
+      }
+    }
+    panel.addView(searchInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = (10 * d).toInt()
+    })
+    // initialQuery로 열렸으면(다른 경로에서 검색어를 들고 들어온 경우) 그대로 채워준다.
+    if (!initialQuery.isNullOrBlank()) searchInput.setText(initialQuery)
+
     // 프리셋 칩 — 서버가 국가별로 내려준다. 실패하면 줄 자체를 숨긴다(빈 줄이 남지 않게).
     val chipRow = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
@@ -3945,11 +3990,21 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+      // 🔴 2026-08-11 실기기 확인 — 여기가 FLAG_NOT_FOCUSABLE이라 검색어 입력창에 **키보드가 안 떴다**
+      //   (mCurrentFocus가 계속 유튜브였고, adb로 넣은 텍스트도 이 창이 아니라 유튜브로 갔다).
+      //   오버레이가 포커스를 안 가져가는 건 원래 의도였다 — 뒤 앱(유튜브) 조작을 막지 않으려고.
+      //   그런데 EditText는 창이 포커스를 가져와야만 IME가 붙는다. 두 요구가 충돌한다.
+      //   → FLAG_ALT_FOCUSABLE_IM 없이 NOT_FOCUSABLE만 뺀다. 패널이 떠 있는 동안만 포커스를 갖고
+      //     (그동안 뒤 앱 터치는 어차피 패널을 닫고 쓰면 된다), 닫으면 곧바로 유튜브로 돌아간다.
+      //   ⚠️ FLAG_NOT_TOUCH_MODAL을 함께 켜서 **패널 바깥 터치는 그대로 뒤 앱으로 통과**시킨다 —
+      //     이게 없으면 화면 전체가 이 창에 먹혀 유튜브가 아예 안 눌린다.
+      WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
       android.graphics.PixelFormat.TRANSLUCENT
     ).apply {
       gravity = Gravity.TOP or Gravity.END
       x = (16 * d).toInt(); y = 80 + (44 * d).toInt()
+      // 입력창이 IME에 가려지지 않게 — 키보드가 뜨면 창을 밀어올린다.
+      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
         blurBehindRadius = (28 * d).toInt()

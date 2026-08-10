@@ -8790,3 +8790,18 @@ Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 
 **⚠️ Windows 빌드/실기기 검증 필요** — 이 Mac 세션엔 Android 툴체인(gradle/adb)이 없어 컴파일도
 설치도 못 한다. Kotlin 문법은 눈으로 재확인했지만 실제 빌드는 못 돌렸음 — Windows 세션에서
 `./gradlew` 빌드 통과 여부와 실기기에서 자유 검색이 여전히(제한 없이) 동작하는지 확인 요청.
+
+---
+
+### 2026-08-11 — 이후 Windows 커밋(검색 버튼 + 국가별 검색어 확장) iOS 확인, 실기기 없어 시뮬레이터로
+
+`2433b9f`(검색 버튼 + 국가별 확장, `expo-localization` 신규 사용) + `b9e313c`(내 하루제한 제거와
+병합 — Windows가 직접 확인/승인함, 충돌 없음) merge 반영. `expo-localization`은 이미
+`package.json`/`Podfile.lock`에 링크돼 있어 재설치 불필요. `tsc --noEmit` 클린.
+
+**지금 실기기가 없어 시뮬레이터(iPhone 17, iOS 26.4)로 검증** — Release 빌드 설치·앱 정상 기동
+확인(크래시 없음, 스크린샷으로 홈 화면 정상 렌더 확인). ⚠️ 이 세션엔 시뮬레이터 UI 자동조작 수단이
+없어(cliclick 미설치, macOS 접근성 권한 없음) 실제로 검색창에 타이핑해 "cat"→"cat shorts" 확장이
+동작하는지는 **코드 리뷰로만** 확인(로직 자체는 안드 표와 동일한 `LOCALE_SHORTS_WORD` 매핑,
+중복 접미사 방지 로직도 정상). 실사용자 시나리오(타이핑+검색 버튼 탭+결과 확인)는 사장님이나
+실기기가 있을 때 최종 확인 필요.

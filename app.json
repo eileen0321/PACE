@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pace",
     "slug": "Pace",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "scheme": "pace",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,7 +20,7 @@
       },
       "icon": "./assets/icon-phone11.png",
       "backgroundColor": "#0B0C0F",
-      "runtimeVersion": "1.0.2"
+      "runtimeVersion": "1.0.3"
     },
     "android": {
       "package": "com.strides7.pace",

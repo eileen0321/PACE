@@ -8829,5 +8829,12 @@ Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 
 
 `xcodebuild archive -allowProvisioningUpdates` → **ARCHIVE SUCCEEDED**.
 `xcodebuild -exportArchive`(method=app-store, teamID=328BF833XS) → **EXPORT SUCCEEDED**,
-`Pace.ipa`(~53MB) 스크래치패드에 생성 완료. 업로드(`xcrun altool --upload-app`)는 App-Specific
-Password가 필요한 단계라 사장님 확인 후 진행 — 여기서 자동으로 올리지 않음.
+`Pace.ipa`(~53MB) 스크래치패드에 생성 완료.
+
+**업로드 시도 1** — `eileenlee0321@gmail.com` + 어제 앱 암호로 인증 성공, 그런데 **1.0.2가 이미
+Apple 승인 완료 상태**(90062/90186, 8/10과 같은 패턴)라 build 번호만 올린 걸론 안 됨 — 버전
+문자열 자체를 올려야 함.
+
+**버전 1.0.3으로 재상향** — `Info.plist`/`project.pbxproj`(4곳)/`app.json`(version +
+`ios.runtimeVersion`, 네이티브 변경 포함 빌드라 런타임버전도 같이 올림) 전부 동기화. build
+번호는 7 유지. 재아카이브/재export 진행 중.

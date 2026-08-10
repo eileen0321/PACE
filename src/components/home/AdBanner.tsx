@@ -24,8 +24,12 @@ try {
 
 // 2026-07-26 사용자 지시 — 평소(개발/테스트)엔 테스트 광고 ID를 쓰고, 실제 광고 ID는 출시 빌드에서만
 // 켠다: 자기 폰에서 실 광고를 반복 로드/클릭하면 AdMob "invalid traffic"으로 계정이 정지될 수 있어서.
-// 출시 때만 EXPO_PUBLIC_USE_REAL_ADS=true로 빌드 → 실 단위 ID. (앱 ID는 실제로 둬도 테스트 광고엔 무방.)
-const USE_REAL_ADS = process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true';
+// 🔴 2026-08-11 매출 전수확인 감사 발견 — rewardedAd.ts와 완전히 같은 구멍(그쪽 주석 참고): 이
+// 판정이 `EXPO_PUBLIC_USE_REAL_ADS` env에 의존했는데 이 세션의 로컬 빌드 파이프라인은 그 값을
+// 어디서도 채워준 적이 없어(eas.json에만 존재, .env엔 없음) 오늘 밤 실기기 빌드가 전부 테스트
+// 배너를 내보내고 있었다. adsConfig.ts가 이미 쓰는 검증된 `!__DEV__` 판정으로 통일.
+const FORCE_TEST_ADS = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
+const USE_REAL_ADS = !__DEV__ && !FORCE_TEST_ADS;
 const REAL_BANNER_UNIT_ID = Platform.select({
   android: 'ca-app-pub-3201481146134957/1435065235',
   ios: 'ca-app-pub-3201481146134957/9222201702',

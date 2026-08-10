@@ -19,9 +19,22 @@ try {
   console.warn('[rewardedAd] react-native-google-mobile-ads 네이티브 모듈 미링크(재빌드 필요) — 보상형 광고 비활성화:', e);
 }
 
-// 2026-07-26 사용자 지시 — 평소엔 테스트 광고, 실 ID는 출시 빌드(EXPO_PUBLIC_USE_REAL_ADS=true)만.
-// 자기 폰에서 실 광고 반복 시청은 AdMob invalid traffic(계정 정지) 위험. (Android 전용 기능.)
-const USE_REAL_ADS = process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true';
+// 2026-07-26 사용자 지시 — 평소엔 테스트 광고, 실 ID는 출시 빌드만. 자기 폰에서 실 광고 반복
+// 시청은 AdMob invalid traffic(계정 정지) 위험.
+// 🔴 2026-08-11 사장님 지시("git 가져와서 매출관련 전체 전수확인해") 감사 발견 — 이 스위치가
+// `EXPO_PUBLIC_USE_REAL_ADS` 환경변수 하나에 의존했는데, 이 값은 `eas.json`의 production 프로필
+// 에만 있고 이 세션 내내 써온 로컬 빌드 파이프라인(`expo run:ios --configuration Release`,
+// `xcodebuild archive`)은 eas.json을 아예 읽지 않는다 — `.env`에도 이 키가 없다(확인: `.env` grep
+// 0건, 현재 셸 env도 비어 있음). 즉 **오늘 밤 실기기에 깐 모든 Release 빌드(App Store 제출분
+// 포함 가능성 있음)가 테스트 광고를 내보내고 있었다** — 광고는 화면에 정상적으로 뜨니(그래서
+// "광고가 안 뜬다"는 신고로는 안 걸림) 아무도 눈치채지 못한 채 보상형 광고 수익이 전부 0이었다.
+// AdBanner.tsx도 완전히 같은 패턴으로 같은 구멍이 있었다(둘 다 수정).
+// → 외부 env 파일 플러밍에 기대는 대신, 이 코드베이스가 이미 검증된 방식(adsConfig.ts의
+// `!__DEV__` 판정 — Metro가 Release JS 번들에 굽는 값이라 어떤 빌드 경로든 항상 정확하다)으로
+// 통일한다. `EXPO_PUBLIC_AD_TEST_DEVICES`(adsConfig.ts와 동일 플래그, 재사용)로 Release 빌드에서도
+// 안전하게 테스트 광고로 되돌릴 수 있는 탈출구는 유지.
+const FORCE_TEST_ADS = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
+const USE_REAL_ADS = !__DEV__ && !FORCE_TEST_ADS;
 // 2026-07-28 사장님 확인 — 보상형 실 ID가 iOS/Android 구분 없이 하나(5534238136=Android)만 박혀 있어
 // iOS에선 잘못된 단위였다. AdMob 콘솔에서 iOS 보상형 단위 = BonusCredit(6596038364) 확인 → 배너처럼 분리.
 const REAL_REWARDED_UNIT_ID = Platform.select({

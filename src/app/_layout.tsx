@@ -365,8 +365,15 @@ export default function RootLayout() {
     // 출시 빌드에서도 이 앱의 주 수익 경로가 영원히 구글 테스트 광고만 띄우는 상태였다(수익 0이고,
     // 실사용자에게 테스트 광고를 서빙하는 것 자체가 AdMob 정책 위반이다). 네이티브는 JS 빌드
     // 플래그를 스스로 알 수 없으므로 위 syncAutoNextBuildFlag와 같은 이유로 부팅 시 1회 밀어준다.
+    // 🔴 2026-08-11 매출 전수확인 — 위 수정은 "아무도 안 읽던 값"만 고쳤을 뿐, 그 값의 **원천**인
+    // `EXPO_PUBLIC_USE_REAL_ADS`가 어느 로컬 빌드 파이프라인(expo run:ios/android --configuration
+    // Release, xcodebuild)에서도 채워진 적이 없다(eas.json production 프로필에만 존재, .env엔 없음)
+    // — 즉 이 push 자체가 계속 false를 밀어주고 있었다. rewardedAd.ts/AdBanner.tsx와 같은 이유로
+    // 같은 근본 수정(`!__DEV__`, Metro가 굽는 값이라 어떤 빌드 경로든 항상 정확) — 자기 폰 안전
+    // 테스트용 탈출구(EXPO_PUBLIC_AD_TEST_DEVICES)도 동일하게 유지.
     if (Platform.OS === 'android') {
-      bluetoothService.setUseRealAds(process.env.EXPO_PUBLIC_USE_REAL_ADS === 'true').catch(() => {});
+      const forceTestAds = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
+      bluetoothService.setUseRealAds(!__DEV__ && !forceTestAds).catch(() => {});
     }
   }, [initUser, loadSettings, syncSettingsFromServer, initSubscription, loadDailyBonus]);
 

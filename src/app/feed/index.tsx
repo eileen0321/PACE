@@ -138,6 +138,10 @@ export default function PaceFeedScreen() {
   //   같은 우회로가 남아 있었다 — 스토어로 대체한다.
   const sessionEndsAt = useFocusSessionStore((s) => s.endsAt);
   const [showExtendModal, setShowExtendModal] = useState(false);
+  // 2026-08-10 병합 — 맥(c542d25)의 pendingExtendMinutesRef는 제거했다. 같은 목적(연장분만큼만
+  // 켜기)을 useFocusSessionStore.extend(minutes)가 담당하고, 그쪽은 값을 AsyncStorage에 남겨
+  // **앱을 죽였다 켜도 살아남는다**. ref는 프로세스와 함께 사라져서 사장님이 재현하신
+  // "앱 죽였다 다시 들어와서 포커스 온하면 광고 3회 봤는데도 10분"을 못 막는다.
   // 광고가 화면을 덮는 동안 재생을 멈췄다가 되돌리기 위해 직전 상태를 기억한다
   // (FocusSessionExtendModal의 onAdVisibilityChange 주석 참고 — 광고는 앱을 백그라운드로
   //  보내지 않아서 AppState 기반 일시정지가 안 걸린다).
@@ -474,17 +478,27 @@ export default function PaceFeedScreen() {
       //   사라져 다시 10분이 시작된다(사장님이 지적한 바로 그 리셋). 실제 종료는 사용자가 직접
       //   토글한 toggleAutoMode에서 stop()으로만 한다.
     }
+    // ⚠️ 2026-08-10 병합 — 맥(c542d25)이 같은 "연장인데 10분이 켜지는" 버그를 메모리 ref
+    //   (pendingExtendMinutesRef)로 고쳤고, 여기(Windows)는 영속 스토어로 고쳤다. **스토어 쪽을
+    //   남긴다** — 사장님이 방금 재현하신 "앱 죽였다 다시 들어와서 포커스 온하면 광고 3회 봤는데도
+    //   10분 준다"는 ref로는 못 막기 때문이다(프로세스가 죽으면 ref도 timedOut 플래그도 사라진다).
+    //   스토어는 AsyncStorage에 남으므로 앱을 죽였다 켜도 마감시각과 timedOut이 그대로 살아난다.
+    //   맥 쪽 수정의 알맹이(연장분만큼만 켠다)는 extend(minutes)가 그대로 담고 있다.
+    //
     // 마감시각의 진실원천은 스토어다. 살아 있는 세션이 있으면 **이어받고**(백그라운드 복귀,
     // 광고/크레딧 연장 직후), 없을 때만 새 세션을 시작한다 — 재개가 곧 10분 리셋이 되지 않게.
     const session = useFocusSessionStore.getState();
     if (session.endsAt == null || session.endsAt <= Date.now()) session.start(focusSessionDurationMinutes);
     const endsAt = useFocusSessionStore.getState().endsAt ?? Date.now();
     const remainingMs = Math.max(0, endsAt - Date.now());
+    // 토스트/Live Activity에 쓰는 "이번 세션 길이" — 맥 수정의 durationMinutes와 같은 의미지만
+    // 설정값이 아니라 **실제 남은 시간**에서 뽑는다(이어받은 세션이면 그게 맞는 값이다).
+    const durationMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
     // iOS Live Activity/다이나믹아일랜드에 Focus Session 카운트다운 표시(스펙 §1-E). remainingMinutes만
     // 실제로 쓰이고 나머지 필드는 iOS overlayService가 무시(인터페이스 호환용 기본값).
     overlayService.startSession({
       dailyLimitMinutes,
-      remainingMinutes: Math.max(1, Math.ceil(remainingMs / 60000)), // 새 세션이면 설정값, 이어받았으면 남은 시간
+      remainingMinutes: durationMinutes, // 새 세션이면 설정값, 이어받았으면 남은 시간
       autoNext: true,
       sleepTimerMinutes: 0,
       breakIntervalMinutes: 0,
@@ -499,9 +513,12 @@ export default function PaceFeedScreen() {
       // "타임아웃으로 꺼짐"(수동 off와 구분) — 재개 시 광고 게이트의 유일한 근거. 스토어가 영속화한다.
       useFocusSessionStore.getState().markTimedOut();
       setIsAutoMode(false);
-      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: focusSessionDurationMinutes }));
-    }, remainingMs);
+      // 맥 수정 채택 — 토스트는 설정값이 아니라 **이번 세션 실제 길이**를 알려야 맞다
+      // (5분 연장인데 "10분 끝났다"고 말하던 문제와 같은 부류).
+      useToastStore.getState().show(t('feed.focusSessionAutoEndedToast', { n: durationMinutes }));
+    }, remainingMs); // 타이머는 실제 남은 시간으로 — 이어받은 세션이면 durationMinutes와 다를 수 있다
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAutoMode, focusSessionDurationMinutes]);
 
   // Focus Session 남은 분(올림). clock이 30초마다 갱신되며 리렌더 → 이 값도 재계산된다. 세션 없으면 null.
@@ -903,6 +920,9 @@ export default function PaceFeedScreen() {
           //   넘기고 토스트도 "+5m"라 말하는데 실제 타이머만 10분이었다 — 크레딧 5개를 쓴 경우도
           //   똑같이 10분을 받았다. 안드로이드 네이티브(extendFocusSession)는 정확히 5분만 더한다.
           //   이제 인자를 그대로 스토어에 넘겨 **남은 시간에 그만큼만** 더한다.
+          //   ⚠️ 2026-08-10 병합 — 맥(c542d25)은 같은 버그를 pendingExtendMinutesRef(메모리)로
+          //     고쳤다. 스토어 쪽을 남긴다: extend()가 남은 시간에 minutes만큼 더하고 그 결과를
+          //     **AsyncStorage에 저장**하므로, 앱을 죽였다 켜도 연장분과 timedOut이 살아남는다.
           onExtend={(minutes) => { useFocusSessionStore.getState().extend(minutes); setIsAutoMode(true); }}
           onDismiss={() => setShowExtendModal(false)}
           onAdVisibilityChange={(adVisible) => {

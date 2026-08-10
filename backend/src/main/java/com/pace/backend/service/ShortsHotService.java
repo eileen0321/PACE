@@ -382,31 +382,11 @@ public class ShortsHotService {
         String query = QUERY_BY_COUNTRY.getOrDefault(country, SEARCH_FALLBACK_QUERY).get(category);
         // 2026-08-04 — publishedAfter를 붙인다. 이게 없으면 order=viewCount가 **역대 조회수** 순이라
         // 몇 년 된 영상이 계속 1등이고 목록이 매일 그대로다(사장님 지적 "매일 그날 인기 쇼츠 맞아?").
-        // YouTube API는 RFC3339 UTC 형식을 요구한다.
-        String publishedAfter = java.time.Instant.now()
-                .minus(java.time.Duration.ofHours(RECENT_HOURS))
-                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
-                .toString();
-        String searchUrl = SEARCH_API
-                + "?part=snippet"
-                + "&type=video"
-                + "&videoDuration=short"
-                + "&order=viewCount"
-                + "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
-                + "&regionCode=" + country
-                + "&relevanceLanguage=" + LANG_BY_COUNTRY.getOrDefault(country, "en")
-                + "&maxResults=" + SEARCH_FALLBACK_RESULTS
-                + "&q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
-                + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
-
-        HttpRequest searchRequest = HttpRequest.newBuilder(URI.create(searchUrl)).GET().build();
-        HttpResponse<String> searchResponse = httpClient.send(searchRequest, HttpResponse.BodyHandlers.ofString());
-        if (searchResponse.statusCode() != 200) {
-            throw new IllegalStateException("YouTube search API " + searchResponse.statusCode() + ": " + searchResponse.body());
-        }
-
+        // 🔴 2026-08-10 — 다만 그 제한이 붙으면 실제로 **0건**이 돌아오는 것을 API 직접 호출로 확인했다
+        //   (searchWithWidenedWindow 주석의 실측표 참고). 이 경로도 그때 통째로 죽어 있었다 —
+        //   discoverChannels와 동일하게 "좁게 먼저, 0건이면 기간 제한 없이 한 번 더"로 통일한다.
         List<String> candidateIds = new ArrayList<>();
-        for (JsonNode item : objectMapper.readTree(searchResponse.body()).path("items")) {
+        for (JsonNode item : searchWithWidenedWindow(country, query, SEARCH_FALLBACK_RESULTS)) {
             String videoId = item.path("id").path("videoId").asText(null);
             if (videoId != null && seenVideoIds.add(videoId)) candidateIds.add(videoId);
         }
@@ -502,19 +482,49 @@ public class ShortsHotService {
      * 검색 결과의 **영상**이 아니라 그 영상을 올린 **채널**만 가져간다 — 검색어의 유행성이 목록에
      * 매일 반영되지 않게 하기 위함이다.
      */
-    private void discoverChannels(String country, String category) throws Exception {
-        String query = QUERY_BY_COUNTRY.getOrDefault(country, SEARCH_FALLBACK_QUERY).get(category);
-        if (query == null) return;
+    /**
+     * 🔴 2026-08-10 사장님 지적("음악 게임 리스트 못 뽑고 소스 못 고치니까 백엔드만 임시로 수정했잖아")
+     *   — 맞는 지적이었고, 진짜 원인을 실제 API 호출로 확정했다.
+     *
+     *   같은 검색을 파라미터만 바꿔가며 직접 쏴본 결과(regionCode=KR, q="게임 하이라이트"):
+     *       publishedAfter=48시간 전       → totalResults 0
+     *       publishedAfter=7/30/90/180일 전 → 0
+     *       publishedAfter=365일 전         → 2
+     *       publishedAfter **제거**         → 22
+     *   즉 `publishedAfter`가 붙는 순간 0이 된다(order를 date/relevance로 바꿔도 동일, videoDuration을
+     *   빼도 동일). 그래서 **채널 발견이 모든 카테고리에서 실패**하고 있었다.
+     *   gaming이 멀쩡해 보인 건 예전에 채널이 적재돼 있어 collectFromChannels가 도는 것뿐이고,
+     *   명단이 빈 music은 영영 못 채운다 → 빈 목록 → 2026-08-10의 "카테고리가 비면 all로 대체"
+     *   폴백이 매번 발동. 사장님이 Music 탭에서 음악이 아닌 목록을 보신 것이 정확히 이것이다
+     *   (실기기 확인: Gaming은 진짜 게이밍 콘텐츠, Music은 All과 완전히 동일한 목록).
+     *
+     *   publishedAfter를 넣은 원래 의도(2026-08-04 "매일 그날 인기 쇼츠 맞아?")는 유효하므로 버리지
+     *   않는다 — **먼저 좁게 시도하고, 0건이면 기간 제한 없이 한 번 더** 쏜다. 목록이 통째로 비는
+     *   것보다 조금 덜 신선한 편이 낫다는 이 파일의 기존 폴백 원칙과 같다.
+     *   ⚠️ 쿼터: 0건일 때만 1회 추가(search.list 100 units). 발견은 (국가,카테고리)당 하루 1회로
+     *     이미 제한돼 있다(shouldTryDiscovery).
+     */
+    private JsonNode searchWithWidenedWindow(String country, String query, int maxResults) throws Exception {
         String publishedAfter = java.time.Instant.now()
                 .minus(java.time.Duration.ofHours(RECENT_HOURS))
                 .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
                 .toString();
+        JsonNode items = runSearch(country, query, maxResults, publishedAfter);
+        if (items.size() > 0) return items;
+        log.warn("[ShortsHot] 검색 0건(publishedAfter={}) — 기간 제한 없이 재시도: country={} q={}",
+                publishedAfter, country, query);
+        return runSearch(country, query, maxResults, null);
+    }
+
+    private JsonNode runSearch(String country, String query, int maxResults, String publishedAfter) throws Exception {
         String url = SEARCH_API
                 + "?part=snippet&type=video&videoDuration=short&order=viewCount"
-                + "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
+                + (publishedAfter != null
+                        ? "&publishedAfter=" + URLEncoder.encode(publishedAfter, StandardCharsets.UTF_8)
+                        : "")
                 + "&regionCode=" + country
                 + "&relevanceLanguage=" + LANG_BY_COUNTRY.getOrDefault(country, "en")
-                + "&maxResults=" + SEARCH_FALLBACK_RESULTS
+                + "&maxResults=" + maxResults
                 + "&q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
                 + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
         HttpResponse<String> res = httpClient.send(
@@ -522,8 +532,14 @@ public class ShortsHotService {
         if (res.statusCode() != 200) {
             throw new IllegalStateException("YouTube search API " + res.statusCode() + ": " + res.body());
         }
+        return objectMapper.readTree(res.body()).path("items");
+    }
+
+    private void discoverChannels(String country, String category) throws Exception {
+        String query = QUERY_BY_COUNTRY.getOrDefault(country, SEARCH_FALLBACK_QUERY).get(category);
+        if (query == null) return;
         int added = 0;
-        for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
+        for (JsonNode item : searchWithWidenedWindow(country, query, SEARCH_FALLBACK_RESULTS)) {
             String channelId = item.path("snippet").path("channelId").asText(null);
             String channelTitle = item.path("snippet").path("channelTitle").asText(null);
             if (channelId == null || uploadsPlaylistId(channelId) == null) continue;

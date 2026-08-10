@@ -503,6 +503,17 @@ class PaceAccessibilityService : AccessibilityService() {
             chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
             return
           }
+          // 🔴 2026-08-10(2차) — 감시 대상 앱이 화면에 없으면 **아무 판정도 하지 않는다.**
+          //   실기기에서 사용자가 홈 화면에 있는 동안 이어서재생이 발동해 유튜브를 다시 띄웠다
+          //   (22:41:46 CHAIN fire → 22:41:48 usage=launcher). 이어서재생은 "보고 있던 목록을
+          //   계속 이어서 본다"는 기능이지 **나간 사람을 끌고 들어오는** 기능이 아니다.
+          //   위 trackedAppRootNode 폴백 수정만으로도 title=null이 되어 발동은 막히지만, 여기서
+          //   명시적으로 끊고 리싱크로 넘겨야 돌아왔을 때 "그 사이 바뀐 제목"을 변화로 오인하지 않는다.
+          if (!isSupportedAppWindowVisible()) {
+            chainWatchAwaitingResync = true
+            chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
+            return
+          }
           val title = readVisibleTitleChannel()?.first
           if (title != null && title != chainWatchLastTitle) {
             chainWatchLastTitle = title
@@ -828,9 +839,20 @@ class PaceAccessibilityService : AccessibilityService() {
     //   이어서재생이 다음 쇼츠를 열어버렸다 — 광고가 지나가버리던 원인의 절반이 이 한 줄이다.
     //   감시 대상 앱이 아닌 우리 화면은 "읽을 것이 없음"(null)이 정직한 답이다 — 호출부
     //   (readVisibleTitleChannel / 재생시간 폴링 / 즐겨찾기 캡처)는 전부 null을 견디게 돼 있다.
-    val fallback = rootInActiveWindow
-    if (fallback?.packageName?.toString() == packageName) return null
-    return fallback
+    //
+    // 🔴 2026-08-10(2차) 실기기 로그로 확정 — 우리 앱만 막은 건 절반짜리였다. 사용자가 홈으로
+    //   나가 있는 동안 이 폴백이 **런처 창**을 돌려줬고, 이어서재생이 그 위젯 글자를 "새 영상
+    //   제목"으로 읽어 홈 화면에 있던 사용자를 유튜브로 끌고 들어갔다:
+    //     22:41:46 CHAIN fire → HOT chain advance
+    //     22:41:48 pill HIDE ... usage=com.sec.android.app.launcher
+    //     22:41:50 CHAIN resync new baseline='날씨. 이동하려면 두 번 누른 후 움직이세요.'
+    //   이 함수의 계약은 이름 그대로 "**감시 대상 앱의** 루트"다. 대상 앱이 화면에 없으면
+    //   아무 창이나 대신 내주는 건 계약 위반이고, 위 두 사고의 공통 원인이다.
+    //   → 폴백도 감시 대상 앱일 때만 인정한다(단일 창 등 windows가 비는 상황을 위해 폴백 자체는 유지).
+    val fallback = rootInActiveWindow ?: return null
+    val fallbackPkg = fallback.packageName?.toString()
+    if (fallbackPkg != null && SupportedApps.PACKAGES.contains(fallbackPkg)) return fallback
+    return null
   }
 
   // 2026-08-01 실기기 재현(사용자: "지금도 오버레이가 또 없어") — 처음엔 PIP만 의심했으나(위 커밋

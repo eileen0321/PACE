@@ -630,6 +630,14 @@ public class ShortsHotService {
                 JsonNode snippet = item.path("snippet");
                 String title = snippet.path("title").asText(null);
                 if (videoId == null || title == null) continue;
+                // 🔴 2026-08-11 사장님 지적("핫 쇼츠 리스트 음악이 음악이 아닌데") — 실측하니 KR music이
+                //   betterHOME/도넛펭귄 두 채널로 도배됐고 "완벽했던 알리바이의 최후"처럼 음악과 무관한
+                //   것까지 섞였다. 원인은 이 수집이 **채널 단위**로만 돌기 때문이다: 음악 태그 영상 하나로
+                //   채널이 명단에 들어오면 그 채널의 **다른 카테고리 업로드까지 전부** 이 탭에 쏟아진다.
+                //   채널은 한 카테고리만 올리지 않는다 — 명단은 "후보를 어디서 길어올지"일 뿐이고
+                //   카테고리 일치는 **영상 단위로** 확정해야 한다.
+                //   이 응답에 이미 snippet.categoryId가 있으므로 추가 호출·쿼터 없이 걸러낼 수 있다.
+                if (!matchesCategory(category, snippet)) continue;
                 long views = item.path("statistics").path("viewCount").asLong(0);
                 String thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
                 // 🔴 2026-08-10 사장님 지적("키워드가 그게 최선이야?", "쇼츠 검색 키워드 다 문제 아냐?")
@@ -658,6 +666,19 @@ public class ShortsHotService {
         }
         log.info("[ShortsHot] 채널 수집: country={} category={} 채널={}개 후보={}건 채택={}건",
                 country, category, channels.size(), candidateIds.size(), rows.size());
+    }
+
+    /**
+     * 이 영상이 해당 탭의 카테고리와 실제로 일치하는지(유튜브가 붙인 snippet.categoryId 기준).
+     * "all"은 카테고리 개념이 없으므로 항상 통과시킨다.
+     *
+     * 채널 화이트리스트는 "후보를 어디서 길어올지"를 정할 뿐이고, 그 채널이 그 카테고리만
+     * 올린다는 보장은 없다 — 카테고리 일치는 반드시 영상 단위로 확정해야 한다(위 호출부 주석 참고).
+     */
+    private boolean matchesCategory(String category, JsonNode snippet) {
+        String wanted = CATEGORIES.get(category);
+        if (wanted == null) return true; // "all"
+        return wanted.equals(snippet.path("categoryId").asText(null));
     }
 
     /**

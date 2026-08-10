@@ -231,6 +231,20 @@ async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3)
   return [];
 }
 
+// 폴백(Data API) 하루 상한 — 호출부 주석의 근거 참고. 100 units × 40 = 4,000 units로, 무료
+// 쿼터(10,000)의 40%까지만 폴백에 내주고 나머지는 HOT 갱신·채널 발견 몫으로 남긴다.
+const FALLBACK_DAILY_BUDGET = 40;
+let fallbackDay = '';
+let fallbackUsed = 0;
+function consumeFallbackBudget(): boolean {
+  const today = new Date().toISOString().slice(0, 10); // UTC 기준 — 쿼터 리셋(태평양 자정)과 정확히
+  // 같지는 않지만, 목적이 "폭주 방지"라 하루 단위로 끊기기만 하면 된다.
+  if (fallbackDay !== today) { fallbackDay = today; fallbackUsed = 0; }
+  if (fallbackUsed >= FALLBACK_DAILY_BUDGET) return false;
+  fallbackUsed += 1;
+  return true;
+}
+
 // 안전망: 스크래핑이 재시도 후에도 완전 실패(0개)할 때만, 키가 있을 때만 Data API로 폴백.
 // 정상 경로에선 절대 호출 안 되므로 쿼터 소모 0 — "스케일 불가" 문제를 되살리지 않는다.
 type VideoItem = { id: string; snippet?: { title?: string; channelTitle?: string; thumbnails?: { high?: { url?: string }; medium?: { url?: string } } }; contentDetails?: { duration?: string } };
@@ -317,7 +331,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!shorts.length) {
       const apiKey = process.env.YOUTUBE_API_KEY || process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
-      if (apiKey) shorts = await dataApiFallback(categories[0], apiKey, gl, hl);
+      // 🔴 2026-08-11 사장님 확인("검색이 돈 드는 거야?") 후 지시("넣어") — 평소 경로(스크래핑)는
+      //   유튜브 API를 안 쓰므로 쿼터 0이 맞다. 자유 검색 하루 제한을 없앤 판단(18cd7e9)도 옳다.
+      //   문제는 **이 폴백**이다. 유튜브가 스크래핑을 막으면(CAPTCHA·구조 변경 — 이 파일 위쪽
+      //   주석에 실제로 겪은 이력이 있다) 모든 검색이 여기로 몰리는데 search.list는 호출당 100 units라
+      //   **하루 100회면 무료 쿼터 10,000이 전부 소진**된다. 그러면 검색만 죽는 게 아니라 HOT의
+      //   채널 발견까지 같이 멈춘다(2026-08-10에 실제로 겪었다 — 429).
+      //   → 스크래핑 성공은 계속 무제한으로 두고, **폴백이 발동한 경우만** 하루 상한을 건다.
+      //   ⚠️ 한계: Vercel 서버리스는 인스턴스별 메모리라 이 카운터가 전역 정확값이 아니다(웜 인스턴스
+      //     수만큼 곱해진다). 정확히 세려면 KV/Redis가 필요한데 그건 유료 리소스 추가라 안 쓴다.
+      //     목적은 정확한 제어가 아니라 **쿼터가 통째로 날아가는 것을 막는 상한**이므로 이걸로 충분하다.
+      if (apiKey && consumeFallbackBudget()) {
+        shorts = await dataApiFallback(categories[0], apiKey, gl, hl);
+      }
     }
     // 카테고리 로테이션이라 nextPageToken은 항상 다음 index → 피드가 하드스톱 안 됨(무한).
     // (앱은 videoId로 dedup하므로 한 바퀴 돈 뒤 중복은 자동 제거. 카테고리 20개×~30개면 한 바퀴 ~600개.)

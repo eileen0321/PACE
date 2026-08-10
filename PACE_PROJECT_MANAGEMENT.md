@@ -8752,3 +8752,28 @@ Windows가 `94ae7b6`으로 찾은 진짜 원인: `useFocusSessionStore.mergeServ
 거기엔 카운트 표시가 없었다. 공용 컴포넌트에 추가해 양쪽 다 같이 보이게 함(`watchAdToExtendWithCount`
 번역 키, 프리미엄은 이 제한 자체가 없으므로 카운트 없는 기존 문구 유지). `tsc` 클린, Release 빌드
 실기기 설치 완료, 실기기에서 "3/3으로 더이상 광고못봄" 확인(카운트 UI가 정상 노출/동작).
+
+---
+
+### 2026-08-11 — Windows의 검색어 직접 입력(43b5b16) iOS 확인 + 🟡 하루 제한 플랫폼 차이 발견
+
+Windows가 iOS `ShortsSearchOverlay.tsx`에 `TextInput` 붙여 프리셋과 같은 경로
+(`useShortsSearchStore.search`)로 자유 검색을 연결. `git merge`로 반영, `tsc --noEmit` 클린,
+Release 빌드 실기기 설치 완료. 구조 리뷰: 오버레이 바깥 `Pressable`(탭하면 닫힘)과 안쪽 컨텐츠
+`Pressable`(stopPropagation)이 이미 분리돼 있어 안드가 겪은 `FLAG_NOT_FOCUSABLE` 류의 키보드
+문제는 iOS엔 구조적으로 해당 안 됨(일반 RN 뷰 계층, UIKit 반응자 체인이라 별도 처리 불필요) —
+다만 실제 타이핑 테스트는 사장님 실기기 확인 필요.
+
+**🟡 발견 — 안드는 자유 검색에 하루 1회 제한(`FREE_DAILY_SEARCHES=1`)을 걸었는데(커밋 근거:
+"자유 검색은 search.list 100 units라 비싸다"), iOS는 애초에 자유 검색도 프리셋과 똑같이
+Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 `scrapeWithRetry`)를 타서
+**쿼터 비용이 0**이다(Data API 폴백은 스크레이핑이 3회 재시도 후에도 0건일 때만, 그마저도 키가
+있을 때만 — 정상 경로에선 안 탐). 즉 안드의 제한 근거(쿼터 보호)가 iOS엔 애초에 적용 안 된다 —
+지금 iOS에 같은 1회 제한을 안 걸어둔 게 버그가 아니라 **비용 구조가 실제로 다른 결과**다.
+
+다만 캐시 적중률은 낮다(자유 검색어는 제각각이라 CDN 캐시가 잘 안 맞음, 프리셋 코멘트에 이미
+써둔 이유와 동일) — 쿼터는 안전해도 스크레이핑 자체의 서버 부하/남용 가능성은 남는다. **제한을
+걸지 안 걸지는 제품 판단**이라 임의로 정하지 않음 — 사장님 결정 필요: (a) 안드와 동일하게 무료
+하루 1회로 통일(플랫폼 일관성 우선), (b) iOS는 비용이 실제로 0이니 계속 무제한 유지(비용 구조에
+맞춤). 결정되면 iOS 쪽엔 `useShortsSearchStore`에 날짜-키 카운터 하나만 추가하면 됨(다른 스토어들과
+동일 패턴).

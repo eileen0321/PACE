@@ -8777,3 +8777,16 @@ Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 
 하루 1회로 통일(플랫폼 일관성 우선), (b) iOS는 비용이 실제로 0이니 계속 무제한 유지(비용 구조에
 맞춤). 결정되면 iOS 쪽엔 `useShortsSearchStore`에 날짜-키 카운터 하나만 추가하면 됨(다른 스토어들과
 동일 패턴).
+
+**→ 사장님 결정: "통일해 비용구조 공용으로 만들어 놓은거 쓰고"** — (a) 아님, iOS를 안드에 맞추는
+게 아니라 **안드의 제한을 없애 iOS에 맞춘다**(무제한 쪽으로 통일 — 실제 비용이 0이므로).
+
+**iOS 세션에서 안드 코드(`PaceOverlayService.kt`) 직접 수정** — `runSearch`에서 `consumeFreeSearch`
+게이트 제거, `isPreset` 파라미터도 이제 무의미해 삭제(3곳 호출부 갱신), 죽은 코드
+(`FREE_DAILY_SEARCHES`/`consumeFreeSearch`/`usedToday`/`today`/`PREF_DATE`/`PREF_COUNT`) 삭제
+— `prefs()`는 `proxyBase()`가 여전히 써서 남김. grep으로 다른 참조 없음 확인, 구조적으로 리뷰
+완료(중괄호 짝/의존관계 확인).
+
+**⚠️ Windows 빌드/실기기 검증 필요** — 이 Mac 세션엔 Android 툴체인(gradle/adb)이 없어 컴파일도
+설치도 못 한다. Kotlin 문법은 눈으로 재확인했지만 실제 빌드는 못 돌렸음 — Windows 세션에서
+`./gradlew` 빌드 통과 여부와 실기기에서 자유 검색이 여전히(제한 없이) 동작하는지 확인 요청.

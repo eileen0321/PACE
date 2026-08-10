@@ -128,7 +128,13 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
               <Text style={styles.btnPrimaryText}>
                 {adLimitReached
                   ? t('home.watchAdDailyLimitButton', { limit: FOCUS_EXTEND_AD_DAILY_LIMIT })
-                  : t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })}
+                  : isPremium
+                    ? t('home.watchAdToExtend', { extend: FOCUS_SESSION_EXTEND_MINUTES })
+                    : t('home.watchAdToExtendWithCount', {
+                        extend: FOCUS_SESSION_EXTEND_MINUTES,
+                        count: adWatchCount,
+                        limit: FOCUS_EXTEND_AD_DAILY_LIMIT,
+                      })}
               </Text>
             </>
           )}

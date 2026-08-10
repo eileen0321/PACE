@@ -30,6 +30,11 @@ export const translations = {
       focusSessionTimedOutTitle: 'Focus Session ended',
       focusSessionTimedOutMessage: "Free plan Focus Sessions run for 10 minutes. Watch a short ad or use credits to keep going for {{extend}} more.",
       watchAdToExtend: 'Watch ad for +{{extend}}m',
+      // 2026-08-11 사장님 지적("왜 광고 3회중 몇번째다라는 UI가 없어 안드는 있는데") — 안드는 이
+      // 카운트를 네이티브 오버레이 배지 모달(PaceRewardedAdActivity)에서 보여주는데, iOS엔 그
+      // 오버레이 개념 자체가 없어 이 공용 RN 모달(FocusSessionExtendModal)이 iOS의 유일한 표면이다.
+      // 공용 컴포넌트에 추가해 두 플랫폼 다 같이 보이게 한다.
+      watchAdToExtendWithCount: 'Watch ad for +{{extend}}m (today {{count}}/{{limit}})',
       useCreditsToExtend: 'Use {{credits}} credits for +{{extend}}m',
       focusSessionExtendedToast: 'Focus Session extended by {{extend}} minutes',
       // 2026-08-09 사용자 지시 — 무료 사용자의 보상광고 Focus 연장을 하루 3회로 제한.
@@ -586,6 +591,7 @@ export const translations = {
       focusSessionTimedOutTitle: 'Focus Session이 끝났어요',
       focusSessionTimedOutMessage: '무료 플랜의 Focus Session은 10분간 진행돼요. 짧은 광고를 보거나 크레딧을 사용하면 {{extend}}분 더 이어갈 수 있어요.',
       watchAdToExtend: '광고 보고 +{{extend}}분 받기',
+      watchAdToExtendWithCount: '광고 보고 +{{extend}}분 받기 (오늘 {{count}}/{{limit}})',
       useCreditsToExtend: '크레딧 {{credits}}개로 +{{extend}}분 받기',
       focusSessionExtendedToast: 'Focus Session이 {{extend}}분 더 이어져요',
       watchAdDailyLimitReached: '오늘 광고로 연장할 수 있는 횟수({{limit}}회)를 다 썼어요 — 크레딧을 쓰거나 내일 다시 시도해주세요',

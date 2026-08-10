@@ -57,25 +57,38 @@ function todayKey(): string {
 }
 
 /**
- * 서버 기록을 로컬에 합친다 — **불리한 쪽으로만** 움직인다(timedOut은 OR, 마감시각은 더 이른 쪽).
- * 앱을 지웠다 깔아 로컬이 비어 있어도 서버가 "이미 시간이 다 됐다"를 기억하므로 무료 세션이
- * 다시 나가지 않는다. 오프라인이면 아무것도 안 하고 로컬 값으로 간다(fail-open).
+ * 서버 기록을 로컬에 합친다. 앱을 지웠다 깔아 로컬이 비어 있어도 서버가 "이미 시간이 다 됐다"를
+ * 기억하므로 무료 세션이 다시 나가지 않는다. 오프라인이면 아무것도 안 하고 로컬 값으로 간다(fail-open).
  *
- * ⚠️ 마감시각을 "더 나중"이 아니라 **더 이른 쪽**으로 잡는 이유: 여기서 서버의 긴 마감시각을
- *   받아들이면 로컬을 지운 사용자가 오히려 더 긴 세션을 받는다. 연장(광고/크레딧)은 extend()가
- *   로컬에서 직접 늘리고 그 값을 서버로 올리는 방향이라 이 병합에 기대지 않는다.
+ * 🔴 2026-08-11 사장님 실기기 지적("애플에서 광고 보고 나오니 포커스 2분이야, 광고 시간까지 깐 거
+ *   같은데") — 내가 넣은 결함이었다. 원래 여기서 마감시각을 `Math.min`으로 **더 이른 쪽에 클램프**
+ *   했다. 남용을 막겠다고 "불리한 쪽으로만 움직인다"는 규칙을 마감시각에까지 적용한 것인데,
+ *   persist()의 서버 전송은 fire-and-forget이라 **그게 도착하기 전에 load()가 돌면 서버엔 아직
+ *   광고 보기 전의 옛 마감시각이 있다.** 그 이른 값을 채택하면서 광고 보는 동안 흐른 시간만큼
+ *   깎인 것처럼 보였다 — 사장님 표현 그대로 "광고 시간을 깐" 결과다.
+ *
+ *   → 마감시각은 클램프하지 않는다. **로컬에 살아 있는 세션이 있으면 그게 이긴다.**
+ *   남용 차단의 실제 근거는 `timedOut`(OR)과 하루 광고 횟수(useFocusExtendAdStore의 max 병합)이지
+ *   마감시각이 아니다. 로컬을 지운 사용자는 어차피 timedOut을 물려받아 게이트에 걸린다.
+ *   서버의 마감시각은 **로컬에 아무것도 없을 때만** 쓴다(기기 교체·재설치 후 이어받기).
  */
 async function mergeServer(): Promise<void> {
   try {
     const server = await focusAllowanceApi.get(todayKey());
     const state = useFocusSessionStore.getState();
     const serverEndsAt = server.sessionEndsAt != null ? Date.parse(server.sessionEndsAt) : null;
-    const timedOut = state.timedOut || server.timedOut;
+    let timedOut = state.timedOut || server.timedOut;
     let endsAt = state.endsAt;
-    if (serverEndsAt != null && Number.isFinite(serverEndsAt)) {
-      endsAt = endsAt == null ? serverEndsAt : Math.min(endsAt, serverEndsAt);
+    // 로컬에 살아 있는 세션이 있으면 그대로 둔다(서버 값으로 절대 깎지 않는다 — 위 주석 참고).
+    // 로컬이 비어 있을 때만 서버 값을 이어받되, 그것도 아직 안 지난 것만 쓴다.
+    if (endsAt == null && serverEndsAt != null && Number.isFinite(serverEndsAt) && serverEndsAt > Date.now()) {
+      endsAt = serverEndsAt;
     }
-    if (timedOut) endsAt = null; // 시간이 다 된 상태면 남은 세션은 없다
+    if (timedOut && (endsAt == null || endsAt <= Date.now())) endsAt = null;
+    // ⚠️ timedOut이 서 있어도 로컬 세션이 **살아 있으면** 지우지 않는다. 광고/크레딧으로 방금
+    //   연장한 직후가 정확히 그 상태다(서버는 아직 timedOut=true인데 로컬은 이미 연장됨).
+    //   예전엔 무조건 endsAt=null로 밀어서 연장이 통째로 사라질 수 있었다.
+    if (endsAt != null && endsAt > Date.now()) timedOut = false;
     if (timedOut !== state.timedOut || endsAt !== state.endsAt) {
       useFocusSessionStore.setState({ endsAt, timedOut });
       AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify({ endsAt, timedOut })).catch(() => {});

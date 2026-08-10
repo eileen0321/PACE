@@ -662,6 +662,27 @@ public class ShortsHotService {
             }
         }
         scored.sort((a, b) -> Long.compare(b.views(), a.views()));
+        // 🔴 2026-08-11 사장님 지적("게임도 안 맞는 거 아냐?") — 내용은 게임이 맞았지만 목록이
+        //   한 채널로 쏠려 있었다. 실측(KR gaming 25건): kt Rolster 8 / 클로에 하는 니나 6 /
+        //   투 마 5 / 빈쒸 4 — 6채널뿐이고 상위 4개가 23건이었다. 더 나쁜 건 "마스터이 하이라이트
+        //   106, 107, 108, 109, 110"처럼 **같은 시리즈가 연속 5건** 들어간 것이다. 그건 "지금 뜨는
+        //   쇼츠"가 아니라 한 채널의 업로드 목록이다.
+        //   원인은 조회수 정렬만 하기 때문이다 — 구독자 많은 채널의 최근 업로드가 통째로 상위를 먹는다.
+        //   → 채널당 상한을 둔다. 상한을 채운 채널은 건너뛰고 다음 채널로 넘어간다.
+        //   ⚠️ 상한 때문에 KEEP_COUNT를 못 채울 수 있다. 그때는 2차 통과에서 상한을 무시하고 채운다 —
+        //     목록이 비는 것보다 쏠린 목록이 낫다는 이 파일의 기존 원칙(빈 탭 방지)과 같은 판단이다.
+        final int perChannelCap = Math.max(2, KEEP_COUNT / 6);
+        Map<String, Integer> perChannel = new java.util.HashMap<>();
+        for (Scored s : scored) {
+            if (rows.size() >= KEEP_COUNT) break;
+            if (!seenVideoIdsAdd(rows, s.video().getVideoId())) continue;
+            String ch = s.video().getChannel() == null ? "" : s.video().getChannel();
+            if (perChannel.getOrDefault(ch, 0) >= perChannelCap) continue;
+            perChannel.merge(ch, 1, Integer::sum);
+            s.video().setRank(rows.size());
+            rows.add(s.video());
+        }
+        // 2차 — 상한 때문에 모자라면 남은 것으로 채운다(빈 목록 방지).
         for (Scored s : scored) {
             if (rows.size() >= KEEP_COUNT) break;
             if (!seenVideoIdsAdd(rows, s.video().getVideoId())) continue;

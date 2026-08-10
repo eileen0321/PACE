@@ -180,9 +180,32 @@ public class ShortsHotService {
     public List<ShortsHotVideoResponse> get(String country, String category) {
         String normalizedCountry = normalizeCountry(country);
         String normalized = CATEGORIES.containsKey(category) ? category : "all";
-        return repository.findByCountryAndCategoryOrderByRankAsc(normalizedCountry, normalized).stream()
+        List<ShortsHotVideoResponse> rows = repository
+                .findByCountryAndCategoryOrderByRankAsc(normalizedCountry, normalized).stream()
                 .map(ShortsHotVideoResponse::of)
                 .toList();
+        // 🔴 2026-08-10 사장님 지적("쇼츠 핫리스트 유머 게임 안 나오잖아", "다 출시했는데 어쩔거야") —
+        //   music/gaming 카테고리가 0건이라 앱에서 탭이 통째로 비어 보였다.
+        //   원인은 두 겹이다:
+        //     ① 이 두 카테고리는 원래 후보가 귀하다 — 인기 차트에 60초 이하가 거의 없다
+        //        (이 파일 위쪽 MAX_PAGES 주석에 "music 0건, gaming 1건" 실측이 이미 남아 있다).
+        //     ② 그 상태에서 YouTube가 429(쿼터 소진)를 주자 채울 방법이 사라졌다.
+        //   ⚠️ **앱은 이미 출시돼 있어 클라이언트를 고칠 수 없다.** 빈 목록이 그대로 화면에 나간다.
+        //     그래서 서버가 마지막 방어선이 된다 — 비어 있으면 `all` 목록으로 대신 채워 보낸다.
+        //     "정확한 카테고리"보다 "빈 화면이 아닌 것"이 사용자에게 훨씬 낫고, 실제 데이터가 들어오면
+        //     자동으로 원래 카테고리가 이긴다(이 분기는 rows가 빌 때만 탄다).
+        if (rows.isEmpty() && !"all".equals(normalized)) {
+            List<ShortsHotVideoResponse> fallback = repository
+                    .findByCountryAndCategoryOrderByRankAsc(normalizedCountry, "all").stream()
+                    .map(ShortsHotVideoResponse::of)
+                    .toList();
+            if (!fallback.isEmpty()) {
+                log.warn("[ShortsHot] {}/{} 비어 있어 all로 대체해 응답: {}건",
+                        normalizedCountry, normalized, fallback.size());
+                return fallback;
+            }
+        }
+        return rows;
     }
 
     // 2026-08-01 사장님 지시로 1일 1회 → 6시간마다(하루 4회)로 단축 — 트렌드 신선도 개선.

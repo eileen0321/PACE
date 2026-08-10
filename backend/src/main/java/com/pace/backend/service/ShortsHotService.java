@@ -618,7 +618,9 @@ public class ShortsHotService {
         for (int i = 0; i < candidateIds.size(); i += 50) {
             List<String> batch = candidateIds.subList(i, Math.min(i + 50, candidateIds.size()));
             String url = VIDEOS_API
-                    + "?part=snippet,contentDetails,statistics"
+                    // topicDetails 추가 — 유튜브가 분석해 붙이는 주제 분류(matchesTopicOrCategory 참고).
+                    // videos.list는 part를 늘려도 1 unit이라 쿼터 비용이 늘지 않는다.
+                    + "?part=snippet,contentDetails,statistics,topicDetails"
                     + "&id=" + URLEncoder.encode(String.join(",", batch), StandardCharsets.UTF_8)
                     + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
             HttpResponse<String> res = httpClient.send(
@@ -637,7 +639,9 @@ public class ShortsHotService {
                 //   채널은 한 카테고리만 올리지 않는다 — 명단은 "후보를 어디서 길어올지"일 뿐이고
                 //   카테고리 일치는 **영상 단위로** 확정해야 한다.
                 //   이 응답에 이미 snippet.categoryId가 있으므로 추가 호출·쿼터 없이 걸러낼 수 있다.
-                if (!matchesCategory(category, snippet)) continue;
+                //   2026-08-11(2차) — categoryId만으로는 못 거른다(업로더가 고르는 값이라 예능 클립
+                //   채널이 Music으로 태깅한다). 유튜브가 분석해 붙이는 topicCategories를 우선 쓴다.
+                if (!matchesTopicOrCategory(category, item)) continue;
                 long views = item.path("statistics").path("viewCount").asLong(0);
                 String thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
                 // 🔴 2026-08-10 사장님 지적("키워드가 그게 최선이야?", "쇼츠 검색 키워드 다 문제 아냐?")
@@ -679,6 +683,43 @@ public class ShortsHotService {
         String wanted = CATEGORIES.get(category);
         if (wanted == null) return true; // "all"
         return wanted.equals(snippet.path("categoryId").asText(null));
+    }
+
+    /**
+     * 🔴 2026-08-11 사장님 지적("음악이 음악이 아닌데") — categoryId 필터를 넣어도 KR music이
+     *   그대로였다. 실기기·API로 확인한 이유: **categoryId는 업로더가 직접 고르는 값**이고,
+     *   한국 예능 클립 채널들이 노출을 노리고 자기 영상을 Music(10)으로 태깅한다. 유튜브 기준으로도
+     *   "Music"이라 categoryId로는 원천적으로 구분이 안 된다.
+     *
+     *   같은 영상들의 topicDetails를 떠보니 갈렸다:
+     *     "태양의 명언에 지디…"    categoryId=10 / topics = Entertainment, Humour
+     *     "완벽했던 알리바이의 최후" categoryId=10 / topics = Humour
+     *   `topicCategories`는 **유튜브가 콘텐츠를 분석해 붙이는 값**이라 업로더가 마음대로 못 바꾼다.
+     *   그래서 이쪽을 우선 신호로 쓴다.
+     *
+     * ⚠️ topicDetails가 아예 없는 영상도 많다(위 4건 중 2건). 그때까지 버리면 목록이 비므로
+     *   **있을 때만** 판정하고, 없으면 categoryId 판정으로 넘어간다(과잉 필터로 탭을 비우지 않는다).
+     */
+    private static final Map<String, String> TOPIC_KEYWORD = Map.of(
+            "music", "music",      // Music, Pop_music, Hip_hop_music, Rock_music ...
+            "gaming", "game",      // Video_game_culture, Action_game, Strategy_video_game ...
+            "comedy", "humour",    // Humour
+            "pets", "pet"          // Pet
+            // entertainment는 키워드를 두지 않는다 — Entertainment 토픽이 워낙 넓게 붙어(위 예능
+            // 클립들도 Entertainment였다) 변별력이 없고, 오히려 다른 탭의 잔재를 끌어온다.
+    );
+
+    /** topicCategories가 있으면 그것으로, 없으면 categoryId로 판정한다(위 주석 참고). */
+    private boolean matchesTopicOrCategory(String category, JsonNode item) {
+        JsonNode topics = item.path("topicDetails").path("topicCategories");
+        String keyword = TOPIC_KEYWORD.get(category);
+        if (keyword != null && topics.isArray() && topics.size() > 0) {
+            for (JsonNode t : topics) {
+                if (t.asText("").toLowerCase(java.util.Locale.US).contains(keyword)) return true;
+            }
+            return false; // 토픽이 있는데 하나도 안 맞으면 이 탭 것이 아니다
+        }
+        return matchesCategory(category, item.path("snippet"));
     }
 
     /**

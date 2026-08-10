@@ -99,6 +99,14 @@ public class ShortsHotService {
         CATEGORIES.put("pets", "15");
     }
 
+    /** YouTube categoryId → 우리 카테고리 코드. harvestChannel이 역방향으로 쓴다(검색어 없이 분류). */
+    private static final Map<String, String> CATEGORY_BY_YOUTUBE_ID = new LinkedHashMap<>();
+    static {
+        CATEGORIES.forEach((code, ytId) -> {
+            if (ytId != null) CATEGORY_BY_YOUTUBE_ID.put(ytId, code);
+        });
+    }
+
     // search.list는 chart처럼 카테고리ID만으로 못 걸러서 검색어가 필요하다 — 카테고리를 그대로
     // 대표하는 한국어 키워드.
     // 2026-08-04 — "all"을 추가한다. 예전엔 chart=mostPopular가 주 경로라 all은 검색어가 필요 없었지만,
@@ -614,6 +622,19 @@ public class ShortsHotService {
                 if (videoId == null || title == null) continue;
                 long views = item.path("statistics").path("viewCount").asLong(0);
                 String thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+                // 🔴 2026-08-10 사장님 지적("키워드가 그게 최선이야?", "쇼츠 검색 키워드 다 문제 아냐?")
+                //   — 맞다. 채널 발견이 **검색어**에만 의존하는 게 구조적 약점이었다. V6에서 목록의
+                //   모집단을 검색에서 채널로 옮긴 이유가 "검색어는 계속 변한다"였는데, 정작 그 채널
+                //   명단을 채우는 일은 여전히 검색어가 하고 있었다. KR music이 안 차던 것도 결국
+                //   "요즘 인기 플레이리스트"가 롱폼을 가리키는 말이라 videoDuration=short와 어긋난 탓이다.
+                //   → 여기서 **공짜로** 명단을 채운다. 이 응답에는 이미 snippet.categoryId가 들어 있고
+                //   (part=snippet을 이미 받고 있다) 이 영상은 방금 isPlayableShort를 통과한 진짜 쇼츠다.
+                //   즉 "이 채널은 이 카테고리의 쇼츠를 실제로 올린다"가 **검색어 없이 데이터로 증명**된다.
+                //   추가 API 호출이 0이라 쿼터도 안 쓴다.
+                //   ⚠️ 적재는 명단에만 한다 — 이 영상이 목록에 오를지는 아래 조회수 정렬이 따로 정한다
+                //     (사장님 확인 "적재 후에 또 거른다며 조회수로"). 명단이 넓어질수록 그 정렬의
+                //     모수가 좋아지는 구조다.
+                harvestChannel(country, snippet);
                 scored.add(new Scored(new ShortsHotVideo(country, category, 0, videoId, title,
                         snippet.path("channelTitle").asText(null), thumb, now), views));
             }
@@ -627,6 +648,34 @@ public class ShortsHotService {
         }
         log.info("[ShortsHot] 채널 수집: country={} category={} 채널={}개 후보={}건 채택={}건",
                 country, category, channels.size(), candidateIds.size(), rows.size());
+    }
+
+    /**
+     * 방금 확인된 "진짜 쇼츠" 한 건에서 그 채널을 카테고리 화이트리스트에 적재한다(추가 API 호출 0).
+     * 검색어가 아니라 **유튜브가 붙인 categoryId**로 분류하므로 유행어와 무관하게 명단이 쌓인다.
+     * 이미 있으면 hitCount만 올린다(자동 정리 시 낮은 채널부터 걷어내는 기준).
+     */
+    private void harvestChannel(String country, JsonNode snippet) {
+        try {
+            String channelId = snippet.path("channelId").asText(null);
+            String categoryId = snippet.path("categoryId").asText(null);
+            if (channelId == null || categoryId == null) return;
+            String category = CATEGORY_BY_YOUTUBE_ID.get(categoryId);
+            if (category == null) return; // 우리가 안 쓰는 카테고리(교육/뉴스 등)는 무시
+            channelRepository.findByCountryAndCategoryAndChannelId(country, category, channelId)
+                    .ifPresentOrElse(ch -> {
+                        ch.setHitCount(ch.getHitCount() + 1);
+                        channelRepository.save(ch);
+                    }, () -> channelRepository.save(ShortsHotChannel.builder()
+                            .country(country).category(category)
+                            .channelId(channelId).channelTitle(snippet.path("channelTitle").asText(null))
+                            .hitCount(1).pinned(false).enabled(true)
+                            .discoveredAt(LocalDateTime.now())
+                            .build()));
+        } catch (Exception e) {
+            // 명단 적재는 부가 작업 — 실패해도 목록 갱신 자체는 계속돼야 한다.
+            log.debug("[ShortsHot] 채널 적재 실패(무시)", e);
+        }
     }
 
     /** rows에 이미 같은 videoId가 있으면 false(중복 방지) — 채널 간 중복 업로드 대비. */

@@ -353,6 +353,14 @@ public class ShortsHotService {
                 String channel = snippet.path("channelTitle").asText(null);
                 String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
+                // 🔴 2026-08-10(2차) — 적재를 collectFromChannels에만 넣었더니 **KR music이 안 채워졌다**
+                //   (실측: 배포 후에도 채널=1개 그대로). 당연한 결과였다 — 적재는 "수집된 영상"에서
+                //   하는데 music은 수집되는 게 0건이라 적재할 원본 자체가 없다. 명단이 비면 영영
+                //   비어 있는 자기강화 실패다.
+                //   → 이 chart 경로(chart=mostPopular&videoCategoryId=10)는 **검색어 없이** 그 카테고리
+                //   인기 영상을 직접 받아오므로, music처럼 명단이 빈 카테고리를 깨우는 유일한 씨앗이다.
+                //   여기서 걸린 쇼츠의 채널을 적재하면 다음 갱신부터 collectFromChannels가 돌기 시작한다.
+                harvestChannel(country, snippet);
                 rows.add(new ShortsHotVideo(country, category, rows.size(), videoId, title, channel, thumbnailUrl, now));
                 if (rows.size() >= KEEP_COUNT) break;
             }
@@ -421,6 +429,8 @@ public class ShortsHotService {
 
             String channel = snippet.path("channelTitle").asText(null);
             String thumbnailUrl = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+            // 검색으로 찾은 것도 채널 명단에 남긴다 — 그래야 다음부터 검색 없이(쿼터 0) 같은 채널을 쓴다.
+            harvestChannel(country, snippet);
             rows.add(new ShortsHotVideo(country, category, rows.size(), videoId, title, channel, thumbnailUrl, now));
         }
     }

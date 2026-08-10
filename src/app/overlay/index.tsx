@@ -506,6 +506,7 @@ export default function OverlaySessionScreen() {
               else if (action === 'capture') setActiveSavedList('capture');
               else if (action === 'favorite') setActiveSavedList('favorite');
               else if (action === 'hot') useToastStore.getState().show(t('overlay.hotComingSoon'));
+              else if (action === 'search') useToastStore.getState().show(t('overlay.searchComingSoon'));
             }}
           />
         )}

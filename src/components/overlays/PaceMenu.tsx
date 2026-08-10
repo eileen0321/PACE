@@ -4,7 +4,7 @@ import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
 import { radius, spacing, typography } from '../../constants/theme';
 
-export type PaceMenuAction = 'app' | 'hot' | 'capture' | 'favorite';
+export type PaceMenuAction = 'app' | 'hot' | 'search' | 'capture' | 'favorite';
 
 // 2026-07-31 사장님 지시 — 오버레이 우상단 "P" 아이콘을 누르면 이 4개 메뉴(앱으로/Shorts HOT/
 // Saved/Favorite)가 글래스모피즘 투명 박스로 뜬다. 첨부 레퍼런스 이미지(어두운 배경 + 은은한
@@ -21,6 +21,8 @@ export function PaceMenu({ onSelect, onClose, top }: {
     // 하나만 남기고 Saved 항목 제거(favorite 리스트가 예전 capture 저장분까지 함께 보여줌).
     { action: 'app', icon: 'smartphone', label: t('overlay.menuOpenApp') },
     { action: 'hot', icon: 'trending-up', label: t('overlay.menuHot') },
+    // 2026-08-10 파리티 — 안드 지시대로 HOT 바로 아래(dd4dd06).
+    { action: 'search', icon: 'search', label: t('overlay.menuSearch') },
     { action: 'favorite', icon: 'star', label: t('overlay.menuFavorite') },
   ];
   return (

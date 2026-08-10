@@ -164,6 +164,19 @@ const DEV_FALLBACK_SHORTS: YouTubeShort[] = [
   { videoId: 'ScMzIvxBSi4', title: '[DEV] Elephants Dream', channelTitle: 'dev-fallback', thumbnailUrl: 'https://i.ytimg.com/vi/ScMzIvxBSi4/hqdefault.jpg' },
 ];
 
+// 2026-08-10 파리티 — 안드 커밋 dd4dd06(쇼츠 검색, P메뉴 Search)의 iOS 이식. 프리셋은
+// api/search-presets.ts(Vercel, 국가별 캐시)가 내려주고, 실제 검색은 위 fetchShortsPage를
+// 커스텀 query로 그대로 재사용한다(쿼터 0, 이미 iOS 메인 피드가 쓰던 경로).
+export type SearchPreset = { label: string; query: string };
+export async function fetchSearchPresets(gl?: string): Promise<SearchPreset[]> {
+  if (!hasYouTubeProxy()) return [];
+  const params = gl ? `?gl=${encodeURIComponent(gl)}` : '';
+  const res = await fetch(`${YOUTUBE_PROXY_URL}/api/search-presets${params}`);
+  if (!res.ok) throw new Error(`SEARCH_PRESETS_ERROR ${res.status}`);
+  const json = (await res.json()) as { presets?: SearchPreset[] };
+  return json.presets ?? [];
+}
+
 /** Shorts 한 페이지를 받는다. 프록시 설정돼 있으면 프록시, __DEV__면 클라이언트 직접호출,
  * 둘 다 없으면 스크래핑 폴백, 그것도 비면(dev) 샘플. */
 export async function fetchShortsPage(opts: { query?: string; pageToken?: string | null } = {}): Promise<ShortsPage> {

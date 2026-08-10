@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../services/storage/keys';
+import { focusAllowanceApi } from '../services/api/client';
 
 // 🔴 2026-08-10 사장님 지적("맥은 focus off에서 on 갈 때마다 타이머가 10분으로 리셋돼") —
 //   Focus Session의 상태가 **화면 컴포넌트 안에만** 있었던 것이 원인이다. feed/index.tsx가
@@ -37,6 +38,51 @@ type FocusSessionState = PersistedFocusSession & {
 function persist(state: PersistedFocusSession) {
   // 저장 실패로 화면이 멈추면 안 된다 — 최악의 경우 예전(휘발) 동작으로 돌아갈 뿐이다.
   AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify(state)).catch(() => {});
+  // 🔴 2026-08-10 — 로컬만으로는 앱을 지웠다 깔면 통째로 초기화된다(사장님 지적). 서버에도 남긴다.
+  //   서버는 덮어쓰지 않고 병합한다(timedOut은 OR, 마감시각은 더 나중 것) — 재설치 후 올라온
+  //   빈 상태가 기존 기록을 지우지 못한다. 실패는 삼킨다(오프라인에서 세션이 멈추면 안 된다).
+  focusAllowanceApi
+    .sync({
+      date: todayKey(),
+      adExtendCount: 0, // 이 스토어는 횟수를 모른다 — max 병합이라 0은 서버 값을 낮추지 않는다
+      timedOut: state.timedOut,
+      sessionEndsAt: state.endsAt != null ? new Date(state.endsAt).toISOString() : null,
+    })
+    .catch(() => {});
+}
+
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 서버 기록을 로컬에 합친다 — **불리한 쪽으로만** 움직인다(timedOut은 OR, 마감시각은 더 이른 쪽).
+ * 앱을 지웠다 깔아 로컬이 비어 있어도 서버가 "이미 시간이 다 됐다"를 기억하므로 무료 세션이
+ * 다시 나가지 않는다. 오프라인이면 아무것도 안 하고 로컬 값으로 간다(fail-open).
+ *
+ * ⚠️ 마감시각을 "더 나중"이 아니라 **더 이른 쪽**으로 잡는 이유: 여기서 서버의 긴 마감시각을
+ *   받아들이면 로컬을 지운 사용자가 오히려 더 긴 세션을 받는다. 연장(광고/크레딧)은 extend()가
+ *   로컬에서 직접 늘리고 그 값을 서버로 올리는 방향이라 이 병합에 기대지 않는다.
+ */
+async function mergeServer(): Promise<void> {
+  try {
+    const server = await focusAllowanceApi.get(todayKey());
+    const state = useFocusSessionStore.getState();
+    const serverEndsAt = server.sessionEndsAt != null ? Date.parse(server.sessionEndsAt) : null;
+    const timedOut = state.timedOut || server.timedOut;
+    let endsAt = state.endsAt;
+    if (serverEndsAt != null && Number.isFinite(serverEndsAt)) {
+      endsAt = endsAt == null ? serverEndsAt : Math.min(endsAt, serverEndsAt);
+    }
+    if (timedOut) endsAt = null; // 시간이 다 된 상태면 남은 세션은 없다
+    if (timedOut !== state.timedOut || endsAt !== state.endsAt) {
+      useFocusSessionStore.setState({ endsAt, timedOut });
+      AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify({ endsAt, timedOut })).catch(() => {});
+    }
+  } catch {
+    // 오프라인/미인증 — 로컬 값으로 계속 간다.
+  }
 }
 
 export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
@@ -59,12 +105,14 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
           return;
         }
         set({ endsAt, timedOut, hydrated: true });
+        await mergeServer();
         return;
       }
     } catch {
       // 손상된 값이면 아래 기본값으로 폴백
     }
     set({ endsAt: null, timedOut: false, hydrated: true });
+    await mergeServer();
   },
 
   start: (durationMinutes) => {

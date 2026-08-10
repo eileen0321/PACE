@@ -133,6 +133,23 @@ export const authApi = {
   deleteAccount: () => request<void>('/auth/account', { method: 'DELETE' }),
 };
 
+// 🔴 2026-08-10 — 무료 Focus 허용량의 서버측 진실원천(backend V7__focus_allowance.sql).
+// 로컬(안드 prefs / iOS AsyncStorage)만으로는 앱을 지웠다 깔면 통째로 초기화돼서 "무료 10분 +
+// 광고 5분"을 무한 반복할 수 있었다. 게스트도 /auth/guest로 계정이 있으므로 비로그인도 보호된다.
+export type FocusAllowance = {
+  date: string;                 // YYYY-MM-DD (클라이언트 로컬 날짜)
+  adExtendCount: number;
+  timedOut: boolean;
+  sessionEndsAt: string | null; // ISO8601(UTC)
+};
+
+export const focusAllowanceApi = {
+  get: (date: string) => request<FocusAllowance>(`/focus-allowance?date=${encodeURIComponent(date)}`),
+  // 서버는 덮어쓰지 않고 병합한다(카운트 max, timedOut OR) — 재설치 후 올라온 0이 기록을 못 지운다.
+  sync: (body: { date: string; adExtendCount: number; timedOut: boolean; sessionEndsAt: string | null }) =>
+    request<FocusAllowance>('/focus-allowance/sync', { method: 'POST', body }),
+};
+
 export type SessionSyncItem = {
   id: string;
   platformApp: string | null;

@@ -5,6 +5,8 @@ import com.pace.backend.dto.FocusAllowanceSyncRequest;
 import com.pace.backend.entity.FocusAllowance;
 import com.pace.backend.repository.FocusAllowanceRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,11 +20,38 @@ import java.time.LocalDate;
  * 들고 오는데 그걸 그대로 받으면 서버 기록이 지워져 이 기능이 아무 의미가 없어진다. 그래서
  * 카운트는 max, timedOut은 OR로만 움직인다(= 한 방향으로만 늘어난다).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FocusAllowanceService {
 
     private final FocusAllowanceRepository repository;
+
+    /**
+     * 보관 기간. 이 데이터가 실제로 쓰이는 건 **오늘 하루치뿐**이다(하루 3회 한도, 자정 리셋) —
+     * 시간대 경계(클라이언트 로컬 날짜를 쓰므로 서버 기준 하루 앞뒤가 생긴다)를 위한 여유만 있으면 된다.
+     *
+     * 2026-08-10 사장님 질문("서버 용량 비용 드는 거 아냐? 다른 앱들은 어떻게 하는지 찾아봐") 조사 결과 —
+     * 업계 표준은 Redis에 기간만큼 TTL을 걸어 카운터가 스스로 사라지게 하는 것이다(정리 작업도,
+     * 누적 증가도 없다). 다만 Redis를 쓰는 진짜 이유는 저장 비용이 아니라 **분산 환경**(인스턴스가
+     * 여러 개면 프로세스 로컬 카운터는 로드밸런서 뒤에서 우회된다)인데, 우리는 백엔드 인스턴스가
+     * 하나라 그 이점이 없고 Railway에 서비스만 하나 더 늘어 오히려 과금이 는다.
+     * → Redis는 안 붙이고 **TTL의 개념만** 가져온다. 이 스케줄러가 그 역할이다.
+     *   1,000 DAU 기준 상시 7천 행(1 MB 미만)에서 영구히 고정된다.
+     */
+    private static final int RETENTION_DAYS = 7;
+
+    /**
+     * 하루 한 번(새벽 4시) 보관 기간이 지난 행을 지운다. 삭제되는 건 "지난 날짜"뿐이라 오늘의
+     * 한도 판정에는 영향이 없다.
+     */
+    @Scheduled(cron = "0 0 4 * * *")
+    @Transactional
+    public void purgeOldRows() {
+        LocalDate cutoff = LocalDate.now().minusDays(RETENTION_DAYS);
+        int deleted = repository.deleteByAllowanceDateBefore(cutoff);
+        if (deleted > 0) log.info("[FocusAllowance] 보관기간({}일) 경과 {}건 삭제 (cutoff={})", RETENTION_DAYS, deleted, cutoff);
+    }
 
     @Transactional(readOnly = true)
     public FocusAllowanceResponse get(Long userId, LocalDate date) {

@@ -8837,4 +8837,13 @@ Apple 승인 완료 상태**(90062/90186, 8/10과 같은 패턴)라 build 번호
 
 **버전 1.0.3으로 재상향** — `Info.plist`/`project.pbxproj`(4곳)/`app.json`(version +
 `ios.runtimeVersion`, 네이티브 변경 포함 빌드라 런타임버전도 같이 올림) 전부 동기화. build
-번호는 7 유지. 재아카이브/재export 진행 중.
+번호는 7 유지. 재아카이브 → **ARCHIVE SUCCEEDED** → 재export → **EXPORT SUCCEEDED**.
+
+**업로드 시도 2** — `xcrun altool --upload-app` → **UPLOAD SUCCEEDED with no errors**
+(Delivery UUID `22b0f1ed-a1e4-4ea7-a077-749b5580dd32`). 버전 1.0.3 / build 7, App Store
+Connect 업로드 완료. Apple 처리 대기(보통 5~10분) 후 사장님이 App Store Connect에서 직접
+"심사에 추가"를 눌러야 함(그건 로컬 CLI로 못 함).
+
+**이 빌드에 포함된 오늘 밤 주요 변경**: 광고 real/test 판정 버그 수정(수익 0이었던 문제),
+Focus Session 타이머 우회로+연장 버그 수정(Windows와 공동), Keychain 기반 재설치 내성 게스트 id,
+쇼츠 검색(프리셋+자유 검색+국가별 확장), 광고 연장 N/3 카운트 UI.

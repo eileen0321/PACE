@@ -104,7 +104,8 @@
           "androidAppId": "ca-app-pub-3201481146134957~4795871538",
           "iosAppId": "ca-app-pub-3201481146134957~6000041915"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "router": {

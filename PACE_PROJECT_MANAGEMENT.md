@@ -8646,3 +8646,22 @@ markTimedOut/stop)를 정확히 그 의도대로 호출하는 지점 전부 확�
 ⚠️ 아직 안 된 것(40ec367에 명시): iOS는 재설치 시 여전히 새 게스트가 된다(DeviceCheck 등 iOS
 전용 재설치-내성 앵커가 없음) — Android는 SSAID로 어느 정도 막히지만 iOS는 서버 기록이 있어도
 "새 사용자"로 인식되면 소용없다. 별도 작업으로 남아 있음.
+
+#### ✅ 위 iOS 구멍도 메움 — Keychain(`expo-secure-store`)으로 재설치-내성 게스트 id
+
+사장님 질문("웹서치 해봤어? 어떻게 대응하는지")에 실제 웹서치 수행 — Apple Dev Forums 등 확인 결과:
+- **Keychain**: 앱 삭제/재설치를 실제로 견딘다(기기 초기화·암호화 안 된 백업 복원에만 같이 날아감).
+  가장 간단하고, 이미 서버에 `focus_allowance` 기록이 있으니 "그 기록을 재설치 후에도 같은 게스트로
+  찾아가게" 하는 목적엔 이걸로 충분.
+- **DeviceCheck**: Apple 공식 서버투서버 API, 기기당 비트 2개. Keychain보다 변조 내성이 강하지만
+  (탈옥 기기에서 Keychain은 읽기/조작 가능) 별도 서버 연동이 더 필요 — 지금은 과잉이라 판단, Keychain으로 시작.
+- IDFV는 같은 개발사 앱을 전부 지우면 초기화돼 애초에 이 목적에 못 씀(기존에 이미 확인됨).
+
+**구현**: `expo-secure-store` 추가(`npx expo install`, 새 native 의존성 → pod install + 재빌드 필요),
+`deviceId.ts`가 iOS에서 Keychain을 최우선으로 읽고, 없으면 기존 AsyncStorage 값을 그대로 쓰면서
+Keychain에 백필(기존 사용자 id는 안 바뀜 — 이번 업데이트를 설치해도 즉시 효과는 없고, **그 다음
+재설치**부터 같은 id를 되찾음), 둘 다 없으면 새로 생성해 양쪽에 저장.
+
+`tsc --noEmit` 클린, `pod install` 성공, Release 빌드 실기기 설치 완료. 실제 "재설치 후 같은
+게스트로 복귀하는지"는 기기에서 앱 삭제 → 재설치 → 서버가 이전 focus_allowance 기록을 그대로
+보여주는지로 검증 필요(사장님 실기기 확인 요청).

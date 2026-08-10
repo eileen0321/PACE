@@ -186,7 +186,7 @@ export const SHORTS_HOT_CATEGORIES = ['all', 'music', 'gaming', 'comedy', 'enter
 // 지역이 아니라 **언어** 기준 — 한국어 사용자는 폰 지역이 US여도 한국 콘텐츠를 원한다.
 // 백엔드 화이트리스트는 KR/JP/US이고 그 외는 서비스 계층이 US로 폴백한다.
 const LANG_TO_COUNTRY: Record<string, string> = { ko: 'KR', ja: 'JP' };
-function deviceCountry(): string {
+export function deviceCountry(): string {
   try {
     const loc = Localization.getLocales()[0];
     const lang = (loc?.languageCode || '').toLowerCase();

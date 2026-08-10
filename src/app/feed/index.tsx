@@ -26,6 +26,7 @@ import { overlayService } from '../../services/platform';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
+import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
@@ -82,6 +83,13 @@ function DailyRemaining() {
   return <Text style={styles.dailyRemainingText}>{left}m left</Text>;
 }
 
+// 2026-08-10 우회로 발견(사장님 실기기 재현: 포커스 온 → P메뉴로 앱으로 나갔다 피드 재진입 →
+// 포커스 온하면 광고 모달 없이 그냥 10분 무료로 켜짐) — sessionTimedOutRef가 컴포넌트 useRef라
+// P메뉴 '앱으로'(router.back())로 이 화면이 언마운트됐다 재진입 시 리마운트되면서 false로
+// 초기화돼 무료 재개 차단 게이트가 통째로 풀렸다. Android b64b6d8과 같은 종류의 "제한을
+// 무력화하던 우회로" — 컴포넌트 바깥(모듈 스코프)으로 옮겨 화면 재마운트에도 값이 살아남게 한다.
+let sessionTimedOutModule = false;
+
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -115,7 +123,12 @@ export default function PaceFeedScreen() {
   const [sessionEndsAt, setSessionEndsAt] = useState<number | null>(null);
   // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 세션이 "타임아웃으로" 꺼졌는지(수동 off 아님)
   // 추적. 타임아웃 후 재활성화 시도 시 비프리미엄이면 무료 재개 대신 보상광고 연장 모달로 보낸다.
-  const sessionTimedOutRef = useRef(false);
+  // 2026-08-10 — 값 자체는 모듈 스코프(sessionTimedOutModule)에 두어 화면 언마운트/재마운트(P메뉴로
+  // 앱 나갔다 재진입 등)에도 살아남게 한다(위 우회로 주석 참고). .current 읽기/쓰기 인터페이스만 유지.
+  const sessionTimedOutRef = {
+    get current() { return sessionTimedOutModule; },
+    set current(v: boolean) { sessionTimedOutModule = v; },
+  };
   const [showExtendModal, setShowExtendModal] = useState(false);
   // 광고가 화면을 덮는 동안 재생을 멈췄다가 되돌리기 위해 직전 상태를 기억한다
   // (FocusSessionExtendModal의 onAdVisibilityChange 주석 참고 — 광고는 앱을 백그라운드로
@@ -194,6 +207,8 @@ export default function PaceFeedScreen() {
   const [showPaceMenu, setShowPaceMenu] = useState(false);
   const [activeSavedList, setActiveSavedList] = useState<SavedVideoKind | null>(null);
   const [showShortsHot, setShowShortsHot] = useState(false);
+  // 2026-08-10 파리티 — 안드 커밋 dd4dd06(P메뉴 → Search)의 iOS 이식.
+  const [showShortsSearch, setShowShortsSearch] = useState(false);
   // 스와이프 모드에서 플레이어가 보고하는 실제 재생 중 videoId(현재 영상 즐겨찾기 추가용). current.videoId는
   // 스와이프 모드에선 첫 영상에 고정이라 실제 영상과 다를 수 있어, 플레이어 onVideoChange 보고값을 우선한다.
   const currentVideoIdRef = useRef<string | null>(null);
@@ -796,7 +811,7 @@ export default function PaceFeedScreen() {
               // 띄우면 그 위에 겹쳐 그려졌다(위 onSelect 주석과 같은 원인). 여기서도 형제를 닫는다.
               setShowPaceMenu((v) => {
                 const next = !v;
-                if (next) { setActiveSavedList(null); setShowShortsHot(false); }
+                if (next) { setActiveSavedList(null); setShowShortsHot(false); setShowShortsSearch(false); }
                 return next;
               });
             }}
@@ -821,10 +836,12 @@ export default function PaceFeedScreen() {
               setShowPaceMenu(false);
               setActiveSavedList(null);
               setShowShortsHot(false);
+              setShowShortsSearch(false);
               if (action === 'app') { if (router.canGoBack()) router.back(); else router.replace('/(tabs)/home'); }
               else if (action === 'capture') setActiveSavedList('capture');
               else if (action === 'favorite') setActiveSavedList('favorite');
               else if (action === 'hot') setShowShortsHot(true);
+              else if (action === 'search') setShowShortsSearch(true);
             }}
           />
         )}
@@ -854,6 +871,7 @@ export default function PaceFeedScreen() {
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}
+        {showShortsSearch && <ShortsSearchOverlay onClose={() => setShowShortsSearch(false)} onOpenVideo={playInFeed} />}
 
         {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
             feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상

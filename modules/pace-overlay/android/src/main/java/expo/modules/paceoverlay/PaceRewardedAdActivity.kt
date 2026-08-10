@@ -58,6 +58,20 @@ class PaceRewardedAdActivity : Activity() {
     // JS 경로(rewardedAd.ts)의 로드 타임아웃과 같은 값으로 맞춘다.
     private const val LOAD_TIMEOUT_MS = 20_000L
 
+    // 🔴 2026-08-10 실기기 logcat으로 확정 — "광고보기를 눌렀는데 광고가 떴다가 1~2초 만에 지나가버린다"
+    //   (사장님 지적, 시도 6회 전부 재현·보상 0회). 범인은 광고가 아니라 **우리 앱의 HOT 이어서재생
+    //   감시**였다. 그 감시는 1.5초마다 "지금 보이는 제목이 바뀌었나"를 보고 바뀌었으면 다음 쇼츠를
+    //   딥링크로 여는데(PaceOverlayService의 startFavoriteChainWatch 콜백), 광고가 유튜브를 덮는
+    //   순간이 정확히 "제목이 바뀐" 것으로 읽혀서 유튜브를 앞으로 끌어올렸다 → 광고 태스크가 뒤로
+    //   밀리고 noHistory가 껍데기를 finish → 광고도 보상도 사라진다.
+    //     21:32:03.749 using preloaded ad → 21:32:05.004 CHAIN fire → HOT chain advance → 광고 소멸
+    //   ⚠️ "HOT 목록을 방금 눌렀을 때만"이 아니다 — 그 감시는 큐가 빌 때까지 안 멈춰서 실기기에서
+    //     20:46에 시작된 것이 3시간 뒤인 21:32까지 그대로 돌고 있었다. 사용자는 HOT을 건드린 기억도
+    //     없이 "광고보기가 그냥 안 되는" 것으로 겪는다.
+    //   → 광고가 화면에 떠 있는 동안임을 감시 쪽에 알려줘서 그때는 판정 자체를 쉬게 한다.
+    @Volatile var adShowing = false
+      private set
+
     private fun adUnitId(context: Context): String {
       val prefs = context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
       return if (prefs.getBoolean(PREF_USE_REAL_ADS, false)) REAL_UNIT_ID else TEST_UNIT_ID
@@ -153,6 +167,9 @@ class PaceRewardedAdActivity : Activity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // 로드 중(아직 광고가 안 뜬 구간)부터 켠다 — 이 껍데기 자체가 이미 유튜브를 가려서 감시가
+    // "제목이 바뀌었다"로 오판하기 시작하는 시점이 여기다(실기기: 껍데기 뜬 1초 뒤 CHAIN 발동).
+    adShowing = true
     // 2026-08-02 사장님 실기기 지적("광고 보기 눌렀더니 앱이 보이고 하단 흰 키 나오고 다시 광고로
     // 감") — 이 액티비티는 화면을 안 그리는 투명 껍데기인데, 투명 테마(Theme.Translucent)는 시스템
     // 바 색을 지정하지 않아 OEM 기본값(밝은 배경 + 흰 내비게이션 키)이 그대로 적용됐다. 그래서 광고가
@@ -279,6 +296,10 @@ class PaceRewardedAdActivity : Activity() {
   override fun onDestroy() {
     super.onDestroy()
     watchdogHandler.removeCallbacks(loadWatchdog)
+    // 광고 창이 실제로 사라진 지금 감시를 풀어준다. 여기서만 끄는 이유: 보상 콜백/닫힘 콜백은
+    // **광고가 아직 떠 있는 동안**에도 오므로(위 onAdDismissedFullScreenContent 주석의 실기기 로그)
+    // 그 시점에 풀면 광고가 화면에 남은 채로 다음 쇼츠가 열리는 원래 증상이 그대로 재현된다.
+    adShowing = false
   }
 
   private fun finishOnce() {

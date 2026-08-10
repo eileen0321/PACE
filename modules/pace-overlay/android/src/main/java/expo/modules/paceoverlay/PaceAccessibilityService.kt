@@ -477,6 +477,19 @@ class PaceAccessibilityService : AccessibilityService() {
       val runnable = object : Runnable {
         override fun run() {
           val now = SystemClock.elapsedRealtime()
+          // 🔴 2026-08-10 실기기 logcat으로 확정(사장님 "광고가 뜨고 지나가버린다", 6회 시도 6회 재현,
+          //   보상 0회) — 보상형 광고가 떠 있는 동안에도 이 폴링이 그대로 돌면서 광고 화면을
+          //   "제목이 바뀐 유튜브"로 오인해 다음 쇼츠 딥링크를 열었다. 그러면 유튜브가 광고 위로
+          //   올라오고 광고 태스크가 뒤로 밀려 finish된다 → 사용자는 광고를 못 보고 5분도 못 받는다.
+          //     21:32:03.749 광고 표시 → 21:32:05.004 CHAIN fire → HOT chain advance → 광고 소멸
+          //   광고 중에는 아무것도 판정하지 않고, 광고가 닫힌 뒤 화면이 안정되면(SETTLE) 그때
+          //   "기준만 다시 잡는" 리싱크 폴로 복귀한다 — 돌아오자마자 한 칸 건너뛰는 것도 막힌다.
+          if (PaceRewardedAdActivity.adShowing) {
+            chainWatchGraceUntilMs = now + CHAIN_WATCH_SETTLE_MS
+            chainWatchAwaitingResync = true
+            chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
+            return
+          }
           if (now < chainWatchGraceUntilMs) {
             // 유예 구간 — 방금 연 딥링크가 아직 로드 중일 수 있어 지금 읽는 값은 못 믿는다.
             chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
@@ -808,7 +821,16 @@ class PaceAccessibilityService : AccessibilityService() {
     } catch (e: Exception) {
       Log.w("PaceAccessibility", "trackedAppRootNode lookup failed, falling back to rootInActiveWindow", e)
     }
-    return rootInActiveWindow
+    // 🔴 2026-08-10 — 이 폴백이 "감시 대상 앱 창을 못 찾았을 때 지금 활성 창이라도 쓴다"는 뜻인데,
+    //   **우리 앱 자신의 창까지 유튜브인 양 돌려주고 있었다.** 보상형 광고가 유튜브를 덮으면
+    //   (실기기: supportedAppWindowVisible=false n=2, 남은 창이 전부 com.strides7.pace) 여기서
+    //   광고 화면이 돌아가고, readVisibleTitleChannel이 광고 문구를 "새 영상 제목"으로 읽어
+    //   이어서재생이 다음 쇼츠를 열어버렸다 — 광고가 지나가버리던 원인의 절반이 이 한 줄이다.
+    //   감시 대상 앱이 아닌 우리 화면은 "읽을 것이 없음"(null)이 정직한 답이다 — 호출부
+    //   (readVisibleTitleChannel / 재생시간 폴링 / 즐겨찾기 캡처)는 전부 null을 견디게 돼 있다.
+    val fallback = rootInActiveWindow
+    if (fallback?.packageName?.toString() == packageName) return null
+    return fallback
   }
 
   // 2026-08-01 실기기 재현(사용자: "지금도 오버레이가 또 없어") — 처음엔 PIP만 의심했으나(위 커밋

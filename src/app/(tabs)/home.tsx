@@ -36,6 +36,12 @@ import type { AppShieldTarget } from '../../types/models';
 import type { ShortFormApp } from '../../constants/apps';
 
 const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
+// 🔴 2026-08-11 사장님 지시("유튜브처럼 틱톡을 홈에 카드 추가") — 커버 이미지는 이미 저장소에
+// 있었다(assets/covers/tiktok.jpg). 타입(ShortFormApp), 앱 패키지/스킴(supportedApps.ts),
+// 안드 감시 목록(SupportedApps.PACKAGES에 글로벌 com.zhiliaoapp.musically + 한국 리전
+// com.ss.android.ugc.trill 둘 다), 흉내 오버레이(PlatformMimicOverlay)까지 전부 이미 있다 —
+// 즉 카드만 없었다.
+const TIKTOK_COVER = require('../../../assets/covers/tiktok.jpg');
 
 // 2026-08-03 — 홈 인사이트 배너를 다시 뽑기까지 필요한 최소 백그라운드 체류 시간. 이 값보다 짧게
 // 다녀오면(보상광고 시청, P메뉴 "앱으로" 등) 문구를 그대로 두어 복귀 화면이 전혀 안 움직인다.
@@ -589,6 +595,46 @@ export default function HomeScreen() {
             features={[...(capabilities.supportsHandsFreeControl ? ['🎧 Hands-Free'] : []), '⏱ Focus Session']}
             largeButton
           />
+
+          {/* 🔴 2026-08-11 사장님 지시("유튜브처럼 틱톡을 홈에 카드 추가, 안드로이드 애플 각각 동일한
+              방식으로") — 안드로이드는 **오버레이 코드가 앱 무관**이라 카드만 추가하면 기존 세션·
+              한도·이어서재생이 그대로 동작한다(사장님 표현: "안드 오버레이 코드 공통이고 쇼츠
+              사이트만 다르게"). onSelectPlatform('tiktok') → supportedApps.ts의 tiktok 항목
+              (tiktok:// 스킴 / www.tiktok.com/foryou, 실기기에서 For You 풀스크린 진입 검증됨)로
+              앱을 열고, ForegroundAppWatcher가 그 패키지를 감시 대상으로 이미 알고 있다.
+
+              ⚠️ iOS는 같은 방식이 **성립하지 않아** 지금은 숨긴다. iOS는 외부 앱을 안 열고 앱 안
+              WebView로 재생하는 구조인데(YouTubeShortsPlayer.ios), 틱톡은 그 자리에 놓을 콘텐츠를
+              가져올 방법이 없다. 2026-08-11에 유튜브 스크래퍼와 **동일한 기법까지 그대로** 시도해
+              확인한 결과다:
+                · 맨 요청           → 43KB captcha 셸, 영상 ID 0건
+                · 쿠키 세션(유튜브의 CONSENT 쿠키와 같은 수법) → 406KB 실페이지지만 데이터 블롭
+                  (__UNIVERSAL_DATA_FOR_REHYDRATION__)에 **itemList 자체가 없음**
+                · 구글/빙/DDG site:tiktok.com → 0건, RSSHub → 403
+                · oEmbed·embed/v2 → **정상 동작**(단 영상 ID를 이미 알아야 함)
+              유튜브는 검색 결과를 서버에서 HTML에 박아 보내지만 틱톡은 껍데기만 보내고 목록은
+              서명된(X-Bogus/msToken) API로 JS가 따로 받는다 — HTTP만으로는 어떤 쿠키를 붙여도
+              목록을 얻을 수 없다. 남은 수단은 헤드리스 브라우저뿐인데 그건 틱톡이 명시적으로 세운
+              차단을 우회하는 성격이라 별도 판단이 필요하다. 그때까지 iOS에 빈 피드를 보여주느니
+              카드를 안 내보내는 쪽을 택한다. */}
+          {Platform.OS === 'android' && (
+            <PlatformPickerCard
+              key="tiktok-with-pace"
+              title="TikTok with PACE"
+              badge="GUARDED"
+              statusText={
+                activeSessionPlatform === 'tiktok'
+                  ? 'Active'
+                  : 'Track viewing time and build healthier habits.'
+              }
+              cover={TIKTOK_COVER}
+              gradientFrom="rgba(37,244,238,0.30)"
+              onPress={() => onSelectPlatform('tiktok')}
+              isActive={activeSessionPlatform === 'tiktok'}
+              features={['⏱ Focus Session']}
+              largeButton
+            />
+          )}
         </View>
 
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>

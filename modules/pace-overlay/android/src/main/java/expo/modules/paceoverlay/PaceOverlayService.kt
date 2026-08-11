@@ -3838,25 +3838,23 @@ class PaceOverlayService : Service() {
           isClickable = true
           setOnClickListener {
             hideSearchPanel()
-            // HOT과 같은 규칙 — 고른 것부터 이어서 본다(즐겨찾기는 단일 재생, HOT/검색은 이어서재생).
+            // 🔴 2026-08-11 사장님 지적("양다일 검색하고 선택해서 보면 쇼츠가 맘대로 지나가버리던데") —
+            //   실기기 logcat으로 재현 확정. 예전엔 HOT과 같은 규칙으로 **검색 결과 전체를 이어서재생
+            //   큐에 넣었다**(items.drop(index+1) 적재). 그 결과:
+            //     23:24:08 baseline='양다일 [Yang Dail] - 착각 (Shorts Cover)'
+            //     23:24:22 CHAIN fire  ← 14초 만에 다음으로 넘어감
+            //     23:24:47 CHAIN fire  ← 2초 만에 넘어간 것도 있음
+            //     23:24:50 baseline='법무법인나란 핀테크전담팀'  ← 광고까지 큐를 타고 지나감
+            //   검색은 성격이 다르다. "양다일"을 검색해 특정 영상을 고른 건 **그 영상을 보겠다**는
+            //   뜻이지 검색 결과를 쭉 틀어달라는 뜻이 아니다.
+            //   즐겨찾기에서 이미 같은 판단을 했다 — "HOT은 이어서재생이 맞지만 즐겨찾기는 그것만
+            //   재생"(2026-08-09 지시). 검색도 그쪽이다. **고른 것 하나만 연다.**
+            //   ⚠️ 이전 큐/감시가 살아 있으면 그게 대신 넘겨버리므로 반드시 먼저 끊는다(아래 두 줄).
             chainQueue.clear()
             PaceAccessibilityService.stopFavoriteChainWatch()
-            items.drop(index + 1).forEach { rest -> chainQueue.add("https://www.youtube.com/shorts/${rest.videoId}") }
             try {
               startActivity(Intent(Intent.ACTION_VIEW,
                 Uri.parse("https://www.youtube.com/shorts/${item.videoId}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-              if (chainQueue.isNotEmpty()) {
-                foregroundPollHandler.postDelayed({
-                  PaceAccessibilityService.startFavoriteChainWatch {
-                    val next = chainQueue.poll()
-                    if (next == null) { PaceAccessibilityService.stopFavoriteChainWatch(); return@startFavoriteChainWatch }
-                    try {
-                      startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    } catch (e: Exception) { Log.w("PaceOverlayService", "검색 체이닝 재생 실패", e) }
-                    if (chainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
-                  }
-                }, 1800L)
-              }
             } catch (e: Exception) { Log.w("PaceOverlayService", "검색 결과 재생 실패", e) }
           }
         }

@@ -58,8 +58,14 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo }: {
   };
 
   const onOpen = (item: YouTubeShort) => {
-    // HOT과 동일 규칙(안드 지시대로) — 지금 검색 결과 순서를 이어서재생 큐로 넘긴다.
-    if (onOpenVideo) { onOpenVideo(item.videoId, items.map((i) => i.videoId)); onClose(); }
+    // 🔴 2026-08-11 사장님 지적("양다일 검색하고 선택해서 보면 쇼츠가 맘대로 지나가버리던데") —
+    //   안드 실기기 logcat으로 재현 확정(14초·2초 만에 다음 영상으로 넘어가고 광고까지 큐를 탔다).
+    //   예전엔 HOT과 같은 규칙으로 검색 결과 전체를 이어서재생 큐(playlist 인자)로 넘겼는데,
+    //   검색은 성격이 다르다 — 특정 영상을 고른 건 **그걸 보겠다**는 뜻이지 결과를 쭉 틀어달라는
+    //   뜻이 아니다. 즐겨찾기에서 이미 같은 판단을 했다("HOT은 이어서재생이 맞지만 즐겨찾기는
+    //   그것만 재생", 2026-08-09 지시). 검색도 그쪽이다 — playlist를 넘기지 않는다.
+    //   (안드도 같은 날 동일하게 고쳤다: PaceOverlayService의 검색 결과 탭 핸들러.)
+    if (onOpenVideo) { onOpenVideo(item.videoId); onClose(); }
     else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 

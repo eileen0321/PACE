@@ -206,7 +206,22 @@ class PaceOverlayService : Service() {
         // 직접 Pace로 전환한 경우도 같이 해결된다).
         val selfForeground = usageStatsForeground == packageName || accessibilityForeground == packageName
         val eventBasedVisible = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
-        val shouldShow = !selfForeground && (windowVisibleOrNull ?: eventBasedVisible)
+        // 🔴 2026-08-12 사장님 지시("틱톡 넣고 검증하라고") — 실기기에서 틱톡 위에 알약이 **전혀
+        //   안 떴다**. 로그가 원인을 그대로 보여준다:
+        //     pill HIDE fg=com.ss.android.ugc.trill a11yFg=null usage=com.ss.android.ugc.trill win=false
+        //   UsageStats는 틱톡을 정확히 보는데(fg/usage 둘 다 틱톡) **접근성은 틱톡 창을 못 본다**
+        //   (a11yFg=null, win=false). 틱톡이 접근성 트리에 창을 안 내주기 때문이다 — 유튜브가 되는 건
+        //   유튜브가 트리를 노출해서지, 우리 코드가 앱 무관이어서가 아니었다("오버레이 코드 공통이니
+        //   URL만 바꾸면 된다"는 내 판단이 틀렸다).
+        //   기존 규칙은 "접근성이 살아 있으면 그 답만 믿는다"였는데, 그러면 트리를 안 내주는 앱은
+        //   영원히 false가 되어 알약·재생감지·스와이프가 통째로 죽는다.
+        //   → 접근성이 false여도 **UsageStats가 감시 대상 앱을 가리키면 보이는 것으로 인정**한다.
+        //   ⚠️ 깜빡임(2026-08-01에 이 판정을 접근성 단독으로 바꾼 원래 이유)은 그대로 막힌다 —
+        //     UsageStats가 우리 앱이나 런처를 가리키는 순간엔 아래 selfForeground/eventBasedVisible이
+        //     false라 알약이 즉시 사라진다. 낡은 신호를 OR로 얹는 게 아니라 "둘 중 하나라도 이 앱을
+        //     현재 전경으로 지목하면"이라 예전 깜빡임 조건(유튜브↔다른앱 전환)과 다르다.
+        val usageBasedVisible = usageStatsForeground != null && SupportedApps.PACKAGES.contains(usageStatsForeground)
+        val shouldShow = !selfForeground && ((windowVisibleOrNull ?: eventBasedVisible) || usageBasedVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
         // 밀려나 디버깅을 방해했다(실기기 조사 중 반복 확인). 오버레이 표시 로직 자체는 무변경.

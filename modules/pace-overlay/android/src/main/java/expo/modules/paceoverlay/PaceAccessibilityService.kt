@@ -290,6 +290,20 @@ class PaceAccessibilityService : AccessibilityService() {
       // 2026-07-31에 두 번 고쳤던 자리인데(둘 다 currentForegroundPackage의 신선도를 어떻게 다룰지의
       // 문제였다), 근본 원인은 신선도 게이트가 아니라 **이벤트 기반 필드를 신뢰한 것 자체**였다.
       // getWindows()는 이벤트가 아니라 현재 상태를 직접 묻는 API라 이 문제가 구조적으로 없다.
+      //
+      // 🔴 2026-08-12 사장님 지시("틱톡 넣고 검증하라고") — 위 창 게이트만으로는 **틱톡에서 시간이
+      //   한 번도 안 깎였다**. 실기기 로그:
+      //     tick skipped decrement — playback not detected (paused/backgrounded)
+      //     SLEEP CONFIRMED (timer) → SESSION END reason=sleep_detected
+      //   틱톡은 접근성 트리에 창을 안 내주므로 supportedAppWindowVisible()이 **틱톡을 보고 있어도
+      //   항상 false**다. 그래서 재생 감지가 죽고, 시간이 안 깎이고, 끝내 수면 감지가 세션을 끝냈다.
+      //   → 창을 못 찾았을 때 **UsageStats에 지금 이 순간을 직접 물어본다.**
+      //   ⚠️ 2026-08-06에 제거한 것은 `currentForegroundPackage`(**이벤트로만 갱신되는 낡은 필드**)이지
+      //     UsageStats가 아니다. UsageStats는 getWindows()처럼 "지금"을 조회하는 API라 그 함정이 없다.
+      //     그리고 감시 대상 앱이 아니면 여전히 false를 돌려주므로, "다른 앱 보는데 시간이 깎인다"는
+      //     그때 그 버그는 그대로 막혀 있다.
+      val fg = runCatching { ForegroundAppWatcher.getForegroundPackage(service) }.getOrNull()
+      if (fg != null && SupportedApps.PACKAGES.contains(fg)) return true
       return false
     }
 

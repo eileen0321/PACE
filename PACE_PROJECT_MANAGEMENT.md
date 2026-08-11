@@ -8805,3 +8805,45 @@ Vercel 스크레이핑 프록시(`fetchShortsPage`→`api/youtube-shorts.ts`의 
 동작하는지는 **코드 리뷰로만** 확인(로직 자체는 안드 표와 동일한 `LOCALE_SHORTS_WORD` 매핑,
 중복 접미사 방지 로직도 정상). 실사용자 시나리오(타이핑+검색 버튼 탭+결과 확인)는 사장님이나
 실기기가 있을 때 최종 확인 필요.
+
+**추가 확인(실기기, 진단 핑)**: P → Search 탭 → 오버레이 실제로 열림(`DIAG_SEARCH_TAP`
+→ 2ms 뒤 `DIAG_SEARCH_OVERLAY_MOUNTED`) 확인. 사장님이 "검색 UI가 없다"고 한 건 Home 탭에서
+찾고 있었던 것 — Search는 쇼츠 피드 화면 안(P 메뉴)에만 있다. 진단 코드는 확인 후 제거(커밋에
+안 남음, 순수 로컬 임시 코드였음).
+
+---
+
+### 2026-08-11 — 출시 빌드(build 7, 1.0.2) 로컬 아카이브 — 매출 영향 최종 확인 후 착수
+
+사장님 지시("git 가져오고 출시 매출영향없는지 확인하고 로컬로 출시버전빌드해").
+
+**매출 영향 최종 점검**: `USE_REAL_ADS`가 `adsConfig.ts` 한 곳에서만 정의되고 `AdBanner.tsx`/
+`rewardedAd.ts`/`_layout.tsx`(네이티브 push) 전부 그 값을 import해서 쓰는지 grep으로 재확인 —
+`process.env.EXPO_PUBLIC_USE_REAL_ADS` 직접 참조가 코드에 하나도 안 남아있음 확인. 구독/paywall은
+오늘 안 건드림(기존 감사 결과 유지). 안드 검색 하루제한 제거 + Data API 폴백 상한(`fa26c0d`)은
+백엔드(Vercel) 단독 배포라 iOS 빌드와 무관.
+
+**버전**: build 6(1.0.2)은 이미 한 번 업로드한 이력이 있어 build 번호만 7로 올림(마케팅 버전은
+그대로 1.0.2 — 만약 Apple이 "이미 승인됨"으로 거부하면 그때 버전 자체를 올림, 8/10과 같은 패턴).
+`Info.plist`/`project.pbxproj`(4곳)/`app.json` 전부 동기화.
+
+`xcodebuild archive -allowProvisioningUpdates` → **ARCHIVE SUCCEEDED**.
+`xcodebuild -exportArchive`(method=app-store, teamID=328BF833XS) → **EXPORT SUCCEEDED**,
+`Pace.ipa`(~53MB) 스크래치패드에 생성 완료.
+
+**업로드 시도 1** — `eileenlee0321@gmail.com` + 어제 앱 암호로 인증 성공, 그런데 **1.0.2가 이미
+Apple 승인 완료 상태**(90062/90186, 8/10과 같은 패턴)라 build 번호만 올린 걸론 안 됨 — 버전
+문자열 자체를 올려야 함.
+
+**버전 1.0.3으로 재상향** — `Info.plist`/`project.pbxproj`(4곳)/`app.json`(version +
+`ios.runtimeVersion`, 네이티브 변경 포함 빌드라 런타임버전도 같이 올림) 전부 동기화. build
+번호는 7 유지. 재아카이브 → **ARCHIVE SUCCEEDED** → 재export → **EXPORT SUCCEEDED**.
+
+**업로드 시도 2** — `xcrun altool --upload-app` → **UPLOAD SUCCEEDED with no errors**
+(Delivery UUID `22b0f1ed-a1e4-4ea7-a077-749b5580dd32`). 버전 1.0.3 / build 7, App Store
+Connect 업로드 완료. Apple 처리 대기(보통 5~10분) 후 사장님이 App Store Connect에서 직접
+"심사에 추가"를 눌러야 함(그건 로컬 CLI로 못 함).
+
+**이 빌드에 포함된 오늘 밤 주요 변경**: 광고 real/test 판정 버그 수정(수익 0이었던 문제),
+Focus Session 타이머 우회로+연장 버그 수정(Windows와 공동), Keychain 기반 재설치 내성 게스트 id,
+쇼츠 검색(프리셋+자유 검색+국가별 확장), 광고 연장 N/3 카운트 UI.

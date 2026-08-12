@@ -497,4 +497,4 @@ adb logcat -s PaceAccessibility:V | grep -E "RANGE_INFO|AUTO_NEXT|VIDEO_ADVANCE|
 |---|---|
 | 발견 9 | `app.json`이 아직 `versionCode: 11` — **이미 사용된 번호**라 업로드에서 튕긴다. version 문자열만 1.0.3으로 올라갔다 |
 | 발견 8 | `eas.json` production이 **아무도 안 읽는** `EXPO_PUBLIC_USE_REAL_ADS`를 넘기고, 실제 스위치인 `EXPO_PUBLIC_ANDROID_REAL_ADS`는 안 넘긴다 → 안드로이드 프로덕션 빌드가 **테스트 광고로 나가 수익 0** |
-| 발견 10 | **기기 날짜만 바꾸면** 광고 3회 한도·출석 크레딧이 무제한으로 풀린다. 서버도 못 막는다(`FocusAllowanceController`가 클라이언트가 보낸 날짜를 그대로 씀). 2026-08-10에 막은 "재설치 우회"보다 **더 쉬운 우회**가 옆에 열려 있다 |
+| 발견 10 | **기기 날짜를 바꾸면 "하루 N회" 한도가 리셋된다.** 뚫리는 것 = 광고 연장 3회/일(서버가 클라이언트가 보낸 날짜를 그대로 씀, `FocusAllowanceController:32`) + **출석 크레딧 +5/일(서버 연동 자체가 없음)**. 크레딧으로 연장할 수 있으므로 결과적으로 **광고 없이 무제한 연장**이 된다. **안 뚫리는 것 = 포커스 게이트(`timedOut`)** — 날짜 키 없이 저장 + 서버 OR 병합이라 정상. 2026-08-10에 막은 "재설치 우회"보다 쉬운 경로가 옆에 열려 있다 |

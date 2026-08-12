@@ -63,6 +63,10 @@ class PaceAccessibilityService : AccessibilityService() {
   private var lastVideoFingerprint: String? = null
   private var lastRangeProbeLogAtMs = 0L
   // 2026-08-12 — 직전 폴링의 진행률(0~1). -1 = 아직 못 읽음.
+  // 2026-08-13 — range 후보별 직전 진행률(키: 클래스:max). "값이 흐르는 바"를 가려내는 데 쓴다.
+  private val rangeCandidateHistory = HashMap<String, Float>()
+  // 2026-08-13 — 지금 영상을 보기 시작한 시각. 한 영상에 너무 오래 머무는 걸 끊는 데 쓴다.
+  private var videoStartedAtMs = 0L
   private var lastKnownFrac = -1f
   private var lastFracAtMs = 0L
   private var estimatedDurationMs = -1L
@@ -138,6 +142,9 @@ class PaceAccessibilityService : AccessibilityService() {
     // 진행바가 없는 영상(틱톡 짧은 클립)에서만 쓰는 시간 기반 폴백 간격.
     private const val NO_PROGRESSBAR_ADVANCE_MS = 20_000L
     private const val SWIPE_FLING_MS = 120L
+    // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
+    // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
+    private const val MAX_SINGLE_VIDEO_MS = 90_000L
     private const val NEAR_END_LEAD_MS = 2_500L
     private const val NEAR_END_FRAC = 0.95f
     private const val LOOP_BACK_FRAC_DROP = 0.3f
@@ -180,6 +187,16 @@ class PaceAccessibilityService : AccessibilityService() {
     // ⚠️ 이 함수는 "지금 이 순간 붙어 있나"라는 **엄격한** 질문이다. 실제로 제스처를 쏘거나 창을
     // 조회해야 하는 내부 코드는 이 값을 써야 한다. 반대로 사용자에게 "권한이 없다"고 말하거나
     // 기능을 막을지 판단할 때는 아래 isAliveOrRebinding()을 써야 한다(그 주석 참고).
+    /**
+     * 🔴 2026-08-13 사장님 지적("블루투스 연결돼 있는데 집중에서 파란불이 안 들어온다, 동작도 하는데") —
+     * getBluetoothState()가 **오디오 기기(A2DP/SCO)만** 보고 있었다. 리모컨/셔터는 HID 입력기기라
+     * 오디오 목록에 영원히 안 잡힌다 — 그래서 실제로 눌러서 넘어가는데도 "연결 안 됨"이었다.
+     * 어댑터를 직접 조회하려면 Android 12+에서 BLUETOOTH_CONNECT 런타임 권한이 필요해
+     * 권한 프롬프트가 새로 생긴다. 대신 **이미 갖고 있는 증거**를 쓴다: 리모컨이 실제로 키를
+     * 보낸 적이 있으면 그건 연결됐다는 가장 확실한 신호다(추정이 아니라 관측이다).
+     */
+    fun lastRemoteKeyAtMs(): Long = instance?.lastVolumeKeySwipeAtMs ?: 0L
+
     fun isAlive(): Boolean {
       if (instance == null) return false
       lastAliveAtMs = System.currentTimeMillis()
@@ -922,6 +939,10 @@ class PaceAccessibilityService : AccessibilityService() {
       if (frac != null) {
         // 진행바가 실제로 있다 = 관측 가능. 수면감지 게이트가 이 시각을 본다.
         lastTimingReadAtMs = now
+        // over-stay 상한의 기준점. 첫 관측에서 잡아둬야 **세션의 첫 영상이 긴 경우에도** 상한이
+        // 걸린다(이걸 안 잡으면 한 번 넘어간 뒤에야 상한이 작동해서, 사장님이 겪은 "첫 영상이
+        // 2분이라 세션 내내 그것만" 상황을 그대로 놓친다).
+        if (videoStartedAtMs == 0L) videoStartedAtMs = now
         // 🔴 2026-08-12 사장님 지시로 찾아낸 경로 — 틱톡 SeekBar(max=10000)가 재생 진행을 그대로
         //   노출한다(실측 frac 0.724 → 0.787). 유튜브의 currentSec/totalSec 자리에 이 값을 넣으면
         //   nearEnd/looped-back 판정이 그대로 성립한다.
@@ -936,6 +957,7 @@ class PaceAccessibilityService : AccessibilityService() {
             PaceOverlayService.markUserActivity()
           }
           estimatedDurationMs = -1L // 새 영상 — 길이 추정을 처음부터 다시 한다
+          videoStartedAtMs = now  // over-stay 상한도 새 영상 기준으로 리셋
         } else if (prev >= 0f && frac > prev) {
           // 🔴 2026-08-12 실측 — 임계값(frac >= 0.95)만으로는 못 잡는다. 접근성 노드 갱신이 폴링보다
           //   느려(~2.5초) 마지막 샘플이 0.9472였고 다음 샘플은 이미 0.0076(루프 후)이었다.
@@ -950,10 +972,24 @@ class PaceAccessibilityService : AccessibilityService() {
             }
           }
           val remainMs = if (estimatedDurationMs > 0L) ((1f - frac) * estimatedDurationMs).toLong() else Long.MAX_VALUE
-          if (isWatching && remainMs <= NEAR_END_LEAD_MS && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
-            Log.d("PaceAccessibility", "AUTO_NEXT reason=frac-predict frac=$frac est=${estimatedDurationMs}ms remain=${remainMs}ms")
+          // 🔴 2026-08-13 사장님 지적("포커스 온인데 계속 같은 영상이 나와") — 실측으로 확정된 원인:
+          //   그 영상이 **117초짜리**였다. 진행률은 리셋 없이 단조 증가했고(0.004→0.284→0.564→0.983)
+          //   자동넘김은 "끝나기 2.5초 전"에만 발사되므로 2분 내내 그대로 뒀다. 포커스 세션이
+          //   10분인데 영상 하나가 2분을 먹으면 "계속 같은 영상"으로 느껴지는 게 당연하다.
+          //   코드 주석이 전제한 건 "숏폼 15~60초"인데(SAFETY_TIMEOUT_MS 주석) 지금 틱톡은 추천 피드에
+          //   **최대 10분짜리**를 섞어 서빙한다. 10분짜리가 걸리면 10분을 기다린다 —
+          //   "쇼트폼 총 시청시간 줄이기"라는 제품 목적과 정반대로 동작하는 구간이다.
+          //   → 한 영상에 머무는 시간에 상한을 둔다. 상한에 걸리면 진행률과 무관하게 넘긴다.
+          //   ⚠️ 상한은 넉넉히(90초) 잡는다 — 일반적인 숏폼(15~60초)은 절대 중간에 안 끊기고,
+          //     비정상적으로 긴 것만 잘린다. 짧은 영상을 끊는 건 기본 동작을 해치는 것이라 피한다.
+          val stuckOnSameVideoMs = if (videoStartedAtMs > 0L) now - videoStartedAtMs else 0L
+          val overStay = stuckOnSameVideoMs >= MAX_SINGLE_VIDEO_MS
+          if (isWatching && (remainMs <= NEAR_END_LEAD_MS || overStay) && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+            val why = if (overStay) "over-stay(${stuckOnSameVideoMs}ms)" else "frac-predict"
+            Log.d("PaceAccessibility", "AUTO_NEXT reason=$why frac=$frac est=${estimatedDurationMs}ms remain=${remainMs}ms")
             performSwipeUp()
             lastSwipeAtMs = now
+            videoStartedAtMs = now
           }
         }
         if (frac != prev) lastFracAtMs = now
@@ -1148,9 +1184,28 @@ class PaceAccessibilityService : AccessibilityService() {
     //   → 화면에 실제로 보이는(isVisibleToUser) 것만 후보로 두고, 그중 가장 앞선 값을 쓴다.
     //   ⚠️ 안 보이는 바로 폴백하지 않는다 — 그건 항상 0이라 "진행률 0"으로 착각하게 만든다.
     //     못 찾으면 null(=진행 신호 없음)을 돌려주고, 호출부가 시간 기반 폴백으로 넘어가게 한다.
-    val seek = found.filter { it.cls.contains("SeekBar") && it.visible }.maxByOrNull { it.frac }
+    // 🔴 2026-08-13 3차 실기기 (사장님: "포커스 온인데 계속 같은 영상이 나와") — 클래스 이름으로
+    //   고르는 것 자체가 틀렸다. 그날 틱톡은 SeekBar가 아니라 **ProgressBar로 재생 진행률을 줬다**:
+    //     RANGE_INFO n=1 ProgressBar(max=60075.0, frac=0.063, vis=true)   ← 60초 영상의 3.8초 지점
+    //   그런데 SeekBar만 찾다 보니 null이 나가고("RANGE_INFO none") 자동넘김이 통째로 멈췄다.
+    //   앞서 배제했던 버퍼 바(max=1167084, frac이 0에서 안 변함)와 이건 클래스가 같아 이름으로는
+    //   구분이 안 된다. **구분되는 유일한 성질은 "값이 실제로 흐르는가"다.**
+    //   → 보이는 후보들의 직전 값을 기억해두고, 이번에 **증가한 것**을 재생바로 채택한다.
+    //     아직 판단이 안 서는 첫 폴링에서는 종전대로 SeekBar를 우선하고, 그것도 없으면
+    //     보이는 후보 중 하나를 잠정 채택해 다음 폴링에서 흐르는지 본다.
     Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.cls.substringAfterLast('.')}(max=${it.max},frac=${"%.3f".format(it.frac)},vis=${it.visible})" })
-    return (seek ?: return null).frac
+    val visible = found.filter { it.visible }
+    if (visible.isEmpty()) return null
+    val advancing = visible.filter { hit ->
+      val key = "${hit.cls}:${hit.max}"
+      val prev = rangeCandidateHistory[key]
+      rangeCandidateHistory[key] = hit.frac
+      prev != null && hit.frac > prev + 0.0005f // 잡음 방지용 최소 증가폭
+    }
+    val picked = advancing.maxByOrNull { it.frac }
+      ?: visible.firstOrNull { it.cls.contains("SeekBar") }
+      ?: visible.first()
+    return picked.frac
   }
 
   private data class RangeHit(val cls: String, val frac: Float, val max: Float, val visible: Boolean)

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getTodayUsageMinutes, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
+import { getTodayUsageByApp, getTodayUsageMinutes, getPreviousWeekStats, getWeeklyStats } from '../database/repositories/statsRepository';
 import { useSettingsStore } from './useSettingsStore';
 import type { DailyStats } from '../types/models';
 
@@ -16,6 +16,9 @@ function computeFocusScore(weeklyStats: DailyStats[], dailyLimitMinutes: number)
 
 type StatsState = {
   todayUsageMinutes: number;
+  /** 오늘 사용시간을 앱별로 나눈 값 — 2026-08-12 사장님 지시로 부활(원본은 c0cb9b6에서 삭제됨).
+   * 안 본 앱은 아예 안 들어온다. */
+  todayUsageByApp: { app: string; minutes: number; seconds: number }[];
   weeklyStats: DailyStats[];
   /** 지난주(-13일~-7일) 일별 원본 배열 — "지난주 대비 X%" 트렌드 계산용. stats.tsx가 이번 주
    * 경과일수와 같은 범위로 잘라서(요일 단위 공정 비교) 합산한다(2026-07-28 감사 수정,
@@ -28,6 +31,7 @@ type StatsState = {
 
 export const useStatsStore = create<StatsState>((set) => ({
   todayUsageMinutes: 0,
+  todayUsageByApp: [],
   weeklyStats: [],
   previousWeekStats: [],
   focusScore: null,
@@ -36,14 +40,16 @@ export const useStatsStore = create<StatsState>((set) => ({
   refresh: async (userId) => {
     set({ isLoading: true });
     try {
-      const [today, weekly, previousWeek] = await Promise.all([
+      const [today, byApp, weekly, previousWeek] = await Promise.all([
         getTodayUsageMinutes(userId),
+        getTodayUsageByApp(userId),
         getWeeklyStats(userId),
         getPreviousWeekStats(userId),
       ]);
       const dailyLimitMinutes = useSettingsStore.getState().settings.dailyLimitMinutes;
       set({
         todayUsageMinutes: today,
+        todayUsageByApp: byApp,
         weeklyStats: weekly,
         previousWeekStats: previousWeek,
         focusScore: computeFocusScore(weekly, dailyLimitMinutes),

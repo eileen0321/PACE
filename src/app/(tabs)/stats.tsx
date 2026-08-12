@@ -18,7 +18,7 @@ import { AppHeader } from '../../components/ui/AppHeader';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { GlassSurface } from '../../components/ui/GlassSurface';
 import { WeeklyGraphCard } from '../../components/cards/WeeklyGraphCard';
-import { colors, gradients, radius, spacing, typography } from '../../constants/theme';
+import { colors, gradients, radius, sourceColors, spacing, typography } from '../../constants/theme';
 import type { DailyStats } from '../../types/models';
 import { toLocalDateStr } from '../../utils/date';
 
@@ -27,9 +27,10 @@ import { toLocalDateStr } from '../../utils/date';
 // 비중/WeeklyGraphCard(구프로토타입 컴포넌트)/Wholesome Feed Breakdown)였는데, 실제 소스엔 그런
 // 섹션이 없다 — This Week Hero → Focus Score+Healthy Streak 2단 그리드 → Today's Behavior(3행) →
 // Weekly Activity(요일별 바 리스트+목표선) → Best Day 카드 순.
-// 2026-07-26 사용자 지시 — 앱이 YouTube만 지원하기로 확정되면서(Home의 플랫폼 카드도 YouTube
-// 하나뿐) Platform Breakdown은 항상 YouTube 100%로만 나오는 무의미한 섹션이라 통째로 삭제
-// (store의 platformBreakdown 필드/getTodayUsageByApp 쿼리까지 전부 제거).
+// 2026-07-26에 "앱이 YouTube 하나뿐이라 항상 100%로만 나온다"며 Platform Breakdown을 통째로
+// 지웠다가(c0cb9b6), 2026-08-12 틱톡이 들어오면서 **되살렸다**(아래 4-B 섹션 + store의
+// todayUsageByApp + getTodayUsageByApp 쿼리). 앱이 하나뿐인 사용자에겐 여전히 숨기므로
+// 2026-07-26의 판단도 그대로 유효하다.
 // 원본은 4h 26m/82점/18%/31개 자동넘김/Mon-Sun 요일별 분/Best Day="Friday" 전부 하드코딩 데모
 // 숫자다(videosWatched/averageDuration만 실제 prop이었고 그마저 0이면 `|| 42`/`|| 31`로 가짜값
 // 대체). "가짜 데이터로 채우지 말라"는 지시에 따라:
@@ -54,6 +55,7 @@ export default function StatsScreen() {
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { weeklyStats, previousWeekStats, focusScore, refresh } = useStatsStore();
+  const todayUsageByApp = useStatsStore((s) => s.todayUsageByApp);
   const dailyLimitMinutes = useSettingsStore((s) => s.settings.dailyLimitMinutes);
   const bluetooth = useBluetoothStore();
   // Flip Mode(스펙 §4-A) — 오늘 "내려놓은 시간(쉬는시간)", 양쪽 플랫폼 다 실제 계측.
@@ -114,6 +116,7 @@ export default function StatsScreen() {
   const todayEntry = weeklyStats.find((d) => d.date === todayStr);
   const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
   const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
+  const platformTotalSeconds = todayUsageByApp.reduce((acc, p) => acc + p.seconds, 0);
   // "지난주 대비" 트렌드도 같은 이유로 지난주 전체(7일)가 아니라 지난주의 같은 요일 구간(월~오늘과
   // 같은 위치)만 잘라 공정 비교한다 — 안 그러면 예를 들어 월요일 아침엔 "이번 주"(하루치)를 "지난주"
   // (7일치)와 비교해 항상 큰 폭으로 줄어든 것처럼 보인다.
@@ -189,6 +192,36 @@ export default function StatsScreen() {
             <BehaviorRow title={t('stats.longestSession')} subtitle={t('stats.maxUninterrupted')} value={`${longestSessionMinutes}m`} valueColor={colors.primary} last />
           </GlassSurface>
         </View>
+
+        {/* 4-B. PLATFORM BREAKDOWN — 오늘 앱별 사용시간.
+            2026-07-26에 "앱이 YouTube 하나뿐이라 항상 100%로만 나오는 무의미한 섹션"이라며
+            지웠던 것(c0cb9b6)을 2026-08-12 틱톡 추가로 되살린다 — 사장님 지시
+            ("틱톡을 안 봤을 땐 0이니까 안 나와도 되는데 봤으면 같이 나와야 하잖아").
+            ⚠️ 원본과 달라진 점: 원본은 **퍼센트만** 보여줬는데 지시가 "몇 분씩"이므로 분을 앞에 둔다.
+            안 본 앱은 쿼리 결과에 행 자체가 없어 여기서 따로 거를 필요가 없다. 앱이 하나뿐이면
+            100% 한 줄이 되므로 그때는 숨긴다 — 2026-07-26에 지웠던 판단 자체는 그 상황에선 옳았다. */}
+        {todayUsageByApp.length > 1 && (
+          <View>
+            <Text style={styles.sectionTitle}>{t('stats.platformBreakdown')}</Text>
+            <GlassSurface style={styles.card}>
+              {todayUsageByApp.map((p) => {
+                const pct = platformTotalSeconds > 0 ? Math.round((p.seconds / platformTotalSeconds) * 100) : 0;
+                const accent = p.app in sourceColors ? sourceColors[p.app as keyof typeof sourceColors].accent : colors.textSecondary;
+                return (
+                  <View key={p.app} style={styles.barRow}>
+                    <View style={styles.barHeaderRow}>
+                      <Text style={styles.barLabel}>{PLATFORM_LABELS[p.app] ?? (p.app === 'other' ? t('stats.platformOther') : p.app)}</Text>
+                      <Text style={styles.barPct}>{p.minutes}m · {pct}%</Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: accent }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </GlassSurface>
+          </View>
+        )}
 
         {/* 4-A. FLIP MODE — 오늘 내려놓은 시간(쉬는시간) + 적립 크레딧 (스펙 §4-A, 2026-07-23부터 양쪽 플랫폼 계측) */}
         {putDownSeconds > 0 && (
@@ -414,6 +447,13 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 13, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 4 },
   trackingGapHint: { fontSize: 12, color: colors.textSecondary, paddingHorizontal: 4, marginTop: 8, lineHeight: 17 },
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, padding: 20 },
+
+  barRow: { gap: 6, marginBottom: spacing.md },
+  barHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  barLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: '#D1D5DB' },
+  barPct: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
+  barTrack: { height: 6, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: radius.pill, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)' },
+  barFill: { height: '100%', borderRadius: radius.pill },
 
   divideCard: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: 24, paddingHorizontal: 20 },
   behaviorRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 18 },

@@ -8,28 +8,29 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // ⚠️⚠️ DEV 전용 · 프로덕션/스토어 제출 금지 ⚠️⚠️
 // 2026-08-11 사장님 지시("웹뷰로 틱톡 못띄워?") — dev/shorts-poc.tsx와 똑같은 목적, 대상만 틱톡.
-// 시뮬레이터 Safari로 tiktok.com/foryou를 직접 열었더니(react-native-webview가 아니라 진짜 WebKit
-// 브라우저) 캡차/로그인벽 없이 실제 영상이 재생됐다 — 오늘 낮에 확인한 "서버 스크래핑이 막힌다"
-// (X-Bogus/msToken 서명 없인 API 직접 호출 불가)는 완전히 다른 질문이었다. 이건 "페이지 자체를
-// 그대로 띄우면 되는가"(지금 유튜브 쇼츠 iOS가 쓰는 바로 그 방식)라 별도로 검증해야 한다.
-// 시뮬레이터를 탭/스와이프로 조작할 방법이 없어서(macOS 접근성 권한 없음), 사람 대신 주입 JS가
-// 스스로 스크롤/다음영상 이동을 반복하며 몇 분간 무인으로 관찰한다 — 스크롤할수록 로그인벽이
-// 뜨는지, 스와이프 시뮬레이션이 먹히는지가 핵심 질문. 화면 하단 로그 패널로 결과를 본다.
 //
-// 🔴 결론(수 시간 조사, 8개 기법 시도 — 합성 터치스와이프/wheel/키보드/scrollTop 직접대입/
-// Swiper.js 공식 API(slideNext)/nextSibling.scrollIntoView/PointerEvent(Swiper v9+가 내부적으로
-// TouchEvent 대신 쓰는 것)/실제 오픈소스 유저스크립트 원문 기법(video.loop=false로 자동반복을
-// 끄고 진짜 media 'ended' 이벤트를 기다렸다 .swiper-slide.nextElementSibling으로 스크롤, 8차) —
-// 전부 딱 1회만 이동하고 영구히 멈춤(활성 슬라이드 idx=1/2에서 고정, 다음 슬라이드가 DOM에
-// 아예 없음). **8차 시도가 특히 중요한 반증이다** — 이건 페이지 JS가 만든 가짜 이벤트가 아니라
-// 브라우저가 실제 재생 완료를 보고 발생시키는 100% 신뢰된 미디어 이벤트였는데도 실패했다 —
-// 즉 이전까지의 "event.isTrusted를 요구한다"는 가설은 반증됐고, 진짜 원인은 아직 모른다(이
-// 세션이 오늘 밤 반복 테스트로 이미 제한된 상태이거나, 로그인이 필요하거나, 시뮬레이터에서
-// 관측 못 하는 다른 조건일 수 있다). WebDriver(safaridriver)로 진짜 OS 레벨 입력을 시도했으나
-// "Allow Remote Automation"이 꺼져 있고 --enable은 macOS sudo 암호가 필요해(요청 안 함) 검증
-// 못 함. 결론: 콘텐츠 로드/재생/로그인벽 없음은 확정, 자동 다음영상 넘김은 **실기기에서 사람이
-// 직접 스와이프해야만** 최종 확인 가능 — 원인 불명이라 실기기 테스트 결과와 무관하게 여전히
-// 유효한 유일한 다음 단계.
+// 🟢 결론 재반전(2026-08-12, 실기기 확정) — **모바일 UA로는 8개 기법이 전부 1회만 이동하고
+// 영구히 멈췄지만(합성 터치/wheel/키보드/scrollTop/Swiper.slideNext/scrollIntoView/PointerEvent/
+// 진짜 신뢰된 'ended' 미디어 이벤트까지 전부 실패), 사장님 제안대로 **데스크톱(맥/윈도우 크롬)
+// User-Agent로 위장하니 실기기에서 영상이 계속 자동으로 넘어갔다.** 모바일 웹은 앱 설치 유도를
+// 위해 의도적으로 2개쯤에서 막아두고, 데스크톱은 모바일 앱을 설치할 수 없으니 그 제한이 없는
+// 것으로 보인다 — 지금까지의 모든 반증(isTrusted 아님/로그인 무관/WKWebView 임베딩 무관)과도
+// 모순 없이 들어맞는다. 이 UA는 아래 WebView의 userAgent prop에 이미 적용돼 있다(데스크톱
+// Chrome/Mac 고정).
+//
+// 🐛 후속 버그(발견 즉시 수정, 이 커밋) — 위 8개 기법을 "8초마다 전부 강제 재시도"하던 루프가
+// 데스크톱 UA에서는 일부 기법(Swiper slideNext/scrollIntoView 등)이 실제로 먹히기 시작하면서,
+// **영상이 자연 종료되기 전에도 8초마다 강제로 다음 영상으로 밀어버리는** 부작용을 냈다(사장님
+// 보고: "플레이 중간에 다른영상으로 넘어가", 오디오가 비디오보다 먼저 나옴). 원인은 명백히 이
+// 파일의 테스트 하네스 설계(어떤 기법이 먹히는지 몰라 전부 주기적으로 쏴본 것)였지 프로덕션에서
+// 필요한 동작이 아니다 — 실제로 필요한 건 "영상이 끝났을 때만" 넘기는 것. 그래서 강제 재시도
+// 루프(구 advance())를 없애고, 다음 영상 이동은 오직 아래 hookVideoEnded()의 진짜 'ended' 미디어
+// 이벤트(신뢰된 브라우저 이벤트)로만 트리거하도록 바꿨다. 배너 닫기/로그인벽 감지/로그용 DOM 덤프
+// 같은 하우스키핑만 가벼운 주기로 계속 돈다(강제 이동 기법은 전혀 호출 안 함).
+//
+// 다음 단계: 이 ended-only 방식을 실기기에서 재확인(자연 종료 시에만 매끈하게 넘어가는지) →
+// 데스크톱 레이아웃의 사이드바/헤더 등 불필요한 UI를 가리는 CSS 주입(YouTubeShortsPlayer.ios.tsx의
+// 언멋 팝업 숨김과 같은 패턴) → 정식 TikTokShortsPlayer.ios.tsx 구현.
 
 const INJECTED_JS = `
 (function() {
@@ -145,7 +146,6 @@ const INJECTED_JS = `
   // 프로그램이 존재한다는 것 자체가 클릭 가능한 UI 컨트롤이 있다는 증거). 정확한 selector는 검색으로
   // 못 찾아서(문서화가 없음) 실제 라이브 DOM을 직접 덤프해서 찾는다 — 한 번만 실행, 결과를 로그로.
   var domDumped = false;
-  var scrollDumped = false;
   function dumpDomOnce(){
     if (domDumped) return; domDumped = true;
     try {
@@ -163,142 +163,20 @@ const INJECTED_JS = `
     } catch(e) { log('DOM덤프 실패: ' + e.message); }
   }
 
-  // 다음 영상 이동 — 여러 방법을 순서대로 시도(shorts-poc.tsx와 같은 폴백 체인 전략).
-  function advance(){
+  // 하우스키핑만 — 강제 다음영상 이동 기법은 전혀 안 부른다(구 advance()는 8초마다 이 전부를
+  // 강제 재시도해서 자연 종료 전에도 영상을 밀어버렸다, 위 헤더 코멘트 참고). 다음 영상 이동은
+  // 오직 hookVideoEnded()의 진짜 'ended' 미디어 이벤트로만 일어난다.
+  function houseKeeping(){
     dismissAppBanner();
     checkLoginWall();
     trackCurrentVideo();
     dumpDomOnce();
-    // 2026-08-11(4차) — 스크롤 후보 덤프에서 결정적 단서 발견: class="swiper swiper-initialized..."
-    // 틱톡 웹 피드가 Swiper.js(유명 캐러셀 라이브러리)로 만들어져 있다. 그러면 합성 터치/스크롤
-    // 해킹이 필요 없다 — Swiper 인스턴스는 자기 DOM 엘리먼트에 .swiper 프로퍼티로 스스로를
-    // 노출하는 게 라이브러리 표준 관례고, 공식 API slideNext()가 있다. 이게 되면 지금까지 시도한
-    // 모든 합성 이벤트보다 압도적으로 신뢰도 높다(진짜 라이브러리 메서드 호출이지 입력 위조가 아님).
-    try {
-      var allSwipers = document.querySelectorAll('.swiper');
-      var info = [];
-      var moved = false;
-      for (var s = 0; s < allSwipers.length; s++) {
-        var inst = allSwipers[s].swiper;
-        if (!inst) { info.push('#' + s + ':no-instance'); continue; }
-        var slideCount = inst.slides ? inst.slides.length : -1;
-        var before = inst.activeIndex;
-        info.push('#' + s + ' idx=' + before + '/' + slideCount + ' loop=' + !!inst.params.loop);
-        if (typeof inst.slideNext === 'function') {
-          inst.slideNext();
-          if (inst.activeIndex !== before) moved = true;
-        }
-      }
-      log('Swiper 전수 시도(' + allSwipers.length + '개): ' + info.join(' | ') + (moved ? ' → 이동함!' : ' → 전부 제자리'));
-    } catch(e) { log('Swiper.slideNext 시도 실패: ' + e.message); }
-    // 2026-08-12 사장님 지적("wkuserscript... 스크롤내리는 자바코드 다 확인했어?") — 웹서치로 확인:
-    // Swiper.js v9+는 내부 입력 처리를 TouchEvent가 아니라 **PointerEvent**로 전환했다(v11도
-    // pointerdown/move/up 지원 유지). 지금까지 시도한 건 전부 TouchEvent였다 — 틱톡의 Swiper가
-    // Pointer Events로 리스너를 붙였다면 TouchEvent는 애초에 Swiper의 리스너에 안 잡혔을 것이다
-    // (버블링은 되지만 Swiper 자신의 pointerdown 핸들러가 아예 안 걸렸을 수 있다는 뜻). 같은
-    // 좌표/시퀀스로 PointerEvent 버전을 별도로 시도한다.
-    try {
-      var py0 = window.innerHeight * 0.8, py1 = window.innerHeight * 0.15, px = window.innerWidth / 2;
-      var pel = document.elementFromPoint(px, py0) || document.body;
-      function pev(type, y, id){
-        return new PointerEvent(type, {
-          pointerId: id, pointerType: 'touch', isPrimary: true,
-          clientX: px, clientY: y, bubbles: true, cancelable: true
-        });
-      }
-      pel.dispatchEvent(pev('pointerdown', py0, 1));
-      pel.dispatchEvent(pev('pointermove', (py0 + py1) / 2, 1));
-      pel.dispatchEvent(pev('pointermove', py1, 1));
-      pel.dispatchEvent(pev('pointerup', py1, 1));
-      log('PointerEvent 스와이프 시뮬레이션 실행(pointerType=touch)');
-    } catch(e) { log('PointerEvent 시도 실패: ' + e.message); }
-    // 2026-08-11(5차) — 실제로 동작하는 오픈소스 유저스크립트(TikTok Autoscroll, Greasyfork) 코드를
-    // 확인했다: API 호출도 합성 이벤트도 아니고 nextSibling.scrollIntoView()만 쓴다. 왜 이게 더
-    // 나을 수 있는가 — Swiper.activeIndex를 코드로 바꾸는 것과 달리 scrollIntoView는 브라우저가
-    // 진짜 스크롤/리플로우를 일으키므로, 틱톡이 "다음 배치를 불러올 시점"을 판단하는 데 흔히 쓰는
-    // IntersectionObserver(스크롤 위치 기반 sentinel 감시)가 반응할 가능성이 훨씬 높다 — Swiper
-    // 내부 인덱스만 바꾸는 건 그 관찰자를 안 건드릴 수 있다.
-    try {
-      var activeSlide = document.querySelector('.swiper-slide-active');
-      var nextSlide = activeSlide ? activeSlide.nextElementSibling : null;
-      if (nextSlide) {
-        nextSlide.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-        log('nextSibling.scrollIntoView() 실행(활성슬라이드 다음 형제 있음)');
-      } else {
-        log('nextSibling 없음(activeSlide=' + !!activeSlide + ') — 마지막 로드된 슬라이드인 듯');
-      }
-    } catch(e) { log('scrollIntoView 시도 실패: ' + e.message); }
-    // 방법 0: aria-label 기반 다음영상 버튼을 실제로 클릭(합성 터치보다 훨씬 신뢰도 높음 —
-    // "나중에" 배너 닫기가 이미 이 방식으로 성공했다).
-    try {
-      var btns = document.querySelectorAll('[aria-label]');
-      for (var j = 0; j < btns.length; j++) {
-        var al = (btns[j].getAttribute('aria-label') || '').toLowerCase();
-        if (al.indexOf('next') !== -1 || al.indexOf('다음') !== -1 || al.indexOf('down') !== -1) {
-          btns[j].click(); log('다음 버튼 클릭: aria="' + al + '"'); return;
-        }
-      }
-    } catch(e) {}
-    // 2026-08-11(3차) — DOM덤프 결과: aria-label 붙은 건 상단 네비 아이콘 3개뿐, "다음 영상" 버튼
-    // 자체가 없다(모바일 레이아웃이라 데스크톱의 화살표 UI가 아예 안 뜬 것으로 보임). 합성
-    // 터치/wheel/키보드가 전부 실패한 것도 다시 보면 당연하다 — 많은 가상 스크롤 피드는 실제
-    // scrollTop 변화를 IntersectionObserver로 감시해 "몇 번째 영상이 화면에 보이는가"로 다음
-    // 영상을 트리거한다(이벤트가 아니라 **위치**가 근거). 진짜 스크롤 컨테이너를 찾아 scrollTop을
-    // 직접 바꿔본다 — 이벤트 발사가 아니라 DOM 프로퍼티 값 자체를 바꾸는 것이라 isTrusted 같은
-    // "진짜 사용자 입력인가" 체크에 안 걸린다.
-    try {
-      var containers = document.querySelectorAll('div, main, section');
-      var candidates = [];
-      for (var k = 0; k < containers.length; k++) {
-        var c = containers[k];
-        var delta = c.scrollHeight - c.clientHeight;
-        if (delta > 20) candidates.push({ el: c, delta: delta, top: c.scrollTop, h: c.scrollHeight, cls: (c.className || '').toString().slice(0, 30) });
-      }
-      candidates.sort(function(a, b){ return b.delta - a.delta; });
-      if (!scrollDumped) {
-        scrollDumped = true;
-        var summary = candidates.slice(0, 8).map(function(c){ return 'Δ' + c.delta + ' top=' + c.top + ' h=' + c.h + ' cls="' + c.cls + '"'; }).join(' | ');
-        log('스크롤 후보 ' + candidates.length + '개: ' + summary);
-      }
-      // 상위 후보 전부에 시도(어느 게 실제 피드인지 모르니 전부 밀어본다 — 값 프로퍼티 대입은
-      // 부작용이 적어 여러 개를 건드려도 안전하다).
-      for (var m = 0; m < Math.min(3, candidates.length); m++) {
-        candidates[m].el.scrollTop = candidates[m].top + window.innerHeight;
-      }
-      var se0 = document.scrollingElement || document.documentElement;
-      se0.scrollTop = se0.scrollTop + window.innerHeight;
-    } catch(e) { log('scrollTop 시도 실패: ' + e.message); }
-    try {
-      var y0 = window.innerHeight * 0.8, y1 = window.innerHeight * 0.15, x = window.innerWidth / 2;
-      var el = document.elementFromPoint(x, y0) || document.body;
-      function tev(type, y){ var t = new Touch({identifier: 1, target: el, clientX: x, clientY: y});
-        return new TouchEvent(type, {cancelable: true, bubbles: true, touches: type === 'touchend' ? [] : [t], targetTouches: type === 'touchend' ? [] : [t], changedTouches: [t]}); }
-      el.dispatchEvent(tev('touchstart', y0));
-      el.dispatchEvent(tev('touchmove', (y0 + y1) / 2));
-      el.dispatchEvent(tev('touchmove', y1));
-      el.dispatchEvent(tev('touchend', y1));
-      log('스와이프 시뮬레이션 실행');
-    } catch(e) {
-      log('스와이프 실패(' + e.message + ') → scrollBy 폴백');
-      try { window.scrollBy({ top: window.innerHeight, behavior: 'smooth' }); } catch(e2) {}
-    }
-    // wheel 이벤트 — 데스크톱 웹은 스크롤휠로 넘어가는 게 기본일 수 있다(사람은 안 쓰지만 데스크톱
-    // 레이아웃이 로드됐을 가능성 있음, UA를 모바일로 줬어도 뷰포트 크기로 데스크톱 CSS가 뜰 수 있다).
-    try {
-      var wheelEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2) || document.body;
-      wheelEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true, cancelable: true }));
-      log('wheel 이벤트 실행');
-    } catch(e) {}
-    // 키보드 방향키도 같이 시도.
-    try {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true }));
-    } catch(e) {}
   }
 
-  log('PACE TikTok PoC 주입 완료 — 8초마다 강제시도 + ended 이벤트 대기 병행');
+  log('PACE TikTok PoC 주입 완료 — ended 이벤트로만 다음 영상 이동(강제 재시도 루프 제거, 2026-08-12)');
   trackCurrentVideo();
   startEndedObserver();
-  setInterval(advance, 8000);
+  setInterval(houseKeeping, 3000);
   // 배너는 로드 직후 뜨는 경우가 많아 더 빨리도 한 번 시도.
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);

@@ -71,13 +71,16 @@ const INJECTED_JS = `
   // 진단 로그가 전부 조용히 버려지고 있었다).
   function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
 
-  // 2026-08-13(17차) 실기기 보고("앱 시작하자마자 틱톡에서 무엇을 시청하고 싶으신가요 뜸") —
-  // 관심사 선택 온보딩 모달이 그대로 남아 화면을 막고 있는 것으로 보인다. 예전엔 버튼 텍스트를
-  // 정확히 일치(===)시켰는데, 실제 버튼엔 아이콘/공백이 섞여 있을 수 있어 못 잡았을 가능성이 커서
-  // 부분일치(indexOf)로 넓히고 후보 문구도 늘렸다. 그래도 못 찾으면 [role="dialog"] 안의 마지막
-  // 버튼(스킵/닫기가 보통 우상단·마지막에 옴)도 시도한다.
+  // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
+  // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
+  // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
+  // 둘러보기" 버튼으로 닫게 해준다). 예전 문구 목록엔 그게 없었다 — 추가.
+  // ⚠️ "continue"/"계속하기"는 일부러 안 넣는다 — 로그인 모달 안의 "Continue with Google/Apple"
+  // 버튼과도 겹쳐서, 잘못 누르면 OAuth 플로우가 열리는 훨씬 나쁜 상태로 갈 수 있다. "게스트"류
+  // 문구만 안전하게 특정해서 매칭한다.
   var SKIP_PHRASES = ['나중에', 'not now', 'maybe later', 'later', '건너뛰기', 'skip', '완료', 'done',
-    '닫기', 'close', '괜찮아요', '괜찮습니다', '아니요', '아니오', '선택 안', 'no thanks', "i'll do this later"];
+    '닫기', 'close', '괜찮아요', '괜찮습니다', '아니요', '아니오', '선택 안', 'no thanks', "i'll do this later",
+    '게스트', 'guest', '둘러보기', '비회원', '로그인 없이', 'without logging'];
   function textMatches(txt){
     var lower = txt.toLowerCase();
     for (var i = 0; i < SKIP_PHRASES.length; i++) {
@@ -97,19 +100,19 @@ const INJECTED_JS = `
       if (closeBtn) { closeBtn.click(); send({ type: 'domlog', text: '배너닫음(aria-label)' }); return true; }
       var bodyText = document.body.innerText || '';
       if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
-        // 관심사 모달이 확실히 감지됐는데 텍스트/aria-label 매칭도 실패 — 다이얼로그 안의 마지막
-        // 버튼을 시도(스킵/닫기가 보통 우상단·마지막에 옴). 진단용으로 실제 버튼 텍스트를 로그.
+        // 로그인 유도 모달이 확실히 감지됐는데 "게스트"류 텍스트/aria-label 매칭도 실패 — 진단으로
+        // 실제 버튼 목록만 로그(다음 라운드에 정확한 문구로 좁히기 위함). ⚠️ 여기서 아무 버튼이나
+        // 골라 클릭하지 않는다 — 로그인 모달엔 "Continue with Google/Apple" 같은 버튼도 같이 있어,
+        // 잘못 누르면 OAuth 플로우가 열리는 더 나쁜 상태가 된다. 안전한 배경 클릭/Esc만 시도.
         try {
           var dialog = document.querySelector('[role="dialog"], [class*="Modal" i], [class*="modal" i]');
           if (dialog) {
-            var btns = dialog.querySelectorAll('button, [role="button"]');
-            if (btns.length > 0) {
-              var found = [];
-              for (var j = 0; j < Math.min(btns.length, 10); j++) found.push('"' + (btns[j].textContent || '').trim().slice(0, 15) + '"');
-              send({ type: 'domlog', text: '관심사모달 버튼들: ' + found.join(', ') });
-              btns[btns.length - 1].click();
-              return true;
-            }
+            var btns = dialog.querySelectorAll('button, [role="button"], a');
+            var found = [];
+            for (var j = 0; j < Math.min(btns.length, 12); j++) found.push('"' + (btns[j].textContent || '').trim().slice(0, 20) + '"');
+            send({ type: 'domlog', text: '로그인모달 버튼들(' + btns.length + '개): ' + found.join(', ') });
+          } else {
+            send({ type: 'domlog', text: '로그인모달 감지됐는데 [role=dialog]/.modal 요소를 못 찾음' });
           }
         } catch(e) {}
         try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); } catch(e) {}

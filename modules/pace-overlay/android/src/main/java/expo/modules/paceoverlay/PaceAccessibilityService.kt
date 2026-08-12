@@ -53,6 +53,19 @@ class PaceAccessibilityService : AccessibilityService() {
   // 2026-08-04 — 직전 영상 전환 시점의 영상 길이(초). "유튜브가 같은 영상을 반복 재생하는 것"과
   // "사용자가 다음 영상으로 넘긴 것"을 가르는 데 쓴다(아래 loopedBack 분기 주석 참고).
   private var lastAdvanceTotalSec = -1
+  // 🔴 2026-08-12 실기기(틱톡) — 재생위치(timing)를 마지막으로 **읽어낸** 시각. "재생 중인가"가
+  // 아니라 "이 앱을 우리가 관측할 수 있는가"를 나타낸다. 수면감지가 이 값에 의존한다: 아래
+  // loopedBack 분기의 markUserActivity()(=손가락으로 직접 넘겼다는 **유일한** '깨어있음' 증거,
+  // 2026-08-02 오탐 수정)가 timing을 읽을 수 있을 때만 발생하므로, 못 읽는 앱에서는 무입력
+  // 시계를 리셋할 수단이 아예 없어 멀쩡히 보고 있어도 반드시 수면으로 오판된다.
+  @Volatile private var lastTimingReadAtMs = 0L
+  // 2026-08-12 — 재생위치가 없는 앱에서 "지금 영상"을 식별하는 지문(currentVideoFingerprint 참고).
+  private var lastVideoFingerprint: String? = null
+  private var lastRangeProbeLogAtMs = 0L
+  // 2026-08-12 — 직전 폴링의 진행률(0~1). -1 = 아직 못 읽음.
+  private var lastKnownFrac = -1f
+  private var lastFracAtMs = 0L
+  private var estimatedDurationMs = -1L
   // 2026-07-26 추가 — currentSec가 이전 폴링보다 실제로 늘어난(=재생 중이라는 강한 증거) 마지막
   // 시각. companion의 isLikelyPlaying()이 이 값의 신선도로 "지금 실제로 재생 중인가"를 판단해
   // PaceOverlayService.performTick()의 사용시간 차감을 게이팅한다.
@@ -119,6 +132,13 @@ class PaceAccessibilityService : AccessibilityService() {
     // 재생 위치를 얼마나 자주 확인할지(스와이프 자체의 간격이 아니라 폴링 주기) — 초 단위 텍스트라
     // 이보다 훨씬 잦은 폴링은 정확도 이득이 없다.
     private const val POLL_INTERVAL_MS = 500L
+    // 2026-08-12 — 진행바(RangeInfo) 기반 판정 임계값. 위 checkPlaybackAndMaybeSwipe 주석 참고.
+    // 예측 발사 리드타임 — 남은 시간이 이 값 이하가 되면 넘긴다(접근성 갱신 지연 ~2.5초를 감안).
+    // 플링 인식 임계를 넉넉히 넘기는 스트로크 시간 — performSwipeUp 주석 참고.
+    private const val SWIPE_FLING_MS = 120L
+    private const val NEAR_END_LEAD_MS = 2_500L
+    private const val NEAR_END_FRAC = 0.95f
+    private const val LOOP_BACK_FRAC_DROP = 0.3f
     // 물리 볼륨 버튼 1회 입력의 반복 ACTION_DOWN을 하나로 묶는 불응 구간(onKeyEvent 참고).
     private const val VOLUME_KEY_DEBOUNCE_MS = 500L
     // 2026-08-02 — "우리가 방금 스와이프한 결과"와 "사용자가 직접 손으로 넘긴 것"을 가르는 최소 간격.
@@ -251,6 +271,34 @@ class PaceAccessibilityService : AccessibilityService() {
         service.lastPlaybackAdvanceAtMs = 0L
         service.maybeStopPolling()
       }
+    }
+
+    /**
+     * 🔴 2026-08-12 실기기(틱톡) — "이 앱에서 사용자가 깨어있다는 증거를 우리가 관측할 수 있는가".
+     *
+     * 수면감지의 무입력 시계(lastUserInputAtMs)를 리셋하는 경로는 사실상 세 개뿐이다:
+     *   ① 손짓/핑거스냅  ② BT 리모컨 물리버튼  ③ loopedBack + totalSec 변화(= 손으로 직접 넘김)
+     * 폰을 책상에 두고 손가락으로 넘겨 보는 **가장 흔한 사용 패턴**을 커버하는 건 ③뿐이고
+     * (2026-08-02에 바로 이 오탐으로 고친 경로), ③은 재생위치 텍스트를 읽을 수 있어야 성립한다.
+     *
+     * 틱톡은 접근성 트리에 재생위치를 노출하지 않는다 → ③이 영원히 안 뜬다 → 사용자가 멀쩡히
+     * 보고 있어도 무입력 시계가 10분을 채우고 5분 뒤 확정, 화면이 까맣게 덮인다.
+     * 실측(2026-08-12): 08:01:19 SUSPECT noInputMs=628976 → 08:06:19 PROMPTED → 08:06:49 종료.
+     *
+     * 그래서 관측 불가 상태에서는 수면 확정을 **보류**한다. 잘못된 방향의 오차는
+     * "자는 사람을 못 잡는 것"이어야지 "보고 있는 사람 화면을 끄는 것"이면 안 된다.
+     */
+    fun canObserveWatchEvidence(maxStaleMs: Long = 60_000L): Boolean {
+      val service = instance ?: return false
+      val at = service.lastTimingReadAtMs
+      if (at != 0L && SystemClock.elapsedRealtime() - at <= maxStaleMs) return true
+      // ⚠️ 신선도만 보면 안 된다 — 실기기 확인(2026-08-12 11:00): 재생위치 폴링은
+      //   (isWatching || isTrackingPlayback) && 포그라운드가 감시 대상일 때만 돈다. FOCUS OFF이거나
+      //   currentForegroundPackage가 이벤트 유실로 낡으면 유튜브에서도 이 값이 영원히 안 갱신돼
+      //   observable=false → **수면감지가 통째로 죽는다**(오탐을 고치려다 기능을 없애는 셈).
+      //   그래서 폴링과 무관하게 지금 직접 한 번 읽어본다. 이 함수는 SUSPECT 단계에서 1분에 한 번만
+      //   불리므로 트리 탐색 비용을 매분 한 번 더 쓰는 정도다.
+      return runCatching { service.readCachedOrSearchTiming() != null }.getOrDefault(false)
     }
 
     // null = 판단 불가(접근성 꺼짐/추적 미시작/아직 신호 한 번도 못 잡음) — 호출부는 이 경우 기존
@@ -753,6 +801,8 @@ class PaceAccessibilityService : AccessibilityService() {
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
+      // 관측 가능성 도장 — 위 lastTimingReadAtMs 주석 참고(수면감지 게이트가 이 신선도를 본다).
+      lastTimingReadAtMs = now
       // 2026-08-02 출시 전 정리 — 여기 있던 "timing current=Xs total=Ys" 로그 제거. 재생위치 폴링이
       // 500ms마다 도는데 매 폴마다 찍혀서(시간당 7,200줄) logcat 링버퍼를 채우고, 정작 필요한
       // VIDEO_ADVANCE/스와이프/onKeyEvent 로그를 밀어내 실기기 디버깅을 반복적으로 방해했다.
@@ -814,6 +864,72 @@ class PaceAccessibilityService : AccessibilityService() {
         return
       }
       lastKnownCurrentSec = currentSec
+    } else {
+      // 🔴 2026-08-12 — 재생위치 텍스트가 없는 앱(틱톡). 시간 문자열 말고 남은 두 경로를 여기서 쓴다.
+      //   ① RangeInfo(진행바 상태값) — 있으면 유튜브와 동일하게 nearEnd 판정까지 갈 수 있다.
+      //   ② 영상 지문(설명·작성자·사운드) 변화 — 길이는 못 얻지만 "영상이 바뀌었다"는 알 수 있어,
+      //      2026-08-02에 세운 '손으로 넘김 = 깨어있음 증거' 규칙을 틱톡에서도 성립시킨다.
+      val root = trackedAppRootNode()
+      val rangeBudget = intArrayOf(3000)
+      val frac = findProgressRange(root, budget = rangeBudget)
+      // 진단 로그 — "진행바가 없다"와 "예산이 모자라 못 찾았다"를 구분하기 위해 방문 노드 수를 남긴다.
+      if (frac == null && now - lastRangeProbeLogAtMs > 5_000L) {
+        lastRangeProbeLogAtMs = now
+        Log.d("PaceAccessibility", "RANGE_INFO none — visited=${3000 - rangeBudget[0]} rootPkg=${root?.packageName}")
+      }
+      if (frac != null) {
+        // 진행바가 실제로 있다 = 관측 가능. 수면감지 게이트가 이 시각을 본다.
+        lastTimingReadAtMs = now
+        // 🔴 2026-08-12 사장님 지시로 찾아낸 경로 — 틱톡 SeekBar(max=10000)가 재생 진행을 그대로
+        //   노출한다(실측 frac 0.724 → 0.787). 유튜브의 currentSec/totalSec 자리에 이 값을 넣으면
+        //   nearEnd/looped-back 판정이 그대로 성립한다.
+        //   ⚠️ 접근성 노드 갱신이 폴링(500ms)보다 느려 실측상 ~2.5초 간격으로 값이 튄다. 임계값을
+        //     0.99처럼 빡빡하게 잡으면 짧은 영상에서 갱신 한 번을 통째로 건너뛰어 놓친다.
+        val prev = lastKnownFrac
+        if (prev >= 0f && frac < prev - LOOP_BACK_FRAC_DROP) {
+          // 진행률이 확 떨어졌다 = 영상이 끝나 반복됐거나 사용자가 넘겼다.
+          videoAdvanceCount++
+          if (now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=frac-loop prev=$prev now=$frac count=$videoAdvanceCount")
+            PaceOverlayService.markUserActivity()
+          }
+          estimatedDurationMs = -1L // 새 영상 — 길이 추정을 처음부터 다시 한다
+        } else if (prev >= 0f && frac > prev) {
+          // 🔴 2026-08-12 실측 — 임계값(frac >= 0.95)만으로는 못 잡는다. 접근성 노드 갱신이 폴링보다
+          //   느려(~2.5초) 마지막 샘플이 0.9472였고 다음 샘플은 이미 0.0076(루프 후)이었다.
+          //   그래서 **진행률 증가 속도로 영상 길이를 역산**해, 남은 시간이 임박하면 미리 넘긴다.
+          //     길이 ≈ 경과시간 / 진행률증가분,  남은시간 ≈ (1 - 진행률) × 길이
+          val dtMs = now - lastFracAtMs
+          if (lastFracAtMs > 0L && dtMs > 0L) {
+            val est = (dtMs / (frac - prev)).toLong()
+            // 이상치 방어 — 숏폼 길이 범위(3초~10분) 밖 추정은 버린다.
+            if (est in 3_000L..600_000L) {
+              estimatedDurationMs = if (estimatedDurationMs <= 0L) est else (estimatedDurationMs * 2 + est) / 3
+            }
+          }
+          val remainMs = if (estimatedDurationMs > 0L) ((1f - frac) * estimatedDurationMs).toLong() else Long.MAX_VALUE
+          if (isWatching && remainMs <= NEAR_END_LEAD_MS && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+            Log.d("PaceAccessibility", "AUTO_NEXT reason=frac-predict frac=$frac est=${estimatedDurationMs}ms remain=${remainMs}ms")
+            performSwipeUp()
+            lastSwipeAtMs = now
+          }
+        }
+        if (frac != prev) lastFracAtMs = now
+        lastKnownFrac = frac
+      }
+      val fp = currentVideoFingerprint(root)
+      if (fp != null) {
+        lastTimingReadAtMs = now // 지문을 읽었다는 것 자체가 "이 앱을 관측할 수 있다"는 뜻
+        if (lastVideoFingerprint != null && fp != lastVideoFingerprint) {
+          videoAdvanceCount++
+          if (now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+            // 우리가 넘긴 직후가 아닌데 영상이 바뀌었다 = 사용자가 손으로 넘겼다 = 깨어있음.
+            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=fingerprint count=$videoAdvanceCount (manual)")
+            PaceOverlayService.markUserActivity()
+          }
+        }
+        lastVideoFingerprint = fp
+      }
     }
     // 2026-08-03 사장님 지시("1번 없애고") — Tier 2(재생 위치 신호를 못 찾으면 safetyTimeoutMs마다
     // 무조건 강제 스와이프)를 삭제한다.
@@ -954,6 +1070,59 @@ class PaceAccessibilityService : AccessibilityService() {
     return parseTiming(desc)
   }
 
+  /**
+   * 🔴 2026-08-12 사장님 지시("접근성으로 하단 진행바 상태값 읽기 다 확인해봤어?") —
+   * 재생위치를 **텍스트가 아니라 노드의 RangeInfo**로 읽는 두 번째 경로.
+   *
+   * SeekBar/ProgressBar 계열 노드는 시간 문자열이 없어도 AccessibilityNodeInfo.RangeInfo로
+   * (min, max, current)를 노출할 수 있다. uiautomator XML에는 이 값이 안 찍혀서 덤프만 봐서는
+   * 있는지 없는지 알 수 없다 — 그래서 여기서 직접 조회한다.
+   *
+   * 반환: 진행률 0.0~1.0. 없으면 null.
+   */
+  private fun collectRanges(node: AccessibilityNodeInfo?, out: MutableList<Triple<String, Float, Float>>, depth: Int = 0, budget: IntArray = intArrayOf(3000)) {
+    if (node == null || depth > 40 || budget[0] <= 0) return
+    budget[0]--
+    val range = node.rangeInfo
+    if (range != null) {
+      val span = range.max - range.min
+      if (span > 0f) {
+        out.add(Triple(node.className?.toString() ?: "?", (range.current - range.min) / span, range.max))
+      }
+    }
+    for (i in 0 until node.childCount) collectRanges(node.getChild(i), out, depth + 1, budget)
+  }
+
+  private fun findProgressRange(node: AccessibilityNodeInfo?, depth: Int = 0, budget: IntArray = intArrayOf(3000)): Float? {
+    val found = mutableListOf<Triple<String, Float, Float>>()
+    collectRanges(node, found, depth, budget)
+    if (found.isEmpty()) return null
+    // ⚠️ 첫 번째 노드를 그냥 쓰면 안 된다 — 실기기(2026-08-12): 틱톡 트리의 첫 rangeInfo는
+    //   max=1167084, cur=0으로 고정된 **버퍼/로딩 바**였고, 정작 재생 진행을 나타내는 SeekBar를
+    //   가려버렸다. 재생바로 쓸 수 있는 건 SeekBar 계열이므로 그것을 우선한다.
+    val seek = found.firstOrNull { it.first.contains("SeekBar") }
+    Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.first.substringAfterLast('.')}(max=${it.third},frac=${"%.3f".format(it.second)})" })
+    return (seek ?: return null).second
+  }
+
+  /**
+   * 🔴 2026-08-12 — 틱톡처럼 재생위치를 안 주는 앱에서 "지금 보고 있는 영상"을 식별하는 지문.
+   *
+   * 실기기 트리 덤프(181노드)로 확인된 것: 틱톡은 진행바는 안 주지만 **영상 설명·작성자·사운드는
+   * content-desc/text로 준다.** 이 조합이 바뀌면 = 영상이 바뀐 것이고, 우리가 스와이프한 게
+   * 아니라면 = **사용자가 손으로 넘긴 것**(= 확실한 '깨어있음' 증거)이다.
+   * 유튜브에서 totalSec 변화로 하던 판정(2026-08-02)을 트리 텍스트로 옮긴 것뿐이다.
+   */
+  private fun currentVideoFingerprint(node: AccessibilityNodeInfo?, depth: Int = 0, budget: IntArray = intArrayOf(3000), sb: StringBuilder = StringBuilder()): String? {
+    if (node == null || depth > 40 || budget[0] <= 0) return if (sb.isEmpty()) null else sb.toString()
+    budget[0]--
+    val desc = node.contentDescription?.toString()
+    // 프로필/사운드/설명만 고른다 — 좋아요·댓글 수는 실시간으로 계속 바뀌어 지문으로 못 쓴다.
+    if (!desc.isNullOrEmpty() && (desc.startsWith("사운드:") || desc.endsWith("님의 프로필"))) sb.append(desc).append('|')
+    for (i in 0 until node.childCount) currentVideoFingerprint(node.getChild(i), depth + 1, budget, sb)
+    return if (sb.isEmpty()) null else sb.toString()
+  }
+
   // 화면 트리를 재귀 순회해 재생 위치 텍스트(SeekBar의 content-desc 등)를 가진 노드를 찾는다.
   // depth/budget으로 트리가 비정상적으로 크거나 깊어도 폴링 주기 안에서 ANR 위험 없이 끝나게 방어.
   // 캐시가 무효화됐을 때만 호출되므로(readCachedOrSearchTiming 참고) 실제 발동 빈도는 낮다.
@@ -1037,11 +1206,18 @@ class PaceAccessibilityService : AccessibilityService() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
     val bounds = activeAppWindowBounds()
     // 숏폼 피드 표준 제스처: 창 하단 3/4 지점에서 위쪽 1/4 지점으로 빠르게 스와이프(다음 영상).
+    // 🔴 2026-08-12 — 웹 조사(XDA/Appium 제스처 문서) + 실기기 결과로 조정. 숏폼 피드는 ViewPager2
+    //   계열이라 **드래그가 아니라 플링(fling)** 으로 인식돼야 자기 스냅 애니메이션을 태우고,
+    //   그래야 전환이 앱 자체 스와이프와 같아진다(느린 드래그는 중간에 걸린 듯 보이거나 되돌아간다).
+    //   최소 플링 속도를 넉넉히 넘기도록 **더 짧은 거리를 더 빠르게** 긋는다.
+    //     이전: 0.75h→0.25h / 250ms (≈4,600px/s)   지금: 0.70h→0.40h / 120ms (≈5,800px/s)
+    //   시작점도 0.70h로 올렸다 — 0.75h는 설명/댓글 입력 영역에 걸려 피드가 아니라 그쪽이 먹는
+    //   경우가 있었다(실기기에서 댓글창이 열린 채로 발견).
     val path = Path().apply {
-      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.75f)
-      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.25f)
+      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.70f)
+      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.40f)
     }
-    dispatchSwipe(path)
+    dispatchSwipe(path, SWIPE_FLING_MS)
   }
 
   // Bluetooth Previous 전용(2026-07-19) — performSwipeUp의 역방향(창 상단→하단, 이전 영상).
@@ -1056,9 +1232,9 @@ class PaceAccessibilityService : AccessibilityService() {
   }
 
 
-  private fun dispatchSwipe(path: Path) {
+  private fun dispatchSwipe(path: Path, durationMs: Long = SWIPE_FLING_MS) {
     val gesture = GestureDescription.Builder()
-      .addStroke(GestureDescription.StrokeDescription(path, 0, 250))
+      .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
       .build()
     // TEMP 진단용(작업 끝나면 정리) — dispatchGesture의 리턴값/완료 콜백을 지금까지 아예 안 보고
     // 있었다. 사용자가 "Next Short 힌트만 뜨고 안 넘어간다"고 보고한 원인 후보(제스처가 시스템에

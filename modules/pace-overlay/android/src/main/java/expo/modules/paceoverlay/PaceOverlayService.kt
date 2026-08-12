@@ -534,8 +534,14 @@ class PaceOverlayService : Service() {
       val charging = isCharging()
       val btGone = btDisconnectedDuringStillness
       val supporting = dark || laidFlat || charging || btGone
-      if (!isWithinSleepDetectionWindow() || !supporting) {
-        Log.d("PaceOverlay", "SLEEP confirm held — window=${isWithinSleepDetectionWindow()} dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone")
+      // 🔴 2026-08-12 — 관측 가능성 게이트. 재생위치를 못 읽는 앱(틱톡)에서는 "손으로 직접 넘김"이
+      //   무입력 시계를 리셋할 수 없어, 멀쩡히 보고 있어도 100% 수면으로 오판된다(실측 08:06:49
+      //   SESSION END). 자세한 근거는 PaceAccessibilityService.canObserveWatchEvidence() 주석.
+      //   ⚠️ 이 게이트는 SUSPECT 분기 안에만 둔다 — PROMPTED에까지 걸면 2026-08-06 교착(전체화면
+      //     프롬프트가 감시 앱 창을 가려 스스로 30초 타임아웃에 도달 못 함)이 그대로 재현된다.
+      val observable = PaceAccessibilityService.canObserveWatchEvidence()
+      if (!isWithinSleepDetectionWindow() || !supporting || !observable) {
+        Log.d("PaceOverlay", "SLEEP confirm held — window=${isWithinSleepDetectionWindow()} observable=$observable dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone")
         return false
       }
       sleepStage = SLEEP_STAGE_PROMPTED

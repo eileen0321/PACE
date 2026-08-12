@@ -1058,13 +1058,44 @@ class PaceAccessibilityService : AccessibilityService() {
   // 재생 위치 텍스트를 영원히 못 찾는다 — Tier 1이 조용히 죽고 Tier 2(45초 타임아웃)만 도는 것과
   // 같은 부류의 버그(activeAppWindowBounds와 동일 원인). windows 목록에서 대상 패키지의 창을 직접
   // 찾아 그 루트를 우선 쓰고, 못 찾으면(단일 창 등 기존과 동일한 상황) rootInActiveWindow로 폴백.
+  /**
+   * 🔴 2026-08-13 사장님 질문("유튜브와 틱톡이 둘 다 떠 있을 땐 어떻게 해?" →
+   *   "전체 창에 영상 시간으로 하고 오버레이나 스와이프도 다 전체 창인 애한테 연결해야 하지 않아?") —
+   *   지적하신 그대로가 맞고, 실제로 그렇게 안 돼 있었다.
+   *
+   * trackedAppRootNode / activeAppWindowBounds가 `windows`를 훑다 **처음 만난** 감시 대상 앱 창을
+   * 그냥 썼다 = **창 목록 순서에 의존**. 유튜브가 PIP(작은 창)로 남고 사용자가 틱톡을 보고 있으면
+   * 유튜브 창을 잡아 **그쪽 진행률을 읽고** 스와이프는 화면 전체에 쐈다. 사장님이 본
+   * "유튜브가 작은 창 갔다 큰 창으로 왔다"가 이 증상이다.
+   *
+   * supportedAppWindowVisible()은 이미 같은 함정을 겪고 **창 크기로 PIP를 거르는** 로직을 갖고
+   * 있었는데(그 함수 위 주석의 One UI 오탐 이력) 이 두 함수엔 없었다. 선택 규칙을 여기 한 곳으로 모은다:
+   *   ① 진짜 PIP(화면 폭의 80% 미만)는 후보에서 제외 — "전체 창인 애"만 남긴다
+   *   ② 지금 보고 있는 앱(PaceOverlayService가 매초 기록)을 최우선
+   *   ③ 그래도 여럿이면 가장 넓은 창
+   * 이 하나를 진행률·스와이프 좌표 양쪽이 함께 쓰므로 "읽는 창과 쏘는 창이 다른" 상황이 없어진다.
+   */
+  private fun bestTrackedWindow(): android.view.accessibility.AccessibilityWindowInfo? {
+    val screenWidth = resources.displayMetrics.widthPixels
+    val focused = PaceOverlayService.currentTrackedPackage()
+    var best: android.view.accessibility.AccessibilityWindowInfo? = null
+    var bestScore = Long.MIN_VALUE
+    val bounds = Rect()
+    for (window in windows) {
+      val pkg = window.root?.packageName?.toString() ?: continue
+      if (!SupportedApps.PACKAGES.contains(pkg)) continue
+      window.getBoundsInScreen(bounds)
+      if (screenWidth > 0 && bounds.width() < screenWidth * 0.8) continue // ① 전체 창만
+      val area = bounds.width().toLong() * bounds.height().toLong()
+      val score = (if (pkg == focused) 1_000_000_000L else 0L) + area // ②③
+      if (score > bestScore) { bestScore = score; best = window }
+    }
+    return best
+  }
+
   private fun trackedAppRootNode(): AccessibilityNodeInfo? {
     try {
-      for (window in windows) {
-        val root = window.root ?: continue
-        val pkg = root.packageName?.toString()
-        if (pkg != null && SupportedApps.PACKAGES.contains(pkg)) return root
-      }
+      bestTrackedWindow()?.root?.let { return it }
     } catch (e: Exception) {
       Log.w("PaceAccessibility", "trackedAppRootNode lookup failed, falling back to rootInActiveWindow", e)
     }
@@ -1317,13 +1348,12 @@ class PaceAccessibilityService : AccessibilityService() {
   private fun activeAppWindowBounds(): Rect {
     val rect = Rect()
     try {
-      for (window in windows) {
-        val root = window.root ?: continue
-        val pkg = root.packageName?.toString()
-        if (pkg != null && SupportedApps.PACKAGES.contains(pkg)) {
-          window.getBoundsInScreen(rect)
-          if (!rect.isEmpty) return rect
-        }
+      // 🔴 2026-08-13 — 진행률을 **읽는 창**과 스와이프를 **쏘는 창**이 반드시 같아야 한다
+      //   (bestTrackedWindow 주석 참고). 예전엔 각자 "첫 supported 창"을 따로 골라서,
+      //   PIP 유튜브의 진행률을 읽고 전체화면 틱톡에 스와이프를 쏘는 조합이 가능했다.
+      bestTrackedWindow()?.let { w ->
+        w.getBoundsInScreen(rect)
+        if (!rect.isEmpty) return rect
       }
     } catch (e: Exception) {
       Log.w("PaceAccessibility", "activeAppWindowBounds lookup failed, falling back to full screen", e)

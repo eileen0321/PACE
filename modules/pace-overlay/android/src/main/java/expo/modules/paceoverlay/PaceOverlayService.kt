@@ -1029,6 +1029,10 @@ class PaceOverlayService : Service() {
     // 2026-08-13 — 위 registerForegroundTracking() 참고. 액티비티 생명주기로 갱신되는 즉시값.
     // 2026-08-13 — 직전에 보고 있던 감시 대상 앱. 검색/메뉴가 "어느 앱 맥락인가"를 판단할 때 쓴다.
     @Volatile private var lastSupportedAppPackage: String? = null
+
+    /** 2026-08-13 — 접근성 서비스가 "전체 창 후보 중 어느 앱을 우선할지" 판단할 때 쓴다
+     *  (PaceAccessibilityService.bestTrackedWindow 참고). 폴링이 매초 갱신하는 값이다. */
+    fun currentTrackedPackage(): String? = lastSupportedAppPackage
     @Volatile private var appInForeground = false
     private var resumedActivityCount = 0
     private var foregroundTrackingRegistered = false

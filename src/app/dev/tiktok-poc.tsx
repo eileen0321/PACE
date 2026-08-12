@@ -113,6 +113,35 @@ const INJECTED_JS = `
     } catch(e) {}
   }
 
+  // 2026-08-13(16차) 웹서치로 확인(추측 아님) — WKWebView의 allowsInlineMediaPlayback 설정만으로는
+  // 부족하다. "iOS requires the playsinline attribute in the HTML video element itself, not just
+  // the WebView prop configuration" — WebView 레벨 설정은 "허용"만 하고, 실제 인라인 재생 여부는
+  // 각 <video> 태그 자체의 playsinline 속성이 결정한다. 틱톡 데스크톱(Chrome) UA로 서빙되는
+  // 페이지는 진짜 데스크톱 브라우저는 이 속성이 필요 없으니 안 붙였을 가능성이 높다 — 그러면
+  // WKWebView가 iOS 18 계열에서 보고된 것과 같은 버그로 네이티브 전체화면으로 전환해 RN UI를
+  // 통째로 덮는다(Apple Developer Forums: "WKWebView on iOS 18: Video Auto-Play Not Working
+  // Inline, Launching in Full-Screen Instead"). video를 찾을 때마다 playsinline/webkit-playsinline
+  // 속성과 DOM 프로퍼티를 직접 강제로 세팅한다.
+  var inlineObserverStarted = false;
+  function ensureInline(video){
+    try {
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.playsInline = true;
+    } catch(e) {}
+  }
+  function startInlineObserver(){
+    if (inlineObserverStarted) return; inlineObserverStarted = true;
+    var vs = document.querySelectorAll('video');
+    for (var i = 0; i < vs.length; i++) ensureInline(vs[i]);
+    var mo = new MutationObserver(function(){
+      var list = document.querySelectorAll('video');
+      for (var j = 0; j < list.length; j++) ensureInline(list[j]);
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    log('playsinline 강제 옵저버 시작(video 태그마다 즉시 적용)');
+  }
+
   // 2026-08-13(10차) 사장님 보고("같은 영상만 계속 리플레이") — 'ended' 이벤트 단독 의존이
   // 실기기에서 실패했다. 두 가지 의심 지점: (1) 틱톡 자체 코드가 우리가 끈 video.loop을 다시
   // true로 되돌릴 수 있다(그러면 브라우저가 내부적으로 되감아 재생해 'ended'가 아예 안 뜬다 —
@@ -340,6 +369,7 @@ const INJECTED_JS = `
   }
 
   log('PACE TikTok PoC 주입 완료 — ended 이벤트 + 재생위치 폴링으로만 다음 영상 이동(2026-08-13)');
+  startInlineObserver();
   trackCurrentVideo();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
@@ -347,6 +377,31 @@ const INJECTED_JS = `
   // 배너는 로드 직후 뜨는 경우가 많아 더 빨리도 한 번 시도.
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);
+})();
+true;
+`;
+
+// 페이지 자체 스크립트가 돌기 전에(=onload 이후인 injectedJavaScript보다 먼저) 전체화면 차단 +
+// playsinline 강제를 걸어둔다. 틱톡 데스크톱 UA 페이지가 첫 <video>를 만드는 시점에 이미 인라인
+// 재생이 강제돼 있어야 iOS WKWebView가 네이티브 전체화면으로 승격할 기회 자체가 없다.
+const EARLY_JS = `
+(function() {
+  try {
+    if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
+      Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
+    }
+    if (typeof HTMLVideoElement !== 'undefined' && HTMLVideoElement.prototype.webkitEnterFullscreen) {
+      HTMLVideoElement.prototype.webkitEnterFullscreen = function(){};
+    }
+  } catch(e) {}
+  function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
+  try {
+    var mo = new MutationObserver(function(){
+      var list = document.querySelectorAll('video');
+      for (var i = 0; i < list.length; i++) ensureInline(list[i]);
+    });
+    mo.observe(document.documentElement || document, { childList: true, subtree: true });
+  } catch(e) {}
 })();
 true;
 `;
@@ -373,6 +428,7 @@ export default function TikTokPocScreen() {
         ref={webRef}
         source={{ uri: 'https://www.tiktok.com/foryou' }}
         style={StyleSheet.absoluteFill}
+        injectedJavaScriptBeforeContentLoaded={EARLY_JS}
         injectedJavaScript={INJECTED_JS}
         onMessage={(e) => {
           try {

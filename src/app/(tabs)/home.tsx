@@ -632,7 +632,11 @@ export default function HomeScreen() {
           {Platform.OS === 'android' && (
             <PlatformPickerCard
               key="tiktok-video-loop"
-              title="TikTok Video Loop"
+              // 🔴 2026-08-12 사장님 결정 — 상표 결합 위험 때문에 "TikTok with PACE"는 쓰지 않는다.
+              //   YouTube/TikTok 브랜드 가이드라인은 자사 마크를 다른 이름과 합쳐 새 명칭을 만드는
+              //   것을 금지하고, Apple 5.2.1 / Play 지식재산 정책도 제휴 오인을 반려 사유로 본다.
+              //   → 제품명(Shorts/Loops)에만 PACE를 붙인다: "Shorts with PACE" / "Loops with PACE".
+              title="Loops with PACE"
               badge="LOOPS"
               statusText={
                 activeSessionPlatform === 'tiktok'

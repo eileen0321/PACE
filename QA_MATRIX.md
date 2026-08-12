@@ -122,6 +122,34 @@
 즉 `platform_app` 데이터는 이미 정확하게 쌓이고 있고, **표시만 합산**하고 있다.
 앱별로 나눠 보여주고 싶어지면 쿼리에 `platform_app` 조건만 더하면 된다(데이터 마이그레이션 불필요).
 
+### 홈 플랫폼 카드 — 이름과 커버 (2026-08-12 확정)
+
+| 카드 | 제목 | 배지 | 커버 |
+|---|---|---|---|
+| YouTube | **`Shorts with PACE`** | `GUARDED` | `assets/covers/youtube.jpg` |
+| TikTok | **`Loops with PACE`** | `LOOPS` | `assets/covers/tiktok.jpg` |
+
+> ⚠️ **`YouTube with PACE` / `TikTok with PACE`는 쓰지 않는다** (사장님 확인 후 결정).
+> YouTube·TikTok 브랜드 가이드라인은 자사 마크를 **다른 이름과 합쳐 새 명칭을 만드는 것**을
+> 금지하고, Apple 5.2.1 / Play 지식재산 정책도 **제휴 오인**을 반려 사유로 본다.
+> → 플랫폼 마크가 아니라 **제품명(Shorts/Loops)에만** PACE를 붙인다.
+
+**🍎 맥 세션에 필요한 것 — 커버 이미지는 이미 git에 있다.**
+`assets/covers/tiktok.jpg`는 `47cc6ff`부터 추적되어 있고 `origin/master`에 그대로 있다
+(원본 프로토타입 `healthy-shorts-assistant(5)/src/assets/images/tiktok_cover_*.jpg`와
+**바이트 단위 동일**, git hash `df0bbf2…`). 따로 올릴 게 없다.
+
+대신 **오버레이 그라데이션 수정**(`3b5e4a1`)을 반드시 받아야 한다 — 이게 없으면
+iOS에서도 틱톡 커버가 안 보인다:
+
+| | 원본 프로토타입 | 잘못돼 있던 값 | 수정 후 |
+|---|---|---|---|
+| 방향 | 아래→위 **세로** | 왼→오른 가로 | 아래→위 세로 |
+| 농도 | accent 40% → 검정 **80%** | accent 35% → 검정 **90%** | 검정 80% → accent |
+
+유튜브 커버는 밝은 빨강이라 90% 검정 밑에서도 보였지만 **틱톡 커버는 어두운 야경이라
+통째로 묻혔다** — 같은 컴포넌트·같은 프롭인데 한쪽만 안 보이던 이유다.
+
 ## 1-5. 알아두면 헛수고를 막는 확인된 사실
 
 | 조사한 것 | 결과 | 다시 하지 말 것 |

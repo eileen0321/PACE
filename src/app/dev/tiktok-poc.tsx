@@ -344,9 +344,10 @@ export default function TikTokPocScreen() {
         javaScriptEnabled
         onError={(e) => pushLog('onError: ' + String(e.nativeEvent?.description).slice(0, 80))}
         onHttpError={(e) => pushLog('httpError: ' + e.nativeEvent?.statusCode)}
-        userAgent={Platform.OS === 'ios'
-          ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
-          : undefined}
+        // 2026-08-12(9차) 사장님 지시("맥이나 윈도우 pc 크롬 브라우져처럼 속여서") — 모바일 UA는
+        // 데스크톱 웹 CTA(앱 설치 유도)가 실려있을 수 있다. 데스크톱은 모바일 앱을 설치할 수
+        // 없으니 같은 제한이 없을 가능성 — 데스크톱 크롬(맥)으로 위장해 재시도.
+        userAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
       />
 
       <SafeAreaView style={styles.uiLayer} edges={['top']} pointerEvents="box-none">

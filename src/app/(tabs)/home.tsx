@@ -617,18 +617,27 @@ export default function HomeScreen() {
               목록을 얻을 수 없다. 남은 수단은 헤드리스 브라우저뿐인데 그건 틱톡이 명시적으로 세운
               차단을 우회하는 성격이라 별도 판단이 필요하다. 그때까지 iOS에 빈 피드를 보여주느니
               카드를 안 내보내는 쪽을 택한다. */}
+          {/* ⚠️ 2026-08-12 — 아래 제목/배지/그라데이션은 **원본(383eae5)의 값 그대로** 쓴다.
+              처음엔 내가 "TikTok with PACE"/"GUARDED"/rgba(37,244,238,0.30)으로 지어냈는데,
+              사장님이 "이전 원본 찾아보라"고 하신 그 코드가 git에 있었다:
+                { id: 'tiktok', title: 'TikTok Video Loop', badge: 'LOOPS',
+                  gradientFrom: 'rgba(13,148,136,0.35)' }
+              supportedApps.ts의 label도 'TikTok Video Loop'로 이미 그 값이었다(내가 안 봤다).
+              내가 지어낸 그라데이션이 원본보다 진해 커버 이미지가 덮여 보이던 것도 같이 해결된다.
+              ⚠️ 인스타그램 카드는 원본에 함께 있었고 자산·타입·supportedApps 항목이 그대로 살아
+                있다(사장님: "인스타는 나중에 쓸 거야 버리지 마") — 지우지 말 것. */}
           {Platform.OS === 'android' && (
             <PlatformPickerCard
-              key="tiktok-with-pace"
-              title="TikTok with PACE"
-              badge="GUARDED"
+              key="tiktok-video-loop"
+              title="TikTok Video Loop"
+              badge="LOOPS"
               statusText={
                 activeSessionPlatform === 'tiktok'
                   ? 'Active'
                   : 'Track viewing time and build healthier habits.'
               }
               cover={TIKTOK_COVER}
-              gradientFrom="rgba(37,244,238,0.30)"
+              gradientFrom="rgba(13,148,136,0.35)"
               onPress={() => onSelectPlatform('tiktok')}
               isActive={activeSessionPlatform === 'tiktok'}
               features={['⏱ Focus Session']}

@@ -658,6 +658,11 @@ export default function PaceFeedScreen() {
   // 넘으면 스킵을 멈추고 에러 상태로 전환(사용자에게 재시도 UI). 재생이 실제로 되면(onProgress>0) 리셋.
   const errorStreakRef = useRef(0);
   const [feedBlocked, setFeedBlocked] = useState(false);
+  // 🔴 2026-08-13 코드 재검토로 발견 — 틱톡은 큐가 없어 retryFeed의 loadInitial()이 아무 효과가
+  // 없었다(유튜브 큐 전용). TikTokShortsPlayer의 key가 고정 문자열("tiktok")이라 재시도를 눌러도
+  // 리마운트가 안 돼, 에러 화면만 사라지고 그 밑엔 똑같이 멈춘 WebView가 남는 "가짜 재시도"였다.
+  // key에 카운터를 섞어 재시도 시 실제로 리마운트(=WebView 새로 로드)되게 한다.
+  const [tiktokRetryKey, setTiktokRetryKey] = useState(0);
   const handlePlayerError = () => {
     errorStreakRef.current += 1;
     if (errorStreakRef.current >= 6) {
@@ -672,7 +677,12 @@ export default function PaceFeedScreen() {
     //    매 500ms setState로 피드를 재렌더시켜 일부 영상에 주기적 히치("어떤건 씹힘")를 유발했다.
     //    death-spiral 방지용 errorStreak 리셋만 남긴다.
   };
-  const retryFeed = () => { errorStreakRef.current = 0; setFeedBlocked(false); loadInitial(); };
+  const retryFeed = () => {
+    errorStreakRef.current = 0;
+    setFeedBlocked(false);
+    if (platform === 'tiktok') setTiktokRetryKey((k) => k + 1);
+    else loadInitial();
+  };
 
   const goPrevious = () => { goPrev(); };
 
@@ -794,7 +804,7 @@ export default function PaceFeedScreen() {
       {platform === 'tiktok' ? (
         !feedBlocked && !sleepBlackout && (
           <TikTokShortsPlayer
-            key="tiktok"
+            key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
             onProgress={handleProgress}

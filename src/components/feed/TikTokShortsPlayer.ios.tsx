@@ -90,10 +90,21 @@ const INJECTED_JS = `
   }
   // 2026-08-13(18차) 실기기 로그로 확정(추측 아님) — "건너뛰기" 매칭이 실제 로그인 모달이 아니라
   // "콘텐츠 피드로 건너뛰기"라는 **접근성 스킵링크**(스크린리더용, 화면엔 안 보임)를 계속 클릭하고
-  // 있었다(3초마다 같은 로그 반복 = 진짜 모달은 그대로 안 닫힘). offsetParent===null인 요소는
-  // 화면에 실제로 안 보이는 요소라 후보에서 제외한다.
+  // 있었다(3초마다 같은 로그 반복 = 진짜 모달은 그대로 안 닫힘).
+  // ⚠️ 2026-08-13(20차) 코드 재검토로 발견(실기기 재현 전에 미리 잡음) — offsetParent===null 체크는
+  // "화면에 안 보임"이 아니라 "레이아웃 흐름에서 빠짐"만 뜻한다. position:fixed 요소는 실제로
+  // 화면 한가운데 떠 있는 모달이어도 offsetParent가 항상 null이다(스펙) — 로그인 모달이 흔한
+  // position:fixed 오버레이라면, 이 체크가 **진짜 모달 버튼까지 전부 "안 보임"으로 오판해서
+  // 걸러내고 있었을 수 있다.** getBoundingClientRect + computedStyle로 실제 크기·표시 여부를
+  // 직접 확인하는 방식으로 교체 — position 방식과 무관하게 정확하다.
   function isVisible(el){
-    try { return el.offsetParent !== null; } catch(e) { return true; }
+    try {
+      var rect = el.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return false; // 접근성 전용 1px 텍스트 등은 계속 제외
+      var style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') === 0) return false;
+      return true;
+    } catch(e) { return true; }
   }
   function dismissAppBanner(){
     try {
@@ -319,8 +330,14 @@ const INJECTED_JS = `
     dismissAppBanner();
     dumpDomOnce();
     var href = '' + location.href;
+    // ⚠️ 2026-08-13(20차) 코드 재검토로 발견 — search()가 /search?q=…로 이동시키면 그 결과 페이지는
+    // 보통 썸네일 그리드라 자동재생 <video>가 없는 게 정상이다. 이 novideo 체크가 그걸 "재생 실패"로
+    // 오판해 12초 뒤 onError(-2)를 보내고, feed/index.tsx의 handlePlayerError가 연속 6회로 세는
+    // death-spiral 카운터를 매 사이클(3초 하우스키핑 반복 무관 — 1회만 보내지만)마다 결국 채워서
+    // "Shorts를 불러오지 못했습니다" 화면을 띄울 수 있었다. 검색 결과 페이지에선 이 체크를 안 한다.
+    var onSearchPage = href.indexOf('/search') !== -1;
     var noVideo = !document.querySelector('video');
-    if (noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent) {
+    if (!onSearchPage && noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent) {
       window.__paceNoVideoSent = true;
       send({ type: 'novideo', href: href.slice(0, 80) });
     }

@@ -36,6 +36,24 @@ const INJECTED_JS = `
 (function() {
   function log(m){ try { window.ReactNativeWebView.postMessage(JSON.stringify({t:Date.now(), m:m})); } catch(e){} }
 
+  // 2026-08-13(15차) 시뮬레이터 자체 검증 — RN 상단바(X/로그패널)가 사라지고 영상만 화면을 꽉 채우는
+  // 패턴을 반복 재현했다: WebView 렌더러 크래시가 아니라 **네이티브 전체화면 비디오 프레젠테이션**이
+  // RN 뷰 계층을 통째로 덮는 것으로 의심된다(allowsInlineMediaPlayback은 <video>의 playsinline만
+  // 보장하지, 데스크톱 UA 페이지의 Fullscreen API(requestFullscreen)나 webkitEnterFullscreen 호출은
+  // 안 막는다). 페이지 로드 즉시(다른 코드보다 먼저) 두 경로를 모두 no-op으로 가로막는다 — 전체화면
+  // 요청이 있어도 인라인 상태를 유지하게 강제.
+  try {
+    if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
+      Element.prototype.requestFullscreen = function(){ log('🚫 requestFullscreen 차단'); return Promise.reject(new Error('blocked by PACE PoC')); };
+    }
+    if (typeof HTMLVideoElement !== 'undefined' && HTMLVideoElement.prototype.webkitEnterFullscreen) {
+      HTMLVideoElement.prototype.webkitEnterFullscreen = function(){ log('🚫 webkitEnterFullscreen 차단'); };
+    }
+    document.addEventListener('fullscreenchange', function(){
+      if (document.fullscreenElement) { log('🚫 fullscreenchange 감지 — exitFullscreen 시도'); try { document.exitFullscreen(); } catch(e) {} }
+    }, true);
+  } catch(e) { log('전체화면 차단 설치 실패: ' + e.message); }
+
   // "이 앱을 다운로드하세요" 유도 모달 — 매 페이지 로드 초반에 뜬다. 텍스트 매칭으로 닫기/나중에
   // 버튼을 찾아 자동 클릭한다(좌표 기반 탭이 없어도 DOM 쿼리로는 가능).
   // 2026-08-13(13차) 사장님 보고("틱톡에서 무엇을 시청하고 싶으신가요 팝업 나옴") — 관심사(카테고리)

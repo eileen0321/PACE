@@ -34,8 +34,14 @@ export const SUPPORTED_APPS = {
   // 동작하는데 오버레이가 전혀 안 뜨는 버그로 이어졌다(ForegroundAppWatcher가 포그라운드 패키지를
   // 못 알아봄) — 두 패키지명 다 등록.
   // 2026-07-28 실기기 재현으로 webFallback(`www.tiktok.com/foryou`) 확인 — YouTube/Instagram과 달리
-  // 정확히 추천(For You) 풀스크린 피드로 바로 열림. 기본 우선순위(webFallback 먼저)로 그대로 둠.
-  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: false },
+  // 정확히 추천(For You) 풀스크린 피드로 바로 열림. 기본 우선순위(webFallback 먼저)로 그대로 뒀었다.
+  // 🔴 2026-08-13 사장님 지적("틱톡은 실행하면 웹페이지가 나오고 번쩍이다 영상이 플레이돼") —
+  //   그 "번쩍임"의 정체가 이 우선순위다. webFallback을 먼저 열면 안드로이드가 **웹 URL을 한 번
+  //   띄웠다가** 앱 링크로 TikTok 앱에 넘긴다. 최종 도착지는 같지만 그 사이 브라우저 화면이
+  //   깜빡인다. Instagram도 같은 이유로 2026-07-28에 이미 preferScheme: true로 뒤집었다.
+  //   → tiktok:// 스킴을 먼저 시도해 앱으로 직행한다. 스킴이 실패하면 기존 webFallback으로
+  //     자동 폴백하므로(launchPlatformApp의 [first, second] 구조) 안전망은 그대로다.
+  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: true },
 } as const;
 
 // 2026-07-20 실기기 검증 중 발견: 이 함수를 세션 시작 useEffect 안(DB 조회 2번 + Connecting 애니메이션

@@ -1,5 +1,7 @@
 package expo.modules.paceoverlay
 
+import android.app.Activity
+import android.app.Application
 import android.app.*
 import android.content.ComponentName
 import android.content.Context
@@ -21,6 +23,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
@@ -204,7 +207,17 @@ class PaceOverlayService : Service() {
         // 아직 유튜브를 가리켜서 다음 폴(1초)이 알약을 곧바로 되살리기 때문이다. "우리 앱이 전경이면
         // 알약은 어떤 신호가 뭐라 하든 띄우지 않는다"가 예외 없는 규칙이라 여기서 잘라낸다(사용자가
         // 직접 Pace로 전환한 경우도 같이 해결된다).
-        val selfForeground = usageStatsForeground == packageName || accessibilityForeground == packageName
+        // 🔴 2026-08-13 사장님 지적("지금 앱 홈인데 왜 오버레이가 떠있지???") — 위 두 신호만으로는
+        //   부족했다. **UsageStats는 갱신이 수 초 늦다.** 틱톡에서 홈으로 돌아와도 한동안
+        //   usage=com.ss.android.ugc.trill 로 답하는데, 내가 틱톡용으로 넣은 usageBasedVisible이
+        //   그 낡은 값을 그대로 믿어 알약을 계속 띄웠다(실측: 홈 진입 18초 뒤 스크린샷에도 알약이
+        //   그대로 있었다). 접근성은 우리 앱을 packageNames 필터에서 제외하므로 a11yFg=null이라
+        //   도움이 안 된다.
+        //   → 액티비티 생명주기로 **우리 앱이 전경인지 직접** 안다(appInForeground). 이건 지연이
+        //     없고 어떤 폴링보다 정확하다. "우리 앱이 전경이면 알약은 어떤 신호가 뭐라 하든 안 뜬다"는
+        //     기존 규칙을 실제로 지킬 수 있게 하는 신호다.
+        val selfForeground = appInForeground ||
+          usageStatsForeground == packageName || accessibilityForeground == packageName
         val eventBasedVisible = foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)
         // 🔴 2026-08-12 사장님 지시("틱톡 넣고 검증하라고") — 실기기에서 틱톡 위에 알약이 **전혀
         //   안 떴다**. 로그가 원인을 그대로 보여준다:
@@ -1007,6 +1020,11 @@ class PaceOverlayService : Service() {
   }
 
   companion object {
+    // 2026-08-13 — 위 registerForegroundTracking() 참고. 액티비티 생명주기로 갱신되는 즉시값.
+    @Volatile private var appInForeground = false
+    private var resumedActivityCount = 0
+    private var foregroundTrackingRegistered = false
+
     private const val POLL_INTERVAL_MS = 1000L
     // 2026-07-28 — 오버레이 유령 창(mHasSurface=false) 대응 강제 재생성 주기. 너무 짧으면 매번
     // add/removeView 오버헤드+깜빡임, 너무 길면 복구 체감이 느림 — 4초로 절충.
@@ -1889,6 +1907,36 @@ class PaceOverlayService : Service() {
   override fun onCreate() {
     super.onCreate()
     instance = this
+    registerForegroundTracking()
+  }
+
+  /**
+   * 🔴 2026-08-13 — "우리 앱이 지금 전경인가"를 **지연 없이** 아는 유일한 방법.
+   * UsageStats는 수 초 늦고(그래서 홈으로 돌아와도 알약이 남았다), 접근성은 우리 앱을
+   * packageNames 필터에서 제외하므로 애초에 우리를 못 본다. 액티비티 생명주기는 즉시 정확하다.
+   * Application 단위로 한 번만 등록하고, 서비스가 죽어도 콜백은 Application에 남는다.
+   */
+  private fun registerForegroundTracking() {
+    if (foregroundTrackingRegistered) return
+    val app = applicationContext as? Application ?: return
+    foregroundTrackingRegistered = true
+    app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+      override fun onActivityResumed(activity: Activity) {
+        // ⚠️ 보상형 광고 액티비티(PaceRewardedAdActivity)도 우리 앱이다 — 그때도 알약은 가려야
+        //   하므로 굳이 구분하지 않는다.
+        resumedActivityCount++
+        appInForeground = true
+      }
+      override fun onActivityPaused(activity: Activity) {
+        resumedActivityCount = (resumedActivityCount - 1).coerceAtLeast(0)
+        appInForeground = resumedActivityCount > 0
+      }
+      override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+      override fun onActivityStarted(activity: Activity) {}
+      override fun onActivityStopped(activity: Activity) {}
+      override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+      override fun onActivityDestroyed(activity: Activity) {}
+    })
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -3798,6 +3846,39 @@ class PaceOverlayService : Service() {
   // ─────────────────────────────────────────────────────────────────────────
   private var searchPanelView: FrameLayout? = null
 
+  /**
+   * 지금 사용자가 보고 있는 앱이 틱톡인가. UsageStats를 먼저 보고(접근성보다 신뢰도가 높았다 —
+   * 틱톡은 접근성 창 조회에서 안 잡히는 경우가 있다, 2026-08-12 알약 수정 참고) 없으면 접근성 값.
+   */
+  private fun isTikTokContext(): Boolean {
+    val fg = runCatching { ForegroundAppWatcher.getForegroundPackage(this) }.getOrNull()
+      ?: PaceAccessibilityService.getCurrentForegroundPackage()
+    return fg == "com.ss.android.ugc.trill" || fg == "com.zhiliaoapp.musically"
+  }
+
+  /**
+   * 틱톡 앱의 **자체 검색 화면**을 키워드와 함께 연다(2026-08-13 실기기 확인).
+   * 우리는 결과 목록을 만들 수 없으므로(위 submitSearch 주석) 입력만 받아 넘긴다.
+   * snssdk1233://이 실패하면 tiktok://로 폴백한다 — 리전별 설치본에서 스킴이 갈린다.
+   */
+  private fun openTikTokSearch(keyword: String) {
+    val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
+    for (scheme in listOf("snssdk1233", "tiktok")) {
+      val ok = runCatching {
+        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("$scheme://search?keyword=$encoded")).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          // 유튜브 복귀 경로와 동일 — 이게 없으면 대상 앱이 자동 PIP로 들어간다(2026-07-31 발견).
+          addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+        })
+      }.isSuccess
+      if (ok) {
+        Log.i("PaceOverlay", "TikTok search opened via $scheme:// keyword=$keyword")
+        return
+      }
+    }
+    Log.w("PaceOverlay", "TikTok search 실패 — 두 스킴 모두 열리지 않음")
+  }
+
   private fun hideSearchPanel() {
     searchPanelView?.let { v -> try { windowManager?.removeView(v) } catch (e: Exception) {} }
     searchPanelView = null
@@ -3970,6 +4051,18 @@ class PaceOverlayService : Service() {
         "ko" -> "쇼츠"
         "ja" -> "ショート"
         else -> "shorts"
+      }
+      // 🔴 2026-08-13 사장님 지시("검색은 우리 UI 쓰고 검색 결과만 틱톡 화면으로") — 정확히 그 구조다.
+      //   입력창·프리셋 칩은 이 패널(우리 것)을 그대로 쓰고, **결과만** 틱톡 앱 검색 화면에 맡긴다.
+      //   틱톡은 목록 API가 서명(X-Bogus/msToken)을 요구해 우리가 결과 목록을 만들 수 없다(스크래핑도
+      //   차단). 실기기 확인: `snssdk1233://search?keyword=고양이` → 틱톡 검색 결과가 그대로 뜨고
+      //   우리 알약도 그 위에 유지된다(`https://www.tiktok.com/search?q=`는 크롬이 떠서 못 쓴다).
+      //   로케일 접미사("쇼츠")는 안 붙인다 — 그건 유튜브 결과를 국내로 미는 장치이고, 틱톡 앱
+      //   검색은 이미 사용자 지역 기준으로 동작한다.
+      if (isTikTokContext()) {
+        hideSearchPanel()
+        openTikTokSearch(raw)
+        return
       }
       val q = if (raw.contains(suffix, ignoreCase = true)) raw else "$raw $suffix"
       runSearch(q)
@@ -4358,11 +4451,16 @@ class PaceOverlayService : Service() {
     // 강제로 넓히지 않고 자기 내용물 크기 그대로(WRAP_CONTENT) — 불필요하게 커지지 않는다
     // (사장님 지적: "왜 창은 크게 키워놓은건데").
     data class MenuItem(val label: String, val action: () -> Unit, val icon: String? = null, val badge: String? = null)
-    val items = listOf(
+    // 🔴 2026-08-13 — 틱톡 위에서는 HOT 목록을 띄우지 않는다. 그 목록은 **유튜브 쇼츠**이고,
+    //   틱톡을 보다가 눌러 고르면 조용히 유튜브로 튕겨 나간다(사장님 지적 전에 실제로 그랬다).
+    //   틱톡용 HOT 목록은 만들 수 없다 — 목록 API가 서명(X-Bogus/msToken)을 요구하고 스크래핑도
+    //   막혀 있다. 잘못된 목록을 보여주느니 항목을 감춘다(검색은 틱톡 자체 검색으로 넘겨 살린다).
+    val onTikTok = isTikTokContext()
+    val items = listOfNotNull(
       MenuItem("Open App", { openApp(); hidePaceMenu() }, icon = "↗"),
       // "Shorts"만 — 뒤 HOT 배지가 이미 트렌드를 표시하므로 라벨에 또 "HOT"을 넣으면 중복이라
       // 가장 넓은 행이 됨(사장님 지적: "가로 길이 줄이라고").
-      MenuItem("Shorts", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
+      if (onTikTok) null else MenuItem("Shorts", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
       MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),

@@ -91,16 +91,22 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
                   </View>
                 )}
               </View>
-              {/* 2026-08-13 사장님 지시 — 재생 버튼을 단색 배경 대신 글래스모피즘으로(PaceMenu/
-                  ConnectingOverlay와 같은 GlassSurface 패턴). 플랫폼별 분기 없는 공용 컴포넌트라
-                  안드로이드·iOS 둘 다 이 변경이 그대로 적용된다. */}
+              {/* 2026-08-13 사장님 지시("첨부처럼 완전 최신의 글래스모피즘 스타일로, 좀 줄여서") —
+                  맥 세션과 같은 시각에 각자 구현해 충돌났고, **맥의 GlassSurface 방식을 채택**한다:
+                  유리 재질을 앱 공용 컴포넌트 한 곳(PaceMenu/ConnectingOverlay와 같은 패턴)에서
+                  관리하는 게 맞고, 플랫폼 분기가 없어 iOS에도 그대로 적용된다.
+                  거기에 두 가지만 얹었다:
+                    · 크기 축소(40→32 / 32→26) — "좀 줄여서" 지시
+                    · 상단 하이라이트 — 위쪽에만 밝은 띠. 첨부한 liquid glass 레퍼런스의 핵심으로,
+                      이게 없으면 '반투명 원'이지 '유리'로 안 읽힌다. */}
               <GlassSurface
                 style={[styles.playButton, largeButton && styles.playButtonLarge]}
                 intensity={40}
                 tint="dark"
                 fallbackColor="rgba(88,86,214,0.35)"
               >
-                <Ionicons name="play" size={largeButton ? 18 : 14} color="#FFFFFF" style={styles.playIcon} />
+                <View style={styles.playHighlight} pointerEvents="none" />
+                <Ionicons name="play" size={largeButton ? 15 : 12} color="#FFFFFF" style={styles.playIcon} />
               </GlassSurface>
             </LinearGradient>
           </ImageBackground>
@@ -140,14 +146,20 @@ const styles = StyleSheet.create({
   featureChip: { borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingVertical: 2 },
   featureChipText: { fontSize: 8, fontFamily: typography.bodyFontFamilyBold, color: '#E5E7EB', letterSpacing: 0.3 },
   playButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden', // 하이라이트가 원형 밖으로 새지 않게
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.35)',
   },
-  playButtonLarge: { width: 40, height: 40, borderRadius: 20 }, // 2026-07-26 사용자 지시로 52→40 축소(안드로이드와 맞춤)
+  playButtonLarge: { width: 32, height: 32, borderRadius: 16 }, // 2026-08-13 40→32 축소(사장님 "좀 줄여서")
+  // 상단 하이라이트 — 위쪽에만 밝은 띠(liquid glass 레퍼런스의 핵심). 없으면 유리로 안 읽힌다.
+  playHighlight: {
+    position: 'absolute', left: 0, right: 0, top: 0, height: '55%',
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
   playIcon: { marginLeft: 2 }, // 원본 ml-0.5(2px) — 삼각형 아이콘의 시각적 무게중심 보정
 });

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated as RNAnimated, AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -39,6 +39,31 @@ const DAY_INDEX_KEYS: TranslationKey[] = [
 // 단순화. 원본은 minutesWatched를 로컬 데모 state로 관리했는데, Pace는 실제 useStatsStore
 // (todayUsageMinutes) 데이터로 대체했다 — "죽은 코드/가짜 데이터로 남기지 말라"는 별도 지시에 따름.
 // Break Reminder/Healthy Pause 토글도 실제 useSettingsStore에 연결.
+/** 🔴 2026-08-13 사장님 지시 — 홈 플랫폼 카드의 활성 표시와 **같은 기호**(연결=초록 펄스 /
+ * 미연결=회색 정적). "기능을 켰는가"와 "리모컨이 실제로 붙어 있는가"는 다른 정보인데 지금까지
+ * 후자를 볼 방법이 없었다. PlatformPickerCard의 statusDot과 같은 크기00b7같은 색00b7같은 주기를 쓴다. */
+function ConnectedDot({ connected }: { connected: boolean }) {
+  const pulse = useRef(new RNAnimated.Value(0.4)).current;
+  useEffect(() => {
+    if (!connected) { pulse.setValue(1); return; }
+    const loop = RNAnimated.loop(RNAnimated.sequence([
+      RNAnimated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      RNAnimated.timing(pulse, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, connected]);
+  return (
+    <RNAnimated.View
+      style={[
+        { width: 6, height: 6, borderRadius: 3 },
+        { backgroundColor: connected ? colors.successLight : 'rgba(255,255,255,0.3)' },
+        { opacity: pulse },
+      ]}
+    />
+  );
+}
+
 export default function FocusScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -51,6 +76,8 @@ export default function FocusScreen() {
   const attendanceHistory = useAttendanceStore((s) => s.history);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
   const currentStreak = getCurrentStreak(attendanceHistory);
+  // 2026-08-13 — 블루투스 리모컨이 **실제로 연결돼 있는지** (기능 on/off와 별개). 아래 ConnectedDot.
+  const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
   const autoModeEnabled = useBluetoothStore((s) => s.autoModeEnabled);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   // 2026-07-27 사용자 지시 — "손짓/볼륨키/블루투스 핸즈프리" 상태를 Focus 탭에 모아서 보여달라는
@@ -394,6 +421,11 @@ export default function FocusScreen() {
               >
                 <View style={[styles.handsFreeIcon, bluetoothBlocked && styles.handsFreeRowBlocked]}><RemoteClickIllustration /></View>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {/* 🔴 2026-08-13 사장님 지시("블루투스 리모컨 옆에 홈 카드의 반짝이는 녹색 아이콘을
+                      달아서 실제 연결돼 있는지 표시") — 지금까지 이 줄은 "기능을 켰는지"만 보여줬고
+                      **리모컨이 실제로 붙어 있는지**는 알 수 없었다. 홈 플랫폼 카드의 활성 표시와
+                      똑같은 점(연결=초록 펄스 / 미연결=회색 정적)을 쓴다 — 같은 의미에 같은 기호. */}
+                  <ConnectedDot connected={isBluetoothConnected} />
                   <Text style={[styles.interventionTitle, bluetoothBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
                   {bluetoothBlocked ? (
                     <View style={styles.permissionNeededBadge}>

@@ -58,6 +58,10 @@ class PaceOverlayModule : Module() {
   // Bluetooth Hands-Free(2026-07-19) — AudioManager로 현재 연결된 블루투스 오디오 출력을 조회.
   // BLUETOOTH_CONNECT 런타임 권한(Android 12+)이 필요한 건 BluetoothAdapter의 클래식 API 쪽이고,
   // AudioManager.getDevices()로 출력 라우팅만 보는 이 경로는 별도 권한 없이 동작한다.
+  // 리모컨 키가 이 시간 안에 들어온 적 있으면 "연결됨"으로 본다. 넉넉히 잡는다 —
+  // 리모컨은 눌러야 신호가 나므로 짧게 잡으면 잠깐 안 누른 사이 회색으로 돌아간다.
+  private val REMOTE_ALIVE_WINDOW_MS = 6L * 60L * 60L * 1000L // 6시간
+
   private fun getConnectedBluetoothAudioDevice(context: Context): Pair<Boolean, String?> {
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return Pair(false, null)
     val btDevice = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
@@ -535,8 +539,17 @@ class PaceOverlayModule : Module() {
       val context = appContext.reactContext
       val prefs = context?.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
       val deviceInfo = context?.let { getConnectedBluetoothAudioDevice(it) }
+      // 🔴 2026-08-13 사장님 지적("블루투스 연결돼 있는데 집중에서 파란불이 안 들어온다, 동작도 하는데") —
+      //   위 getConnectedBluetoothAudioDevice는 **오디오 기기(A2DP/SCO)만** 본다. 리모컨/셔터는
+      //   HID 입력기기라 오디오 목록에 영원히 안 잡힌다 → 실제로 눌러서 넘어가는데도 "연결 안 됨"이었다.
+      //   어댑터를 직접 조회하려면 Android 12+에서 BLUETOOTH_CONNECT 런타임 권한이 필요해 **새 권한
+      //   프롬프트**가 생긴다. 그 대신 이미 갖고 있는 **관측 증거**를 쓴다 — 리모컨이 키를 보낸 적이
+      //   있으면 그건 추정이 아니라 연결됐다는 직접 증거다.
+      val lastRemoteKeyAt = PaceAccessibilityService.lastRemoteKeyAtMs()
+      val remoteRecentlyUsed = lastRemoteKeyAt > 0L &&
+        android.os.SystemClock.elapsedRealtime() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
       mapOf(
-        "isConnected" to (deviceInfo?.first ?: false),
+        "isConnected" to ((deviceInfo?.first ?: false) || remoteRecentlyUsed),
         "deviceName" to deviceInfo?.second,
         "autoModeEnabled" to (prefs?.getBoolean(PaceOverlayService.PREF_AUTO_MODE, false) ?: false),
         "nextCount" to (prefs?.getInt("bt_next_count", 0) ?: 0),

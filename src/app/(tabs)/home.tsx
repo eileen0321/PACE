@@ -41,8 +41,8 @@ const YOUTUBE_COVER = require('../../../assets/covers/youtube.jpg');
 // 안드 감시 목록(SupportedApps.PACKAGES에 글로벌 com.zhiliaoapp.musically + 한국 리전
 // com.ss.android.ugc.trill 둘 다), 흉내 오버레이(PlatformMimicOverlay)까지 전부 이미 있다 —
 // 즉 카드만 없었다.
-const TIKTOK_COVER = require('../../../assets/covers/tiktok.jpg');
-
+import { LOOPS_COVER_DATA_URI } from '../../constants/loopsCover';
+const TIKTOK_COVER = { uri: LOOPS_COVER_DATA_URI };
 // 2026-08-03 — 홈 인사이트 배너를 다시 뽑기까지 필요한 최소 백그라운드 체류 시간. 이 값보다 짧게
 // 다녀오면(보상광고 시청, P메뉴 "앱으로" 등) 문구를 그대로 두어 복귀 화면이 전혀 안 움직인다.
 // 아래 AppState 효과의 주석 참고 — 왜 "안 바꾸는 것"이 유일한 해법인지 실측 근거가 적혀 있다.

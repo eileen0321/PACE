@@ -59,10 +59,14 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
                 검정이 80%인데, 여기선 **왼→오른 가로**에 검정 90%였다. 유튜브 커버는 밝은
                 빨강이라 그 밑에서도 살아남았지만 틱톡 커버는 어두운 야경이라 통째로 묻혔다 —
                 같은 컴포넌트·같은 프롭인데 한쪽만 안 보이던 이유다. 원본 방향·농도로 되돌린다. */}
+            {/* 🔴 2026-08-13 사장님 지시("홈 카드가 왜 이렇게 어두워? 첨부처럼 밝게") — 커버가
+                거의 안 보일 만큼 덮고 있던 오버레이를 걷어낸다. 우리 레이아웃은 원본 프로토타입과
+                달리 텍스트가 **왼쪽**, 재생 버튼이 오른쪽이므로 세로가 아니라 **가로**로 깐다:
+                왼쪽만 글자 가독성만큼 살짝 어둡게, 오른쪽은 거의 그대로 둬서 그래픽이 살아난다. */}
             <LinearGradient
-              colors={['rgba(0,0,0,0.8)', gradientFrom]}
+              colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0.12)']}
               start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
+              end={{ x: 1, y: 0 }}
               style={styles.overlay}
             >
               <View style={styles.textCol}>

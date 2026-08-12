@@ -175,7 +175,21 @@ WebView를 아예 안 쓰고 **진짜 네이티브 앱**을 여니까 이 제한
 | 카드 | 제목 | 배지 | 커버 |
 |---|---|---|---|
 | YouTube | **`Shorts with PACE`** | `GUARDED` | `assets/covers/youtube.jpg` |
-| TikTok | **`Loops with PACE`** | `LOOPS` | `assets/covers/tiktok.jpg` |
+| TikTok | **`Loops with PACE`** | `LOOPS` | **`src/constants/loopsCover.ts`** (data URI) — 아래 참고 |
+
+🔴 **2026-08-13 — 틱톡 커버는 `require()` 에셋으로는 끝내 렌더되지 않아 data URI로 인라인했다**(`59a6b35`).
+런타임 진단: `resolveAssetSource(tiktok)` → `{"uri":"","width":1024,"height":1024}`.
+Metro가 파일은 읽어 크기까지 알아냈는데 **리소스 이름만 빈 문자열**이었다. 안드로이드 드로어블
+(`assets_covers_*.jpg`)과 APK 리소스(`res/*.jpg`)는 **양쪽 다 정상 생성·번들**됐다.
+배제한 것: 파일 동일성(원본과 해시 일치) · 카드/그라데이션(이 카드에 유튜브 이미지를 넣으면 정상) ·
+오버레이 완전 제거 · JPEG 인코딩(둘 다 SOF0 baseline) · 재인코딩 · Metro 캐시 전체 삭제 ·
+파일명 3회 변경 · 쌓인 생성 리소스 정리. 전부 동일해서 **에셋 등록 경로를 우회**했다.
+
+> **🍎 iOS에 틱톡 카드를 붙일 때**: `require('assets/covers/…')`로 하면 같은 증상이 날 수 있다.
+> 안 보이면 `LOOPS_COVER_DATA_URI`를 그대로 쓰면 된다(플랫폼 무관).
+>
+> 부수 발견: 같은 이름의 `.jpg`/`.png`가 함께 있으면 AAPT가 `Duplicate resources`로 빌드를 깬다.
+> 생성 리소스 디렉터리(`android/app/build/generated/res/react`)는 **빌드 간에 정리되지 않고 쌓인다.**
 
 > ⚠️ **`YouTube with PACE` / `TikTok with PACE`는 쓰지 않는다** (사장님 확인 후 결정).
 > YouTube·TikTok 브랜드 가이드라인은 자사 마크를 **다른 이름과 합쳐 새 명칭을 만드는 것**을

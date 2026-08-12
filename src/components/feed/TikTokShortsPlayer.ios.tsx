@@ -127,13 +127,12 @@ const INJECTED_JS = `
       }
       var bodyText = document.body.innerText || '';
       if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
-        // 로그인 유도 모달이 확실히 감지됐는데 "게스트"류 텍스트/aria-label 매칭도 실패 — 진단으로
-        // 실제 버튼 목록만 로그(다음 라운드에 정확한 문구로 좁히기 위함). ⚠️ 여기서 아무 버튼이나
-        // 골라 클릭하지 않는다 — 로그인 모달엔 "Continue with Google/Apple" 같은 버튼도 같이 있어,
-        // 잘못 누르면 OAuth 플로우가 열리는 더 나쁜 상태가 된다. 안전한 배경 클릭/Esc만 시도.
-        // 2026-08-13(18차) — [role="dialog"]/.modal 셀렉터로는 못 찾았다(실기기 로그로 확인, 진짜
-        // 모달 마크업이 다른 패턴일 가능성). "무엇을 시청하고"를 직접 담은 텍스트 노드에서부터 위로
-        // 올라가며 각 조상의 버튼/링크를 덤프한다 — 이러면 모달 컨테이너 이름이 뭐든 반드시 잡힌다.
+        // 2026-08-13(21차) 실기기 콘솔 로그로 실제 버튼 목록을 확인(추측 아님): "계속 (0/3)",
+        // "로그인", "대한민국", "서비스 약관", "개인정보 처리방침". "게스트로 보기"류 스킵 버튼은
+        // 없다 — 이건 "카테고리를 최소 몇 개 고르면 계속 버튼이 활성화되는" 관심사 선택 게이트다.
+        // "계속"만 클릭해선 (0/3)이라 진행이 안 될 수 있다. 모달 컨테이너 안에서 이 5개 알려진
+        // 크롬 버튼이 아닌, 텍스트를 가진 "말단"(자식 엘리먼트 없는) 요소들을 카테고리 칩으로 보고
+        // 몇 개 클릭한 뒤 "계속"을 누른다. ⚠️ "로그인"/OAuth류는 여전히 안 건드린다.
         try {
           var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
           var textNode = null;
@@ -141,27 +140,52 @@ const INJECTED_JS = `
             if ((walker.currentNode.nodeValue || '').indexOf('무엇을 시청하고') !== -1) { textNode = walker.currentNode; break; }
           }
           var anchor = textNode ? textNode.parentElement : null;
+          var modalRoot = null;
           if (anchor) {
             var level = 0;
             var el2 = anchor;
             while (el2 && level < 6) {
               var interactive = el2.querySelectorAll('button, [role="button"], a');
-              if (interactive.length > 0 && interactive.length < 15) {
-                var found2 = [];
-                for (var k = 0; k < interactive.length; k++) {
-                  if (!isVisible(interactive[k])) continue;
-                  found2.push('"' + (interactive[k].textContent || '').trim().slice(0, 20) + '"');
-                }
-                if (found2.length > 0) {
-                  send({ type: 'domlog', text: '로그인모달(lv' + level + ' ' + el2.tagName + '.' + (el2.className || '').toString().slice(0, 30) + ') 버튼: ' + found2.join(', ') });
-                  break;
-                }
-              }
+              if (interactive.length > 0 && interactive.length < 15) { modalRoot = el2; break; }
               el2 = el2.parentElement;
               level++;
             }
+          }
+          if (!modalRoot) {
+            send({ type: 'domlog', text: '로그인모달 컨테이너 못 찾음' });
           } else {
-            send({ type: 'domlog', text: '로그인모달 텍스트는 감지됐는데 텍스트노드를 못 찾음(이상 케이스)' });
+            var KNOWN_CHROME = ['계속', '로그인', '대한민국', '서비스 약관', '개인정보 처리방침', 'continue', 'log in', 'login'];
+            var isKnownChrome = function(t){
+              var lt = t.toLowerCase();
+              for (var kc = 0; kc < KNOWN_CHROME.length; kc++) { if (lt.indexOf(KNOWN_CHROME[kc].toLowerCase()) !== -1) return true; }
+              return false;
+            };
+            var all = modalRoot.querySelectorAll('*');
+            var chipCandidates = [];
+            for (var a2 = 0; a2 < all.length; a2++) {
+              var cand = all[a2];
+              if (cand.children.length > 0) continue; // 말단 요소만(카테고리 칩은 보통 텍스트만 든 리프)
+              var ctxt = (cand.textContent || '').trim();
+              if (!ctxt || ctxt.length > 10) continue; // 카테고리명은 짧다(동물/코미디 등)
+              if (isKnownChrome(ctxt)) continue;
+              if (!isVisible(cand)) continue;
+              chipCandidates.push(cand);
+            }
+            send({ type: 'domlog', text: '카테고리칩 후보 ' + chipCandidates.length + '개: ' + chipCandidates.slice(0, 8).map(function(c){ return '"' + (c.textContent || '').trim() + '"'; }).join(', ') });
+            var clickN = Math.min(3, chipCandidates.length);
+            for (var c3 = 0; c3 < clickN; c3++) { try { chipCandidates[c3].click(); } catch(e) {} }
+            if (clickN > 0) {
+              send({ type: 'domlog', text: '카테고리 ' + clickN + '개 클릭함, 0.4초 뒤 계속 버튼 시도' });
+              setTimeout(function(){
+                try {
+                  var btns2 = modalRoot.querySelectorAll('button, [role="button"], a');
+                  for (var b2 = 0; b2 < btns2.length; b2++) {
+                    var bt = (btns2[b2].textContent || '').trim();
+                    if (isVisible(btns2[b2]) && bt.indexOf('계속') !== -1) { btns2[b2].click(); send({ type: 'domlog', text: '계속 버튼 클릭: ' + bt }); return; }
+                  }
+                } catch(e) {}
+              }, 400);
+            }
           }
         } catch(e) { send({ type: 'domlog', text: '로그인모달 진단 실패: ' + e.message }); }
         try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); } catch(e) {}

@@ -100,9 +100,12 @@ const INJECTED_JS = `
     var v = activeSlide ? activeSlide.querySelector('video') : null;
     return v || document.querySelector('video');
   }
-  function markAdvancedOnce(video){
-    if (video.__paceAdvanced) return false;
-    video.__paceAdvanced = true;
+  // "한 번 시도했다 실패하면 영영 그 영상에 갇힌다"를 막기 위한 게이트. 시도 "중"에만 true —
+  // 이동이 실제로 확인되거나 재시도가 소진되면 풀려서, 다음 자연종료 감지(재생 재시작 등) 때
+  // 다시 시도할 수 있다(아래 tryAdvance).
+  function markAdvancingOnce(video){
+    if (video.__paceAdvancing) return false;
+    video.__paceAdvancing = true;
     return true;
   }
   function scrollToNextFromVideo(video){
@@ -130,26 +133,115 @@ const INJECTED_JS = `
       log('scrollIntoView 대상 못 찾음(.swiper-slide도 폴백도 실패)');
     } catch(err) { log('scrollToNextFromVideo 실패: ' + err.message); }
   }
+  // 2026-08-13(11차) 사장님 보고("같은영상만 나와", slideNext 단독 시도 이후에도 재현) — Swiper API
+  // 단독으로는 실기기에서 안 먹혔다. 예전 8초 강제루프가 "영상이 계속 넘어간다"는 걸 실제로
+  // 만들어냈던 것은 특정 한 기법이 아니라 **여러 기법을 한꺼번에 쏘는 것 자체**였을 가능성이
+  // 높다(그중 정확히 뭐가 먹혔는지 로그로 특정 못 함 — DOM 덤프가 실기기 세션마다 달랐다). 그래서
+  // 이번엔 그 전체 기법 목록을 되살리되, **자연 종료를 감지했을 때 딱 한 번만**(markAdvancedOnce
+  // 가드, 8초 블라인드 반복 아님) 전부 순서대로 시도한다 — "언제 넘길지"는 이제 재생 위치로
+  // 정확히 판단하고, "어떻게 넘길지"만 예전의 다중기법 산탄식으로 되돌린 것.
   function goToNext(video){
+    var moved = false;
     try {
-      var swiperEl = video.closest ? video.closest('.swiper') : null;
-      var inst = swiperEl && swiperEl.swiper;
-      if (inst && typeof inst.slideNext === 'function') {
+      var allSwipers = document.querySelectorAll('.swiper');
+      for (var s = 0; s < allSwipers.length; s++) {
+        var inst = allSwipers[s].swiper;
+        if (!inst || typeof inst.slideNext !== 'function') continue;
         var before = inst.activeIndex;
         inst.slideNext();
-        log('goToNext: swiper.slideNext() idx ' + before + '→' + inst.activeIndex);
+        if (inst.activeIndex !== before) moved = true;
       }
+      log('goToNext: Swiper 전수 slideNext() (' + allSwipers.length + '개)' + (moved ? ' → 이동함' : ' → 제자리'));
     } catch(e) { log('goToNext swiper 실패: ' + e.message); }
     scrollToNextFromVideo(video);
+    try {
+      var py0 = window.innerHeight * 0.8, py1 = window.innerHeight * 0.15, px = window.innerWidth / 2;
+      var pel = document.elementFromPoint(px, py0) || document.body;
+      function pev(type, y, id){
+        return new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: true, clientX: px, clientY: y, bubbles: true, cancelable: true });
+      }
+      pel.dispatchEvent(pev('pointerdown', py0, 1));
+      pel.dispatchEvent(pev('pointermove', (py0 + py1) / 2, 1));
+      pel.dispatchEvent(pev('pointermove', py1, 1));
+      pel.dispatchEvent(pev('pointerup', py1, 1));
+      log('goToNext: PointerEvent 스와이프 실행');
+    } catch(e) { log('goToNext PointerEvent 실패: ' + e.message); }
+    // 2026-08-13(12차) 사장님 보고("스와이프 안넘어가는데" — 실제 손가락 터치도 안 먹힘) — 데스크톱
+    // UA로 서빙되는 페이지라면 Swiper가 터치가 아니라 **마우스 드래그**로 설정돼 있을 가능성이 있다
+    // (simulateTouch/마우스 전용 리스너). 합성 마우스 드래그(mousedown→mousemove→mouseup)도 같이 쏜다.
+    try {
+      var my0 = window.innerHeight * 0.8, my1 = window.innerHeight * 0.15, mx = window.innerWidth / 2;
+      var mel = document.elementFromPoint(mx, my0) || document.body;
+      function mev(type, y){ return new MouseEvent(type, { clientX: mx, clientY: y, bubbles: true, cancelable: true, button: 0 }); }
+      mel.dispatchEvent(mev('mousedown', my0));
+      mel.dispatchEvent(mev('mousemove', (my0 + my1) / 2));
+      mel.dispatchEvent(mev('mousemove', my1));
+      mel.dispatchEvent(mev('mouseup', my1));
+      log('goToNext: MouseEvent 드래그 실행');
+    } catch(e) { log('goToNext MouseEvent 실패: ' + e.message); }
+    try {
+      var y0 = window.innerHeight * 0.8, y1 = window.innerHeight * 0.15, x = window.innerWidth / 2;
+      var el = document.elementFromPoint(x, y0) || document.body;
+      function tev(type, y){ var t = new Touch({identifier: 1, target: el, clientX: x, clientY: y});
+        return new TouchEvent(type, {cancelable: true, bubbles: true, touches: type === 'touchend' ? [] : [t], targetTouches: type === 'touchend' ? [] : [t], changedTouches: [t]}); }
+      el.dispatchEvent(tev('touchstart', y0));
+      el.dispatchEvent(tev('touchmove', (y0 + y1) / 2));
+      el.dispatchEvent(tev('touchmove', y1));
+      el.dispatchEvent(tev('touchend', y1));
+      log('goToNext: TouchEvent 스와이프 실행');
+    } catch(e) { log('goToNext TouchEvent 실패: ' + e.message); }
+    try {
+      var wheelEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2) || document.body;
+      wheelEl.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true, cancelable: true }));
+    } catch(e) {}
+    try {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true }));
+    } catch(e) {}
+    try {
+      var containers = document.querySelectorAll('div, main, section');
+      var candidates = [];
+      for (var k = 0; k < containers.length; k++) {
+        var c = containers[k];
+        var delta = c.scrollHeight - c.clientHeight;
+        if (delta > 20) candidates.push({ el: c, top: c.scrollTop });
+      }
+      for (var m = 0; m < Math.min(3, candidates.length); m++) {
+        candidates[m].el.scrollTop = candidates[m].top + window.innerHeight;
+      }
+      var se0 = document.scrollingElement || document.documentElement;
+      se0.scrollTop = se0.scrollTop + window.innerHeight;
+    } catch(e) {}
+  }
+  // 실제로 다음 영상으로 옮겨갔는지(getActiveVideo()가 바뀌었는지) 확인하고, 안 옮겨갔으면 짧은
+  // 간격으로 재시도한다(최대 6회 ≈ 4.2초). 8초 블라인드 반복과 다른 점: 이건 "영상이 이미 끝났다"고
+  // 확정된 뒤에만 도는 재시도이지, 재생 중에는 절대 안 돈다.
+  function tryAdvance(video, attemptsLeft){
+    if (attemptsLeft === undefined) attemptsLeft = 6;
+    goToNext(video);
+    setTimeout(function(){
+      var nowActive = getActiveVideo();
+      if (nowActive && nowActive !== video) {
+        log('🟢 다음 영상으로 이동 확인됨');
+        video.__paceAdvancing = false;
+        return;
+      }
+      if (attemptsLeft > 0) {
+        log('아직 이동 안 됨 — 재시도(남은 ' + attemptsLeft + '회)');
+        tryAdvance(video, attemptsLeft - 1);
+      } else {
+        log('🔴 이동 재시도 소진 — 이 영상에 갇힘, 다음 감지 때 다시 시도');
+        video.__paceAdvancing = false;
+      }
+    }, 700);
   }
   function hookVideoEnded(video){
     if (!video || video.__paceEndedHooked) return;
     video.__paceEndedHooked = true;
     try { video.loop = false; } catch(e) {}
     video.addEventListener('ended', function(){
-      if (!markAdvancedOnce(video)) return;
+      if (!markAdvancingOnce(video)) return;
       log('🟢 video "ended" 이벤트 실제 발생 — 0.5초 뒤 다음으로');
-      setTimeout(function(){ goToNext(video); }, 500);
+      setTimeout(function(){ tryAdvance(video); }, 500);
     }, false);
   }
   var endedObserverStarted = false;
@@ -175,9 +267,9 @@ const INJECTED_JS = `
     var t = v.currentTime;
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
-    if ((nearEnd || loopedBack) && markAdvancedOnce(v)) {
+    if ((nearEnd || loopedBack) && markAdvancingOnce(v)) {
       log('🟡 폴링 자연종료 감지(nearEnd=' + nearEnd + ' loopedBack=' + loopedBack + ') t=' + t.toFixed(2) + '/' + v.duration.toFixed(2));
-      goToNext(v);
+      tryAdvance(v);
     }
     pollLastT = t;
   }

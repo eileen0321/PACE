@@ -660,12 +660,27 @@ export default function PaceFeedScreen() {
 
   const goPrevious = () => { goPrev(); };
 
-  const toggleAutoMode = () => {
+  const toggleAutoMode = async () => {
     // 토스트(다른 컴포넌트 setState)를 setIsAutoMode 업데이터 안에서 호출하면 React가
     // "Cannot update a component (ToastHost) while rendering..." 경고를 낸다(업데이터는 순수해야 함).
     // 이벤트 핸들러 본문(렌더 밖)에서 현재 값을 뒤집어 계산하고, 상태 변경과 토스트를 분리 호출한다.
     markUserInput();
     const next = !isAutoMode;
+    // 🔴 2026-08-12 — Windows가 useFocusSessionStore.load()의 "재설치 직후" 경로에서 hydrated를
+    // 서버 병합 뒤로 미뤘다(feff7ba, "앱 지웠다 깔면 포커스 10분이 새로 나가던 우회" 수정) — 근거는
+    // "hydrated=true를 본 화면이 그 사이에 세션을 시작해버리면 서버가 timedOut을 말하기 전에 공짜
+    // 10분이 나간다"였다. 근데 그 store를 코드베이스 전체에서 grep해보면 **hydrated를 실제로 읽는
+    // 곳이 여기 포함해 한 곳도 없었다** — 플래그만 나중에 세워질 뿐 아무도 기다리지 않으면 경쟁
+    // 상태는 그대로다. 여기가 실제로 "세션을 켤지" 판단하는 유일한 지점이라 여기서 직접 기다린다.
+    // load()가 이미 부팅 시 1회 발사돼 있으므로 보통은 이 루프가 즉시(0회 반복) 빠진다 — 사용자가
+    // 앱을 열자마자 몇 초 안에 Focus를 누르는 드문 경우에만 최대 3초(스토어의 fail-open 상한과
+    // 동일) 대기한다.
+    if (next) {
+      const deadline = Date.now() + 3000;
+      while (!useFocusSessionStore.getState().hydrated && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 사용자가 "타임아웃으로" 꺼진 세션을 다시
     // 켜려 하면 무료 재개 대신 보상광고/크레딧 연장 모달로 보낸다(무한 무료 재활성화 구멍 차단).
     // 프리미엄이거나 타임아웃 아닌(수동 off 후) 재개는 그대로 무료로 켠다.

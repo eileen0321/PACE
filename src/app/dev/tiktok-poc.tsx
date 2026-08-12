@@ -16,16 +16,20 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 스스로 스크롤/다음영상 이동을 반복하며 몇 분간 무인으로 관찰한다 — 스크롤할수록 로그인벽이
 // 뜨는지, 스와이프 시뮬레이션이 먹히는지가 핵심 질문. 화면 하단 로그 패널로 결과를 본다.
 //
-// 🔴 결론(수 시간 조사, 7개 기법 시도 — 합성 터치스와이프/wheel/키보드/scrollTop 직접대입/
+// 🔴 결론(수 시간 조사, 8개 기법 시도 — 합성 터치스와이프/wheel/키보드/scrollTop 직접대입/
 // Swiper.js 공식 API(slideNext)/nextSibling.scrollIntoView/PointerEvent(Swiper v9+가 내부적으로
-// TouchEvent 대신 쓰는 것) — 전부 딱 1회만 이동하고 영구히 멈춤(활성 슬라이드 idx=1/2에서 고정,
-// 다음 슬라이드가 DOM에 아예 없음). 틱톡은 영상을 2개만 미리 로드해두고, 다음 배치를 불러오는
-// 트리거가 event.isTrusted(진짜 OS 레벨 입력)를 요구하는 것으로 보인다 — 페이지 JS로 만든 어떤
-// 이벤트도 이 기준을 통과 못 했다. WebDriver(safaridriver)로 진짜 신뢰된 입력을 시도했으나
+// TouchEvent 대신 쓰는 것)/실제 오픈소스 유저스크립트 원문 기법(video.loop=false로 자동반복을
+// 끄고 진짜 media 'ended' 이벤트를 기다렸다 .swiper-slide.nextElementSibling으로 스크롤, 8차) —
+// 전부 딱 1회만 이동하고 영구히 멈춤(활성 슬라이드 idx=1/2에서 고정, 다음 슬라이드가 DOM에
+// 아예 없음). **8차 시도가 특히 중요한 반증이다** — 이건 페이지 JS가 만든 가짜 이벤트가 아니라
+// 브라우저가 실제 재생 완료를 보고 발생시키는 100% 신뢰된 미디어 이벤트였는데도 실패했다 —
+// 즉 이전까지의 "event.isTrusted를 요구한다"는 가설은 반증됐고, 진짜 원인은 아직 모른다(이
+// 세션이 오늘 밤 반복 테스트로 이미 제한된 상태이거나, 로그인이 필요하거나, 시뮬레이터에서
+// 관측 못 하는 다른 조건일 수 있다). WebDriver(safaridriver)로 진짜 OS 레벨 입력을 시도했으나
 // "Allow Remote Automation"이 꺼져 있고 --enable은 macOS sudo 암호가 필요해(요청 안 함) 검증
 // 못 함. 결론: 콘텐츠 로드/재생/로그인벽 없음은 확정, 자동 다음영상 넘김은 **실기기에서 사람이
-// 직접 스와이프해야만** 최종 확인 가능(진짜 터치는 트러스트 문제에 안 걸릴 가능성이 높음 —
-// 검증 안 된 가설).
+// 직접 스와이프해야만** 최종 확인 가능 — 원인 불명이라 실기기 테스트 결과와 무관하게 여전히
+// 유효한 유일한 다음 단계.
 
 const INJECTED_JS = `
 (function() {
@@ -74,6 +78,66 @@ const INJECTED_JS = `
         log('새 영상 #' + count + ' (path=' + location.pathname + ', playing=' + (v ? !v.paused : 'no-video') + ')');
       }
     } catch(e) {}
+  }
+
+  // 2026-08-12(6차) 사장님 지적("오토스크롤 넣어본건") — Greasyfork 스크립트 전체 원문을 다시
+  // 가져와보니 요약에서 빠졌던 핵심이 있었다: **타이머로 강제 스크롤하지 않는다.** video.loop를
+  // false로 꺼서 자동 반복을 막고, 영상이 **진짜로 끝까지 재생돼 자연 발생하는 'ended' 이벤트**를
+  // 기다렸다가만 다음으로 넘긴다(0.5초 딜레이 후). 지금까지 8초 타이머로 영상 상태와 무관하게
+  // 강제로 스크롤을 밀어붙인 것과 근본적으로 다르다 — 'ended'는 브라우저가 실제 재생 완료를 보고
+  // 발생시키는 신뢰된 미디어 이벤트라, 틱톡이 "다음 배치를 부를 시점"의 근거로 이걸 볼 가능성이
+  // 있다(강제 스크롤엔 반응 안 했지만 이건 다른 신호일 수 있다). shorts-poc.tsx와 같은 방식으로
+  // MutationObserver를 써서 새 video가 나타날 때마다 재부착한다.
+  function scrollToNextFromVideo(video){
+    try {
+      // 2026-08-12(7차) — 1차 시도(가장 가까운 "스크롤 가능한 부모"를 아무거나 잡는 휴리스틱)가
+      // 실제로는 엉뚱한 컨테이너를 잡았을 수 있다(예전 scrollTop 실험 때도 같은 실수를 한 번
+      //했었다). 지금 라이브 DOM에서 이미 확인된 진짜 슬라이드 단위는 .swiper-slide다 — 그걸
+      // 정확히 타겟팅한다(Greasyfork 원문의 "DivItemContainer"는 지금 구조에서 이거에 해당).
+      var slide = video.closest ? video.closest('.swiper-slide') : null;
+      if (slide && slide.nextElementSibling) {
+        slide.nextElementSibling.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        log('ended 이벤트 기반: .swiper-slide.nextElementSibling.scrollIntoView() 실행');
+        return;
+      }
+      if (slide) {
+        log('ended 왔음, .swiper-slide는 찾았는데 nextElementSibling이 없음(마지막 로드된 슬라이드)');
+        return;
+      }
+      // 폴백: 예전 휴리스틱(스크롤 가능한 첫 부모).
+      var e = video;
+      while (e && e.tagName && e.tagName.toLowerCase() !== 'body') {
+        var next = e.nextElementSibling;
+        if (next && e.parentElement && e.parentElement.scrollHeight > e.parentElement.clientHeight) {
+          next.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+          log('ended 이벤트 기반(폴백 휴리스틱) nextSibling.scrollIntoView() 실행(el=' + (e.className || e.tagName) + ')');
+          return;
+        }
+        e = e.parentElement;
+      }
+      log('ended 이벤트는 왔는데 스크롤할 다음 형제를 못 찾음(.swiper-slide도 폴백도 실패)');
+    } catch(err) { log('scrollToNextFromVideo 실패: ' + err.message); }
+  }
+  function hookVideoEnded(video){
+    if (!video || video.__paceEndedHooked) return;
+    video.__paceEndedHooked = true;
+    try { video.loop = false; } catch(e) {}
+    video.addEventListener('ended', function(){
+      log('🟢 video "ended" 이벤트 실제 발생(신뢰된 미디어 이벤트) — 0.5초 뒤 스크롤');
+      setTimeout(function(){ scrollToNextFromVideo(video); }, 500);
+    }, false);
+  }
+  var endedObserverStarted = false;
+  function startEndedObserver(){
+    if (endedObserverStarted) return; endedObserverStarted = true;
+    var v0 = document.querySelector('video');
+    if (v0) hookVideoEnded(v0);
+    var mo = new MutationObserver(function(){
+      var v = document.querySelector('video');
+      if (v) hookVideoEnded(v);
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    log('ended 이벤트 옵저버 시작(MutationObserver로 새 video 자동 재부착)');
   }
 
   // 2026-08-11(2차) 사장님 지시("웹에서 다시 찾아봐") — 합성 터치가 64초간 8번 실패한 뒤 웹서치로
@@ -231,8 +295,9 @@ const INJECTED_JS = `
     } catch(e) {}
   }
 
-  log('PACE TikTok PoC 주입 완료 — 8초마다 자동 진행');
+  log('PACE TikTok PoC 주입 완료 — 8초마다 강제시도 + ended 이벤트 대기 병행');
   trackCurrentVideo();
+  startEndedObserver();
   setInterval(advance, 8000);
   // 배너는 로드 직후 뜨는 경우가 많아 더 빨리도 한 번 시도.
   setTimeout(dismissAppBanner, 1500);

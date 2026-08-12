@@ -87,6 +87,45 @@ WebView를 아예 안 쓰고 **진짜 네이티브 앱**을 여니까 이 제한
 구조(WKWebView + 클린 UA + 주입 CSS/JS), UA만 데스크톱으로. 완성되면 `home.tsx`의
 `Platform.OS === 'android'` 가드를 풀어 iOS에도 틱톡 홈 카드 노출.
 
+### 2026-08-13 — PoC 안정화: 재생 중 끊김/무한 리플레이/영구 고착/RN UI 소실, 4개 버그 순차 수정
+
+데스크톱 UA 확인 직후 실기기에서 새로 보고된 증상들을 `src/app/dev/tiktok-poc.tsx`에서
+순서대로 재현·수정(커밋 `d975b5d`→`2d48025`):
+
+1. **재생 중간에 다음 영상으로 끊김** — PoC의 8초 블라인드 강제 루프가 영상 상태와 무관하게
+   매번 전체 기법을 재시도해서 생긴 테스트 하네스 자체 부작용이었다. 실제 'ended' 이벤트 +
+   재생위치 폴링(YouTube 플레이어와 동일 패턴)으로만 다음 영상을 트리거하도록 변경.
+2. **같은 영상만 무한 리플레이** — 첫 이동 시도가 실패하면 `markAdvancedOnce`가 그 영상을
+   영구히 재시도 불가 상태로 막아버렸다. "시도 진행 중"에만 막는 `markAdvancingOnce` +
+   실제 이동 여부를 확인하며 최대 6회 재시도하는 `tryAdvance()`로 교체.
+3. **손가락 스와이프도 무반응** — 데스크톱 UA 페이지는 Swiper가 터치가 아니라 마우스 드래그로
+   구성돼 있을 가능성 → 합성 MouseEvent 드래그 기법 추가.
+4. **RN 상단바(닫기버튼/로그패널)가 사라지고 영상만 화면을 꽉 채움** — 처음엔 WKWebView 렌더러
+   크래시로 의심해 `onContentProcessDidTerminate` 복구 핸들러를 추가했으나 재현이 계속됨.
+   **웹서치로 확정**(추측 아님, Apple Developer Forums "WKWebView on iOS 18: Video Auto-Play
+   Not Working Inline, Launching in Full-Screen Instead" 등 다수 보고와 일치): WKWebView의
+   `allowsInlineMediaPlayback`은 인라인 재생을 "허용"만 할 뿐, 실제 인라인 여부는 **각
+   `<video>` 태그 자체의 `playsinline` 속성**이 결정한다. 틱톡 데스크톱(Chrome) UA 페이지는
+   진짜 데스크톱 브라우저엔 그 속성이 필요 없어 안 붙였을 가능성이 높고, 그러면 WKWebView가
+   네이티브 전체화면으로 승격해 RN 뷰 계층 전체를 덮는다 — 정확히 관측된 증상과 일치.
+   `<video>`가 나타날 때마다 `playsinline`/`webkit-playsinline` 속성과 DOM 프로퍼티를 강제
+   세팅하는 옵저버를 `injectedJavaScriptBeforeContentLoaded`(페이지 자체 스크립트보다 먼저)로
+   조기 주입 + `requestFullscreen`/`webkitEnterFullscreen` no-op 차단.
+
+**시뮬레이터 자체 검증**(사장님께 실기기 테스트를 반복 요청하지 않고 `xcrun simctl` 스크린샷으로
+직접 확인, ~40초 동안 스크린샷 4장): 4번 수정 이후 RN 상단바가 한 번도 사라지지 않고 유지된
+채로, 서로 다른 영상 3개 이상이 연속으로 "🟢 다음 영상으로 이동 확인됨" 로그와 함께 자연스럽게
+전환됨(짧은 영상은 `ended` 이벤트, 긴 영상(~28초)은 폴링의 nearEnd로 감지 — 둘 다 정상 작동).
+**다만 시뮬레이터 세션 내내 `.swiper`/`.swiper-slide` 요소가 0개**로 나와, 실제로 이동을
+성사시킨 게 어느 기법인지는 특정 못 함(TouchEvent/MouseEvent/PointerEvent 셋 중 하나로 추정) —
+프로덕션 구현 시 셋 다 유지하거나 실기기 로그로 좁혀야 함.
+
+⚠️ **미확인**: 이 전체가 시뮬레이터에서만 확인됐다. 실기기 WebKit은 버전/휴리스틱이 달라 같은
+현상이 재현 안 되거나 다르게 나타날 수 있음 — 실기기 스팟체크 필요. 또한 같은 밤 동안 같은
+IP(맥 시뮬레이터 + 사장님 실기기)로 tiktok.com을 반복 요청해 틱톡 쪽 안티봇/레이트리밋에 걸려
+페이지가 세션마다 다르게(사이드바 있는 정상 피드 vs UI 없는 단일영상 뷰) 나온 정황도 관측됨 —
+코드와 무관한 변수라 결과가 매번 다를 수 있다는 걸 감안할 것.
+
 ## 1-2. 앱별 지원 현황
 
 | 기능 | 🤖 YouTube | 🤖 TikTok | 🍎 YouTube | 🍎 TikTok |

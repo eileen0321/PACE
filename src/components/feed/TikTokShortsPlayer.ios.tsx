@@ -66,24 +66,52 @@ true;
 
 const INJECTED_JS = `
 (function() {
-  function send(o) { if (o && o.type === 'domlog' && !window.__PACE_DIAG__) return; if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  // domlog는 RN 쪽(onMessage)에서 __DEV__일 때만 PaceGestureLog로 넘긴다 — 여기서 또 게이팅할
+  // 필요 없다(예전엔 window.__PACE_DIAG__를 요구했는데 프로덕션 파일에선 그 값을 아무도 안 세팅해
+  // 진단 로그가 전부 조용히 버려지고 있었다).
+  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
 
+  // 2026-08-13(17차) 실기기 보고("앱 시작하자마자 틱톡에서 무엇을 시청하고 싶으신가요 뜸") —
+  // 관심사 선택 온보딩 모달이 그대로 남아 화면을 막고 있는 것으로 보인다. 예전엔 버튼 텍스트를
+  // 정확히 일치(===)시켰는데, 실제 버튼엔 아이콘/공백이 섞여 있을 수 있어 못 잡았을 가능성이 커서
+  // 부분일치(indexOf)로 넓히고 후보 문구도 늘렸다. 그래도 못 찾으면 [role="dialog"] 안의 마지막
+  // 버튼(스킵/닫기가 보통 우상단·마지막에 옴)도 시도한다.
+  var SKIP_PHRASES = ['나중에', 'not now', 'maybe later', 'later', '건너뛰기', 'skip', '완료', 'done',
+    '닫기', 'close', '괜찮아요', '괜찮습니다', '아니요', '아니오', '선택 안', 'no thanks', "i'll do this later"];
+  function textMatches(txt){
+    var lower = txt.toLowerCase();
+    for (var i = 0; i < SKIP_PHRASES.length; i++) {
+      if (lower.indexOf(SKIP_PHRASES[i].toLowerCase()) !== -1) return true;
+    }
+    return false;
+  }
   function dismissAppBanner(){
     try {
-      var candidates = Array.prototype.slice.call(document.querySelectorAll('button, div[role="button"], a'));
+      var candidates = Array.prototype.slice.call(document.querySelectorAll('button, div[role="button"], a, [role="button"]'));
       for (var i = 0; i < candidates.length; i++) {
         var el = candidates[i];
         var txt = (el.textContent || '').trim();
-        if (txt === '나중에' || txt === 'Not now' || txt === 'Maybe later' || txt === 'Later'
-          || txt === '건너뛰기' || txt === 'Skip' || txt === '완료' || txt === 'Done'
-          || txt === '닫기' || txt === 'Close' || txt === '나중에 하기') {
-          el.click(); return true;
-        }
+        if (txt && txt.length < 20 && textMatches(txt)) { el.click(); send({ type: 'domlog', text: '배너닫음(텍스트): ' + txt }); return true; }
       }
-      var closeBtn = document.querySelector('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"]');
-      if (closeBtn) { closeBtn.click(); return true; }
+      var closeBtn = document.querySelector('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"], [aria-label*="skip" i], [aria-label*="건너뛰기"]');
+      if (closeBtn) { closeBtn.click(); send({ type: 'domlog', text: '배너닫음(aria-label)' }); return true; }
       var bodyText = document.body.innerText || '';
-      if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1) {
+      if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
+        // 관심사 모달이 확실히 감지됐는데 텍스트/aria-label 매칭도 실패 — 다이얼로그 안의 마지막
+        // 버튼을 시도(스킵/닫기가 보통 우상단·마지막에 옴). 진단용으로 실제 버튼 텍스트를 로그.
+        try {
+          var dialog = document.querySelector('[role="dialog"], [class*="Modal" i], [class*="modal" i]');
+          if (dialog) {
+            var btns = dialog.querySelectorAll('button, [role="button"]');
+            if (btns.length > 0) {
+              var found = [];
+              for (var j = 0; j < Math.min(btns.length, 10); j++) found.push('"' + (btns[j].textContent || '').trim().slice(0, 15) + '"');
+              send({ type: 'domlog', text: '관심사모달 버튼들: ' + found.join(', ') });
+              btns[btns.length - 1].click();
+              return true;
+            }
+          }
+        } catch(e) {}
         try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); } catch(e) {}
         try { document.body.click(); } catch(e) {}
       }
@@ -233,7 +261,7 @@ const INJECTED_JS = `
 
   var domDumped = false;
   function dumpDomOnce(){
-    if (domDumped || !window.__PACE_DIAG__) return; domDumped = true;
+    if (domDumped) return; domDumped = true;
     try {
       var all = document.querySelectorAll('button, [role="button"], [aria-label]');
       var found = [];

@@ -9049,3 +9049,33 @@ simctl` 스크린샷으로 직접 검증함 — 4번 수정 이후 ~40초 동안
 커버·내비게이션 화이트리스트 등)를 공유 모듈로 뽑아서 재사용, (2) 안드로이드와 이미 공용인
 플랫폼 타입/통계·세션 기록/일일제한·포커스세션 게이팅(`AppShieldTarget`, `startSession` 등)은
 새로 만들지 않고 `Platform.OS === 'android'` 가드만 넓히는 방향으로 재사용할 것.
+
+### 2026-08-13 — 정식 TikTokShortsPlayer.ios.tsx 구현 완료 + 라우팅 연결 + 시뮬레이터 전수검사
+
+바로 위 계획대로 구현 완료(커밋 `7300b18`, `7ea007b`):
+- `sharedShortsPlayer.ts` — YouTube/TikTok 플레이어 공통부(핸들 타입/스타일/내비게이션
+  화이트리스트). `YouTubeShortsPlayer.ios.tsx`도 이걸 쓰도록 리팩터(동작 변경 없음).
+- `TikTokShortsPlayer.ios.tsx` — tiktok-poc.tsx에서 검증한 로직(데스크톱 UA, playsinline+
+  전체화면 차단, ended+폴링 이중 감지, 검증형 재시도, 크래시 복구) 그대로 이식.
+- `feed/index.tsx` — home.tsx가 넘기는 platform 파라미터로 YouTube/TikTok 플레이어 분기.
+  틱톡은 큐레이션(비디오 큐/HOT/검색/즐겨찾기)이 없어 그 로직만 건너뛰고, 세션/일일한도/
+  수면감지 같은 공용 로직은 그대로 재사용(원래도 큐가 아니라 상태 스토어 기반이라 안 건드림).
+- `home.tsx` — iOS `/feed` 진입 2곳에 platform 파라미터 추가, "Loops with PACE" 카드의
+  `Platform.OS==='android'` 가드 제거(iOS도 노출).
+- 겸사겸사: `PlatformPickerCard`(공용, 안드/iOS 둘 다 적용)의 재생 버튼을 단색→글래스모피즘으로.
+
+**시뮬레이터 전수검사**(사장님 지시 "만들어놓은 테스트 케이스로 전수 검사" — `QA_MATRIX.md`
+3-3절에 안드 A1~A7 대응하는 iOS TikTok 전용 표(C1~C9) 신설, 결과 기록):
+- ✅ 확인됨(시뮬레이터로 자동 검증 가능한 것): 자동넘김(연속 3개+ 영상), 전환 중 RN UI 유지,
+  일일한도/포커스 표시 유지, 홈 카드 노출.
+- ⚠️ 코드 경로만 확인, 실제 미검증: 렌더러 크래시 복구, BT리모컨/손짓→다음영상, P메뉴 HOT/검색/
+  즐겨찾기 숨김, platform_app 통계 정확성.
+- ❌ 시뮬레이터로 원천 불가: **손가락 스와이프**(`xcrun simctl`엔 탭 주입이 없음) — PoC 단계에서
+  실기기 진짜 손가락도 무반응이었던 전례가 있어 프로덕션에서 **반드시 실기기로 재확인 필요**.
+
+**Windows에게**: iOS도 이제 "Loops with PACE" 카드가 뜬다 — 안드는 이미 다른(네이티브 앱 실행)
+방식으로 되고 있어 안드 쪽 조치는 필요 없음. `flushWatchTime`이 하드코딩된 `'youtube'` 대신
+실제 platform을 쓰도록 고쳤으니 iOS 틱톡 시청시간도 이제 `tiktok`으로 정확히 집계됨(전에 지적한
+그 갭).
+
+**다음 세션 필수**: 실기기에서 C6(BT리모컨/손짓)·**C7(손가락 스와이프, 최우선)**·C8·C9 확인.

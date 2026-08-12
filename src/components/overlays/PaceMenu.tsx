@@ -10,13 +10,16 @@ export type PaceMenuAction = 'app' | 'hot' | 'search' | 'capture' | 'favorite';
 // Saved/Favorite)가 글래스모피즘 투명 박스로 뜬다. 첨부 레퍼런스 이미지(어두운 배경 + 은은한
 // 글로우 외곽선 카드)에 맞춰 GlassSurface(실제 블러, iOS/Android 둘 다 진짜 블러 렌더링 —
 // 2026-07-27 재작성분) 위에 얇은 반투명 테두리만 추가해 "떠 있는 유리판" 느낌을 낸다.
-export function PaceMenu({ onSelect, onClose, top }: {
+export function PaceMenu({ onSelect, onClose, top, hiddenActions }: {
   onSelect: (action: PaceMenuAction) => void;
   onClose: () => void;
   top: number;
+  /** 2026-08-13 — 틱톡 피드(feed/index.tsx)는 큐레이션이 없어 HOT/검색/즐겨찾기가 성립하지
+   *  않는다(전부 유튜브 videoId 큐 기반). 생략하면(overlay/index.tsx 등) 기존과 동일하게 전부 노출. */
+  hiddenActions?: PaceMenuAction[];
 }) {
   const { t } = useTranslation();
-  const items: { action: PaceMenuAction; icon: keyof typeof Feather.glyphMap; label: string }[] = [
+  const allItems: { action: PaceMenuAction; icon: keyof typeof Feather.glyphMap; label: string }[] = [
     // 2026-08-01 사장님 지시 — Saved(capture)/Favorite 병합. 네이티브 P 메뉴와 동일하게 "Favorite"
     // 하나만 남기고 Saved 항목 제거(favorite 리스트가 예전 capture 저장분까지 함께 보여줌).
     { action: 'app', icon: 'smartphone', label: t('overlay.menuOpenApp') },
@@ -25,6 +28,7 @@ export function PaceMenu({ onSelect, onClose, top }: {
     { action: 'search', icon: 'search', label: t('overlay.menuSearch') },
     { action: 'favorite', icon: 'star', label: t('overlay.menuFavorite') },
   ];
+  const items = hiddenActions ? allItems.filter((item) => !hiddenActions.includes(item.action)) : allItems;
   return (
     <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="none">
       <GlassSurface style={[styles.menu, { top }]} intensity={50}>

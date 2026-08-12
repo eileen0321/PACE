@@ -1,8 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Localization from 'expo-localization';
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import {
+  isAllowedNavigation,
+  sharedShortsPlayerStyles as styles,
+  type ShortsPlayerHandle,
+} from './sharedShortsPlayer';
 
 // 임시 진단: WebView 로그를 NSLog로 흘려 devicectl --console로 캡처.
 const PaceGestureLog = requireOptionalNativeModule<{ nativeLog(msg: string): void }>('PaceGesture');
@@ -586,12 +591,6 @@ function consentCookie(hl: string, gl: string): string {
   return `SOCS=${SOCS_BY_LANG[hl] ?? SOCS_BY_LANG.en}; CONSENT=YES+1; PREF=hl=${hl}&gl=${gl}`;
 }
 
-// http(s)만 허용 → youtube 앱 딥링크(youtube://)/앱스토어(itms-apps://) 등 "앱에서 열기" 시도를 차단해
-// WebView가 딴 데로 튕겨 까매지는 것을 막는다. youtube/구글/영상CDN은 전부 http(s)라 그대로 허용됨.
-function isAllowedNavigation(url: string): boolean {
-  return url.startsWith('http://') || url.startsWith('https://') || url === 'about:blank';
-}
-
 // 기기 언어를 유튜브에 알려주는 헤더 — "ko-KR,ko;q=0.9,en;q=0.8" 형태.
 // 유튜브는 익명 세션의 추천 언어권을 이걸로도 판단한다.
 function acceptLanguageHeader(): string {
@@ -605,7 +604,8 @@ function acceptLanguageHeader(): string {
   }
 }
 
-export type ShortsPlayerHandle = { advance: () => void; previous: () => void; setMuted: (muted: boolean) => void };
+// feed/index.tsx가 `from './YouTubeShortsPlayer'`로 이 타입도 같이 가져오던 기존 경로를 유지하는 재수출.
+export type { ShortsPlayerHandle };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
   { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload, listMode }: Props,
@@ -783,20 +783,4 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
       )}
     </View>
   );
-});
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000000' },
-  web: { flex: 1, backgroundColor: '#000000' },
-  loadingCover: {
-    // RN 0.86 타입에서 StyleSheet.absoluteFillObject가 안 잡혀(tsc 에러) 명시적 절대위치로 대체 — 동일 효과.
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#000000',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });

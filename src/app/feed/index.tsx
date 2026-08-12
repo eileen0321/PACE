@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { YouTubeShortsPlayer, SWIPE_NAV, type ShortsPlayerHandle } from '../../components/feed/YouTubeShortsPlayer';
+import { TikTokShortsPlayer } from '../../components/feed/TikTokShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
@@ -97,6 +98,12 @@ function DailyRemaining() {
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  // 2026-08-13 — home.tsx가 어느 카드로 들어왔는지 넘겨준 값. 파라미터가 없는 기존 진입 경로
+  // (딥링크 등)는 전부 지금까지의 동작(YouTube)을 그대로 유지해야 하므로 기본값은 'youtube'.
+  // 틱톡은 큐레이션(비디오 큐/HOT/검색/즐겨찾기)이 없어 이 화면의 YouTube 전용 로직 대부분이
+  // 적용 안 되고, 재생만 TikTokShortsPlayer로 바뀐다 — 아래 각 지점에서 platform으로 분기.
+  const { platform: platformParam } = useLocalSearchParams<{ platform?: string }>();
+  const platform: 'youtube' | 'tiktok' = platformParam === 'tiktok' ? 'tiktok' : 'youtube';
   // fullScreenModal 프레젠테이션에선 SafeAreaView의 top edge가 0으로 잡혀 상단바가 시스템 상태바와
   // 겹친다(overlay/index.tsx와 동일 이슈) → useSafeAreaInsets로 명시 보정, 0이면 47로 폴백.
   const insets = useSafeAreaInsets();
@@ -242,7 +249,8 @@ export default function PaceFeedScreen() {
   // 2026-07-21: current가 생기는 순간부터 play=true로 마운트해야 라이브러리가 loadVideoById(autoplay)
   // 경로를 타 무음 자동재생이 걸릴 여지가 생긴다(status IDLE→READY 레이스로 첫 렌더가 play=false면
   // cueVideoById로 붙어 자동재생이 아예 안 걸림). PAUSED일 때만 멈춘다.
-  const playing = current != null && status !== 'PAUSED';
+  // 틱톡은 큐가 없어(현재 없음 == current) — platform이 tiktok이면 큐 유무와 무관하게 재생 가능.
+  const playing = (platform === 'tiktok' || current != null) && status !== 'PAUSED';
 
   // 엎어놓으면(쉬는 시간 시작) 영상을 멈춘다 — WKWebView가 재생 중이면 화면 wake-lock을 잡아 안 그러면
   // 폰이 슬립에 못 든다. 정지 → 화면 꺼짐 허용 → 폰 자동잠금(스펙 §4-B "내려놓으면 쇼츠 멈춤" 방향).
@@ -268,7 +276,10 @@ export default function PaceFeedScreen() {
     if (!uid || durationSeconds < 3) return; // 3초 미만(즉시 이탈/오탐)은 무시
     // MEDIUM 4 수정 — 실제 세그먼트 시작·종료 시각을 그대로 기록해 started_at ≤ ended_at 보장 +
     // duration_seconds == (ended_at − started_at) 정합. sleep_detected 역전행/자정 오귀속 해소.
-    startSession(uid, 'youtube', new Date(startedAt).toISOString())
+    // 🔴 2026-08-13 — 이 화면이 유튜브 전용이던 동안엔 무해했던 하드코딩이었으나, 틱톡도 같은 화면을
+    // 쓰게 되며 실제 platform_app을 안 넘기면 틱톡 시청시간이 유튜브로 잘못 집계된다(Windows 세션이
+    // 미리 지적한 지점).
+    startSession(uid, platform, new Date(startedAt).toISOString())
       .then((id) => endSession(id, durationSeconds, 0, status, new Date(endMs).toISOString()))
       .catch(() => {});
   };
@@ -405,6 +416,9 @@ export default function PaceFeedScreen() {
   const handsFreeDetectActive = isAutoMode && handsFreeGesture;
 
   useEffect(() => {
+    // 틱톡은 PACE가 고르는 큐 자체가 없다(틱톡 자신의 추천 피드를 그대로 탄다) — 유튜브 큐를
+    // 건드리거나 불필요한 네트워크 요청을 낼 이유가 없다.
+    if (platform !== 'youtube') return;
     // §4-1 "Shorts with PACE 누를 때마다 새 영상"(2026-08-04 사장님) — loadInitial엔 "큐가 이미 있으면
     // skip"(즉시재생용) 가드가 있어, 재진입 시 zustand에 남은 이전 시드가 그대로 나왔다. 진입마다 큐를
     // 비워 가드를 통과시켜 새 시드를 뽑는다(서버가 9cbfef5로 serverPool을 1순위로 바꿔 매번 다른 영상이
@@ -412,7 +426,7 @@ export default function PaceFeedScreen() {
     useShortsQueueStore.setState({ queue: [], isLoading: false, error: null });
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [platform]);
 
 
   // 감사 MED1(2026-07-27) — 시간 상태바가 제거됐는데 벽시계 clock state + 30초 setInterval이 남아,
@@ -425,10 +439,11 @@ export default function PaceFeedScreen() {
     if (__DEV__) console.log('[Feed] queue=', queue.length, 'current=', current?.videoId, 'usingScrape=', usingScrape, 'loading=', isLoading, 'error=', error);
   }, [queue.length, current?.videoId, usingScrape, isLoading, error]);
 
-  // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS).
+  // 큐가 처음 채워지면 IDLE→READY 전이(상태 전이표 규칙: FETCH_SUCCESS). 틱톡은 큐가 없어
+  // 마운트 즉시 READY(플레이어 자체가 로딩 커버를 따로 보여줌).
   useEffect(() => {
-    if (status === 'IDLE' && queue.length > 0) setStatus('READY');
-  }, [status, queue.length]);
+    if (status === 'IDLE' && (platform === 'tiktok' || queue.length > 0)) setStatus('READY');
+  }, [status, queue.length, platform]);
 
   // 2026-07-19: Auto Mode를 앱이 백그라운드로 갈 때 자동으로 끈다 — 사용자 지시("카톡 확인하러
   // 잠깐 나갔다 5분 뒤 복귀하면 이미 여러 영상이 지나가 있는 걸 방지"). Bluetooth 연결 해제와는
@@ -773,49 +788,65 @@ export default function PaceFeedScreen() {
           (§4-1 "누를 때마다 새 영상"). 그 사이거나 큐가 소진된 상태에서 즐겨찾기를 누르면
           forcedVideoId는 설정되는데 **화면엔 아무 일도 안 일어난다** — 저장은 멀쩡한데 안 열리는 정체.
           forcedVideoId만으로도 재생할 수 있어야 한다(그게 그 값의 존재 이유다). */}
-      {(forcedVideoId || current) && !feedBlocked && !sleepBlackout && (
-        <YouTubeShortsPlayer
-          key={forcedVideoId ?? current!.videoId}
-          ref={playerRef}
-          videoId={forcedVideoId ?? current!.videoId}
-          playing={playing}
-          onProgress={handleProgress}
-          onVideoChange={(id) => { currentVideoIdRef.current = id; }}
-          onUserSwipe={(dir, moved) => {
-            // iOS 유저 손가락 스와이프(위=다음/아래=이전).
-            markUserInput();
-            // 2026-08-05 사장님 "스와이프 개 버벅" 수정 — moved=true면 WebView가 브릿지 왕복 없이 이미
-            // 넘긴 뒤다. 여기서 goNext()를 또 부르면 이중 이동(두 칸)이 된다. 기록/상태만 맞춘다.
-            // 토스트도 안 띄운다: 손짓·볼륨키는 화면 피드백이 없어 필요하지만, 손가락 스와이프는 본인이
-            // 한 동작이라 매번 뜨면 방해만 되고 전환 순간에 불필요한 렌더/애니메이션을 얹는다.
-            if (moved) {
-              pauseWaveRef.current?.(); // 전환 중 손짓 오발화 방지(goNext가 하던 것과 동일)
-              setStatus('PLAYING');
-              return;
-            }
-            // moved=false = 리스트 모드(HOT/즐겨찾기) — 이동은 여기서 리스트의 다음/이전 항목으로 수행.
-            if (dir === 1) goNext(); else goPrev();
-          }}
-          listMode={listMode}
-          onReady={clearForcedTransitionCover}
-          onEnded={onEnded}
-          onError={() => { clearForcedTransitionCover(); handlePlayerError(); }} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
-          onNotShorts={() => {
-            // 2026-08-01 사장님 지적 — HOT/Favorite에서 연 항목이 비-쇼츠(라이브/롱폼)라 watch로 리다이렉트되면
-            // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔 리마운트한다.
-            useToastStore.getState().show(t('feed.notShortsSkippedToast'));
-            // 리스트 재생 중이면 리스트의 다음 항목으로 건너뛴다(카테고리 안에서 계속). 리스트 끝이면 큐로 복귀.
-            const list = forcedListRef.current;
-            if (list) {
-              const ni = forcedIndexRef.current + 1;
-              if (ni < list.length) { forcedIndexRef.current = ni; jumpToVideo(list[ni]); return; }
-              forcedListRef.current = null; setListMode(false); jumpToVideo(null); return;
-            }
-            if (forcedVideoId) jumpToVideo(null);
-            else advance();
-          }}
-          onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
-        />
+      {/* 2026-08-13 — 틱톡은 큐레이션이 없어(TikTokShortsPlayer 헤더 코멘트 참고) forcedVideoId/current
+          게이팅이 적용 안 된다 — feedBlocked/sleepBlackout만 걸린다. */}
+      {platform === 'tiktok' ? (
+        !feedBlocked && !sleepBlackout && (
+          <TikTokShortsPlayer
+            key="tiktok"
+            ref={playerRef}
+            playing={playing}
+            onProgress={handleProgress}
+            onReady={clearForcedTransitionCover}
+            onEnded={onEnded}
+            onError={() => { clearForcedTransitionCover(); handlePlayerError(); }}
+          />
+        )
+      ) : (
+        (forcedVideoId || current) && !feedBlocked && !sleepBlackout && (
+          <YouTubeShortsPlayer
+            key={forcedVideoId ?? current!.videoId}
+            ref={playerRef}
+            videoId={forcedVideoId ?? current!.videoId}
+            playing={playing}
+            onProgress={handleProgress}
+            onVideoChange={(id) => { currentVideoIdRef.current = id; }}
+            onUserSwipe={(dir, moved) => {
+              // iOS 유저 손가락 스와이프(위=다음/아래=이전).
+              markUserInput();
+              // 2026-08-05 사장님 "스와이프 개 버벅" 수정 — moved=true면 WebView가 브릿지 왕복 없이 이미
+              // 넘긴 뒤다. 여기서 goNext()를 또 부르면 이중 이동(두 칸)이 된다. 기록/상태만 맞춘다.
+              // 토스트도 안 띄운다: 손짓·볼륨키는 화면 피드백이 없어 필요하지만, 손가락 스와이프는 본인이
+              // 한 동작이라 매번 뜨면 방해만 되고 전환 순간에 불필요한 렌더/애니메이션을 얹는다.
+              if (moved) {
+                pauseWaveRef.current?.(); // 전환 중 손짓 오발화 방지(goNext가 하던 것과 동일)
+                setStatus('PLAYING');
+                return;
+              }
+              // moved=false = 리스트 모드(HOT/즐겨찾기) — 이동은 여기서 리스트의 다음/이전 항목으로 수행.
+              if (dir === 1) goNext(); else goPrev();
+            }}
+            listMode={listMode}
+            onReady={clearForcedTransitionCover}
+            onEnded={onEnded}
+            onError={() => { clearForcedTransitionCover(); handlePlayerError(); }} // 재생 불가 영상 스킵 — 연속 실패는 가드가 잡음(death-spiral 방지)
+            onNotShorts={() => {
+              // 2026-08-01 사장님 지적 — HOT/Favorite에서 연 항목이 비-쇼츠(라이브/롱폼)라 watch로 리다이렉트되면
+              // 스와이프/자동넘김/손짓이 안 먹는다. 스와이프 스킵으론 복구 불가(릴 DOM 없음)라 key를 바꿔 리마운트한다.
+              useToastStore.getState().show(t('feed.notShortsSkippedToast'));
+              // 리스트 재생 중이면 리스트의 다음 항목으로 건너뛴다(카테고리 안에서 계속). 리스트 끝이면 큐로 복귀.
+              const list = forcedListRef.current;
+              if (list) {
+                const ni = forcedIndexRef.current + 1;
+                if (ni < list.length) { forcedIndexRef.current = ni; jumpToVideo(list[ni]); return; }
+                forcedListRef.current = null; setListMode(false); jumpToVideo(null); return;
+              }
+              if (forcedVideoId) jumpToVideo(null);
+              else advance();
+            }}
+            onAudioDiag={() => {}} // diag 상태 제거(성능) — 리렌더 소스 제거
+          />
+        )
       )}
       {/* 위 forcedTransitionCover 주석 참고 — key 교체로 플레이어가 리마운트되는 순간(HOT/즐겨찾기
           선택, 리스트 소진 등) 옛 프레임이 잠깐 남아 있다 잘리는 것을 막는다. 플레이어의 자체
@@ -879,6 +910,8 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
+            // 틱톡은 큐레이션이 없어 HOT/검색/즐겨찾기가 전부 유튜브 videoId 큐를 전제한다 — 성립 안 함.
+            hiddenActions={platform === 'tiktok' ? ['hot', 'search', 'favorite'] : undefined}
             onSelect={(action) => {
               // 2026-08-09 파리티 — 안드로이드 ada6c09(같은 자리에 뜨는 오버레이 창들이 서로 겹쳐
               // 보이던 문제)와 같은 계열 버그가 iOS에도 독립적으로 있었다: HOT이 열린 채로 P를 다시

@@ -453,7 +453,9 @@ export default function HomeScreen() {
     // 2026-07-22 감사수정(App Review 블로커): iOS의 /overlay는 가짜 유튜브 "DEV SIMULATOR" 목업이라
     // 그대로 심사에 내면 반려(2.2 데모/4.3 사칭)된다. iOS에선 실제 인앱 재생 화면(Pace Feed)으로 보낸다.
     // Android는 오버레이-어시스턴트 모델 그대로 유지.
-    if (Platform.OS === 'ios') { router.push('/feed'); return; }
+    // 🔴 2026-08-13 — platform 파라미터 없이 push하면 feed/index.tsx가 기본값(youtube)으로 렌더해
+    // "Loops" 카드를 눌러도 유튜브가 떴다(feed 화면이 platform param을 새로 읽게 된 시점부터 필요).
+    if (Platform.OS === 'ios') { router.push({ pathname: '/feed', params: { platform } }); return; }
     // 2026-08-02 실기기 로그로 확정("P메뉴 앱으로 눌렀는데 쇼츠로 되돌아감", 오늘 반복 재현) —
     // /overlay 화면의 세션 시작 이펙트가 마운트마다 돌면서 launchPlatformApp으로 유튜브를 다시
     // 열어버렸다. 기존 가드(useSessionStore.status === 'running')는 세션이 방금 끝났거나 스토어가
@@ -488,7 +490,7 @@ export default function HomeScreen() {
     if (useSessionStore.getState().status === 'running') {
       // iOS는 외부 앱을 안 열어 resumePlatformApp이 즉시 return이다 — 예전엔 카드를 눌러도 **아무 일도
       // 일어나지 않았다**(피드에서 나온 뒤 홈에서 재탭 시 먹통). 보던 피드로 되돌려 준다.
-      if (Platform.OS === 'ios') { router.push('/feed'); return; }
+      if (Platform.OS === 'ios') { router.push({ pathname: '/feed', params: { platform } }); return; }
       resumePlatformApp(platform)
         .then((resumed) => {
           // PIP로 줄여둔 창이 없으면 복원할 게 없다 → 정상 진입으로 새 쇼츠를 연다.
@@ -606,20 +608,11 @@ export default function HomeScreen() {
               (tiktok:// 스킴 / www.tiktok.com/foryou, 실기기에서 For You 풀스크린 진입 검증됨)로
               앱을 열고, ForegroundAppWatcher가 그 패키지를 감시 대상으로 이미 알고 있다.
 
-              ⚠️ iOS는 같은 방식이 **성립하지 않아** 지금은 숨긴다. iOS는 외부 앱을 안 열고 앱 안
-              WebView로 재생하는 구조인데(YouTubeShortsPlayer.ios), 틱톡은 그 자리에 놓을 콘텐츠를
-              가져올 방법이 없다. 2026-08-11에 유튜브 스크래퍼와 **동일한 기법까지 그대로** 시도해
-              확인한 결과다:
-                · 맨 요청           → 43KB captcha 셸, 영상 ID 0건
-                · 쿠키 세션(유튜브의 CONSENT 쿠키와 같은 수법) → 406KB 실페이지지만 데이터 블롭
-                  (__UNIVERSAL_DATA_FOR_REHYDRATION__)에 **itemList 자체가 없음**
-                · 구글/빙/DDG site:tiktok.com → 0건, RSSHub → 403
-                · oEmbed·embed/v2 → **정상 동작**(단 영상 ID를 이미 알아야 함)
-              유튜브는 검색 결과를 서버에서 HTML에 박아 보내지만 틱톡은 껍데기만 보내고 목록은
-              서명된(X-Bogus/msToken) API로 JS가 따로 받는다 — HTTP만으로는 어떤 쿠키를 붙여도
-              목록을 얻을 수 없다. 남은 수단은 헤드리스 브라우저뿐인데 그건 틱톡이 명시적으로 세운
-              차단을 우회하는 성격이라 별도 판단이 필요하다. 그때까지 iOS에 빈 피드를 보여주느니
-              카드를 안 내보내는 쪽을 택한다. */}
+              🟢 2026-08-13 — 아래 "iOS는 성립하지 않는다"는 이전 결론은 뒤집혔다(자세한 히스토리는
+              QA_MATRIX.md 2026-08-12/13 섹션). 서버 스크래핑(이 코멘트가 실패라고 적었던 것)은 여전히
+              막혀 있지만, 그건 다른 질문이었다 — 진짜 답은 **WKWebView로 tiktok.com/foryou 페이지
+              자체를 데스크톱 UA로 그대로 띄우는 것**(TikTokShortsPlayer.ios.tsx, YouTube 플레이어와
+              같은 패턴)이었다. iOS도 이제 카드를 노출한다. */}
           {/* ⚠️ 2026-08-12 — 아래 제목/배지/그라데이션은 **원본(383eae5)의 값 그대로** 쓴다.
               처음엔 내가 "TikTok with PACE"/"GUARDED"/rgba(37,244,238,0.30)으로 지어냈는데,
               사장님이 "이전 원본 찾아보라"고 하신 그 코드가 git에 있었다:
@@ -629,28 +622,26 @@ export default function HomeScreen() {
               내가 지어낸 그라데이션이 원본보다 진해 커버 이미지가 덮여 보이던 것도 같이 해결된다.
               ⚠️ 인스타그램 카드는 원본에 함께 있었고 자산·타입·supportedApps 항목이 그대로 살아
                 있다(사장님: "인스타는 나중에 쓸 거야 버리지 마") — 지우지 말 것. */}
-          {Platform.OS === 'android' && (
-            <PlatformPickerCard
-              key="tiktok-video-loop"
-              // 🔴 2026-08-12 사장님 결정 — 상표 결합 위험 때문에 "TikTok with PACE"는 쓰지 않는다.
-              //   YouTube/TikTok 브랜드 가이드라인은 자사 마크를 다른 이름과 합쳐 새 명칭을 만드는
-              //   것을 금지하고, Apple 5.2.1 / Play 지식재산 정책도 제휴 오인을 반려 사유로 본다.
-              //   → 제품명(Shorts/Loops)에만 PACE를 붙인다: "Shorts with PACE" / "Loops with PACE".
-              title="Loops with PACE"
-              badge="LOOPS"
-              statusText={
-                activeSessionPlatform === 'tiktok'
-                  ? 'Active'
-                  : 'Track viewing time and build healthier habits.'
-              }
-              cover={TIKTOK_COVER}
-              gradientFrom="rgba(13,148,136,0.35)"
-              onPress={() => onSelectPlatform('tiktok')}
-              isActive={activeSessionPlatform === 'tiktok'}
-              features={['⏱ Focus Session']}
-              largeButton
-            />
-          )}
+          <PlatformPickerCard
+            key="tiktok-video-loop"
+            // 🔴 2026-08-12 사장님 결정 — 상표 결합 위험 때문에 "TikTok with PACE"는 쓰지 않는다.
+            //   YouTube/TikTok 브랜드 가이드라인은 자사 마크를 다른 이름과 합쳐 새 명칭을 만드는
+            //   것을 금지하고, Apple 5.2.1 / Play 지식재산 정책도 제휴 오인을 반려 사유로 본다.
+            //   → 제품명(Shorts/Loops)에만 PACE를 붙인다: "Shorts with PACE" / "Loops with PACE".
+            title="Loops with PACE"
+            badge="LOOPS"
+            statusText={
+              activeSessionPlatform === 'tiktok'
+                ? 'Active'
+                : 'Track viewing time and build healthier habits.'
+            }
+            cover={TIKTOK_COVER}
+            gradientFrom="rgba(13,148,136,0.35)"
+            onPress={() => onSelectPlatform('tiktok')}
+            isActive={activeSessionPlatform === 'tiktok'}
+            features={['⏱ Focus Session']}
+            largeButton
+          />
         </View>
 
         <Text style={[styles.sectionTitle, styles.quickControlsTitle]}>{t('home.quickControls')}</Text>

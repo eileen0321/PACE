@@ -38,19 +38,33 @@ const INJECTED_JS = `
 
   // "이 앱을 다운로드하세요" 유도 모달 — 매 페이지 로드 초반에 뜬다. 텍스트 매칭으로 닫기/나중에
   // 버튼을 찾아 자동 클릭한다(좌표 기반 탭이 없어도 DOM 쿼리로는 가능).
+  // 2026-08-13(13차) 사장님 보고("틱톡에서 무엇을 시청하고 싶으신가요 팝업 나옴") — 관심사(카테고리)
+  // 선택 온보딩 모달도 같은 방식으로 처리. 이게 화면을 덮고 있으면 스와이프/합성 이벤트가 전부
+  // 이 모달에 막혀 실제 피드에 안 닿을 수 있다(스와이프 무반응 증상과 관련 있을 가능성).
   function dismissAppBanner(){
     try {
       var candidates = Array.prototype.slice.call(document.querySelectorAll('button, div[role="button"], a'));
       for (var i = 0; i < candidates.length; i++) {
         var el = candidates[i];
         var txt = (el.textContent || '').trim();
-        if (txt === '나중에' || txt === 'Not now' || txt === 'Maybe later' || txt === 'Later') {
-          el.click(); log('배너 닫음: "' + txt + '"'); return true;
+        if (txt === '나중에' || txt === 'Not now' || txt === 'Maybe later' || txt === 'Later'
+          || txt === '건너뛰기' || txt === 'Skip' || txt === '완료' || txt === 'Done'
+          || txt === '닫기' || txt === 'Close' || txt === '나중에 하기') {
+          el.click(); log('배너/모달 닫음: "' + txt + '"'); return true;
         }
       }
       // X 아이콘류 — aria-label 기반
-      var closeBtn = document.querySelector('[aria-label="Close"], [aria-label="닫기"]');
+      var closeBtn = document.querySelector('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"]');
       if (closeBtn) { closeBtn.click(); log('배너 닫음(X 아이콘)'); return true; }
+      // 관심사 선택 모달은 닫기 버튼이 없이 Esc나 배경 클릭으로만 닫히는 경우가 있다. 좌표 기반
+      // elementFromPoint 클릭은 하지 않는다 — 임의 UI(로고/메뉴 등)를 잘못 눌러 딴 페이지로 튈 위험이
+      // 있다(2026-08-13 시뮬레이터 자체 검증 중 검은 화면 고착 재현, 원인 후보 중 하나로 배제).
+      // document.body.click()은 좌표 없이 백드롭-클릭-닫기 델리게이트 패턴에만 걸리므로 더 안전하다.
+      var bodyText = document.body.innerText || '';
+      if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1) {
+        try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); } catch(e) {}
+        try { document.body.click(); log('관심사 모달: Esc + body 클릭 시도'); } catch(e) {}
+      }
     } catch(e) { log('dismissAppBanner 실패: ' + e.message); }
     return false;
   }
@@ -357,6 +371,11 @@ export default function TikTokPocScreen() {
         javaScriptEnabled
         onError={(e) => pushLog('onError: ' + String(e.nativeEvent?.description).slice(0, 80))}
         onHttpError={(e) => pushLog('httpError: ' + e.nativeEvent?.statusCode)}
+        // 2026-08-13(14차) 시뮬레이터 자체 검증 — 검은 화면에 갇힌 채 로그도 멈추는 증상을
+        // 재현했는데, YouTubeShortsPlayer.ios.tsx엔 있는 이 핸들러가 여기 빠져 있었다. WKWebView
+        // 렌더러 프로세스가 죽으면(메모리 압박, 합성 이벤트 폭주 등) 복구 수단이 전혀 없어 영구히
+        // 검은 화면 — 리로드로 복구한다.
+        onContentProcessDidTerminate={() => { pushLog('🔴 WebView 렌더러 프로세스 종료 — 리로드'); webRef.current?.reload(); }}
         // 2026-08-12(9차) 사장님 지시("맥이나 윈도우 pc 크롬 브라우져처럼 속여서") — 모바일 UA는
         // 데스크톱 웹 CTA(앱 설치 유도)가 실려있을 수 있다. 데스크톱은 모바일 앱을 설치할 수
         // 없으니 같은 제한이 없을 가능성 — 데스크톱 크롬(맥)으로 위장해 재시도.

@@ -19,6 +19,9 @@ import { focusAllowanceApi } from '../services/api/client';
 //   상태**다 — 마감시각이 언제인지, 타임아웃으로 꺼진 것인지. 그 두 가지가 양쪽에서 다르게
 //   기억되는 한 규칙(10분 / +5분 / 하루 3회 / 광고 게이트)은 계속 어긋난다.
 
+// 재설치 직후 서버 판단을 기다리는 최대 시간 — 위 load() 주석 참고(오프라인 fail-open).
+const FRESH_INSTALL_MERGE_TIMEOUT_MS = 3000;
+
 type PersistedFocusSession = { endsAt: number | null; timedOut: boolean };
 
 type FocusSessionState = PersistedFocusSession & {
@@ -124,8 +127,20 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
     } catch {
       // 손상된 값이면 아래 기본값으로 폴백
     }
-    set({ endsAt: null, timedOut: false, hydrated: true });
-    await mergeServer();
+    // 🔴 2026-08-12 사장님 실기기 제보(iOS) — "앱 지웠다 다시 설치하니 포커스가 10분으로 리셋된다".
+    //   여기가 **재설치 직후 경로**(로컬에 저장된 세션이 아예 없음)다. 예전엔 hydrated를 먼저 세우고
+    //   서버 병합을 나중에 await 했는데, hydrated=true를 본 화면이 그 사이에 세션을 시작해버리면
+    //   서버가 "오늘 이미 다 썼다(timedOut)"고 말하기 전에 **공짜 10분**이 나간다.
+    //   = 앱을 지웠다 깔기만 하면 광고 3회 게이트를 무한히 우회할 수 있다(사장님이 막으라고 한 그것).
+    //   → 로컬에 근거가 하나도 없는 이 경로에서만 **서버 답을 받은 뒤에** hydrated를 세운다.
+    //   ⚠️ 오프라인에서 영원히 막히면 안 되므로(이 앱의 fail-open 원칙) 최대 3초만 기다린다.
+    //     그 안에 못 받으면 일단 열어주고, 병합은 도착하는 대로 스토어에 반영된다.
+    set({ endsAt: null, timedOut: false });
+    await Promise.race([
+      mergeServer(),
+      new Promise<void>((resolve) => setTimeout(resolve, FRESH_INSTALL_MERGE_TIMEOUT_MS)),
+    ]);
+    set({ hydrated: true });
   },
 
   start: (durationMinutes) => {

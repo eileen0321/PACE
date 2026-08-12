@@ -425,8 +425,11 @@ export default function FocusScreen() {
                       달아서 실제 연결돼 있는지 표시") — 지금까지 이 줄은 "기능을 켰는지"만 보여줬고
                       **리모컨이 실제로 붙어 있는지**는 알 수 없었다. 홈 플랫폼 카드의 활성 표시와
                       똑같은 점(연결=초록 펄스 / 미연결=회색 정적)을 쓴다 — 같은 의미에 같은 기호. */}
-                  <ConnectedDot connected={isBluetoothConnected} />
+                  {/* ⚠️ 2026-08-13(2차) 사장님 지적("블루투스 왼쪽에 있으니 손짓과 글자 배열이 안 맞잖아,
+                      오른쪽으로 바꾸든지") — 라벨 **앞**에 두니 이 줄만 글자 시작 위치가 점+간격만큼
+                      밀려 아래 손짓 행과 어긋났다. 라벨 **뒤**로 옮겨 두 행의 글자가 같은 x에서 시작한다. */}
                   <Text style={[styles.interventionTitle, bluetoothBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
+                  <ConnectedDot connected={isBluetoothConnected} />
                   {bluetoothBlocked ? (
                     <View style={styles.permissionNeededBadge}>
                       <Text style={styles.permissionNeededBadgeText}>{t('focus.permissionNeeded')}</Text>

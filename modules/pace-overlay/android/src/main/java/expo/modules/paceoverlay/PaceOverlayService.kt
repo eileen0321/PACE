@@ -1252,6 +1252,8 @@ class PaceOverlayService : Service() {
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
     // 2026-08-13 — PaceAccessibilityService.resumeTrackingIfSessionAlive()가 읽어야 해서 공개.
+    // 2026-08-13 — 리모컨 키가 마지막으로 들어온 벽시계 시각. "연결됨" 표시의 근거(재시작 견딤).
+    const val PREF_LAST_REMOTE_KEY_AT = "last_remote_key_at"
     const val PREF_SESSION_ACTIVE = "session_active"
     private const val PREF_REMAINING = "session_remaining_minutes"
     private const val PREF_SLEEP_TIMER = "session_sleep_timer_remaining"

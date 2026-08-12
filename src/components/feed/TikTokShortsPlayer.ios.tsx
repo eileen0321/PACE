@@ -88,33 +88,71 @@ const INJECTED_JS = `
     }
     return false;
   }
+  // 2026-08-13(18차) 실기기 로그로 확정(추측 아님) — "건너뛰기" 매칭이 실제 로그인 모달이 아니라
+  // "콘텐츠 피드로 건너뛰기"라는 **접근성 스킵링크**(스크린리더용, 화면엔 안 보임)를 계속 클릭하고
+  // 있었다(3초마다 같은 로그 반복 = 진짜 모달은 그대로 안 닫힘). offsetParent===null인 요소는
+  // 화면에 실제로 안 보이는 요소라 후보에서 제외한다.
+  function isVisible(el){
+    try { return el.offsetParent !== null; } catch(e) { return true; }
+  }
   function dismissAppBanner(){
     try {
       var candidates = Array.prototype.slice.call(document.querySelectorAll('button, div[role="button"], a, [role="button"]'));
       for (var i = 0; i < candidates.length; i++) {
         var el = candidates[i];
+        if (!isVisible(el)) continue;
         var txt = (el.textContent || '').trim();
         if (txt && txt.length < 20 && textMatches(txt)) { el.click(); send({ type: 'domlog', text: '배너닫음(텍스트): ' + txt }); return true; }
       }
-      var closeBtn = document.querySelector('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"], [aria-label*="skip" i], [aria-label*="건너뛰기"]');
-      if (closeBtn) { closeBtn.click(); send({ type: 'domlog', text: '배너닫음(aria-label)' }); return true; }
+      // 2026-08-13(19차) 실기기 로그로 확정 — 이 셀렉터도 isVisible 체크가 없어서 화면에 안 보이는
+      // 뭔가를 3초마다 계속 클릭만 하고 있었다(진짜 로그인 모달은 안 닫힘). 전부에 가시성 체크.
+      var closeCandidates = document.querySelectorAll('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"], [aria-label*="skip" i], [aria-label*="건너뛰기"]');
+      for (var ci = 0; ci < closeCandidates.length; ci++) {
+        if (isVisible(closeCandidates[ci])) {
+          closeCandidates[ci].click();
+          send({ type: 'domlog', text: '배너닫음(aria-label): ' + (closeCandidates[ci].getAttribute('aria-label') || '') });
+          return true;
+        }
+      }
       var bodyText = document.body.innerText || '';
       if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
         // 로그인 유도 모달이 확실히 감지됐는데 "게스트"류 텍스트/aria-label 매칭도 실패 — 진단으로
         // 실제 버튼 목록만 로그(다음 라운드에 정확한 문구로 좁히기 위함). ⚠️ 여기서 아무 버튼이나
         // 골라 클릭하지 않는다 — 로그인 모달엔 "Continue with Google/Apple" 같은 버튼도 같이 있어,
         // 잘못 누르면 OAuth 플로우가 열리는 더 나쁜 상태가 된다. 안전한 배경 클릭/Esc만 시도.
+        // 2026-08-13(18차) — [role="dialog"]/.modal 셀렉터로는 못 찾았다(실기기 로그로 확인, 진짜
+        // 모달 마크업이 다른 패턴일 가능성). "무엇을 시청하고"를 직접 담은 텍스트 노드에서부터 위로
+        // 올라가며 각 조상의 버튼/링크를 덤프한다 — 이러면 모달 컨테이너 이름이 뭐든 반드시 잡힌다.
         try {
-          var dialog = document.querySelector('[role="dialog"], [class*="Modal" i], [class*="modal" i]');
-          if (dialog) {
-            var btns = dialog.querySelectorAll('button, [role="button"], a');
-            var found = [];
-            for (var j = 0; j < Math.min(btns.length, 12); j++) found.push('"' + (btns[j].textContent || '').trim().slice(0, 20) + '"');
-            send({ type: 'domlog', text: '로그인모달 버튼들(' + btns.length + '개): ' + found.join(', ') });
-          } else {
-            send({ type: 'domlog', text: '로그인모달 감지됐는데 [role=dialog]/.modal 요소를 못 찾음' });
+          var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          var textNode = null;
+          while (walker.nextNode()) {
+            if ((walker.currentNode.nodeValue || '').indexOf('무엇을 시청하고') !== -1) { textNode = walker.currentNode; break; }
           }
-        } catch(e) {}
+          var anchor = textNode ? textNode.parentElement : null;
+          if (anchor) {
+            var level = 0;
+            var el2 = anchor;
+            while (el2 && level < 6) {
+              var interactive = el2.querySelectorAll('button, [role="button"], a');
+              if (interactive.length > 0 && interactive.length < 15) {
+                var found2 = [];
+                for (var k = 0; k < interactive.length; k++) {
+                  if (!isVisible(interactive[k])) continue;
+                  found2.push('"' + (interactive[k].textContent || '').trim().slice(0, 20) + '"');
+                }
+                if (found2.length > 0) {
+                  send({ type: 'domlog', text: '로그인모달(lv' + level + ' ' + el2.tagName + '.' + (el2.className || '').toString().slice(0, 30) + ') 버튼: ' + found2.join(', ') });
+                  break;
+                }
+              }
+              el2 = el2.parentElement;
+              level++;
+            }
+          } else {
+            send({ type: 'domlog', text: '로그인모달 텍스트는 감지됐는데 텍스트노드를 못 찾음(이상 케이스)' });
+          }
+        } catch(e) { send({ type: 'domlog', text: '로그인모달 진단 실패: ' + e.message }); }
         try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); } catch(e) {}
         try { document.body.click(); } catch(e) {}
       }

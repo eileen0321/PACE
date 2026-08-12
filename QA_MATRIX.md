@@ -35,9 +35,19 @@
 | 입력 신뢰도 | OS 레벨 주입 → 앱이 진짜 입력으로 받음 | 합성 이벤트 → `event.isTrusted=false` |
 | 화면 관측 | 접근성 트리(노드·RangeInfo) | DOM |
 
-**이 한 줄이 대부분의 차이를 설명한다.** iOS는 틱톡이 `isTrusted`를 요구해 다음 배치를
-로드하지 않는다(맥 세션 `27daef1`: 합성터치·wheel·키보드·scrollTop·Swiper `slideNext`·
-`scrollIntoView` **6개 기법 전부 실패**).
+**이 한 줄이 대부분의 차이를 설명한다.** iOS는 틱톡 WebView 안에서 다음 영상으로 못 넘어간다.
+
+⚠️ **2026-08-12 정정 — `isTrusted` 가설은 실기기 테스트로 반증됐다.** 처음엔 페이지 JS가
+만든 합성 입력이 `event.isTrusted=false`라 막히는 거라고 추정했다(합성터치·wheel·키보드·
+scrollTop·Swiper `slideNext`·`scrollIntoView`·PointerEvent·실제 media `ended` 이벤트 —
+**8개 기법 전부 실패**, `27daef1`/`8083b0b`). 그런데 사장님 실기기에서 **진짜 손가락 스와이프**로
+직접 테스트한 결과 — **똑같이 딱 1번만 넘어가고 그 다음부턴 영구히 멈췄다.** 진짜 신뢰된 OS
+레벨 입력도 실패했으니 트러스트 문제가 아니다. 남은 유력한 설명: **로그인 안 한 익명 WebView
+세션에 틱톡이 영상을 딱 2개까지만 주고 그 이상은 로그인/앱 설치를 유도하려고 의도적으로
+막는 구조**(가설, 완전히 확정된 건 아님 — 로그인 세션으로 테스트하면 검증 가능하나 아직 안 함).
+→ 결론: 지금 아키텍처(WebView로 페이지 통째로 띄우기)로는 iOS 틱톡 자동넘김이 **원리적으로
+안 된다.** 되게 하려면 안드처럼 완전히 다른 방식(Apple Screen Time API로 진짜 틱톡 앱을 열고
+시스템 레벨에서 제한 — 별도 프로젝트급)이 필요하다.
 
 ## 1-2. 앱별 지원 현황
 
@@ -58,7 +68,7 @@
 | 항목 | 이유 | 근거 |
 |---|---|---|
 | 🍎 자동넘김 전무 | iOS는 다른 앱의 UI/제스처를 조작할 수단이 없다 | `autoNextService.ios.ts` — `supportsAutoNext: false` |
-| 🍎 TikTok 자동넘김 | 페이지 JS 이벤트가 `isTrusted` 벽에 막힘 | 맥 세션 6개 기법 전부 실패 (`27daef1`) |
+| 🍎 TikTok 자동넘김 | 익명 WebView 세션이 영상 2개 이상 안 줌(가설) — 트러스트 문제 아님 | 맥 세션 8개 기법 + **실기기 진짜 손가락**까지 전부 동일하게 1회만 이동 후 정지 (`27daef1`/`8083b0b`) |
 | TikTok HOT/검색 | 서명(X-Bogus/msToken) 없이는 API 직접 호출 불가 | 스크래핑 차단 확인 |
 | 🍎 TikTok 카드 미노출 | 목록을 못 얻어 빈 피드가 됨 | `home.tsx` — `Platform.OS === 'android'` 가드 |
 

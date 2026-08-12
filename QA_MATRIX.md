@@ -223,6 +223,23 @@ adb logcat -s PaceAccessibility:V | grep -E "RANGE_INFO|AUTO_NEXT|VIDEO_ADVANCE|
    정상 사용 흐름으로 재검증이 필요하고, 거기서도 안 나오면 "열린 세션 하나만 집계" 규칙을
    앱별 집계에서는 다르게 가져가야 합니다.
 
+### 🍎 Mac 세션 응답(2026-08-12) — 위 4번 확인 결과
+
+- **①**: 시뮬레이터에서 분석 탭 정상 렌더 확인(크래시/에러 없음). 오늘 사용량이 0이라
+  Platform Breakdown 섹션 자체가 안 보이는 상태 — 예상대로 정상(통과). 실사용 세션을 걸어
+  섹션이 실제로 "나타나는" 것까지는 시뮬레이터 탭 조작 수단이 없어 못 봄(스크린샷은 확보).
+- **②**: 실기기가 지금 오프라인이라 진행 중 세션을 직접 만들어 두 숫자를 비교하는 라이브
+  테스트는 못 했음 — 대신 코드로 확정: `getTodayUsageMinutes`와 `getTodayUsageByApp`의 열린
+  세션 처리 로직이 **완전히 동일한 공식**(`statsRepository.ts:95-108` vs `116-135` —
+  `wallClock = min(14400, now-started_at)`, `watched = overlayService.getWatchedSeconds()`,
+  `elapsed = watched != null ? min(wallClock, watched) : wallClock`)이라 **구조적으로 어긋날
+  수 없음**(같은 입력에 같은 함수를 두 곳에서 그대로 재사용). `overlayService.ios.ts:69`의
+  `getWatchedSeconds()`도 스텁이 아니라 실제 구현(2026-08-06 `3ac55aa`) 확인 — null 폴백
+  경로가 상시로 타는 상태 아님. 실기기 라이브 확인은 여전히 권장(엣지 케이스 대비)이지만
+  코드상 회귀 가능성은 낮다고 판단.
+- **③**: 확인함, 인지하고 있음 — 지금 진행 중인 iOS 틱톡 WebView 조사(아래 참고)가 실제로
+  결실을 맺으면 `feed/index.tsx:271`의 `'youtube'` 하드코딩을 그 작업과 함께 고칠 것.
+
 ---
 
 # 5부. 자동화 현황과 공백

@@ -16,15 +16,16 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 // 스스로 스크롤/다음영상 이동을 반복하며 몇 분간 무인으로 관찰한다 — 스크롤할수록 로그인벽이
 // 뜨는지, 스와이프 시뮬레이션이 먹히는지가 핵심 질문. 화면 하단 로그 패널로 결과를 본다.
 //
-// 🔴 결론(수 시간 조사, 6개 기법 시도 — 합성 터치스와이프/wheel/키보드/scrollTop 직접대입/
-// Swiper.js 공식 API(slideNext)/nextSibling.scrollIntoView — 전부 딱 1회만 이동하고
-// 영구히 멈춤(활성 슬라이드 idx=1/2에서 고정, 다음 슬라이드가 DOM에 아예 없음). 틱톡은 영상을
-// 2개만 미리 로드해두고, 다음 배치를 불러오는 트리거가 event.isTrusted(진짜 OS 레벨 입력)를
-// 요구하는 것으로 보인다 — 페이지 JS로 만든 어떤 이벤트도 이 기준을 통과 못 했다. WebDriver
-// (safaridriver)로 진짜 신뢰된 입력을 시도했으나 "Allow Remote Automation"이 꺼져 있어(수동 GUI
-// 토글 필요, 여기서 자동화 불가) 검증 못 함. 결론: 콘텐츠 로드/재생/로그인벽 없음은 확정, 자동
-// 다음영상 넘김은 **실기기에서 사람이 직접 스와이프해야만** 최종 확인 가능(진짜 터치는 트러스트
-// 문제에 안 걸릴 가능성이 높음 — 검증 안 된 가설).
+// 🔴 결론(수 시간 조사, 7개 기법 시도 — 합성 터치스와이프/wheel/키보드/scrollTop 직접대입/
+// Swiper.js 공식 API(slideNext)/nextSibling.scrollIntoView/PointerEvent(Swiper v9+가 내부적으로
+// TouchEvent 대신 쓰는 것) — 전부 딱 1회만 이동하고 영구히 멈춤(활성 슬라이드 idx=1/2에서 고정,
+// 다음 슬라이드가 DOM에 아예 없음). 틱톡은 영상을 2개만 미리 로드해두고, 다음 배치를 불러오는
+// 트리거가 event.isTrusted(진짜 OS 레벨 입력)를 요구하는 것으로 보인다 — 페이지 JS로 만든 어떤
+// 이벤트도 이 기준을 통과 못 했다. WebDriver(safaridriver)로 진짜 신뢰된 입력을 시도했으나
+// "Allow Remote Automation"이 꺼져 있고 --enable은 macOS sudo 암호가 필요해(요청 안 함) 검증
+// 못 함. 결론: 콘텐츠 로드/재생/로그인벽 없음은 확정, 자동 다음영상 넘김은 **실기기에서 사람이
+// 직접 스와이프해야만** 최종 확인 가능(진짜 터치는 트러스트 문제에 안 걸릴 가능성이 높음 —
+// 검증 안 된 가설).
 
 const INJECTED_JS = `
 (function() {
@@ -126,6 +127,27 @@ const INJECTED_JS = `
       }
       log('Swiper 전수 시도(' + allSwipers.length + '개): ' + info.join(' | ') + (moved ? ' → 이동함!' : ' → 전부 제자리'));
     } catch(e) { log('Swiper.slideNext 시도 실패: ' + e.message); }
+    // 2026-08-12 사장님 지적("wkuserscript... 스크롤내리는 자바코드 다 확인했어?") — 웹서치로 확인:
+    // Swiper.js v9+는 내부 입력 처리를 TouchEvent가 아니라 **PointerEvent**로 전환했다(v11도
+    // pointerdown/move/up 지원 유지). 지금까지 시도한 건 전부 TouchEvent였다 — 틱톡의 Swiper가
+    // Pointer Events로 리스너를 붙였다면 TouchEvent는 애초에 Swiper의 리스너에 안 잡혔을 것이다
+    // (버블링은 되지만 Swiper 자신의 pointerdown 핸들러가 아예 안 걸렸을 수 있다는 뜻). 같은
+    // 좌표/시퀀스로 PointerEvent 버전을 별도로 시도한다.
+    try {
+      var py0 = window.innerHeight * 0.8, py1 = window.innerHeight * 0.15, px = window.innerWidth / 2;
+      var pel = document.elementFromPoint(px, py0) || document.body;
+      function pev(type, y, id){
+        return new PointerEvent(type, {
+          pointerId: id, pointerType: 'touch', isPrimary: true,
+          clientX: px, clientY: y, bubbles: true, cancelable: true
+        });
+      }
+      pel.dispatchEvent(pev('pointerdown', py0, 1));
+      pel.dispatchEvent(pev('pointermove', (py0 + py1) / 2, 1));
+      pel.dispatchEvent(pev('pointermove', py1, 1));
+      pel.dispatchEvent(pev('pointerup', py1, 1));
+      log('PointerEvent 스와이프 시뮬레이션 실행(pointerType=touch)');
+    } catch(e) { log('PointerEvent 시도 실패: ' + e.message); }
     // 2026-08-11(5차) — 실제로 동작하는 오픈소스 유저스크립트(TikTok Autoscroll, Greasyfork) 코드를
     // 확인했다: API 호출도 합성 이벤트도 아니고 nextSibling.scrollIntoView()만 쓴다. 왜 이게 더
     // 나을 수 있는가 — Swiper.activeIndex를 코드로 바꾸는 것과 달리 scrollIntoView는 브라우저가

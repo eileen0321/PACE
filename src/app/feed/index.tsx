@@ -28,6 +28,7 @@ import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverlay';
+import { TikTokSearchOverlay } from '../../components/overlays/TikTokSearchOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
@@ -910,8 +911,10 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
-            // 틱톡은 큐레이션이 없어 HOT/검색/즐겨찾기가 전부 유튜브 videoId 큐를 전제한다 — 성립 안 함.
-            hiddenActions={platform === 'tiktok' ? ['hot', 'search', 'favorite'] : undefined}
+            // 🔴 2026-08-13 — HOT/즐겨찾기는 유튜브 videoId 큐를 전제해 틱톡에선 성립 안 하지만,
+            // 검색은 QA_MATRIX.md 1-4b(안드 → 맥 세션 요청)대로 "입력은 우리 UI, 결과는 틱톡
+            // 화면"으로 성립한다 — hiddenActions에서 뺀다(아래 onSelect가 platform으로 분기).
+            hiddenActions={platform === 'tiktok' ? ['hot', 'favorite'] : undefined}
             onSelect={(action) => {
               // 2026-08-09 파리티 — 안드로이드 ada6c09(같은 자리에 뜨는 오버레이 창들이 서로 겹쳐
               // 보이던 문제)와 같은 계열 버그가 iOS에도 독립적으로 있었다: HOT이 열린 채로 P를 다시
@@ -955,7 +958,19 @@ export default function PaceFeedScreen() {
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}
-        {showShortsSearch && <ShortsSearchOverlay onClose={() => setShowShortsSearch(false)} onOpenVideo={playInFeed} />}
+        {showShortsSearch && (
+          platform === 'tiktok' ? (
+            <TikTokSearchOverlay
+              // 패널을 그냥 닫기만(검색 안 하고) 하면 WebView는 그대로 /foryou에 있으니 되돌릴
+              // 필요가 없다. onSubmit이 실제로 검색 URL로 이동시킨 뒤에는 사용자가 검색 결과에
+              // 남아 있어도 되므로(틱톡 자체 화면), 여기서 강제로 되돌리지 않는다.
+              onClose={() => setShowShortsSearch(false)}
+              onSubmit={(query) => { playerRef.current?.search?.(query); }}
+            />
+          ) : (
+            <ShortsSearchOverlay onClose={() => setShowShortsSearch(false)} onOpenVideo={playInFeed} />
+          )
+        )}
 
         {/* 무료 세션 타임아웃 후 재개 시도 → 보상광고/크레딧 연장(Android 8468a82 matching). onExtended로
             feed가 직접 세션 재활성화(iOS는 세션이 JS 관리 — extendFocusSession은 no-op). 광고 실패/미보상

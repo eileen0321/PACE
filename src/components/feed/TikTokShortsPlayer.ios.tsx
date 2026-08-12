@@ -257,6 +257,15 @@ const INJECTED_JS = `
     }
   }
 
+  // BT 리모컨/손짓(hands-free) 입력에서 RN이 강제로 "다음 영상" 시도를 걸 수 있게 노출.
+  // 자연종료 감지(ended/폴링)와 똑같이 markAdvancingOnce 게이트를 거쳐 tryAdvance를 부른다 —
+  // 이미 재생 중인 영상이면(자연종료 아님) 그냥 넘겨버리는 게 아니라 시도만 트리거하고, 이미
+  // 진행 중인 이동이 있으면(markAdvancingOnce가 false) 중복 실행하지 않는다.
+  window.paceForceAdvance = function(){
+    var v = getActiveVideo();
+    if (v && markAdvancingOnce(v)) tryAdvance(v);
+  };
+
   var startedAt = Date.now();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
@@ -280,13 +289,22 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   // (BT 리모컨/볼륨키 입력에서 재사용). previous는 대응하는 방법이 없어 no-op.
   useImperativeHandle(ref, () => ({
     advance: () => {
-      webRef.current?.injectJavaScript(
-        'var v=document.querySelector(".swiper-slide-active video")||document.querySelector("video"); if(v){v.__paceAdvancing=true;}true;'
-      );
+      webRef.current?.injectJavaScript('window.paceForceAdvance && window.paceForceAdvance(); true;');
     },
     previous: () => {},
     setMuted: (muted) => {
       webRef.current?.injectJavaScript(`(function(){var v=document.querySelector('video'); if(v){v.muted=${muted};}})();true;`);
+    },
+    // QA_MATRIX.md 1-4b(맥 세션 요청) — 안드로이드가 이미 구현한 "검색은 우리 UI, 결과는 틱톡
+    // 화면" 패턴의 iOS 버전. 딥링크로 외부 앱/브라우저를 여는 대신, 이미 떠 있는 같은 WebView를
+    // 틱톡 검색 URL로 이동시킨다(안드에서 https://www.tiktok.com/search가 크롬을 띄운 원인은
+    // Linking.openURL로 "밖"으로 나가서지 URL 자체 문제가 아니었다 — 우리는 안 나간다).
+    // 빈 문자열이면 검색 종료 → /foryou로 복귀.
+    search: (query) => {
+      const url = query.trim()
+        ? `https://www.tiktok.com/search?q=${encodeURIComponent(query.trim())}`
+        : 'https://www.tiktok.com/foryou';
+      webRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
     },
   }), []);
 

@@ -451,6 +451,8 @@ export const translations = {
       searchPickPreset: 'Pick a topic above to see shorts',
       searchPlaceholder: 'Type a search term',
       searchGo: 'Go',
+      // 2026-08-13 — 틱톡은 결과 목록을 우리가 못 만들어(서명 API) 검색어만 받고 틱톡 화면으로 넘긴다.
+      tiktokSearchHint: 'Results open right here in TikTok — type a term and go.',
       searchComingSoon: 'Search is coming soon ✨',
       hotCatAll: 'All',
       hotCatMusic: 'Music',
@@ -944,6 +946,7 @@ export const translations = {
       searchPickPreset: '위에서 주제를 골라 쇼츠를 확인하세요',
       searchPlaceholder: '검색어를 입력하세요',
       searchGo: '검색',
+      tiktokSearchHint: '검색 결과는 틱톡 화면에 바로 열려요 — 검색어를 입력하고 검색을 누르세요.',
       searchComingSoon: '검색은 곧 만나요 ✨',
       hotCatAll: '전체',
       hotCatMusic: '음악',

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Animated, ImageBackground, Pressable, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { GlassSurface } from '../ui/GlassSurface';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // healthy-shorts-assistant(2) App.tsx "Choose Platform" 카드를 토씨 하나 안 틀리고 그대로 이식
@@ -90,9 +91,17 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
                   </View>
                 )}
               </View>
-              <View style={[styles.playButton, largeButton && styles.playButtonLarge]}>
+              {/* 2026-08-13 사장님 지시 — 재생 버튼을 단색 배경 대신 글래스모피즘으로(PaceMenu/
+                  ConnectingOverlay와 같은 GlassSurface 패턴). 플랫폼별 분기 없는 공용 컴포넌트라
+                  안드로이드·iOS 둘 다 이 변경이 그대로 적용된다. */}
+              <GlassSurface
+                style={[styles.playButton, largeButton && styles.playButtonLarge]}
+                intensity={40}
+                tint="dark"
+                fallbackColor="rgba(88,86,214,0.35)"
+              >
                 <Ionicons name="play" size={largeButton ? 18 : 14} color="#FFFFFF" style={styles.playIcon} />
-              </View>
+              </GlassSurface>
             </LinearGradient>
           </ImageBackground>
         </Animated.View>
@@ -130,7 +139,15 @@ const styles = StyleSheet.create({
   featureRow: { flexDirection: 'row', gap: 4, marginTop: 2, flexWrap: 'wrap' },
   featureChip: { borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 6, paddingVertical: 2 },
   featureChipText: { fontSize: 8, fontFamily: typography.bodyFontFamilyBold, color: '#E5E7EB', letterSpacing: 0.3 },
-  playButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  playButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
   playButtonLarge: { width: 40, height: 40, borderRadius: 20 }, // 2026-07-26 사용자 지시로 52→40 축소(안드로이드와 맞춤)
   playIcon: { marginLeft: 2 }, // 원본 ml-0.5(2px) — 삼각형 아이콘의 시각적 무게중심 보정
 });

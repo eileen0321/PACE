@@ -233,7 +233,12 @@ async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3)
 
 // 폴백(Data API) 하루 상한 — 호출부 주석의 근거 참고. 100 units × 40 = 4,000 units로, 무료
 // 쿼터(10,000)의 40%까지만 폴백에 내주고 나머지는 HOT 갱신·채널 발견 몫으로 남긴다.
-const FALLBACK_DAILY_BUDGET = 40;
+// 🔴 2026-08-12 — 40에서 5로 내린다. 이 카운터는 **인스턴스별 메모리**라(아래 호출부 주석 참고)
+//   웜 인스턴스 수만큼 곱해진다. 40이면 인스턴스 10개만 떠도 400회 × 100 units = 40,000 units로
+//   무료 쿼터(10,000)를 네 배 넘긴다 — 실제로 오늘 quotaExceeded로 검색이 통째로 죽었다.
+//   5면 같은 조건에서 5,000 units로 절반 안에 들어온다. 폴백은 어차피 스크래핑이 실패했을 때만
+//   도는 안전망이고, 이제 그 위에 stale-if-error(직전 정상 목록 재사용)가 한 겹 더 있다.
+const FALLBACK_DAILY_BUDGET = 5;
 let fallbackDay = '';
 let fallbackUsed = 0;
 function consumeFallbackBudget(): boolean {
@@ -344,6 +349,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch {
       shorts = [];
     }
+    // 🔴 2026-08-12 근본원인 수정 ① — 제네릭(HOT 로테이션)은 Data API로 떨어지기 전에 **다른
+    //   카테고리를 먼저 더 시도한다.** 유튜브 CAPTCHA는 특정 요청에 걸리는 것이지 전 카테고리가
+    //   동시에 막히는 게 아니다(실측: cat/음악/먹방은 되고 축구만 0개). 검색어가 다르면 통과할
+    //   확률이 충분히 높은데, 예전 코드는 3개만 시도하고 곧장 100 units짜리 search.list로 갔다.
+    //   추가 시도는 전부 스크래핑이라 쿼터 소모가 0이다.
+    if (!shorts.length && isGeneric) {
+      for (let extra = 1; extra <= 2 && !shorts.length; extra++) {
+        const alt = cats[(page * MIX_COUNT + seed + MIX_COUNT * extra) % cats.length];
+        shorts = await scrapeWithRetry(alt, gl, hl, 1).catch(() => []);
+      }
+    }
     if (!shorts.length) {
       const apiKey = process.env.YOUTUBE_API_KEY || process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
       // 🔴 2026-08-11 사장님 확인("검색이 돈 드는 거야?") 후 지시("넣어") — 평소 경로(스크래핑)는
@@ -368,7 +384,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 24시간 묵은 리스트"를 뜻했다(실측: Age 520s, X-Vercel-Cache HIT). 위 시간 시드가 매시간 카테고리를
     // 바꾸므로 캐시 창도 그에 맞춰 좁힌다. swr은 30분으로 줄여 하루 지난 목록이 나가는 일을 없앤다.
     // 스크래핑 횟수는 여전히 (카테고리 × 시간당 1회) 수준이라 스케일 이점은 그대로다.
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+    // 🔴 2026-08-12 근본원인 수정 ② — 빈 결과를 200으로 돌려주면 CDN이 **"결과 없음"을 5분간
+    //   캐시**한다. 실기기에서 검색이 전부 "결과가 없어요"로 보인 게 이것이다(스크래핑 CAPTCHA →
+    //   쿼터 소진 → 빈 배열 → 그 빈 배열이 다시 캐시). 빈 응답은 성공이 아니므로 에러로 돌린다.
+    //   그러면 아래 stale-if-error가 **직전 정상 목록**을 대신 내보낸다 — 사용자는 빈 화면 대신
+    //   조금 묵은 목록을 보고, 우리는 쿼터를 더 태우지 않는다.
+    if (!shorts.length) throw new Error('NO_RESULTS');
+    // 🔴 근본원인 수정 ③ — stale-if-error 추가. 오리진이 실패해도 CDN이 마지막 정상 응답을
+    //   최대 하루까지 계속 서빙한다. 이게 없어서 실패할 때마다 매 요청이 오리진을 때리고
+    //   그때마다 100 units짜리 폴백이 돌 수 있었다.
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600, stale-if-error=86400');
     // ⚠️ 이 헤더가 없으면 CDN이 URL만으로 캐시해서, 맨 처음 요청한 나라의 결과가 전 세계에 그대로
     // 나간다(국가별 분기를 넣어도 무의미해진다). 지오IP 헤더를 캐시 키에 포함시킨다.
     res.setHeader('Vary', 'x-vercel-ip-country');

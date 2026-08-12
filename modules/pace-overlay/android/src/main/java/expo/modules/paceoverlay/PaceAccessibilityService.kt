@@ -135,6 +135,8 @@ class PaceAccessibilityService : AccessibilityService() {
     // 2026-08-12 — 진행바(RangeInfo) 기반 판정 임계값. 위 checkPlaybackAndMaybeSwipe 주석 참고.
     // 예측 발사 리드타임 — 남은 시간이 이 값 이하가 되면 넘긴다(접근성 갱신 지연 ~2.5초를 감안).
     // 플링 인식 임계를 넉넉히 넘기는 스트로크 시간 — performSwipeUp 주석 참고.
+    // 진행바가 없는 영상(틱톡 짧은 클립)에서만 쓰는 시간 기반 폴백 간격.
+    private const val NO_PROGRESSBAR_ADVANCE_MS = 20_000L
     private const val SWIPE_FLING_MS = 120L
     private const val NEAR_END_LEAD_MS = 2_500L
     private const val NEAR_END_FRAC = 0.95f
@@ -877,6 +879,19 @@ class PaceAccessibilityService : AccessibilityService() {
         lastRangeProbeLogAtMs = now
         Log.d("PaceAccessibility", "RANGE_INFO none — visited=${3000 - rangeBudget[0]} rootPkg=${root?.packageName}")
       }
+      // 🔴 2026-08-12 3차 실기기 — 틱톡은 **일부 영상에만 진행바를 그린다.** 짧은 영상(수달 클립)은
+      //   SeekBar가 vis=false로만 존재해(490회 연속) 진행 신호가 아예 없고, 그대로 두면 같은 영상이
+      //   영원히 루프한다(실측 5분). 진행바가 있는 영상은 위 예측 발사로 정확히 넘기고, 없는
+      //   영상에만 시간 기반으로 넘긴다 — 진행바가 없는 건 대체로 짧은 영상이라 이 간격이면
+      //   최소 한 번은 다 보고 넘어간다.
+      if (frac == null && isWatching && lastKnownFrac < 0f &&
+          now - lastSwipeAtMs > NO_PROGRESSBAR_ADVANCE_MS) {
+        Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms")
+        performSwipeUp()
+        lastSwipeAtMs = now
+      }
+      // 진행바가 있는 영상에서 없는 영상으로 넘어갔을 때 예전 값이 남아 폴백을 막지 않도록 초기화.
+      if (frac == null) lastKnownFrac = -1f
       if (frac != null) {
         // 진행바가 실제로 있다 = 관측 가능. 수면감지 게이트가 이 시각을 본다.
         lastTimingReadAtMs = now
@@ -1080,30 +1095,38 @@ class PaceAccessibilityService : AccessibilityService() {
    *
    * 반환: 진행률 0.0~1.0. 없으면 null.
    */
-  private fun collectRanges(node: AccessibilityNodeInfo?, out: MutableList<Triple<String, Float, Float>>, depth: Int = 0, budget: IntArray = intArrayOf(3000)) {
+  private fun collectRanges(node: AccessibilityNodeInfo?, out: MutableList<RangeHit>, depth: Int = 0, budget: IntArray = intArrayOf(3000)) {
     if (node == null || depth > 40 || budget[0] <= 0) return
     budget[0]--
     val range = node.rangeInfo
     if (range != null) {
       val span = range.max - range.min
       if (span > 0f) {
-        out.add(Triple(node.className?.toString() ?: "?", (range.current - range.min) / span, range.max))
+        out.add(RangeHit(node.className?.toString() ?: "?", (range.current - range.min) / span, range.max, node.isVisibleToUser))
       }
     }
     for (i in 0 until node.childCount) collectRanges(node.getChild(i), out, depth + 1, budget)
   }
 
   private fun findProgressRange(node: AccessibilityNodeInfo?, depth: Int = 0, budget: IntArray = intArrayOf(3000)): Float? {
-    val found = mutableListOf<Triple<String, Float, Float>>()
+    val found = mutableListOf<RangeHit>()
     collectRanges(node, found, depth, budget)
     if (found.isEmpty()) return null
     // ⚠️ 첫 번째 노드를 그냥 쓰면 안 된다 — 실기기(2026-08-12): 틱톡 트리의 첫 rangeInfo는
     //   max=1167084, cur=0으로 고정된 **버퍼/로딩 바**였고, 정작 재생 진행을 나타내는 SeekBar를
     //   가려버렸다. 재생바로 쓸 수 있는 건 SeekBar 계열이므로 그것을 우선한다.
-    val seek = found.firstOrNull { it.first.contains("SeekBar") }
-    Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.first.substringAfterLast('.')}(max=${it.third},frac=${"%.3f".format(it.second)})" })
-    return (seek ?: return null).second
+    // 🔴 2026-08-12 2차 실기기 — SeekBar를 고르는 것만으로는 부족했다. ViewPager가 **인접 페이지를
+    //   미리 붙여두기 때문에** SeekBar가 여러 개 잡히고(로그 n=2), 재생 중이 아닌 이웃 페이지의
+    //   바는 항상 frac=0이다. 그걸 집으면 진행률이 영원히 0으로 보인다(피드/상세 양쪽에서 0 고정).
+    //   → 화면에 실제로 보이는(isVisibleToUser) 것만 후보로 두고, 그중 가장 앞선 값을 쓴다.
+    //   ⚠️ 안 보이는 바로 폴백하지 않는다 — 그건 항상 0이라 "진행률 0"으로 착각하게 만든다.
+    //     못 찾으면 null(=진행 신호 없음)을 돌려주고, 호출부가 시간 기반 폴백으로 넘어가게 한다.
+    val seek = found.filter { it.cls.contains("SeekBar") && it.visible }.maxByOrNull { it.frac }
+    Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.cls.substringAfterLast('.')}(max=${it.max},frac=${"%.3f".format(it.frac)},vis=${it.visible})" })
+    return (seek ?: return null).frac
   }
+
+  private data class RangeHit(val cls: String, val frac: Float, val max: Float, val visible: Boolean)
 
   /**
    * 🔴 2026-08-12 — 틱톡처럼 재생위치를 안 주는 앱에서 "지금 보고 있는 영상"을 식별하는 지문.

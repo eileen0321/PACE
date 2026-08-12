@@ -529,7 +529,15 @@ export default function HomeScreen() {
   // 판단해 "YouTube Only"로 MVP 방향 확정. Instagram/TikTok 카드는 완전히 제거하고, 대신 YouTube를
   // "그냥 열기"(추적/차단 없음) vs "PACE와 함께"(기존 세션 추적+오버레이+한도 집행) 두 모드로 분리 —
   // Pace의 핵심 가치(한도 집행)가 필요 없는 사용자도 존재할 수 있다는 판단.
-  const connectingCard = connectingPlatform ? { title: 'Shorts with PACE' } : null;
+  // 🔴 2026-08-13 사장님 지시("틱톡 누르면 원형 중간 팝업 … 동일하게 만들고 TikTok으로 문구 바꾸고") —
+  //   이 두 값이 **유튜브로 하드코딩**돼 있어서, 틱톡(Loops) 카드를 눌러도 연결 팝업이
+  //   "YouTube / Shorts with PACE"라고 말했다. 홈 카드 제목과 같은 규칙으로 플랫폼에 따라 고른다.
+  const connectingCard = connectingPlatform
+    ? { title: connectingPlatform === 'tiktok' ? 'Loops with PACE' : 'Shorts with PACE' }
+    : null;
+  const connectingPlatformName = connectingPlatform === 'tiktok' ? 'TikTok'
+    : connectingPlatform === 'instagram' ? 'Instagram'
+    : connectingPlatform ? 'YouTube' : '';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -683,7 +691,7 @@ export default function HomeScreen() {
 
       <ConnectingOverlay
         visible={connectingPlatform !== null}
-        platformName={connectingPlatform ? 'YouTube' : ''}
+        platformName={connectingPlatformName}
         platformFullTitle={connectingCard?.title ?? ''}
         onComplete={handleConnectingComplete}
       />

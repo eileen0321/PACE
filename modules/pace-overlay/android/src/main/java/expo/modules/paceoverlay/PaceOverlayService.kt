@@ -234,6 +234,12 @@ class PaceOverlayService : Service() {
         //     false라 알약이 즉시 사라진다. 낡은 신호를 OR로 얹는 게 아니라 "둘 중 하나라도 이 앱을
         //     현재 전경으로 지목하면"이라 예전 깜빡임 조건(유튜브↔다른앱 전환)과 다르다.
         val usageBasedVisible = usageStatsForeground != null && SupportedApps.PACKAGES.contains(usageStatsForeground)
+        // 🔴 2026-08-13 사장님 지적("기기에서 검색하면 우리 UI가 나오고 누르면 유튜브로 간다") —
+        //   isTikTokContext()를 **제출 시점**에 물었던 게 잘못이었다. 검색 패널의 입력창이 포커스를
+        //   가져가는 순간 UsageStats가 우리 앱을 전경으로 지목해서, 틱톡을 보다 검색해도 유튜브
+        //   경로를 탔다. 판단 기준은 "지금 무엇이 전경인가"가 아니라 **"직전에 무엇을 보고 있었나"**다.
+        //   여기 폴링에서 감시 대상 앱이 잡힐 때마다 남겨두고, 메뉴/검색은 그 값을 쓴다.
+        if (usageBasedVisible) lastSupportedAppPackage = usageStatsForeground
         val shouldShow = !selfForeground && ((windowVisibleOrNull ?: eventBasedVisible) || usageBasedVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
@@ -1021,6 +1027,8 @@ class PaceOverlayService : Service() {
 
   companion object {
     // 2026-08-13 — 위 registerForegroundTracking() 참고. 액티비티 생명주기로 갱신되는 즉시값.
+    // 2026-08-13 — 직전에 보고 있던 감시 대상 앱. 검색/메뉴가 "어느 앱 맥락인가"를 판단할 때 쓴다.
+    @Volatile private var lastSupportedAppPackage: String? = null
     @Volatile private var appInForeground = false
     private var resumedActivityCount = 0
     private var foregroundTrackingRegistered = false
@@ -1243,7 +1251,8 @@ class PaceOverlayService : Service() {
     private const val PREF_PENDING_CREDIT_SPEND = "pending_credit_spend"
     // 2026-07-19: 카운트다운 상태 영속화 키(프로세스 재생성 복구용) — 위 PREF_AUTO_MODE(블루투스
     // Auto Mode 스위치)와는 별개 개념이라 이름을 분리했다.
-    private const val PREF_SESSION_ACTIVE = "session_active"
+    // 2026-08-13 — PaceAccessibilityService.resumeTrackingIfSessionAlive()가 읽어야 해서 공개.
+    const val PREF_SESSION_ACTIVE = "session_active"
     private const val PREF_REMAINING = "session_remaining_minutes"
     private const val PREF_SLEEP_TIMER = "session_sleep_timer_remaining"
     private const val PREF_BREAK_INTERVAL = "session_break_interval_minutes"
@@ -3847,11 +3856,17 @@ class PaceOverlayService : Service() {
   private var searchPanelView: FrameLayout? = null
 
   /**
-   * 지금 사용자가 보고 있는 앱이 틱톡인가. UsageStats를 먼저 보고(접근성보다 신뢰도가 높았다 —
-   * 틱톡은 접근성 창 조회에서 안 잡히는 경우가 있다, 2026-08-12 알약 수정 참고) 없으면 접근성 값.
+   * 사용자가 **보고 있던** 앱이 틱톡인가.
+   *
+   * 🔴 2026-08-13 사장님 지적("검색하면 유튜브 리스트가 나오고 누르면 유튜브로 간다") —
+   *   처음엔 "지금 전경이 무엇인가"를 물었는데 그게 틀렸다. 검색 패널의 입력창이 포커스를
+   *   가져가는 순간 전경은 **우리 앱**이 되고, 그러면 틱톡을 보다 검색해도 유튜브 경로를 탄다.
+   *   판단 기준은 "지금"이 아니라 **"직전에 무엇을 보고 있었나"**다 — 폴링이 매초 남겨두는
+   *   lastSupportedAppPackage(위 선언부 주석)를 1순위로 쓴다.
    */
   private fun isTikTokContext(): Boolean {
-    val fg = runCatching { ForegroundAppWatcher.getForegroundPackage(this) }.getOrNull()
+    val fg = lastSupportedAppPackage
+      ?: runCatching { ForegroundAppWatcher.getForegroundPackage(this) }.getOrNull()
       ?: PaceAccessibilityService.getCurrentForegroundPackage()
     return fg == "com.ss.android.ugc.trill" || fg == "com.zhiliaoapp.musically"
   }

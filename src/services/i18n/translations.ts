@@ -495,9 +495,13 @@ export const translations = {
       // 라벨과 동기화(대칭 ON/OFF 쌍으로 통일 — 예전엔 "SESSION ON"/"START SESSION"으로 비대칭이었음).
       focusSessionOnBadge: 'FOCUS ON',
       focusSessionStartBadge: 'FOCUS OFF',
-      loadingShorts: 'Loading Shorts…',
-      emptyQueueMessage: 'No Shorts to show.',
-      loadFailedMessage: 'Failed to load Shorts.',
+      // 🔴 2026-08-13 사장님 지적("틱톡일 때는 쇼츠 단어가 아니지 않아? 틱톡 테스트에서
+      //   '쇼츠를 불러오지 못했습니다'가 나온다") — 이 피드 화면은 이제 유튜브/틱톡 공용이다
+      //   (맥 세션이 iOS 틱톡을 같은 화면에 붙였다). 플랫폼 이름을 박으면 반대쪽에서 틀린 말이
+      //   되므로 중립어로 바꾼다.
+      loadingShorts: 'Loading videos…',
+      emptyQueueMessage: 'No videos to show.',
+      loadFailedMessage: 'Failed to load videos.',
       sleepBlackout: 'Looks like you dozed off · tap to exit',
       // 2026-08-04 iOS 수면감지 2단계(Android parity, afb8573→새 설계) — "아직 보고 계세요?" 확인 팝업.
       sleepPromptTitle: 'Are you still watching?',
@@ -650,7 +654,7 @@ export const translations = {
       appOpenTimeSub: '오늘 앱이 화면에 떠 있던 시간',
       paceTracked: 'Pace가 기록한 시간',
       paceTrackedSub: 'Pace에서 시작한 세션만 측정됩니다',
-      trackingGapHint: 'Pace에서 쇼츠를 열면 나머지 시간도 함께 기록돼요.',
+      trackingGapHint: 'Pace에서 영상을 열면 나머지 시간도 함께 기록돼요.',
       restCredits: '적립 크레딧',
       restCreditsSub: '휴식 10분마다 +5 크레딧',
       totalCredits: '총 크레딧',
@@ -795,7 +799,7 @@ export const translations = {
       enforcementSection: '차단 실행',
       hardBlockMode: 'Hard Block Mode',
       hardBlockModeDesc: '한도 도달 시 전체화면 차단에 더해, YouTube 등 차단 대상 앱을 즉시 강제 종료합니다.',
-      hardBlockModeDescIos: '한도 도달 시 지나가는 안내 대신 전체화면 차단으로 쇼츠를 실제로 멈춥니다.',
+      hardBlockModeDescIos: '한도 도달 시 지나가는 안내 대신 전체화면 차단으로 영상을 실제로 멈춥니다.',
       favoriteAutoChain: 'Favorite 리스트 이어서 재생',
       favoriteAutoChainDesc: '즐겨찾기 항목을 탭하면 그 리스트를 끝까지 이어서 보여준 뒤 유튜브 자체 피드로 넘어갑니다. 기본 꺼짐.',
       bluetoothSection: '블루투스',
@@ -943,7 +947,7 @@ export const translations = {
       menuSearch: '검색',
       menuCapture: 'Saved',
       menuFavorite: 'Favorite',
-      searchPickPreset: '위에서 주제를 골라 쇼츠를 확인하세요',
+      searchPickPreset: '위에서 주제를 골라 영상을 확인하세요',
       searchPlaceholder: '검색어를 입력하세요',
       searchGo: '검색',
       tiktokSearchHint: '검색 결과는 틱톡 화면에 바로 열려요 — 검색어를 입력하고 검색을 누르세요.',
@@ -987,9 +991,10 @@ export const translations = {
       // 배지는 영문 배지 그대로 둔다(자연어 번역 대상 아님).
       focusSessionOnBadge: 'FOCUS ON',
       focusSessionStartBadge: 'FOCUS OFF',
-      loadingShorts: 'Shorts 불러오는 중…',
-      emptyQueueMessage: '표시할 Shorts가 없습니다.',
-      loadFailedMessage: 'Shorts를 불러오지 못했습니다.',
+      // 위 en 주석 참고 — 유튜브/틱톡 공용 화면이라 중립어로.
+      loadingShorts: '영상 불러오는 중…',
+      emptyQueueMessage: '표시할 영상이 없습니다.',
+      loadFailedMessage: '영상을 불러오지 못했습니다.',
       sleepBlackout: '잠드신 것 같아요 · 탭하면 종료',
       sleepPromptTitle: '아직 보고 계세요?',
       sleepPromptBody: '한동안 아무 조작이 없어서 여쭤봐요. 반응이 없으면 잠시 후 자동으로 종료할게요.',

@@ -619,6 +619,33 @@ class PaceAccessibilityService : AccessibilityService() {
     // 세부 설정(canPerformGestures, packageNames, eventTypes)은 전부
     // res/xml/accessibility_service_config.xml에 선언 — 여기서 serviceInfo를 재조립하지 않는다.
     maybeReturnToPaceAfterAccessibilityGranted()
+    resumeTrackingIfSessionAlive()
+  }
+
+  /**
+   * 🔴 2026-08-13 사장님 지적("지금 자동재생도 안 되는데") — 실기기 로그가 원인을 그대로 보여줬다:
+   *
+   *   01:06:01 W startPlaybackTracking() called but instance is null — accessibility not bound yet
+   *   01:06:01 W startWatching() called but instance is null — accessibility not bound yet, silently ignored
+   *
+   * 세션이 시작되는 순간 접근성 서비스가 **아직 안 붙어 있으면** 두 호출이 그냥 버려졌고, 그 뒤
+   * 접근성이 붙어도 **아무도 다시 부르지 않아 폴링이 영영 안 돌았다**(RANGE_INFO 0줄 → 자동넘김
+   * 완전 정지). 사용자 눈에는 원인이 안 보인다 — 알약도 멀쩡하고 시간도 깎이는데 넘어가지만 않는다.
+   * 실사용에서 이 순서는 흔하다: 앱 업데이트 직후 첫 세션 / 프로세스가 죽었다 살아난 뒤 /
+   * 접근성 재바인딩이 느린 기기.
+   *
+   * "조용히 무시"가 문제였다. 접근성이 붙는 이 시점에 **세션이 아직 살아 있으면 스스로 재개**한다.
+   * 세션 여부·자동넘김 설정은 이미 prefs에 있으므로(네이티브가 진실원천) JS 왕복이 필요 없다.
+   */
+  private fun resumeTrackingIfSessionAlive() {
+    val prefs = getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)
+    if (!prefs.getBoolean(PaceOverlayService.PREF_SESSION_ACTIVE, false)) return
+    // 사용시간 정확도용 폴링은 자동넘김 여부와 무관하게 항상 켠다(startPlaybackTracking 주석 참고).
+    startPlaybackTracking()
+    // 45초는 다른 호출부(PaceOverlayService:1438/1636)와 같은 값 — 안전 타임아웃 폴백이 삭제된 뒤로
+    // 이 값은 폴링 주기 로그에만 쓰인다.
+    if (prefs.getBoolean(PaceOverlayService.PREF_AUTO_MODE, false)) startWatching(45_000L)
+    Log.i("PaceAccessibility", "세션이 살아 있어 추적 재개 — 바인딩 전에 버려진 startWatching/startPlaybackTracking 복구")
   }
 
   // 2026-08-01 사용자 지시("설정하면 바로 PACE로 와야 한다고 말했을 텐데 계속 설정이잖아") — 위

@@ -165,18 +165,32 @@ const INJECTED_JS = `
               for (var kc = 0; kc < KNOWN_CHROME.length; kc++) { if (lt.indexOf(KNOWN_CHROME[kc].toLowerCase()) !== -1) return true; }
               return false;
             };
+            // 2026-08-13(23차) — children.length===0(순수 리프)만 인정했더니 0개였다(실기기 확인) —
+            // 아이콘+텍스트를 함께 감싼 카테고리 칩이면 진짜 리프는 아이콘 뒤의 span 하나뿐이고,
+            // 우리가 원하는 "칩 전체"는 그 부모일 수 있다. 대신 "자신과 완전히 같은 텍스트를 가진
+            // 자손이 없는" 가장 안쪽 요소를 찾는다 — 래퍼 깊이가 몇 겹이든 실제 텍스트가 달린
+            // 지점을 정확히 잡아낸다.
             var all = modalRoot.querySelectorAll('*');
             var chipCandidates = [];
             for (var a2 = 0; a2 < all.length; a2++) {
               var cand = all[a2];
-              if (cand.children.length > 0) continue; // 말단 요소만(카테고리 칩은 보통 텍스트만 든 리프)
               var ctxt = (cand.textContent || '').trim();
-              if (!ctxt || ctxt.length > 10) continue; // 카테고리명은 짧다(동물/코미디 등)
+              if (!ctxt || ctxt.length > 12) continue; // 카테고리명은 짧다(동물/코미디 등)
               if (isKnownChrome(ctxt)) continue;
               if (!isVisible(cand)) continue;
+              var kids2 = cand.querySelectorAll('*');
+              var isWrapper = false;
+              for (var w2 = 0; w2 < kids2.length; w2++) {
+                if ((kids2[w2].textContent || '').trim() === ctxt) { isWrapper = true; break; }
+              }
+              if (isWrapper) continue;
               chipCandidates.push(cand);
             }
             send({ type: 'domlog', text: '카테고리칩 후보 ' + chipCandidates.length + '개: ' + chipCandidates.slice(0, 8).map(function(c){ return '"' + (c.textContent || '').trim() + '"'; }).join(', ') });
+            if (chipCandidates.length === 0) {
+              // 그래도 0개면 실제 마크업을 그대로 덤프해서 다음 라운드에 정확히 좁힌다.
+              try { send({ type: 'domlog', text: '모달 HTML: ' + modalRoot.outerHTML.slice(0, 500) }); } catch(e) {}
+            }
             var clickN = Math.min(3, chipCandidates.length);
             for (var c3 = 0; c3 < clickN; c3++) { try { chipCandidates[c3].click(); } catch(e) {} }
             if (clickN > 0) {

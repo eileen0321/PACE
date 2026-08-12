@@ -148,7 +148,18 @@ function stripAccessibilityMeta(t: string): string {
   return t;
 }
 
-async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[]> {
+// 🔴 2026-08-12 — 재시도마다 요청 모양을 바꾸기 위한 UA 풀. 근거(실측):
+//   같은 쿼리("축구")를 **주거용 IP에서 부르면 lockup 34개**가 정상으로 오는데 Vercel
+//   데이터센터 IP에서는 0개가 된다. 즉 파서 문제가 아니라 요청이 튕기는 것이고, 3회 재시도가
+//   전부 **완전히 동일한 요청**이라 튕기면 세 번 다 튕겼다. 재시도마다 UA를 바꿔 성공 확률을 올린다.
+//   (전부 실제 브라우저 UA다. 우리 서비스가 쓰는 공개 검색 페이지를 가져오는 용도.)
+const UA_POOL = [
+  DESKTOP_UA,
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+];
+
+async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): Promise<Short[]> {
   // 2026-08-04 — gl/hl을 붙여야 유튜브가 해당 지역·언어 결과를 준다. 예전엔 이 둘이 없어 서버(미국
   // Vercel) 기준 영어 결과만 나왔다 — 사장님 지적("HOT 리스트가 왜 영어냐")의 직접 원인.
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}&gl=${gl}&hl=${hl}`;
@@ -157,7 +168,7 @@ async function scrapeOnce(query: string, gl: string, hl: string): Promise<Short[
   let html: string;
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': DESKTOP_UA, 'Accept-Language': `${hl}-${gl},${hl};q=0.9`, Cookie: CONSENT_COOKIE },
+      headers: { 'User-Agent': UA_POOL[attempt % UA_POOL.length], 'Accept-Language': `${hl}-${gl},${hl};q=0.9`, Cookie: CONSENT_COOKIE },
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`YT_SCRAPE_HTTP_${res.status}`);
@@ -220,7 +231,7 @@ async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3)
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      const s = await scrapeOnce(query, gl, hl);
+      const s = await scrapeOnce(query, gl, hl, i);
       if (s.length) return s;
     } catch (e) {
       last = e;

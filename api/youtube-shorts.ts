@@ -255,16 +255,31 @@ function parseISO(iso: string): number {
 async function dataApiFallback(query: string, apiKey: string, gl: string, hl: string): Promise<Short[]> {
   // 2026-08-04 — regionCode/relevanceLanguage가 US/en 하드코딩이라 한국 사용자에게 영어 결과가 나갔다.
   // order=viewCount도 추가: 메뉴 이름이 "HOT"인데 실제로는 검색 관련도 순이라 인기와 아무 상관이 없었다.
+  // 🔴 2026-08-12 — 실기기에서 검색이 전부 "결과가 없어요"로 나오고, 프록시는 {"error":"YT_VIDEOS_403"}
+  //   만 돌려줬다. 상태코드만으로는 원인(할당량 초과 / 키 제한 / API 미사용 설정)을 못 가른다 —
+  //   셋 다 403이고 대응이 전부 다르다. 구글이 주는 reason을 그대로 실어 보내 진단 한 번에 끝낸다.
   const sp = new URLSearchParams({ key: apiKey, part: 'snippet', type: 'video', videoDuration: 'short', videoEmbeddable: 'true', q: query, maxResults: '25', order: 'viewCount', regionCode: gl, relevanceLanguage: hl });
   const sr = await fetch(`${DATA_API}/search?${sp}`);
-  if (!sr.ok) throw new Error(`YT_SEARCH_${sr.status}`);
+  if (!sr.ok) throw new Error(`YT_SEARCH_${sr.status}${await ytReason(sr)}`);
   const ids = ((await sr.json()).items ?? []).map((i: { id?: { videoId?: string } }) => i.id?.videoId).filter(Boolean);
   if (!ids.length) return [];
   const vr = await fetch(`${DATA_API}/videos?${new URLSearchParams({ key: apiKey, part: 'snippet,contentDetails', id: ids.join(',') })}`);
-  if (!vr.ok) throw new Error(`YT_VIDEOS_${vr.status}`);
+  if (!vr.ok) throw new Error(`YT_VIDEOS_${vr.status}${await ytReason(vr)}`);
   return ((await vr.json()).items as VideoItem[] ?? [])
     .filter((v) => parseISO(v.contentDetails?.duration ?? '') <= MAX_SHORT_SECONDS)
     .map((v) => ({ videoId: v.id, title: v.snippet?.title ?? '', channelTitle: v.snippet?.channelTitle ?? '', thumbnailUrl: v.snippet?.thumbnails?.high?.url ?? v.snippet?.thumbnails?.medium?.url ?? null }));
+}
+
+// 구글 오류 응답에서 reason만 뽑아 "_quotaExceeded" 같은 접미사로 만든다. 본문을 통째로 싣지
+// 않는 건 키 문자열이 에러 메시지에 섞여 클라이언트로 새는 걸 막기 위해서다.
+async function ytReason(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: { errors?: Array<{ reason?: string }>; status?: string } };
+    const reason = body.error?.errors?.[0]?.reason ?? body.error?.status;
+    return reason ? `_${reason}` : '';
+  } catch {
+    return '';
+  }
 }
 
 type VercelRequest = { query: Record<string, string | string[] | undefined>; headers?: Record<string, string | string[] | undefined> };

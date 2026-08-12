@@ -81,51 +81,75 @@ const INJECTED_JS = `
     } catch(e) {}
   }
 
-  // 2026-08-12(6차) 사장님 지적("오토스크롤 넣어본건") — Greasyfork 스크립트 전체 원문을 다시
-  // 가져와보니 요약에서 빠졌던 핵심이 있었다: **타이머로 강제 스크롤하지 않는다.** video.loop를
-  // false로 꺼서 자동 반복을 막고, 영상이 **진짜로 끝까지 재생돼 자연 발생하는 'ended' 이벤트**를
-  // 기다렸다가만 다음으로 넘긴다(0.5초 딜레이 후). 지금까지 8초 타이머로 영상 상태와 무관하게
-  // 강제로 스크롤을 밀어붙인 것과 근본적으로 다르다 — 'ended'는 브라우저가 실제 재생 완료를 보고
-  // 발생시키는 신뢰된 미디어 이벤트라, 틱톡이 "다음 배치를 부를 시점"의 근거로 이걸 볼 가능성이
-  // 있다(강제 스크롤엔 반응 안 했지만 이건 다른 신호일 수 있다). shorts-poc.tsx와 같은 방식으로
-  // MutationObserver를 써서 새 video가 나타날 때마다 재부착한다.
+  // 2026-08-13(10차) 사장님 보고("같은 영상만 계속 리플레이") — 'ended' 이벤트 단독 의존이
+  // 실기기에서 실패했다. 두 가지 의심 지점: (1) 틱톡 자체 코드가 우리가 끈 video.loop을 다시
+  // true로 되돌릴 수 있다(그러면 브라우저가 내부적으로 되감아 재생해 'ended'가 아예 안 뜬다 —
+  // 스펙상 loop=true인 동안은 ended가 발생하지 않는다), (2) 'ended'는 떴어도 다음 슬라이드가
+  // 아직 DOM에 없어(.swiper-slide.nextElementSibling 없음) scrollIntoView가 조용히 실패했을 수
+  // 있다 — 예전엔 8초 강제루프의 Swiper.slideNext() 반복 호출이 다음 콘텐츠를 미리 당겨오는
+  // 부수효과를 냈는데, 그걸 통째로 없애며 그 효과까지 같이 사라졌을 가능성. 그래서 이번엔
+  // YouTubeShortsPlayer.ios.tsx가 이미 검증한 전략을 그대로 가져온다: **'ended' 이벤트에만
+  // 의존하지 않고, currentTime/duration을 500ms마다 직접 폴링해 종료임박(duration-0.5초 이내)
+  // 또는 되감김(loopedBack, 짧게 끝났다가 되돌아감)을 감지**한다 — video.loop이 되돌려져도,
+  // 'ended'가 안 떠도 이 폴링은 영향받지 않는다. 그리고 실제 "다음으로" 이동은 scrollIntoView
+  // 전에 **Swiper 공식 slideNext()를 먼저 호출**해 다음 슬라이드를 확실히 DOM에 올린 뒤
+  // scrollIntoView로 마무리한다(둘 다 해도 서로 방해 안 됨 — slideNext가 렌더만 보장, 실제
+  // 스크롤 위치/IntersectionObserver 트리거는 scrollIntoView가 담당).
+  function getActiveVideo(){
+    var activeSlide = document.querySelector('.swiper-slide-active');
+    var v = activeSlide ? activeSlide.querySelector('video') : null;
+    return v || document.querySelector('video');
+  }
+  function markAdvancedOnce(video){
+    if (video.__paceAdvanced) return false;
+    video.__paceAdvanced = true;
+    return true;
+  }
   function scrollToNextFromVideo(video){
     try {
-      // 2026-08-12(7차) — 1차 시도(가장 가까운 "스크롤 가능한 부모"를 아무거나 잡는 휴리스틱)가
-      // 실제로는 엉뚱한 컨테이너를 잡았을 수 있다(예전 scrollTop 실험 때도 같은 실수를 한 번
-      //했었다). 지금 라이브 DOM에서 이미 확인된 진짜 슬라이드 단위는 .swiper-slide다 — 그걸
-      // 정확히 타겟팅한다(Greasyfork 원문의 "DivItemContainer"는 지금 구조에서 이거에 해당).
       var slide = video.closest ? video.closest('.swiper-slide') : null;
       if (slide && slide.nextElementSibling) {
         slide.nextElementSibling.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-        log('ended 이벤트 기반: .swiper-slide.nextElementSibling.scrollIntoView() 실행');
+        log('scrollIntoView: .swiper-slide.nextElementSibling 실행');
         return;
       }
       if (slide) {
-        log('ended 왔음, .swiper-slide는 찾았는데 nextElementSibling이 없음(마지막 로드된 슬라이드)');
+        log('scrollIntoView: nextElementSibling 없음(마지막 로드된 슬라이드)');
         return;
       }
-      // 폴백: 예전 휴리스틱(스크롤 가능한 첫 부모).
       var e = video;
       while (e && e.tagName && e.tagName.toLowerCase() !== 'body') {
         var next = e.nextElementSibling;
         if (next && e.parentElement && e.parentElement.scrollHeight > e.parentElement.clientHeight) {
           next.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-          log('ended 이벤트 기반(폴백 휴리스틱) nextSibling.scrollIntoView() 실행(el=' + (e.className || e.tagName) + ')');
+          log('scrollIntoView(폴백 휴리스틱) 실행(el=' + (e.className || e.tagName) + ')');
           return;
         }
         e = e.parentElement;
       }
-      log('ended 이벤트는 왔는데 스크롤할 다음 형제를 못 찾음(.swiper-slide도 폴백도 실패)');
+      log('scrollIntoView 대상 못 찾음(.swiper-slide도 폴백도 실패)');
     } catch(err) { log('scrollToNextFromVideo 실패: ' + err.message); }
+  }
+  function goToNext(video){
+    try {
+      var swiperEl = video.closest ? video.closest('.swiper') : null;
+      var inst = swiperEl && swiperEl.swiper;
+      if (inst && typeof inst.slideNext === 'function') {
+        var before = inst.activeIndex;
+        inst.slideNext();
+        log('goToNext: swiper.slideNext() idx ' + before + '→' + inst.activeIndex);
+      }
+    } catch(e) { log('goToNext swiper 실패: ' + e.message); }
+    scrollToNextFromVideo(video);
   }
   function hookVideoEnded(video){
     if (!video || video.__paceEndedHooked) return;
     video.__paceEndedHooked = true;
     try { video.loop = false; } catch(e) {}
     video.addEventListener('ended', function(){
-      log('🟢 video "ended" 이벤트 실제 발생(신뢰된 미디어 이벤트) — 0.5초 뒤 스크롤');
-      setTimeout(function(){ scrollToNextFromVideo(video); }, 500);
+      if (!markAdvancedOnce(video)) return;
+      log('🟢 video "ended" 이벤트 실제 발생 — 0.5초 뒤 다음으로');
+      setTimeout(function(){ goToNext(video); }, 500);
     }, false);
   }
   var endedObserverStarted = false;
@@ -139,6 +163,23 @@ const INJECTED_JS = `
     });
     mo.observe(document.documentElement, { childList: true, subtree: true });
     log('ended 이벤트 옵저버 시작(MutationObserver로 새 video 자동 재부착)');
+  }
+  // 폴링 백업 — 'ended'가 안 뜨는 경우(loop 되돌림 등)를 대비해 재생 위치로 직접 종료를 감지한다.
+  var pollLastT = -1, pollLastVideo = null;
+  function pollActiveVideo(){
+    var v = getActiveVideo();
+    if (!v) return;
+    if (v !== pollLastVideo) { pollLastVideo = v; pollLastT = -1; }
+    try { if (v.loop) v.loop = false; } catch(e) {}
+    if (!v.duration || isNaN(v.duration)) return;
+    var t = v.currentTime;
+    var nearEnd = t >= v.duration - 0.5;
+    var loopedBack = pollLastT > 1 && t < pollLastT - 1;
+    if ((nearEnd || loopedBack) && markAdvancedOnce(v)) {
+      log('🟡 폴링 자연종료 감지(nearEnd=' + nearEnd + ' loopedBack=' + loopedBack + ') t=' + t.toFixed(2) + '/' + v.duration.toFixed(2));
+      goToNext(v);
+    }
+    pollLastT = t;
   }
 
   // 2026-08-11(2차) 사장님 지시("웹에서 다시 찾아봐") — 합성 터치가 64초간 8번 실패한 뒤 웹서치로
@@ -165,7 +206,8 @@ const INJECTED_JS = `
 
   // 하우스키핑만 — 강제 다음영상 이동 기법은 전혀 안 부른다(구 advance()는 8초마다 이 전부를
   // 강제 재시도해서 자연 종료 전에도 영상을 밀어버렸다, 위 헤더 코멘트 참고). 다음 영상 이동은
-  // 오직 hookVideoEnded()의 진짜 'ended' 미디어 이벤트로만 일어난다.
+  // hookVideoEnded()의 'ended' 이벤트 + pollActiveVideo()의 재생위치 폴링, 둘 중 먼저 감지되는
+  // 쪽으로만 일어난다(markAdvancedOnce로 중복 방지).
   function houseKeeping(){
     dismissAppBanner();
     checkLoginWall();
@@ -173,10 +215,11 @@ const INJECTED_JS = `
     dumpDomOnce();
   }
 
-  log('PACE TikTok PoC 주입 완료 — ended 이벤트로만 다음 영상 이동(강제 재시도 루프 제거, 2026-08-12)');
+  log('PACE TikTok PoC 주입 완료 — ended 이벤트 + 재생위치 폴링으로만 다음 영상 이동(2026-08-13)');
   trackCurrentVideo();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
+  setInterval(pollActiveVideo, 500);
   // 배너는 로드 직후 뜨는 경우가 많아 더 빨리도 한 번 시도.
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);

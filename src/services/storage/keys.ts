@@ -58,6 +58,10 @@ export const STORAGE_KEYS = {
   // 10분으로 리셋"과 "광고 없이 무료 10분"의 원인이었다. 안드로이드는 같은 값을 네이티브 prefs에
   // 이미 저장하고 있다(PaceOverlayService) — iOS를 같은 수명으로 맞춘 것.
   focusSession: 'pace_focus_session',
+  /** 🔴 2026-08-12 — 마지막으로 고른 플랫폼. /overlay 라우트 파라미터가 유실됐을 때의 폴백이다.
+   * 파라미터가 없으면 세션이 platform_app=NULL로 기록돼 앱별 통계에서 통째로 빠진다
+   * (실측: 총 110분 중 51분이 NULL이라 앱별 섹션이 유튜브 하나로만 잡혔다). */
+  lastPlatform: 'pace_last_platform',
 } as const;
 
 // 로그아웃 시 회수할 키. 진행도(viewing_sessions/daily_stats)는 SQLite에 있으므로 별도 삭제 로직(database/reset.ts)을 탄다.

@@ -46,6 +46,9 @@ export const useStatsStore = create<StatsState>((set) => ({
         getWeeklyStats(userId),
         getPreviousWeekStats(userId),
       ]);
+      // 2026-08-12 진단 — 앱별 사용시간 섹션이 두 앱 기록이 있는데도 안 떠서 실제 값을 확인한다.
+      // 릴리즈 빌드는 run-as로 DB를 못 열기 때문에 여기서 로그로 꺼내는 게 유일한 경로다.
+      console.log('[stats] todayUsageByApp=', JSON.stringify(byApp), 'today=', today);
       const dailyLimitMinutes = useSettingsStore.getState().settings.dailyLimitMinutes;
       set({
         todayUsageMinutes: today,

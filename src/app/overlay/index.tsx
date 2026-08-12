@@ -9,6 +9,8 @@ import { OverlayExpandedCard } from '../../components/overlays/shared/OverlayExp
 import { PlatformMimicOverlay } from '../../components/overlays/PlatformMimicOverlay';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../../services/storage/keys';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useTimerStore } from '../../store/useTimerStore';
 import { useUserStore } from '../../store/useUserStore';
@@ -194,13 +196,24 @@ export default function OverlaySessionScreen() {
       return;
     }
     (async () => {
-      const id = await startSession(user.id, platform ?? null);
+      // 🔴 2026-08-12 실측 — 진단 로그로 잡았다: 오늘 총 110분 중 **51분이 platform_app=NULL**이라
+      //   앱별 사용시간(분석 탭 Platform Breakdown)에서 통째로 빠지고, 앱이 유튜브 하나로만 잡혀
+      //   섹션이 숨었다. 원인은 이 라우트 파라미터가 유실될 수 있다는 것 — 프로세스가 죽었다
+      //   살아나거나 다른 경로로 이 화면이 재마운트되면 `platform`이 undefined가 되고, 그대로
+      //   null로 기록돼 그 세션은 "어느 앱인지 모르는 시간"이 된다.
+      //   → 카드를 누를 때 저장해 둔 마지막 플랫폼으로 폴백한다. 그래도 없으면 종전대로 null.
+      let resolvedPlatform: AppShieldTarget | null = platform ?? null;
+      if (!resolvedPlatform) {
+        const saved = await AsyncStorage.getItem(STORAGE_KEYS.lastPlatform).catch(() => null);
+        if (saved === 'youtube' || saved === 'instagram' || saved === 'tiktok') resolvedPlatform = saved;
+      }
+      const id = await startSession(user.id, resolvedPlatform);
       sessionIdRef.current = id;
       sessionStartedAtMsRef.current = Date.now();
       // 2026-07-18: useSessionStore가 정의만 되고 어디서도 안 쓰이던 죽은 상태였다 — Home의
       // "지금 실제로 어떤 플랫폼이 활성 세션인지" 표시(플랫폼 카드 상태 점 초록 펄스)가 이 스토어를
       // 진실원천으로 쓰도록 여기서 실제로 채운다.
-      useSessionStore.getState().start({ sessionId: id, platformApp: platform ?? null });
+      useSessionStore.getState().start({ sessionId: id, platformApp: resolvedPlatform });
       const todayUsedMinutes = await getTodayUsageMinutes(user.id);
       const remainingMinutes = Math.max(0, settings.dailyLimitMinutes + useDailyBonusStore.getState().extraMinutes - todayUsedMinutes);
       timer.startSession({

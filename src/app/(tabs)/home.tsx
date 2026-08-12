@@ -365,6 +365,9 @@ export default function HomeScreen() {
   // 애니메이션을 먼저 보여준다(App.tsx triggerConnectingSequence). 애니메이션이 끝나면
   // handleConnectingComplete가 실제 라우팅을 수행.
   const startSession = useCallback((platform: AppShieldTarget) => {
+    // 🔴 2026-08-12 — /overlay 라우트 파라미터가 유실되면 세션이 platform_app=NULL로 기록돼
+    //   앱별 통계에서 빠진다(실측: 총 110분 중 51분이 NULL). 여기서 남겨 두면 overlay가 폴백한다.
+    AsyncStorage.setItem(STORAGE_KEYS.lastPlatform, platform).catch(() => {});
     // 2026-07-20 실기기 검증 중 발견: 예전엔 /overlay 화면이 마운트된 뒤(DB 조회 2번 + Connecting
     // 애니메이션 이후)에야 launchPlatformApp을 불렀는데, 그러면 원래 탭 제스처로부터 너무 늦어져
     // 안드로이드 백그라운드 액티비티 시작 제한에 조용히 막혔다(예외 없음 — 그냥 실행이 안 됨).

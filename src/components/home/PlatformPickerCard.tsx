@@ -51,7 +51,20 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
       {({ pressed }) => (
         <Animated.View style={[styles.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
           <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
-            <LinearGradient colors={[gradientFrom, 'rgba(0,0,0,0.9)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.overlay}>
+            {/* 🔴 2026-08-12 사장님 지적("틱톡 홈 그래픽 이전 그래픽으로 바꾸랬더니 머했냐") —
+                커버 이미지(assets/covers/tiktok.jpg)는 원본 프로토타입과 **바이트 단위로 동일**한데
+                (git hash df0bbf2… 일치) 화면에선 안 보였다. 범인은 이 오버레이였다.
+                원본(healthy-shorts-assistant/src/components/SourceGrid.tsx:
+                `bg-gradient-to-t from-{accent}/40 to-black/80`)은 **아래→위 세로** 그라데이션에
+                검정이 80%인데, 여기선 **왼→오른 가로**에 검정 90%였다. 유튜브 커버는 밝은
+                빨강이라 그 밑에서도 살아남았지만 틱톡 커버는 어두운 야경이라 통째로 묻혔다 —
+                같은 컴포넌트·같은 프롭인데 한쪽만 안 보이던 이유다. 원본 방향·농도로 되돌린다. */}
+            <LinearGradient
+              colors={['rgba(0,0,0,0.8)', gradientFrom]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.overlay}
+            >
               <View style={styles.textCol}>
                 <View style={styles.titleRow}>
                   <Text style={styles.title} numberOfLines={1}>{title}</Text>

@@ -194,6 +194,10 @@ async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): P
   //   videoId는 예전처럼 앞쪽 900자 안에서만 찾는다(그 범위를 넓히면 다른 렌더러의 id가 섞일 수 있다).
   //   제목은 블록 **뒤쪽**에 있는 overlayMetadata.primaryText에서 가져온다 — 그래서 블록 전체가 필요하다.
   const starts = [...html.matchAll(/shortsLockupViewModel":\{/g)].map((mm) => mm.index ?? -1).filter((i) => i >= 0);
+  // 🔴 2026-08-12 — 차단 여부를 남긴다. HTTP는 200인데 lockup이 0이면 유튜브가 검색 결과 대신
+  //   다른 페이지를 준 것이다(= 차단). 이게 유일하게 믿을 수 있는 판별 신호다 —
+  //   본문의 "captcha" 문자열은 **정상 응답에도 2개씩 들어있어** 쓸 수 없다(실측).
+  if (!starts.length) console.warn(`YT_SCRAPE_BLOCKED q="${query}" gl=${gl} attempt=${attempt} bytes=${html.length}`);
   const out: Short[] = [];
   const seen = new Set<string>();
   for (let bi = 0; bi < starts.length; bi++) {
@@ -404,7 +408,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 🔴 근본원인 수정 ③ — stale-if-error 추가. 오리진이 실패해도 CDN이 마지막 정상 응답을
     //   최대 하루까지 계속 서빙한다. 이게 없어서 실패할 때마다 매 요청이 오리진을 때리고
     //   그때마다 100 units짜리 폴백이 돌 수 있었다.
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600, stale-if-error=86400');
+    // 🔴 2026-08-12 — 사용자가 직접 친 검색어는 캐시 창을 길게 잡는다(30분).
+    //   제네릭(HOT 로테이션)은 "매시간 목록이 바뀌어야" 하므로 5분을 유지하지만, 검색 결과는
+    //   30분 사이에 달라질 이유가 없다. 반대로 짧게 잡으면 그만큼 오리진 스크래핑이 늘고,
+    //   그중 일부가 차단당해 100 units짜리 폴백으로 떨어진다 — 오늘 쿼터가 그렇게 날아갔다.
+    //   실측 근거: 차단은 특정 검색어의 성질이 아니라 **요청마다 무작위로 걸린다**
+    //   (같은 '게임'이 한 번은 lockup 0개, 같은 '축구'가 다른 시점엔 25/25 정상).
+    //   즉 오리진 호출 횟수를 줄이는 것 자체가 실패 확률을 줄인다.
+    const sMaxAge = isGeneric ? 300 : 1800;
+    res.setHeader('Cache-Control', `s-maxage=${sMaxAge}, stale-while-revalidate=600, stale-if-error=86400`);
     // ⚠️ 이 헤더가 없으면 CDN이 URL만으로 캐시해서, 맨 처음 요청한 나라의 결과가 전 세계에 그대로
     // 나간다(국가별 분기를 넣어도 무의미해진다). 지오IP 헤더를 캐시 키에 포함시킨다.
     res.setHeader('Vary', 'x-vercel-ip-country');

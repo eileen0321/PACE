@@ -141,18 +141,23 @@ const INJECTED_JS = `
           }
           var anchor = textNode ? textNode.parentElement : null;
           var modalRoot = null;
+          // 2026-08-13(22차) — 이전엔 "버튼 1~14개"인 조상만 인정했는데, 실기기에서 세션마다
+          // 모달 DOM 구조가 조금씩 달라(카테고리 칩이 button/a로 렌더될 때도 있는 듯) 그 범위를
+          // 못 맞춰 "컨테이너 못 찾음"이 나기도 했다. 버튼 개수로 거르지 말고, "계속"/"로그인"
+          // 텍스트를 실제로 포함한 첫 조상을 그대로 모달 루트로 쓴다 — 훨씬 관대하고 목적에 맞다
+          // (우리가 찾는 건 "버튼이 적당히 있는 곳"이 아니라 "계속 버튼이 들어있는 곳").
           if (anchor) {
             var level = 0;
             var el2 = anchor;
-            while (el2 && level < 6) {
-              var interactive = el2.querySelectorAll('button, [role="button"], a');
-              if (interactive.length > 0 && interactive.length < 15) { modalRoot = el2; break; }
+            while (el2 && level < 8) {
+              var txt3 = (el2.textContent || '');
+              if (txt3.indexOf('계속') !== -1 || txt3.toLowerCase().indexOf('continue') !== -1) { modalRoot = el2; break; }
               el2 = el2.parentElement;
               level++;
             }
           }
           if (!modalRoot) {
-            send({ type: 'domlog', text: '로그인모달 컨테이너 못 찾음' });
+            send({ type: 'domlog', text: '로그인모달 컨테이너 못 찾음(계속 텍스트 없음, anchor=' + (anchor ? anchor.tagName : 'null') + ')' });
           } else {
             var KNOWN_CHROME = ['계속', '로그인', '대한민국', '서비스 약관', '개인정보 처리방침', 'continue', 'log in', 'login'];
             var isKnownChrome = function(t){

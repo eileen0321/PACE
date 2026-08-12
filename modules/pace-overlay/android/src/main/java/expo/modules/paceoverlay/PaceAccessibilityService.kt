@@ -66,6 +66,8 @@ class PaceAccessibilityService : AccessibilityService() {
   // 2026-08-13 — range 후보별 직전 진행률(키: 클래스:max). "값이 흐르는 바"를 가려내는 데 쓴다.
   private val rangeCandidateHistory = HashMap<String, Float>()
   // 2026-08-13 — 지금 영상을 보기 시작한 시각. 한 영상에 너무 오래 머무는 걸 끊는 데 쓴다.
+  // 2026-08-13 — 직전 폴에서 광고가 떠 있었는지. 광고 복귀 시 시계를 한 번 리셋하기 위한 엣지 감지.
+  private var adWasShowing = false
   private var videoStartedAtMs = 0L
   private var lastKnownFrac = -1f
   private var lastFracAtMs = 0L
@@ -795,6 +797,14 @@ class PaceAccessibilityService : AccessibilityService() {
       return true
     }
     lastVolumeKeySwipeAtMs = now
+    // 🔴 2026-08-13 — 리모컨 "연결됨" 표시의 근거(PaceOverlayModule.getBluetoothState 주석 참고).
+    //   메모리에만 두면 접근성 서비스가 재시작될 때(앱 업데이트/프로세스 재시작) 사라져서, 실제로는
+    //   계속 연결돼 있는데 점이 회색으로 돌아간다 — prefs에 남겨 재시작을 견디게 한다.
+    //   벽시계(System.currentTimeMillis)를 쓴다: elapsedRealtime은 재부팅 시 0으로 돌아가 비교가 깨진다.
+    runCatching {
+      getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putLong(PaceOverlayService.PREF_LAST_REMOTE_KEY_AT, System.currentTimeMillis()).apply()
+    }
     Log.i("PaceAccessibility", "onKeyEvent volume-key-swipe keyCode=${event.keyCode} pkg=$currentForegroundPackage")
     // 2026-07-26 사용자 지시 — 외부 블루투스 리모컨의 실제 물리 버튼 입력이므로 swipeOnce와 동일하게
     // "사람이 직접 낸 신호"다 — 수면감지 무진동 시계 리셋.
@@ -844,6 +854,24 @@ class PaceAccessibilityService : AccessibilityService() {
   // PaceAccessibility로 필터링).
   private fun checkPlaybackAndMaybeSwipe() {
     val now = SystemClock.elapsedRealtime()
+    // 🔴 2026-08-13 사장님 지적("쇼츠를 보다 포커스 때문에 광고를 보고 오면 보던 쇼츠가 다 안 끝나고
+    //   넘어가버리는 것 같은데") — 맞다. 이 함수의 시간 기반 판정은 전부 **경과 시간**을 보는데
+    //   (진행바 없는 영상의 20초 폴백, 한 영상 90초 상한), 광고를 보는 30초~1분 동안에도 그 시계가
+    //   계속 흘렀다. 그래서 광고를 닫고 돌아오면 **이미 임계를 넘긴 상태**라 복귀 즉시 스와이프했다 —
+    //   보던 영상이 중간에 잘린 것처럼 보인다.
+    //   → 광고가 떠 있는 동안은 판정 자체를 건너뛰고, 광고가 닫힌 직후 한 번 시계를 지금으로 리셋한다.
+    //     (chain 워처는 2026-08-10에 이미 같은 이유로 adShowing을 보고 있다 — 같은 규칙을 여기에도 맞춘다.)
+    if (PaceRewardedAdActivity.adShowing) {
+      adWasShowing = true
+      return
+    }
+    if (adWasShowing) {
+      adWasShowing = false
+      lastSwipeAtMs = now      // 20초 폴백이 광고 시간을 세지 않게
+      videoStartedAtMs = now   // 90초 상한도 광고 시간을 세지 않게
+      lastFracAtMs = now       // 길이 추정도 광고 구간을 빼고 다시 잡게
+      Log.i("PaceAccessibility", "광고 복귀 — 자동넘김 시계 리셋(광고 보는 동안 흐른 시간은 시청으로 안 센다)")
+    }
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing

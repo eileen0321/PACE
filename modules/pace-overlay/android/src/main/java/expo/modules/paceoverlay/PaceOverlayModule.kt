@@ -545,9 +545,11 @@ class PaceOverlayModule : Module() {
       //   어댑터를 직접 조회하려면 Android 12+에서 BLUETOOTH_CONNECT 런타임 권한이 필요해 **새 권한
       //   프롬프트**가 생긴다. 그 대신 이미 갖고 있는 **관측 증거**를 쓴다 — 리모컨이 키를 보낸 적이
       //   있으면 그건 추정이 아니라 연결됐다는 직접 증거다.
-      val lastRemoteKeyAt = PaceAccessibilityService.lastRemoteKeyAtMs()
+      //   prefs에 남긴 벽시계 시각을 본다 — 메모리 값만 보면 접근성 서비스가 재시작될 때마다
+      //   (앱 업데이트/프로세스 재시작) 초기화돼 실제로는 연결돼 있는데 회색으로 돌아간다.
+      val lastRemoteKeyAt = prefs?.getLong(PaceOverlayService.PREF_LAST_REMOTE_KEY_AT, 0L) ?: 0L
       val remoteRecentlyUsed = lastRemoteKeyAt > 0L &&
-        android.os.SystemClock.elapsedRealtime() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
+        System.currentTimeMillis() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
       mapOf(
         "isConnected" to ((deviceInfo?.first ?: false) || remoteRecentlyUsed),
         "deviceName" to deviceInfo?.second,

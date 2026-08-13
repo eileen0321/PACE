@@ -956,9 +956,19 @@ class PaceAccessibilityService : AccessibilityService() {
       //   영원히 루프한다(실측 5분). 진행바가 있는 영상은 위 예측 발사로 정확히 넘기고, 없는
       //   영상에만 시간 기반으로 넘긴다 — 진행바가 없는 건 대체로 짧은 영상이라 이 간격이면
       //   최소 한 번은 다 보고 넘어간다.
-      if (frac == null && isWatching && lastKnownFrac < 0f &&
+      // 🔴 2026-08-13 실기기 발견 — **`root == null`일 때도 발사하고 있었다.** root가 null이라는 건
+      //   "감시 대상 앱의 창을 아예 못 찾았다" = 지금 그 앱이 화면에 없다는 뜻인데, 그 상태에서
+      //   20초마다 화면 전체에 스와이프를 쐈다.
+      //   실측: 유튜브에서 빠져나와 **Pace 홈 화면에 있는 동안** `AUTO_NEXT reason=no-progressbar`가
+      //   20초 간격으로 4회 연속 찍혔고(`RANGE_INFO none — visited=0 rootPkg=null`과 같은 시각),
+      //   사용자 입장에선 가만히 있는데 화면이 20초마다 제멋대로 스크롤된다.
+      //   `frac == null`은 "진행바가 없는 영상"과 "앱이 아예 없음"을 구분하지 못한다 — 폴백을 만든
+      //   의도는 전자(짧은 틱톡 영상)뿐이었다.
+      // → 대상 앱 창을 실제로 찾았을 때만(root != null) 폴백을 쏜다.
+      //   ⚠️ F10("대상 앱 밖에서는 자동넘김 안 함")이 문서엔 ✅였는데 실제로는 이 경로로 뚫려 있었다.
+      if (frac == null && root != null && isWatching && lastKnownFrac < 0f &&
           now - lastSwipeAtMs > NO_PROGRESSBAR_ADVANCE_MS) {
-        Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms")
+        Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms pkg=${root.packageName}")
         performSwipeUp()
         lastSwipeAtMs = now
       }

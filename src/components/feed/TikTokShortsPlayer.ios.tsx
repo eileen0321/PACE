@@ -44,6 +44,11 @@ type Props = {
 
 const INJECTED_JS_BEFORE_LOAD = `
 (function() {
+  // 2026-08-14(27차) 진단 — 지금까지 모든 로그가 INJECTED_JS(페이지 로드 "완료" 후 주입)에서만
+  // 나갔다. "로딩만 계속 돎"이 재현될 때 로그가 통째로 0줄이었던 게 (a) 이 BeforeContentLoaded
+  // 자체가 전혀 실행 안 된 것인지, (b) 이건 실행됐는데 그 뒤 페이지 로드가 "완료" 판정을 영영
+  //못 받아 INJECTED_JS가 못 도는 것인지 구분이 안 됐다. 여기서 한 줄 찍어 구분한다.
+  try { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() })); } catch(e) {}
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };

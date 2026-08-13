@@ -9193,3 +9193,52 @@ sleep 필요"를 실측 관례로 명시한다 — 우리가 로드 직후(1.5~3
   refresh + 포커스 유지 중 3초 폴링 추가.
 - `tsc` 클린 확인 후 커밋/푸시(`1e854d3`). **실기기 미검증** — 다음 세션에서 실제 AirPods/블루투스
   리모컨 연결·해제로 점이 즉시(3초 내) 반응하는지 확인 필요.
+
+### 2026-08-14 — 🔴 틱톡 "로딩중→같은 영상 반복, P메뉴 실종" 근본원인 확정: react-native-webview+Fabric injectJavaScript 미실행(업스트림 미해결 버그)
+
+사장님 실기기 재현("틱톡인데 포커스 오버레이가 첨에 뜨고 → 로딩화면 한참 → 같은 영상 반복,
+이때는 오버레이 없어") 보고를 시뮬레이터(`xcrun simctl` + 스크린샷 + `log stream`)로 빠르게
+반복 재현·진단. **실기기 대신 시뮬레이터를 쓴 이유**: 화면을 직접 못 보고 탭도 못 하는 한계를
+`simctl io booted screenshot`(스크린샷을 직접 Read해서 봄) + `simctl openurl`(딥링크로 네비게이션
+대체) + `simctl spawn booted log stream`(WebKit 네이티브 로그 실시간 확인)으로 우회 — 실기기
+`devicectl` 콘솔보다 훨씬 빠른 반복(재현까지 매번 10초 내외).
+
+**단계별로 확정한 것(전부 추측 아니라 로그/스크린샷 증거)**:
+1. 네트워크·페이지 로딩 자체는 정상 — WebKit 로그로 확인(`tiktok.com/foryou` 200 OK, 문서 로드
+   완료까지 300ms 이내). 로딩이 안 끝나서 멈추는 게 아니었다.
+2. 진짜 원인: `playsinline` 없는 `<video>`가 재생 시작과 동시에 네이티브
+   `AVPlayerViewController` 전체화면으로 자동 승격(`HTMLMediaElement::didBecomeFullscreenElement`
+   로그로 확정). 이 네이티브 전체화면 프레젠테이션이 RN 뷰 트리 전체(P버튼/FOCUS 배지 포함)를
+   덮어버려서 "실종"된 것처럼 보인 것 — WebView 콘텐츠 자체는 계속 재생되고 있었다.
+3. 이걸 막으려고 건 방어들(`createElement`/`play()` 가로채기, `webkitEnterFullscreen`/
+   `webkitSetPresentationMode` 오버라이드, `webkitbeginfullscreen` 이벤트 리스너, 폴링 감시)이
+   전부 효과가 없었던 진짜 이유를 브릿지와 무관한 시각적 테스트로 추적(`document.documentElement`에
+   라임색 outline 강제 → 안 보임 → CSS리셋 의심 → body에 z-index 최대치 DOM 엘리먼트 직접 삽입
+   → 그것도 안 보임) — **`injectedJavaScriptBeforeContentLoaded` prop이 이 앱
+   (`react-native-webview@13.16.1` + Expo 57 Fabric/New Architecture)에서 아예 실행되지 않는다.**
+   `advance()`/`search()`가 쓰는 imperative `injectJavaScript(ref)` 경로로 우회해도 동일(콘솔로
+   `onLoadStart`/`onLoad` 발화와 `webRef` 유효함은 확인했는데도 안 됨).
+4. **웹서치로 확정(추측 아님)**: react-native-webview GitHub
+   [#3727](https://github.com/react-native-webview/react-native-webview/issues/3727)
+   "[iOS] `injectJavaScript` method is not working with the new architecture enabled" —
+   `WKErrorDomain Code=4 "Cannot execute JavaScript in this document"` — 증상이 정확히 일치하는
+   업스트림 미해결 버그(2025-03-10 등록, 답변 없음).
+
+**결론**: 지난 며칠간 짠 배너닫기/로그인게이트 통과/자동 다음영상/전체화면 방지 등 WebView 내부
+제어 로직 전체가 로직 자체의 문제가 아니라 **주입 메커니즘이 이 라이브러리+아키텍처 조합에서
+막혀 있어서** 사실상 한 번도 실행되지 못했을 가능성이 높다. (TikTok 자체의 "For You" 자동재생은
+우리 코드 없이도 도는 TikTok 자체 기본 동작이라, 예전 PoC의 "자동 다음영상 확인"이 착시였을
+수 있음 — 재검증 필요.)
+
+방어 코드는 최대한 보강해서 커밋(`224ccdf`) — `webkitSetPresentationMode` 차단 추가, 폴링 감시가
+`webkitDisplayingFullscreen`/`webkitPresentationMode` 둘 다 확인, `PaceGestureLog`를 모듈
+top-level 즉시 조회(앱 부트스트랩 초반이라 네이티브 모듈 레지스트리 미완성 시점 — null이 영구
+캐시됨) 대신 지연 조회로 변경(별개로 발견한 버그, domlog가 단 한 줄도 안 찍히던 이유). 단
+injectJavaScript 자체가 안 먹는 한 이 재주입 코드들은 사실상 no-op — 라이브러리가 고쳐지면
+(또는 버전을 올리면) 자동으로 살아나게만 남겨둠.
+
+**다음 세션 최우선 — 사장님 결정 필요**: `react-native-webview` 13.16.1 → 16.0.0으로 올릴지
+(13.17.0/14.0.0/14.0.1/15.0.0/16.0.0 순서로 존재, 메이저 3단계 업). 16.0.0 릴리즈노트에 Fabric/iOS
+관련 수정이 여럿 있으나 이 특정 injectJavaScript 버그를 명시적으로 고쳤다는 확인은 문서상 못 함
+(실제 설치·검증 필요). 앱 전체에서 쓰는 공용 라이브러리라 메이저 업그레이드는 다른 WebView
+사용처에도 영향 줄 수 있어 임의로 진행 안 함.

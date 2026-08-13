@@ -8,7 +8,16 @@ import {
   type ShortsPlayerHandle,
 } from './sharedShortsPlayer';
 
-const PaceGestureLog = requireOptionalNativeModule<{ nativeLog(msg: string): void }>('PaceGesture');
+// 2026-08-14(30차, 시뮬레이터 진단으로 발견) — requireOptionalNativeModule을 모듈 top-level에서
+// 즉시 호출(예전 코드)하면 이 파일이 import되는 시점(앱 부트스트랩 초반, 네이티브 모듈 레지스트리가
+// 아직 다 안 채워졌을 수 있는 시점)의 스냅샷이 최상위 const에 영구 캐시된다 — 그 시점에 아직
+// "PaceGesture"가 없으면 null이 그대로 굳어 버려, 이후 모듈이 실제로 등록돼도 절대 안 바뀐다.
+// (bluetoothService.ios.ts의 같은 호출은 화면 마운트 후 지연 호출이라 이 문제가 없었다 — 그래서
+// 그쪽 로그는 찍히는데 여기 domlog만 처음부터 끝까지 단 한 줄도 안 찍히는 비대칭이 났다.)
+// → 매번 다시 조회하는 함수로 바꿔 이 캐시 문제를 없앤다.
+function getPaceGestureLog() {
+  return requireOptionalNativeModule<{ nativeLog(msg: string): void }>('PaceGesture');
+}
 
 // iOS 전용 TikTok 플레이어. `src/app/dev/tiktok-poc.tsx`(DEV PoC)에서 2026-08-12~13 밤 동안
 // 검증한 기법을 그대로 프로덕션 컴포넌트 형태로 옮긴 것 — 실기기에서 데스크톱 UA로 자동 다음영상
@@ -44,6 +53,12 @@ type Props = {
 
 const INJECTED_JS_BEFORE_LOAD = `
 (function() {
+  // 2026-08-14(31차) — injectedJavaScriptBeforeContentLoaded prop이 이 환경(RNW 13.16.1 +
+  // Fabric)에서 실행 안 되는 걸 시각적 테스트로 확정한 뒤, 컴포넌트 쪽에서 onLoadStart/onLoad마다
+  // imperative injectJavaScript(ref)로 이 스크립트를 재주입하도록 바꿨다 — 그 결과 같은 문서에
+  // 이 스크립트가 여러 번 들어올 수 있다(중복 setInterval 등록 방지 필요).
+  if (window.__paceTikTokInit) return;
+  window.__paceTikTokInit = true;
   function send(o) { try { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); } catch(e) {} }
   // 2026-08-14(27차) 진단으로 실기기에서 확정(추측 아님): injectedJavaScript(페이지가 "완전히
   // 로드 끝남" 판정을 받은 뒤에만 주입되는 별도 prop)는 틱톡이 로딩 상태에 갇히면(반복 재현)
@@ -60,6 +75,51 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (typeof HTMLVideoElement !== 'undefined' && HTMLVideoElement.prototype.webkitEnterFullscreen) {
       HTMLVideoElement.prototype.webkitEnterFullscreen = function(){};
     }
+    // 2026-08-14(32차) — webkitEnterFullscreen(구식 API)과 별개로, 최신 WebKit은
+    // webkitSetPresentationMode('fullscreen'/'picture-in-picture')라는 AVKit 연동 API를 따로
+    // 갖고 있다. 사이트가 자체 "극장 모드"/커스텀 전체화면 버튼에 이걸 직접 쓰면 위 오버라이드로는
+    // 안 잡힌다 — 같이 막는다.
+    if (typeof HTMLVideoElement !== 'undefined' && HTMLVideoElement.prototype.webkitSetPresentationMode) {
+      HTMLVideoElement.prototype.webkitSetPresentationMode = function(){};
+    }
+  } catch(e) {}
+  // 2026-08-14(29차, 시뮬레이터로 재현 확정) — 위 webkitEnterFullscreen 오버라이드 +
+  // createElement/play() 가로채기(둘 다 이미 있었음)로도 여전히 네이티브 전체화면이 뚫렸다.
+  // 이유: webkitEnterFullscreen 오버라이드는 "페이지가 그 JS 메서드를 직접 호출하는" 경로만
+  // 막는다 — WKWebView 엔진이 재생 시작 시 playsinline 부재를 보고 **자체적으로** 승격을
+  // 결정하는 건 JS 메서드 호출이 아니라 엔진 내부 로직이라 이 오버라이드로 안 잡힌다. 또한
+  // 비디오가 innerHTML로 삽입되고 autoplay 속성만으로 재생되면 createElement도 play()도 안
+  // 거친다. → 진입을 막는 대신, 진입한 "순간"을 이벤트로 잡아 **즉시 되돌린다**(어떤 경로로
+  // 들어갔든 상관없이 동작 — 커뮤니티에 알려진 WKWebView 우회 패턴).
+  try {
+    document.addEventListener('webkitbeginfullscreen', function(ev) {
+      try { send({ type: 'domlog', text: '🟠 네이티브 전체화면 진입 감지(이벤트) → 즉시 해제' }); } catch(e2) {}
+      try { ev.target && ev.target.webkitExitFullscreen && ev.target.webkitExitFullscreen(); } catch(e2) {}
+    }, true);
+  } catch(e) {}
+  // 2026-08-14(30차, 시뮬레이터로 확정) — 위 이벤트 리스너를 달아도 실제로 전체화면에 들어간 뒤
+  // (WebKit 네이티브 로그로 didBecomeFullscreenElement 확인) 빠져나오는 시도 자체가 한 번도
+  // 안 잡혔다 — 최신 WebKit의 AVPlayerViewController 기반 전체화면 구현에서는
+  // 'webkitbeginfullscreen' 이벤트가 우리 기대와 다르게 동작하는 것으로 보인다(버블링/캡처
+  // 여부가 예전 구현과 다를 수 있음). 이벤트에 기대는 대신 **상태를 직접, 짧은 주기로 감시**해서
+  // 확실하게 잡는다 — video.webkitDisplayingFullscreen은 실제 네이티브 전체화면 표시 여부를
+  // 그대로 반영하는 읽기전용 프로퍼티라 이벤트 발화 여부와 무관하게 항상 정확하다.
+  try {
+    setInterval(function() {
+      try {
+        var vids = document.querySelectorAll('video');
+        for (var i = 0; i < vids.length; i++) {
+          var v = vids[i];
+          var inFullscreen = v.webkitDisplayingFullscreen || (v.webkitPresentationMode && v.webkitPresentationMode !== 'inline');
+          if (inFullscreen) {
+            send({ type: 'domlog', text: '🟠 전체화면 감시(폴링)로 감지(mode=' + v.webkitPresentationMode + ') → 해제 시도' });
+            ensureInline(v);
+            try { v.webkitExitFullscreen(); } catch(e2) {}
+            try { if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('inline'); } catch(e2) {}
+          }
+        }
+      } catch(e2) {}
+    }, 250);
   } catch(e) {}
   function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
   // 2026-08-14(실기기 재현) — MutationObserver로 나중에 playsinline을 붙이는 방식은 **비동기라
@@ -563,6 +623,21 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).
         userAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        // 🔴 2026-08-14(31~33차, 시뮬레이터로 확정, 미해결) — injectedJavaScriptBeforeContentLoaded
+        // prop이 이 환경(react-native-webview 13.16.1 + Fabric/New Architecture)에서 **아예
+        // 실행되지 않는다**. 브릿지와 무관한 시각적 테스트(document.documentElement에 라임색
+        // outline 강제, 이어서 body에 z-index 최대치 DOM 엘리먼트 삽입)로 확정 — postMessage
+        // 브릿지 문제가 아니라 주입 자체가 안 됨.
+        // → advance()/search() 등이 쓰는 imperative injectJavaScript(ref 메서드)로 우회 시도했으나
+        // **이것도 시각적으로 확인 안 됨**(onLoadStart/onLoad에서 webRef가 유효함을 콘솔로 확인한
+        // 뒤 호출해도 동일). react-native-webview GitHub 이슈#3727("[iOS] injectJavaScript method
+        // is not working with the new architecture enabled", WKErrorDomain Code=4 "Cannot execute
+        // JavaScript in this document")과 증상이 일치 — 업스트림에 이미 보고된 미해결 버그.
+        // 이 재주입 코드는 라이브러리가 고쳐지면(또는 버전을 올리면) 자동으로 살아나므로 남겨둔다 —
+        // 지금은 사실상 no-op이라고 봐야 한다. **틱톡 WebView 제어 로직(배너닫기/로그인게이트/
+        // 자동넘김/전체화면방지) 전체가 이 버그로 인해 실행되지 않고 있을 가능성이 높다.**
+        onLoadStart={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
+        onLoad={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
         onError={(e) => { if (__DEV__) console.log('[TikTok WV] onError', e.nativeEvent?.code); }}
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
@@ -574,7 +649,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             return;
           }
           if (msg.type === 'domlog') {
-            try { if (__DEV__) PaceGestureLog?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
+            try { if (__DEV__) getPaceGestureLog()?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
             return;
           }
           if (msg.type === 'ready') {

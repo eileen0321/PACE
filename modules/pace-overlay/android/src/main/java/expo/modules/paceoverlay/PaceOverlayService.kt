@@ -4615,7 +4615,15 @@ class PaceOverlayService : Service() {
       if (onTikTok) null else MenuItem("Shorts", { hidePaceMenu(); showShortsHotList("all") }, badge = "HOT"),
       // 2026-08-01 사장님 지시 — Saved/Favorite은 사실상 같은 기능이라 Favorite 하나로 통합.
       // 기존에 "capture" kind로 저장된 항목도 SavedVideosStore.list()가 같이 읽어오도록 처리해뒀다.
-      MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
+      // 🔴 2026-08-14 감사(Z28) + 사장님 신고("favorite에서 틱톡에서 add 누르면 왜 유튜브로 가는데") —
+      //   HOT은 틱톡에서 감췄는데 **Favorite은 그대로 노출돼 있었다.** 이 기능은 클립보드에서
+      //   유튜브 링크를 뽑아 저장하는 구조라(saveFavoriteFromClipText → extractYouTubeVideoId)
+      //   틱톡에서는 애초에 저장이 성립하지 않고, 저장된 목록도 전부 유튜브 영상이라 골라도
+      //   틱톡에서 튕겨 나간다. HOT과 같은 이유로 같은 처리를 한다 — 잘못 동작하는 항목을
+      //   보여주느니 감춘다.
+      //   ⚠️ 틱톡 즐겨찾기를 만들려면 링크 추출·썸네일·platform_app 컬럼(Z27)이 같이 필요하다.
+      //     그때까지 SavedVideosStore.insert의 "youtube" 리터럴은 **이 가드 덕분에만** 참이다.
+      if (onTikTok) null else MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
       // 🔴 2026-08-10 사장님 지시 — "hot 쇼츠 밑에 검색 기능 넣으면 되잖아". HOT 바로 아래 위치도 지시대로.
       MenuItem("Search", { hidePaceMenu(); showSearchPanel() }, icon = "⌕"),
     )
@@ -5338,6 +5346,12 @@ private object SavedVideosStore {
         .format(java.util.Date())
       db.execSQL(
         "INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        // 🔴 2026-08-14 감사(Z27) — 이 "youtube" 리터럴과 위 i.ytimg.com 썸네일은 **가정에 기대고
+        //   있다**: 이 경로로 들어오는 건 유튜브 영상뿐이라는 가정. 지금은 두 겹으로 보장된다 —
+        //   ① saveFavoriteFromClipText가 extractYouTubeVideoId로 유튜브 링크만 통과시키고
+        //   ② P 메뉴의 Favorite 항목이 틱톡에서는 아예 안 뜬다(Z28).
+        //   ⚠️ 틱톡 즐겨찾기를 붙이는 사람은 **이 줄을 반드시 같이 고쳐야 한다.** 안 고치면 틱톡
+        //     영상이 "youtube"로 기록되고 썸네일 URL이 i.ytimg.com으로 나가 깨진다.
         arrayOf(id, userId, kind, videoId, title, channel, url, thumbnailUrl, "youtube", addedAt)
       )
       id

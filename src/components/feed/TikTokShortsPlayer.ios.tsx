@@ -52,6 +52,46 @@ const INJECTED_JS_BEFORE_LOAD = `
       HTMLVideoElement.prototype.webkitEnterFullscreen = function(){};
     }
   } catch(e) {}
+  // 2026-08-14 웹서치로 확인(추측 아님) — userAgent 문자열만 데스크톱으로 바꿔도 최신 브라우저가
+  // 별도로 노출하는 Client Hints API(navigator.userAgentData)는 여전히 실제 엔진(iOS WKWebView =
+  // 모바일)을 그대로 보고한다. "UA 문자열은 데스크톱, userAgentData는 모바일"이라는 불일치는
+  // 다중 신호를 대조하는 최신 봇 탐지 시스템의 전형적인 트리거다(여러 관측치가 "같은 기기"로
+  // 안 맞아떨어짐). 틱톡이 이 값도 참고한다면 세션마다 다르게 판정되는 원인 중 하나일 수 있다 —
+  // navigator.userAgentData를 UA 문자열(Chrome 126, Mac)과 일치하도록 덮어쓴다.
+  try {
+    if (navigator.userAgentData) {
+      Object.defineProperty(navigator, 'userAgentData', {
+        configurable: true,
+        get: function(){
+          return {
+            brands: [
+              { brand: 'Not)A;Brand', version: '24' },
+              { brand: 'Chromium', version: '126' },
+              { brand: 'Google Chrome', version: '126' }
+            ],
+            mobile: false,
+            platform: 'macOS',
+            getHighEntropyValues: function(){
+              return Promise.resolve({
+                platform: 'macOS', platformVersion: '10.15.7', architecture: 'x86',
+                model: '', uaFullVersion: '126.0.0.0', fullVersionList: [
+                  { brand: 'Not)A;Brand', version: '24.0.0.0' },
+                  { brand: 'Chromium', version: '126.0.0.0' },
+                  { brand: 'Google Chrome', version: '126.0.0.0' }
+                ], mobile: false, bitness: '64'
+              });
+            }
+          };
+        }
+      });
+    }
+    if (typeof navigator.platform === 'string') {
+      try { Object.defineProperty(navigator, 'platform', { configurable: true, get: function(){ return 'MacIntel'; } }); } catch(e) {}
+    }
+    if ('maxTouchPoints' in navigator) {
+      try { Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: function(){ return 0; } }); } catch(e) {}
+    }
+  } catch(e) {}
   function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
   try {
     var mo = new MutationObserver(function(){
@@ -487,7 +527,14 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         domStorageEnabled
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
-        sharedCookiesEnabled
+        // 2026-08-14 웹서치로 확인(추측 아님, react-native-webview GitHub #1780) —
+        // sharedCookiesEnabled는 "문서화된 대로 안 믿을 만하게 동작한다"고 알려져 있다. 우리는
+        // 데스크톱 UA로 위장하는데, 진짜 Safari(모바일 UA)가 tiktok.com에 남긴 쿠키를 공유
+        // 저장소에서 그대로 물려받으면 "이 쿠키는 모바일 브라우저용인데 지금 데스크톱 브라우저가
+        // 들고 있다"는 불일치가 생긴다 — 봇 탐지의 전형적인 신호. 세션마다 결과가 달랐던 것과
+        // 맞아떨어진다. 꺼서 이 WebView만의 격리된 쿠키 저장소를 쓰게 한다(그래도 우리 자신의
+        // 이전 방문 쿠키는 WKWebView 자체 저장소에 그대로 남아 세션 간 유지된다 — Safari와만 안 섞임).
+        sharedCookiesEnabled={false}
         onShouldStartLoadWithRequest={(req) => isAllowedNavigation(req.url)}
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).

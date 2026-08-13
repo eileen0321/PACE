@@ -41,7 +41,20 @@ export const SUPPORTED_APPS = {
   //   깜빡인다. Instagram도 같은 이유로 2026-07-28에 이미 preferScheme: true로 뒤집었다.
   //   → tiktok:// 스킴을 먼저 시도해 앱으로 직행한다. 스킴이 실패하면 기존 webFallback으로
   //     자동 폴백하므로(launchPlatformApp의 [first, second] 구조) 안전망은 그대로다.
-  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: true },
+  //
+  // 🔴🔴 2026-08-13 (2차) — **위 변경을 되돌린다.** 사장님 실기기 지적: *"틱톡 누르는데 왜 시작이
+  //   계속 같은 영상이야."* 원인이 정확히 위 `preferScheme: true`다.
+  //   `tiktok://`는 **앱의 기본 진입점**이라 틱톡이 마지막으로 보던 상태를 그대로 복원한다 —
+  //   카드를 누를 때마다 같은 영상에서 시작한다. 유튜브에서 이미 똑같이 겪었다
+  //   (2026-08-05 "첫 영상이 매번 같다" → openShortsFeed로 해결한 그것. 그때 배운 걸 틱톡에
+  //   적용하지 않고 오히려 같은 함정으로 들어갔다).
+  //   반면 webFallback은 바로 위 2026-07-28 줄이 적어둔 대로 **실기기에서 "정확히 추천(For You)
+  //   풀스크린 피드로 바로 열림"을 확인해 둔 경로**다 — 검증된 동작을 연출 문제 때문에 버린 셈이다.
+  //   ⚠️ 트레이드오프 판단: 번쩍임은 **거슬리는 연출**이고, 같은 영상 반복은 **제품이 무의미해지는
+  //     기능 실패**다. 후자를 먼저 막는다.
+  //   ⬜ 번쩍임은 별도 과제로 남긴다 — "앱으로 직행하면서 For You로 가는" 스킴을 찾아야 한다
+  //     (`tiktok://feed` 등을 adb로 쏴보면 MainActivity까지는 가지만 For You 진입 여부 미확인).
+  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: false },
 } as const;
 
 // 2026-07-20 실기기 검증 중 발견: 이 함수를 세션 시작 useEffect 안(DB 조회 2번 + Connecting 애니메이션

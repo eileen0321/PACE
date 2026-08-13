@@ -1738,7 +1738,7 @@ PODS:
   - react-native-track-player (4.1.2):
     - React-Core
     - SwiftAudioEx (= 1.1.0)
-  - react-native-webview (13.16.1):
+  - react-native-webview (16.0.0):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -3060,7 +3060,7 @@ SPEC CHECKSUMS:
   React-mutationobservernativemodule: f0a0d5ae9b51caf7becbeabf836d716cfedb6bf2
   react-native-safe-area-context: 6b4966397ada0f7dd481e4486a2ef936834861a1
   react-native-track-player: dd56f9948e03756a217c75e0a61aa04aab65b5a1
-  react-native-webview: 2da09bdea1aeb6c46e27dd94632e21059cade6c1
+  react-native-webview: 560e16c7f9dbafcf1732fda7eb3eae9e0ce581d4
   React-NativeModulesApple: a092d89b58f635ebfab88048b0eda9fb516819fd
   React-networking: 968bbbe73590149feb1e72b2af4f6a68e4796ece
   React-oscompat: 0b72a7e926954a0415ccd83e0748b6561fe45367

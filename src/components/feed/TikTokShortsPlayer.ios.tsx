@@ -495,7 +495,7 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (bt.toLowerCase().indexOf(markers[i].toLowerCase()) !== -1) {
           errorStateDumped = true;
           var idx = bt.toLowerCase().indexOf(markers[i].toLowerCase());
-          send({ type: 'domlog', text: '🔴 에러상태 감지("' + markers[i] + '"): ' + bt.slice(Math.max(0, idx - 40), idx + 80).replace(/\n/g, ' ') });
+          send({ type: 'domlog', text: '🔴 에러상태 감지("' + markers[i] + '"): ' + bt.slice(Math.max(0, idx - 40), idx + 80).replace(/\\n/g, ' ') });
           var btns = document.querySelectorAll('button, [role="button"], a');
           var found = [];
           for (var j = 0; j < btns.length && found.length < 8; j++) {
@@ -623,19 +623,24 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).
         userAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        // 🔴 2026-08-14(31~33차, 시뮬레이터로 확정, 미해결) — injectedJavaScriptBeforeContentLoaded
-        // prop이 이 환경(react-native-webview 13.16.1 + Fabric/New Architecture)에서 **아예
-        // 실행되지 않는다**. 브릿지와 무관한 시각적 테스트(document.documentElement에 라임색
-        // outline 강제, 이어서 body에 z-index 최대치 DOM 엘리먼트 삽입)로 확정 — postMessage
-        // 브릿지 문제가 아니라 주입 자체가 안 됨.
-        // → advance()/search() 등이 쓰는 imperative injectJavaScript(ref 메서드)로 우회 시도했으나
-        // **이것도 시각적으로 확인 안 됨**(onLoadStart/onLoad에서 webRef가 유효함을 콘솔로 확인한
-        // 뒤 호출해도 동일). react-native-webview GitHub 이슈#3727("[iOS] injectJavaScript method
-        // is not working with the new architecture enabled", WKErrorDomain Code=4 "Cannot execute
-        // JavaScript in this document")과 증상이 일치 — 업스트림에 이미 보고된 미해결 버그.
-        // 이 재주입 코드는 라이브러리가 고쳐지면(또는 버전을 올리면) 자동으로 살아나므로 남겨둔다 —
-        // 지금은 사실상 no-op이라고 봐야 한다. **틱톡 WebView 제어 로직(배너닫기/로그인게이트/
-        // 자동넘김/전체화면방지) 전체가 이 버그로 인해 실행되지 않고 있을 가능성이 높다.**
+        // 🔴 2026-08-14(31~34차) — injectedJavaScriptBeforeContentLoaded/imperative injectJavaScript
+        // 둘 다 시각적으로 확인이 안 돼(라임 outline/DOM 마커 테스트) react-native-webview+Fabric
+        // 버그(GitHub #3727)로 잠정 결론 내렸었는데, **틀렸다.** react-native-webview를
+        // 13.16.1→16.0.0으로 올렸더니(이 업그레이드로 injectJavaScript 실패 시 에러가 실제로
+        // 콘솔에 찍히기 시작함 — 13.16.1은 이걸 완전히 삼켰다) 진짜 원인이 드러났다:
+        // `SyntaxError: Unterminated regular expression literal '/'`. 원인은 INJECTED_JS_BEFORE_LOAD
+        // 내부의 `.replace(/\n/g, ' ')` — 이 TS 템플릿 리터럴(백틱 문자열) 안에서 `\n`은 TS 자체가
+        // "이스케이프 시퀀스"로 먼저 해석해 진짜 개행문자로 바꿔버린다. 그 결과 런타임에 WebView로
+        // 전달되는 실제 문자열은 정규식 `/\n/g`가 아니라 `/` + 진짜 개행 + `/g`였고, 이건 문법적으로
+        // "닫히지 않은 정규식"이라 스크립트 전체가 파싱 단계에서 죽어 있었다(`\\n`으로 고쳐 해결,
+        // 커밋 참고). 즉 업스트림 버그가 아니라 **우리 스크립트의 SyntaxError가 처음부터 있었고,
+        // 13.16.1이 그 실패를 완전히 침묵시켜서 며칠간 원인을 못 찾았던 것** — 라이브러리 업그레이드
+        // 자체가 고친 게 아니라 에러 메시지를 드러내준 덕분에 진짜 원인을 찾은 것.
+        // 이 재주입(onLoadStart/onLoad)은 이제 정말로 동작한다(시뮬레이터 스크린샷/로그로 확인:
+        // PACEWV 로그 정상 출력, 네이티브 전체화면 승격 없이 P버튼/배지 유지). 다만 여전히 남겨두는
+        // 이유는 — react-native-webview 13.x의 injectedJavaScriptBeforeContentLoaded prop이
+        // (raw 시각 테스트로는) 안 먹혔던 것도 사실이라, prop보다 이 imperative 경로가 더 신뢰도가
+        // 높다고 판단해서다.
         onLoadStart={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
         onLoad={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
         onError={(e) => { if (__DEV__) console.log('[TikTok WV] onError', e.nativeEvent?.code); }}

@@ -110,7 +110,7 @@ class PaceAccessibilityService : AccessibilityService() {
       // 로케일마다 바뀌는 우리 통제 밖의 입력이므로, 파싱 한 번 실패했다고 기능 전체가 영구 정지되면
       // 안 된다. 이번 틱만 버리고 다음 폴링을 계속 돌린다.
       try {
-        if ((isWatching || isTrackingPlayback) && SupportedApps.PACKAGES.contains(currentForegroundPackage)) {
+        if ((isWatching || isTrackingPlayback) && SupportedApps.PACKAGES.contains(pollTargetPackage())) {
           checkPlaybackAndMaybeSwipe()
         }
       } catch (e: Throwable) {
@@ -118,6 +118,40 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       handler.postDelayed(this, POLL_INTERVAL_MS)
     }
+  }
+
+  // 🔴 2026-08-13 출시 검증(신규 설치 첫 세션)에서 잡은 무증상 고장 —
+  //   위 폴링 게이트가 `currentForegroundPackage`(접근성 이벤트로만 갱신되는 값) **하나에만**
+  //   의존하고 있었다. 그 이벤트를 한 번 놓치면 값이 영영 안 채워지고, 게이트가 세션 내내 닫혀
+  //   **자동넘김·영상 카운트·수면감지 증거가 통째로 조용히 죽는다.** 로그조차 안 남아
+  //   ("RANGE_INFO none"도 else 분기 안이라) 고장 사실 자체가 안 보인다.
+  //   실측(신규 설치 → 첫 세션 → 유튜브):
+  //     18:52:44  startWatching() -> polling started
+  //     18:53~19:04  PaceAccessibility 로그 0줄, 같은 영상 12분 반복, 손스와이프도 미인식
+  //     19:04  홈 나갔다 유튜브 재진입(=이벤트 도착) → 19:05:01 VIDEO_ADVANCE near-end 즉시 복구
+  //   이미 312줄 canObserveWatchEvidence 주석이 "currentForegroundPackage가 이벤트 유실로 낡으면
+  //   유튜브에서도 영원히 안 갱신된다"고 이 고장을 예견해뒀는데, 정작 폴링 게이트는 안 고쳐져 있었다.
+  //
+  // → 이벤트가 낡으면 **창 목록으로 직접 확인**한다. bestTrackedWindow()를 그대로 재사용하므로
+  //   PIP 제외(화면폭 80% 미만 컷) 규칙이 동일하게 걸린다 — 런처 위에 떠 있는 유튜브 PIP를
+  //   "전경"으로 오인해 사용시간을 깎는 일은 없다(실측 로그: pipFlag=true w=357/1080).
+  //   ⚠️ 창 목록 조회는 500ms마다 하면 비싸므로, 이벤트 값이 못 쓸 때만 2초에 한 번 확인한다.
+  //   찾았으면 정본 필드도 같이 복구해 둔다(다음 폴링부터는 폴백 없이 바로 통과).
+  private var lastFgProbeAtMs = 0L
+  private var fgProbedPackage: String? = null
+  private fun pollTargetPackage(): String? {
+    val fromEvent = currentForegroundPackage
+    if (SupportedApps.PACKAGES.contains(fromEvent)) return fromEvent
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastFgProbeAtMs < FG_PROBE_INTERVAL_MS) return fgProbedPackage
+    lastFgProbeAtMs = now
+    fgProbedPackage = runCatching { bestTrackedWindow()?.root?.packageName?.toString() }.getOrNull()
+    if (fgProbedPackage != null) {
+      currentForegroundPackage = fgProbedPackage
+      currentForegroundPackageAtMs = now
+      Log.i("PaceAccessibility", "포그라운드 이벤트 유실 복구 — 창 목록에서 $fgProbedPackage 확인, 폴링 재개")
+    }
+    return fgProbedPackage
   }
 
   private fun ensurePollingScheduled() {
@@ -143,6 +177,8 @@ class PaceAccessibilityService : AccessibilityService() {
     // 플링 인식 임계를 넉넉히 넘기는 스트로크 시간 — performSwipeUp 주석 참고.
     // 진행바가 없는 영상(틱톡 짧은 클립)에서만 쓰는 시간 기반 폴백 간격.
     private const val NO_PROGRESSBAR_ADVANCE_MS = 20_000L
+    // 포그라운드 이벤트가 낡았을 때 창 목록을 직접 확인하는 간격(pollTargetPackage 주석 참고).
+    private const val FG_PROBE_INTERVAL_MS = 2_000L
     private const val SWIPE_FLING_MS = 120L
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.

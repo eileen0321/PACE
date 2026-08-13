@@ -220,6 +220,17 @@ export default function FocusScreen() {
       if (Platform.OS !== 'android') return;
       autoNextService.hasPermission().then(setHasAccessibility).catch(() => {});
       bluetoothService.hasCameraPermission().then(setHasCameraPerm).catch(() => {});
+      // 🔴 2026-08-14 사장님 실기기 지적("bt 되는데 왜 블루투스 리모컨 옆에 초록불이 계속 회색이야?
+      //   왜 블루투스 연결된 상태를 표시를 못하냐고") —
+      //   **초록불을 그리는 이 화면이 정작 그 상태를 한 번도 안 읽고 있었다.**
+      //   useBluetoothStore.refresh()를 부르는 곳은 home/settings/stats 셋뿐이고 focus만 빠져 있어서,
+      //   집중 탭만 열면 스토어 초기값(isConnected: false)이 그대로 그려졌다 — 리모컨이 실제로
+      //   동작하는데도 영원히 회색이다.
+      //   ⚠️ 2026-08-13에 네이티브 판정(getBluetoothState)은 이미 고쳤다(HID 리모컨은 오디오 목록에
+      //     안 잡히므로 "키를 보낸 적 있으면 연결"로 판정). 값은 맞게 나오는데 **읽는 쪽이 없었던**
+      //     것이라, 그 수정만으로는 화면이 안 바뀌었다.
+      //   포커스될 때마다 갱신한다(다른 탭들과 동일한 패턴).
+      useBluetoothStore.getState().refresh().catch(() => {});
     }, [])
   );
   // 2026-08-01 사용자 지적("BT토글 누르면 접근성 화면 계속 온다고, 이미 사용중인데") — 위
@@ -327,6 +338,15 @@ export default function FocusScreen() {
     if (pendingEnableRef.current === 'gesture' && accOk && camOk) {
       pendingEnableRef.current = null;
       setGesture(true);
+    } else if (pendingEnableRef.current === 'gesture' && !camOk) {
+      // 🔴 2026-08-14 — 여기서 안 비우면 "켜달라"는 의도가 ref에 남는다. 나중에 사용자가 **다른
+      //   이유로** 카메라 권한을 주는 순간(예: 다른 기능에서 허용) 위 AppState 재확인이 그걸 소비해
+      //   **누른 적도 없는 손짓이 저절로 켜진다.** 방금 병렬 세션이 고친 "손짓이 동의 없이 켜지던 것"
+      //   (59fb492, 실측 WAVE 오탐으로 영상이 저절로 넘어감)과 같은 종류의 사고다.
+      //   카메라는 이 자리에서 사용자가 방금 답을 준 경우(거부)이므로 의도를 여기서 확실히 버린다.
+      //   ⚠️ 접근성은 시스템 설정으로 나갔다 오는 경로라 이 시점에 "거부"를 알 수 없다 — 그래서
+      //     위 accessibility 분기에서는 절대 비우지 않는다(복귀 후 재확인이 소비한다).
+      pendingEnableRef.current = null;
     }
   };
 

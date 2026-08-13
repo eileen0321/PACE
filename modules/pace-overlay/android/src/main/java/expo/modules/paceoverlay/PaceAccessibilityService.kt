@@ -848,8 +848,18 @@ class PaceAccessibilityService : AccessibilityService() {
     //   계속 연결돼 있는데 점이 회색으로 돌아간다 — prefs에 남겨 재시작을 견디게 한다.
     //   벽시계(System.currentTimeMillis)를 쓴다: elapsedRealtime은 재부팅 시 0으로 돌아가 비교가 깨진다.
     runCatching {
-      getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE).edit()
-        .putLong(PaceOverlayService.PREF_LAST_REMOTE_KEY_AT, System.currentTimeMillis()).apply()
+      val e = getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putLong(PaceOverlayService.PREF_LAST_REMOTE_KEY_AT, System.currentTimeMillis())
+      // 🔴 2026-08-14 사장님 지적("블루투스 전원 꺼도 초록불 켜져 있는데 맞아?") — 위 시각만으로는
+      //   **"최근 6시간 안에 눌렀는가"**를 잴 뿐이라 리모컨을 꺼도 초록불이 6시간 유지됐다.
+      //   → 이 키를 보낸 **입력기기의 descriptor**를 같이 남긴다. 조회 시점에 그 descriptor가
+      //     InputDevice 목록에 있는지 보면 "지금 연결돼 있는가"를 정확히 알 수 있다
+      //     (PaceOverlayModule.getBluetoothState 참고).
+      //   descriptor를 쓰는 이유 — deviceId는 재연결/재부팅마다 바뀌지만 descriptor는 안정적이라고
+      //   안드로이드 문서가 명시한다("If you require a stable identifier for a device that persists
+      //   across boots and reconfigurations, use getDescriptor()").
+      event.device?.descriptor?.let { e.putString(PaceOverlayService.PREF_REMOTE_DEVICE_DESCRIPTOR, it) }
+      e.apply()
     }
     Log.i("PaceAccessibility", "onKeyEvent volume-key-swipe keyCode=${event.keyCode} pkg=$currentForegroundPackage")
     // 2026-07-26 사용자 지시 — 외부 블루투스 리모컨의 실제 물리 버튼 입력이므로 swipeOnce와 동일하게

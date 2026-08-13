@@ -548,8 +548,28 @@ class PaceOverlayModule : Module() {
       //   prefs에 남긴 벽시계 시각을 본다 — 메모리 값만 보면 접근성 서비스가 재시작될 때마다
       //   (앱 업데이트/프로세스 재시작) 초기화돼 실제로는 연결돼 있는데 회색으로 돌아간다.
       val lastRemoteKeyAt = prefs?.getLong(PaceOverlayService.PREF_LAST_REMOTE_KEY_AT, 0L) ?: 0L
-      val remoteRecentlyUsed = lastRemoteKeyAt > 0L &&
-        System.currentTimeMillis() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
+      // 🔴 2026-08-14 사장님 지적("블루투스 전원 꺼도 초록불 켜져 있는데 맞아?") — **틀렸다.**
+      //   위 remoteRecentlyUsed는 "최근 6시간 안에 리모컨 키가 왔는가"만 재므로, 리모컨을 끄거나
+      //   블루투스를 꺼도 6시간 동안 초록불이 유지됐다. UI가 말하는 "연결됨"과 이 값이 재는
+      //   "최근에 썼음"은 다른 정보다.
+      //
+      //   ⚠️ 처음엔 BluetoothAdapter.isEnabled를 AND로 걸려 했으나 그것도 임시방편이다 —
+      //     **리모컨만 꺼도 어댑터는 켜져 있으니** 여전히 초록불이 남는다.
+      //   → 웹 조사(Android 공식 InputDevice/InputManager 문서) 결과 **권한 없이** 정확히 알 수 있다:
+      //     리모컨/셔터는 HID 입력기기라 `InputDevice.getDeviceIds()` 목록에 잡히고, **연결이 끊기면
+      //     목록에서 사라진다.** 키가 왔을 때 저장해 둔 descriptor(재연결·재부팅에도 안정적이라고
+      //     문서가 명시)가 지금 목록에 있는지만 보면 된다.
+      //     BLUETOOTH_CONNECT 같은 새 권한이 전혀 필요 없다(545행 주석이 피하려던 그 프롬프트).
+      val remoteDescriptor = prefs?.getString(PaceOverlayService.PREF_REMOTE_DEVICE_DESCRIPTOR, null)
+      val remoteStillAttached = remoteDescriptor != null && runCatching {
+        android.view.InputDevice.getDeviceIds().any { id ->
+          android.view.InputDevice.getDevice(id)?.descriptor == remoteDescriptor
+        }
+      }.getOrDefault(false)
+      // descriptor를 아직 못 받은 구버전 설치분(이 필드가 생기기 전에 리모컨을 쓴 경우)에만 예전
+      // 시간 기반 판정으로 폴백한다 — 새로 한 번만 누르면 그때부터 정확한 판정으로 올라선다.
+      val remoteRecentlyUsed = if (remoteDescriptor != null) remoteStillAttached
+        else lastRemoteKeyAt > 0L && System.currentTimeMillis() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
       mapOf(
         "isConnected" to ((deviceInfo?.first ?: false) || remoteRecentlyUsed),
         "deviceName" to deviceInfo?.second,

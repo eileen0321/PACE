@@ -52,46 +52,12 @@ const INJECTED_JS_BEFORE_LOAD = `
       HTMLVideoElement.prototype.webkitEnterFullscreen = function(){};
     }
   } catch(e) {}
-  // 2026-08-14 웹서치로 확인(추측 아님) — userAgent 문자열만 데스크톱으로 바꿔도 최신 브라우저가
-  // 별도로 노출하는 Client Hints API(navigator.userAgentData)는 여전히 실제 엔진(iOS WKWebView =
-  // 모바일)을 그대로 보고한다. "UA 문자열은 데스크톱, userAgentData는 모바일"이라는 불일치는
-  // 다중 신호를 대조하는 최신 봇 탐지 시스템의 전형적인 트리거다(여러 관측치가 "같은 기기"로
-  // 안 맞아떨어짐). 틱톡이 이 값도 참고한다면 세션마다 다르게 판정되는 원인 중 하나일 수 있다 —
-  // navigator.userAgentData를 UA 문자열(Chrome 126, Mac)과 일치하도록 덮어쓴다.
-  try {
-    if (navigator.userAgentData) {
-      Object.defineProperty(navigator, 'userAgentData', {
-        configurable: true,
-        get: function(){
-          return {
-            brands: [
-              { brand: 'Not)A;Brand', version: '24' },
-              { brand: 'Chromium', version: '126' },
-              { brand: 'Google Chrome', version: '126' }
-            ],
-            mobile: false,
-            platform: 'macOS',
-            getHighEntropyValues: function(){
-              return Promise.resolve({
-                platform: 'macOS', platformVersion: '10.15.7', architecture: 'x86',
-                model: '', uaFullVersion: '126.0.0.0', fullVersionList: [
-                  { brand: 'Not)A;Brand', version: '24.0.0.0' },
-                  { brand: 'Chromium', version: '126.0.0.0' },
-                  { brand: 'Google Chrome', version: '126.0.0.0' }
-                ], mobile: false, bitness: '64'
-              });
-            }
-          };
-        }
-      });
-    }
-    if (typeof navigator.platform === 'string') {
-      try { Object.defineProperty(navigator, 'platform', { configurable: true, get: function(){ return 'MacIntel'; } }); } catch(e) {}
-    }
-    if ('maxTouchPoints' in navigator) {
-      try { Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: function(){ return 0; } }); } catch(e) {}
-    }
-  } catch(e) {}
+  // 2026-08-14 — navigator.userAgentData/platform/maxTouchPoints 스푸핑을 시도했다가 실기기에서
+  // 페이지가 아예 안 뜨는(로그 한 줄도 안 나옴 — 이전엔 항상 몇 초 안에 DOM덤프가 찍혔다) 회귀를
+  // 만들어 즉시 되돌린다. 검증 안 된 상태로 실기기에 남겨두면 안 된다는 판단 — 가설 자체(UA-CH
+  // 불일치가 봇탐지 신호)는 여전히 유효할 수 있지만, 구현이 페이지 부트스트랩을 깨뜨린 것으로
+  // 보인다(아마 navigator.platform을 getter-only로 덮어쓴 게 틱톡 번들의 초기화 코드와 충돌).
+  // 다시 시도하려면 이 하나만 개별적으로(다른 변경과 안 섞어서) 검증할 것.
   function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
   try {
     var mo = new MutationObserver(function(){

@@ -139,6 +139,8 @@ class PaceAccessibilityService : AccessibilityService() {
   //   찾았으면 정본 필드도 같이 복구해 둔다(다음 폴링부터는 폴백 없이 바로 통과).
   private var lastFgProbeAtMs = 0L
   private var fgProbedPackage: String? = null
+  // 같은 near-end 구간에서 반복 발사를 막기 위한 마지막 발사 시각(checkPlaybackAndMaybeSwipe 참고).
+  private var lastNearEndFireAtMs = 0L
   private fun pollTargetPackage(): String? {
     val fromEvent = currentForegroundPackage
     if (SupportedApps.PACKAGES.contains(fromEvent)) return fromEvent
@@ -179,6 +181,10 @@ class PaceAccessibilityService : AccessibilityService() {
     private const val NO_PROGRESSBAR_ADVANCE_MS = 20_000L
     // 포그라운드 이벤트가 낡았을 때 창 목록을 직접 확인하는 간격(pollTargetPackage 주석 참고).
     private const val FG_PROBE_INTERVAL_MS = 2_000L
+    // 같은 near-end 구간에서 재발사를 막는 최소 간격(위 nearEndSuppressed 주석 참고).
+    // 스와이프가 실제로 먹혀 다음 영상이 붙고 접근성 트리가 갱신되기까지 실측 ~2.5초가 걸리므로
+    // 그보다 넉넉히 잡는다 — 이보다 짧으면 "안 먹힌 것"과 "아직 반영이 안 된 것"을 구분 못 한다.
+    private const val NEAR_END_REFIRE_GAP_MS = 4_000L
     private const val SWIPE_FLING_MS = 120L
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
@@ -930,6 +936,25 @@ class PaceAccessibilityService : AccessibilityService() {
       // isWatching과 무관하게 항상 체크한다 — 2026-07-26 "몇 편 봤는지 세기"(videoAdvanceCount)가
       // 바로 이 지점에 걸린다.
       val loopedBack = lastKnownCurrentSec > 0 && currentSec < lastKnownCurrentSec - 1
+      // 🔴 2026-08-13 밤 출시 검증에서 발견 — nearEnd 분기에는 **최소 간격 가드가 없었다.**
+      //   nearEnd는 lastKnownCurrentSec과 무관하게 currentSec/totalSec만 보고 계산되는데, 아래에서
+      //   lastKnownCurrentSec = -1로 리셋하고 return하므로 **다음 폴링(500ms 뒤)에도 그대로 참**이다.
+      //   영상이 끝자락에 머물러 있는 동안(일시정지, 스와이프가 안 먹힘, 유튜브가 같은 자리에서 멈춤)
+      //   0.5초마다 무한히 재발사된다. 실측: 같은 영상 65s/66s에서 count가 1→2→3으로 연속 증가,
+      //   방치하니 287까지 올라갔다.
+      //   · isWatching=true였다면 그건 **0.5초 간격 연속 스와이프**다 — 사장님이 예전에 신고하신
+      //     "두 번씩 넘어감"과 같은 증상이 스와이프가 한 번 안 먹힐 때마다 재현된다.
+      //   · isWatching=false여도 videoAdvanceCount가 부풀어 viewing_sessions.videos_watched에
+      //     거짓 숫자가 기록된다(화면에는 안 나오지만 서버로 동기화된다).
+      //   loopedBack에는 이미 MANUAL_SWIPE_MIN_GAP_MS 가드가 있는데(아래) nearEnd만 빠져 있었다.
+      // → 같은 near-end 구간에서 한 번만 반응한다. 재생 위치가 실제로 뒤로 돌아가면(=영상이 바뀌면)
+      //   아래 loopedBack 경로에서 해제되고, 못 잡고 지나가도 이 간격이 지나면 다시 열린다.
+      val nearEndSuppressed = nearEnd && now - lastNearEndFireAtMs < NEAR_END_REFIRE_GAP_MS
+      if (nearEndSuppressed) {
+        lastKnownCurrentSec = currentSec
+        return
+      }
+      if (nearEnd) lastNearEndFireAtMs = now
       if (nearEnd || loopedBack) {
         videoAdvanceCount++
         Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s count=$videoAdvanceCount isWatching=$isWatching")

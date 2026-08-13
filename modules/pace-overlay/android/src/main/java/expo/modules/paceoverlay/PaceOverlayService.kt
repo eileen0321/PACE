@@ -3946,8 +3946,19 @@ class PaceOverlayService : Service() {
    *   lastSupportedAppPackage(위 선언부 주석)를 1순위로 쓴다.
    */
   private fun isTikTokContext(): Boolean {
-    val fg = lastSupportedAppPackage
-      ?: runCatching { ForegroundAppWatcher.getForegroundPackage(this) }.getOrNull()
+    // 🔴 2026-08-13 밤 감사 지적 — lastSupportedAppPackage는 **대상 앱을 떠나도 안 지워진다**(위
+    //   주석의 의도가 그렇다). 그래서 프로세스가 살아있는 채로 틱톡 → 유튜브로 갈아탄 직후에는
+    //   아직 "틱톡"으로 남아 있어 유튜브에서 연 검색이 틱톡 검색으로 튈 수 있다(폴링이 1초 안에
+    //   갱신하니 창은 좁지만, 틀리면 완전히 엉뚱한 앱으로 가는 종류의 오류다).
+    //   → **지금 전경이 감시 대상 앱이면 그게 가장 정확한 답**이므로 그걸 1순위로 본다. 우리 앱
+    //     위에서 물으면(검색 패널이 포커스를 가져간 경우) 이 값이 대상 앱이 아니라서 자연히
+    //     걸러지고, 원래 의도대로 "직전에 보던 앱"으로 떨어진다.
+    //   ⚠️ getForegroundPackage()가 아니라 peek을 쓴다 — 전자는 커서를 전진시켜 매초 도는 정본
+    //     폴링의 전환 이벤트를 뺏는다(ForegroundAppWatcher.peekForegroundPackage 주석 참고).
+    val nowFg = runCatching { ForegroundAppWatcher.peekForegroundPackage() }.getOrNull()
+      ?.takeIf { SupportedApps.PACKAGES.contains(it) }
+    val fg = nowFg
+      ?: lastSupportedAppPackage
       ?: PaceAccessibilityService.getCurrentForegroundPackage()
     return fg == "com.ss.android.ugc.trill" || fg == "com.zhiliaoapp.musically"
   }

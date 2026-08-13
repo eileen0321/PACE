@@ -57,6 +57,25 @@ object ForegroundAppWatcher {
   private var lastConfirmedAtMs: Long = 0L
   private var cursor: Long = 0L
 
+  /**
+   * 🔴 2026-08-13 밤 감사 지적 — **getForegroundPackage()는 부작용이 있는 함수다.** 아래에서
+   * `cursor = end`로 커서를 전진시키므로, 한 번 읽으면 그 사이의 전이 이벤트는 **다른 호출자에게
+   * 다시는 안 보인다.** 그런데 이걸 진짜로 매번 소비해야 하는 건 매초 도는 폴링 한 곳(정본,
+   * PaceOverlayService의 포그라운드 폴링)뿐이고, 나머지 호출자는 "지금 뭐가 앞이야?"를 묻기만 하면
+   * 된다. 곁다리 호출자가 전이 이벤트를 가로채면 정본이 그 전환을 영영 못 보는데, 그건 오늘 실제로
+   * 터진 "포그라운드 신호 하나 놓쳐서 자동넘김이 세션 내내 조용히 죽는" 고장과 같은 종류다
+   * (PaceAccessibilityService.pollTargetPackage 주석 참고).
+   *
+   * → 곁다리 호출자는 이 함수를 쓴다. 커서를 안 건드리고 마지막으로 확인된 값만 돌려준다.
+   *   폴링이 죽어 값이 낡았을 수 있으므로 maxAgeMs를 넘긴 값은 "모른다"(null)로 처리한다 —
+   *   getForegroundPackage의 STALENESS 가드와 같은 원칙.
+   */
+  fun peekForegroundPackage(maxAgeMs: Long = 10_000L): String? {
+    if (lastConfirmedAtMs == 0L) return null
+    if (System.currentTimeMillis() - lastConfirmedAtMs > maxAgeMs) return null
+    return lastKnownForegroundPackage
+  }
+
   // ⚠️ 실기기 검증 중 발견한 버그(2026-07-18): MOVE_TO_FOREGROUND는 "앱 전환이 일어난 순간"에만
   // 한 번 발생하는 전이(edge-triggered) 이벤트지, "지금 이 앱이 포그라운드다"를 매초 계속 알려주는
   // 신호가 아니다. 처음엔 최근 10초 윈도우만 훑었는데, 사용자가 YouTube Shorts 한 화면에 10초

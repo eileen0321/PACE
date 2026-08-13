@@ -52,9 +52,18 @@ export const SUPPORTED_APPS = {
   //   풀스크린 피드로 바로 열림"을 확인해 둔 경로**다 — 검증된 동작을 연출 문제 때문에 버린 셈이다.
   //   ⚠️ 트레이드오프 판단: 번쩍임은 **거슬리는 연출**이고, 같은 영상 반복은 **제품이 무의미해지는
   //     기능 실패**다. 후자를 먼저 막는다.
-  //   ⬜ 번쩍임은 별도 과제로 남긴다 — "앱으로 직행하면서 For You로 가는" 스킴을 찾아야 한다
-  //     (`tiktok://feed` 등을 adb로 쏴보면 MainActivity까지는 가지만 For You 진입 여부 미확인).
-  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://', webFallback: 'https://www.tiktok.com/foryou', preferScheme: false },
+  //
+  // ✅ 2026-08-14 (3차, 실기기 확정) — **둘 다 되는 경로를 찾았다: `tiktok://feed`.**
+  //   사장님 지적("왜 틱톡 팝업이 초반에 떴다 화면이 사라지는게 보여")이 위 2차 변경의 대가였던
+  //   번쩍임이다. 경로 없는 `tiktok://`(마지막 상태 복원)와 웹 URL(번쩍임) 사이에서 고르는 문제로
+  //   봤는데, **경로를 붙인 스킴**이 제3의 답이었다.
+  //   실기기 검증(앱 강제종료 후 두 번 연속 실행, 각 스크린샷 대조):
+  //     1회차 `korea #소식` / 2회차 `mylovekbs` — **서로 다른 영상**
+  //     둘 다 상단 탭이 "추천"(For You)이고, 웹 화면이 한 번도 안 뜬다(앱 직행).
+  //   → androidScheme을 `tiktok://feed`로 바꾸고 preferScheme을 다시 true로 올린다.
+  //     webFallback(웹 For You)은 스킴이 실패할 때의 안전망으로 그대로 둔다 — 리전별 설치본에서
+  //     스킴이 갈리므로(openTikTokSearch가 snssdk1233://도 시도하는 것과 같은 이유) 없애지 않는다.
+  tiktok: { packageNames: ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill'], label: 'TikTok Video Loop', androidScheme: 'tiktok://feed', webFallback: 'https://www.tiktok.com/foryou', preferScheme: true },
 } as const;
 
 // 2026-07-20 실기기 검증 중 발견: 이 함수를 세션 시작 useEffect 안(DB 조회 2번 + Connecting 애니메이션

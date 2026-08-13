@@ -413,7 +413,11 @@ class PaceAccessibilityService : AccessibilityService() {
       //     UsageStats가 아니다. UsageStats는 getWindows()처럼 "지금"을 조회하는 API라 그 함정이 없다.
       //     그리고 감시 대상 앱이 아니면 여전히 false를 돌려주므로, "다른 앱 보는데 시간이 깎인다"는
       //     그때 그 버그는 그대로 막혀 있다.
-      val fg = runCatching { ForegroundAppWatcher.getForegroundPackage(service) }.getOrNull()
+      // 🔴 2026-08-13 밤 감사 — 여기서 getForegroundPackage()를 부르면 **커서를 전진시켜** 매초 도는
+      //   정본 폴링(PaceOverlayService)이 그 사이의 앱 전환을 영영 못 본다. 이 경로는 "지금 뭐가
+      //   앞이야?"만 알면 되므로 부작용 없는 peek을 쓴다(ForegroundAppWatcher.peekForegroundPackage
+      //   주석 참고). 폴링이 죽어 값이 낡았으면 null이 와서 아래 false로 안전하게 떨어진다.
+      val fg = runCatching { ForegroundAppWatcher.peekForegroundPackage() }.getOrNull()
       if (fg != null && SupportedApps.PACKAGES.contains(fg)) return true
       return false
     }

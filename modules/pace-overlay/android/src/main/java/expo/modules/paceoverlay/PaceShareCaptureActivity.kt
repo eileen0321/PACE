@@ -100,7 +100,13 @@ class PaceShareCaptureActivity : Activity() {
       val back = intent?.getStringExtra(EXTRA_RETURN_TO_PACKAGE)
       if (!back.isNullOrBlank()) onReturnRequested?.invoke(back)
       onReturnRequested = null
-      finish()
+      // 🔴 2026-08-14 사장님 지적("유튜브에서 favorite 누르면 왜 앱 홈으로 갔다가 다시 유튜브로 가는데") —
+      //   finish()만 하면 우리 태스크(taskAffinity="")가 남아, 시스템이 그 다음으로 **Pace의
+      //   MainActivity 태스크**를 앞으로 올린다. 위 콜백이 700ms 뒤 유튜브를 다시 띄우기 전까지
+      //   그 화면이 그대로 보인다 — 그게 사장님이 보신 "앱 홈"이다.
+      //   → 태스크째로 없앤다. 그러면 시스템이 **직전에 앞에 있던 태스크(유튜브)**로 바로 돌아가
+      //     중간 화면이 아예 안 생긴다. 위 콜백은 안전망으로 남긴다(기기별 복귀 선택 차이 대비).
+      runCatching { finishAndRemoveTask() }.getOrElse { finish() }
       // 이 액티비티가 뜨고 사라지는 전환 애니메이션까지 없애 "번쩍임"을 최소화한다.
       @Suppress("DEPRECATION")
       overridePendingTransition(0, 0)

@@ -621,6 +621,23 @@ class PaceAccessibilityService : AccessibilityService() {
     // 리싱크 폴로 처리해 항상 안정된 값과만 비교하게 한다.
     private var chainWatchGraceUntilMs = 0L
     private var chainWatchAwaitingResync = false
+    /**
+     * 🔴 2026-08-14 감사(Z29) — 이어서재생 체인에 **플랫폼 소유권이 없었다.**
+     *
+     * 가드가 `isSupportedAppWindowVisible()` 하나뿐이라 유튜브/틱톡/인스타 **아무거나** 보이면
+     * 통과한다. 즉 유튜브 HOT 목록으로 시작한 체인이 사용자가 틱톡으로 넘어간 뒤에도 계속 돌면서,
+     * **틱톡의 제목 변화를 "다음 영상으로 넘어갔다"로 오인해 유튜브 딥링크를 연다.**
+     * 지금 당장 안 터지는 유일한 이유는 "틱톡이 접근성 창을 잘 안 내준다"는 **외부 조건**이고,
+     * 그건 틱톡 앱 업데이트 한 번에 바뀐다. ("왜 갑자기 유튜브로 넘어가 있었나"의 유력한 후보다.)
+     *
+     * → 체인을 시작한 앱을 기억하고, **그 앱이 화면에 있을 때만** 판정한다. 다른 앱으로 가면
+     *   "대상 앱이 없음"과 똑같이 취급해 리싱크로 넘긴다(돌아왔을 때 그 사이 변화를 오인하지 않게).
+     */
+    private var chainWatchOwnerPackage: String? = null
+
+    /** 지금 화면을 차지한 감시 대상 앱(PIP 제외 — bestTrackedWindow 규칙 재사용). 없으면 null. */
+    private fun visibleSupportedPackage(): String? =
+      runCatching { instance?.bestTrackedWindow()?.root?.packageName?.toString() }.getOrNull()
     private const val CHAIN_WATCH_SETTLE_MS = 1800L
 
     fun startFavoriteChainWatch(onTitleChanged: () -> Unit) {
@@ -629,7 +646,9 @@ class PaceAccessibilityService : AccessibilityService() {
       chainWatchLastTitle = readVisibleTitleChannel()?.first
       chainWatchGraceUntilMs = 0L
       chainWatchAwaitingResync = false
-      Log.i("PaceAccessibility", "CHAIN start baseline='$chainWatchLastTitle'")
+      // Z29 — 이 체인이 어느 앱의 목록인지 못박는다(위 chainWatchOwnerPackage 주석 참고).
+      chainWatchOwnerPackage = visibleSupportedPackage()
+      Log.i("PaceAccessibility", "CHAIN start baseline='$chainWatchLastTitle' owner=$chainWatchOwnerPackage")
       val runnable = object : Runnable {
         override fun run() {
           val now = SystemClock.elapsedRealtime()
@@ -665,7 +684,10 @@ class PaceAccessibilityService : AccessibilityService() {
           //   계속 이어서 본다"는 기능이지 **나간 사람을 끌고 들어오는** 기능이 아니다.
           //   위 trackedAppRootNode 폴백 수정만으로도 title=null이 되어 발동은 막히지만, 여기서
           //   명시적으로 끊고 리싱크로 넘겨야 돌아왔을 때 "그 사이 바뀐 제목"을 변화로 오인하지 않는다.
-          if (!isSupportedAppWindowVisible()) {
+          // Z29 — "감시 대상 앱이 보이나"만으로는 부족하다. **체인을 시작한 그 앱**이어야 한다.
+          //   유튜브 목록 체인이 틱톡 화면의 제목 변화로 발동하면 사용자를 유튜브로 끌고 간다.
+          val visibleNow = visibleSupportedPackage()
+          if (visibleNow == null || (chainWatchOwnerPackage != null && visibleNow != chainWatchOwnerPackage)) {
             chainWatchAwaitingResync = true
             chainWatchHandler.postDelayed(this, CHAIN_WATCH_INTERVAL_MS)
             return

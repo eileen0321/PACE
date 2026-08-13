@@ -4000,7 +4000,10 @@ class PaceOverlayService : Service() {
 
     val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     header.addView(TextView(this).apply {
-      text = if (isKoreanLocale()) "쇼츠 검색" else "Search Shorts"
+      // 🔴 2026-08-13 사장님 지적("틱톡일 때는 쇼츠 단어가 아니지 않아?") — 틱톡을 보다 열었는데
+      //   제목이 "쇼츠 검색"이었다. 홈 카드(Shorts/Loops)와 같은 규칙으로 컨텍스트에 맞춘다.
+      text = if (isTikTokContext()) { if (isKoreanLocale()) "틱톡 검색" else "Search TikTok" }
+             else { if (isKoreanLocale()) "쇼츠 검색" else "Search Shorts" }
       textSize = 15f; setTextColor(Color.WHITE)
       setTypeface(typeface, android.graphics.Typeface.BOLD)
     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -4218,7 +4221,16 @@ class PaceOverlayService : Service() {
             setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
             background = GradientDrawable().apply { cornerRadius = 999f; setColor(Color.parseColor("#33FFFFFF")) }
             isClickable = true
-            setOnClickListener { runSearch(p.query) }
+            // 🔴 2026-08-13 출시 검증에서 발견 — **프리셋 칩만 틱톡 분기를 안 탔다.** 위 submitSearch
+            //   (직접 입력·검색 버튼)에는 isTikTokContext() 분기가 있는데 여기엔 없어서, 틱톡을 보다
+            //   "먹방" 칩을 누르면 유튜브 쇼츠 목록이 그대로 떴다(실기기 확인: #shorts 해시태그 붙은
+            //   유튜브 썸네일). 사장님 지시("검색 결과만 틱톡 화면으로")가 반쪽만 구현돼 있었다.
+            //   ⚠️ 틱톡에 넘길 땐 p.query가 아니라 p.label을 쓴다 — query에는 유튜브 결과를 국내로
+            //     미는 로케일 접미사가 이미 붙어 있고("먹방 쇼츠"), 틱톡 검색에는 방해만 된다.
+            setOnClickListener {
+              if (isTikTokContext()) { hideSearchPanel(); openTikTokSearch(p.label) }
+              else runSearch(p.query)
+            }
           }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { rightMargin = (8 * d).toInt() })
         }

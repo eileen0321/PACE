@@ -11,6 +11,7 @@ import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
+import { notifyAccessibilityNeeded } from '../services/notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
 import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow, purgeOldOverlayEvents } from '../database/repositories/sessionsRepository';
@@ -476,6 +477,28 @@ export default function RootLayout() {
     closeSessionOnNativeExpiry();
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') closeSessionOnNativeExpiry();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // 🔴 2026-08-13 실기기 발견 — 접근성 재활성화 안내 알림이 **실제로는 거의 안 뜨고 있었다.**
+  //   소비처가 `/overlay` 안에 있었는데, 안드로이드는 그 화면이 마운트되자마자 Home으로
+  //   router.replace하고 **언마운트**된다(overlay/index.tsx의 useFocusEffect) — 그 순간 AppState
+  //   리스너도 같이 죽는다. 게다가 `hasSessionStartedRef.current` 가드까지 있어서, 알림을 띄울 코드가
+  //   살아있는 창이 거의 없었다.
+  //   실측: 접근성이 몇 시간 꺼진 채였는데 기기 알림 목록에 포그라운드 서비스 알림(id=4201) 하나뿐.
+  //   → **항상 마운트돼 있는 루트 레이아웃으로 옮긴다.** 세션 유무와 무관하게 Pace로 돌아올 때마다
+  //     네이티브가 세워둔 신호를 1회성으로 소비한다(consumeAccessibilityRevoked는 읽으면 리셋).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const consumeAccessibilityRevoked = () => {
+      overlayService.consumeAccessibilityRevoked().then((revoked) => {
+        if (revoked) notifyAccessibilityNeeded().catch(() => {});
+      }).catch(() => {});
+    };
+    consumeAccessibilityRevoked();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') consumeAccessibilityRevoked();
     });
     return () => sub.remove();
   }, []);

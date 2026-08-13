@@ -912,10 +912,35 @@ class PaceOverlayService : Service() {
     val wasEnabled = prefs.getBoolean(PREF_A11Y_WAS_ENABLED, false)
     if (nowEnabled) {
       if (!wasEnabled) prefs.edit().putBoolean(PREF_A11Y_WAS_ENABLED, true).apply()
+      // 다시 켜졌으면 "이번 세션에 이미 알렸다" 표시를 푼다 — 다음에 또 꺼지면 다시 알려야 한다.
+      if (prefs.getBoolean(PREF_A11Y_MISSING_NOTIFIED, false)) {
+        prefs.edit().putBoolean(PREF_A11Y_MISSING_NOTIFIED, false).apply()
+      }
     } else if (wasEnabled) {
       accessibilityRevokedPending = true
       prefs.edit().putBoolean(PREF_A11Y_WAS_ENABLED, false).apply()
       Log.w("PaceOverlay", "ACCESSIBILITY_REVOKED — was enabled, now disabled (likely OEM background optimization)")
+    } else {
+      // 🔴 2026-08-13 실기기 발견 — 위 "전이" 판정만으로는 **가장 흔한 경우를 놓친다.**
+      //   PREF_A11Y_WAS_ENABLED는 SharedPreferences라 **앱을 재설치하면 같이 날아간다.** 그런데
+      //   안드로이드는 앱을 설치/업데이트할 때마다 접근성 서비스를 끈다 — 즉 업데이트 직후는 항상
+      //   `wasEnabled=false, nowEnabled=false`가 되어 이 함수가 **아무것도 안 한다.**
+      //   코드 입장에서 재설치 사용자와 "한 번도 켠 적 없는 신규 사용자"가 구별되지 않기 때문이다.
+      //   실측: 접근성이 꺼진 채 몇 시간을 돌았는데 안내 알림이 한 번도 안 떴다(기기 알림 목록에
+      //   포그라운드 서비스 알림 하나뿐).
+      //
+      // → 전이 대신 **상태**로 잡는다: "세션이 활성인데 접근성이 없다"면 그 자체가 알려야 할 상황이다.
+      //   세션이 돈다는 건 사용자가 카드를 눌러 추적을 시작했다는 뜻이므로, 신규 사용자에게
+      //   뜬금없이 알리는 문제도 생기지 않는다(그 조건이 원래 우려의 핵심이었다).
+      //   ⚠️ 매 틱(60초)마다 알리면 알림 폭탄이 되므로 1회만 — 다시 켜지면 위에서 플래그를 푼다.
+      //   ⚠️ "세션이 활성인가"를 따로 확인하지 않는 이유 — 이 함수는 performTick()에서만 불리고
+      //     performTick은 **살아있는 세션 동안만** 도는 분 단위 티커가 부른다(startMinuteTicker).
+      //     즉 여기 도달한 것 자체가 세션이 활성이라는 뜻이다.
+      if (!prefs.getBoolean(PREF_A11Y_MISSING_NOTIFIED, false)) {
+        accessibilityRevokedPending = true
+        prefs.edit().putBoolean(PREF_A11Y_MISSING_NOTIFIED, true).apply()
+        Log.w("PaceOverlay", "ACCESSIBILITY_MISSING — 세션은 도는데 접근성이 없다(재설치/업데이트 직후 등). 안내 발신")
+      }
     }
   }
 
@@ -1197,6 +1222,9 @@ class PaceOverlayService : Service() {
     // 호출 직전 시각을 저장해두고, onServiceConnected가 그 시각으로부터 일정 시간 안에 왔을 때만
     // "방금 설정에서 직접 켠 것"으로 간주해 자동 복귀시킨다(PaceOverlayModule 참고).
     const val PREF_ACCESSIBILITY_REQUEST_AT_MS = "accessibility_request_at_ms"
+    // 2026-08-13 — "세션은 도는데 접근성이 없다"를 이번에 이미 알렸는지(60초마다 알림 폭탄 방지).
+    // 접근성이 다시 켜지면 checkAccessibilityRevoked()가 이 값을 푼다 — 다음에 또 꺼지면 다시 알린다.
+    private const val PREF_A11Y_MISSING_NOTIFIED = "a11y_missing_notified"
 
     // PaceOverlayModule.consumeExpired()가 읽는 "네이티브가 시간을 다 써서 스스로 세션을
     // 차단했다" 플래그 + 사유 — JS가 다음에 Pace로 돌아왔을 때 한 번만 소비(읽고 즉시 리셋)한다.

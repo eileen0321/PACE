@@ -146,20 +146,38 @@ export default function FocusScreen() {
       update({ handsFreeGesture: v });
       return;
     }
-    update({ handsFreeGesture: v });
     // 2026-07-28 감사 발견 — 마스터 토글(toggleAutoMode/enableAutoModeForSession)은 켤 때 카메라 권한을
     // 미리 요청하는데, 이 손짓 하위토글은 마스터와 독립적으로 켤 수 있게 분리된 뒤(2026-07-27)로도 권한
     // 요청 코드가 없었다 — 카메라 권한을 한 번도 안 준 기기에서 이 스위치만 켜면 JS는 ON으로 보이는데
     // 네이티브 PaceHandWaveDetector.start()는 조용히 no-op(마스터와 동일한 "보이는데 안 됨" 버그).
-    if (v) {
-      (async () => {
-        const hasCamera = await bluetoothService.hasCameraPermission();
-        if (!hasCamera) await bluetoothService.requestCameraPermission().catch(() => false);
-        bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
-      })();
+    //
+    // 🔴 2026-08-13 사장님 실기기 지적("손짓 토글하니까 권한설정 하나 제대로 안 된다") — 위 수정이
+    //   **반쪽이었다.** 두 가지가 틀렸다:
+    //     ① `update({ handsFreeGesture: v })`를 권한을 묻기 **전에** 무조건 실행 → 사용자가 권한을
+    //        거부해도 **토글은 켜진 채로 남는다.**
+    //     ② `requestCameraPermission()`이 granted(boolean)를 돌려주는데 **그 결과를 버렸다** →
+    //        거부돼도 그대로 setHandsFreeGestureEnabled(true)를 불러 네이티브는 no-op.
+    //   결국 고치겠다고 적어둔 "보이는데 안 됨"이 그대로 남아 있었다. iOS 경로는 camDenied로 강제
+    //   OFF 표시까지 하는데 안드로이드만 그 처리가 통째로 없었다.
+    // → 권한이 실제로 허용됐을 때만 켠다. 거부면 토글을 원래대로 되돌리고 사용자에게 이유를 알린다.
+    if (!v) {
+      update({ handsFreeGesture: false });
+      bluetoothService.setHandsFreeGestureEnabled(false).catch(() => {});
       return;
     }
-    bluetoothService.setHandsFreeGestureEnabled(v).catch(() => {});
+    (async () => {
+      let granted = await bluetoothService.hasCameraPermission();
+      if (!granted) granted = await bluetoothService.requestCameraPermission().catch(() => false);
+      if (!granted) {
+        // 켜지 않는다 — "켜진 것처럼 보이는데 안 되는" 상태를 만들지 않는 게 이 수정의 전부다.
+        update({ handsFreeGesture: false });
+        bluetoothService.setHandsFreeGestureEnabled(false).catch(() => {});
+        useToastStore.getState().show(t('focus.cameraNeededToast'));
+        return;
+      }
+      update({ handsFreeGesture: true });
+      bluetoothService.setHandsFreeGestureEnabled(true).catch(() => {});
+    })();
   };
   const volumeSkipOn = isIOS ? settings.volumeKeyRemote : settings.bluetoothVolumeKeySkipEnabled;
   const setVolumeSkip = (v: boolean) => {
@@ -196,14 +214,32 @@ export default function FocusScreen() {
   // 값에 멈춰 있어 이미 켰는데도 계속 "권한 필요"로 보이고 탭할 때마다 설정 화면이 다시 열렸다.
   // iOS의 카메라 권한 재확인(위 :80, "설정에서 돌아오면 재확인")과 동일한 패턴 — 앱이 다시
   // active로 돌아올 때도 재확인한다.
+  // 🔴 2026-08-13 밤 사장님 실기기 신고("손짓 토글하고 앱 사용 중만 선택했는데 손짓 활성화 안 돼") —
+  //   토글을 탭한 그 순간에는 아직 권한이 없어서 아래 onValueChange가 setGesture(v) 대신
+  //   explainAndOpenSettings(권한 요청)만 부른다. 권한을 허용해도 **켜려던 의도(v=true)는 그대로
+  //   버려져서** settings.handsFreeGesture는 false로 남고 토글은 OFF 그대로다("권한 필요" 배지만
+  //   사라진다 — 실기기 확인). 사용자는 한 번 더 탭해야 한다는 걸 알 방법이 없다.
+  //   ⚠️ 접근성 경로는 시스템 설정 화면으로 나갔다 오므로 요청 직후에 다시 물어봐야 소용이 없다
+  //     (그 시점엔 아직 안 켠 상태다). 그래서 "켜달라고 했다"는 의도를 ref에 적어두고, 권한이
+  //     실제로 채워지는 순간(복귀 후 재확인) 그때 이어서 켠다.
+  const pendingEnableRef = useRef<null | 'gesture' | 'bluetooth'>(null);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const check = () => {
-      autoNextService.hasPermission().then(setHasAccessibility).catch(() => {});
-      bluetoothService.hasCameraPermission().then(setHasCameraPerm).catch(() => {});
+    const check = async () => {
+      const [acc, cam] = await Promise.all([
+        autoNextService.hasPermission().catch(() => false),
+        bluetoothService.hasCameraPermission().catch(() => false),
+      ]);
+      setHasAccessibility(acc);
+      setHasCameraPerm(cam);
+      const pending = pendingEnableRef.current;
+      if (pending === 'gesture' && acc && cam) { pendingEnableRef.current = null; setGesture(true); }
+      else if (pending === 'bluetooth' && acc) { pendingEnableRef.current = null; setVolumeSkip(true); }
     };
+    check();
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
     return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // 실제 스와이프(dispatchGesture)는 결국 접근성 서비스를 거쳐야 하므로(PaceAccessibilityService.
   // swipeOnce), 손짓/블루투스 둘 다 접근성이 꺼져 있으면 무력화된다 — 손짓은 카메라 권한도 추가로 필요.
@@ -266,7 +302,16 @@ export default function FocusScreen() {
       // 앱 설정 화면으로 직접 보낸다. requestCameraPermission이 즉시 false로 끝나면 그 신호로 판단.
       if (!grantedAfter) Linking.openSettings().catch(() => {});
     }
-    setHasCameraPerm(await bluetoothService.hasCameraPermission().catch(() => false));
+    const camOk = await bluetoothService.hasCameraPermission().catch(() => false);
+    setHasCameraPerm(camOk);
+    // 권한 다이얼로그는 별도 액티비티라 위 AppState 'active' 재확인이 보통 먼저 처리하지만,
+    // 기기에 따라 그 이벤트가 안 올 수 있어 여기서도 한 번 이어서 켠다(ref라 중복 실행은 없다).
+    const accOk = await autoNextService.hasPermission().catch(() => false);
+    setHasAccessibility(accOk);
+    if (pendingEnableRef.current === 'gesture' && accOk && camOk) {
+      pendingEnableRef.current = null;
+      setGesture(true);
+    }
   };
 
   useEffect(() => {
@@ -471,7 +516,11 @@ export default function FocusScreen() {
                 </View>
                 <Switch
                   value={volumeSkipOn && !bluetoothBlocked}
-                  onValueChange={(v) => (bluetoothBlocked ? explainAndOpenSettings('accessibility') : setVolumeSkip(v))}
+                  onValueChange={(v) => {
+                    if (!bluetoothBlocked) { setVolumeSkip(v); return; }
+                    if (v) pendingEnableRef.current = 'bluetooth';
+                    explainAndOpenSettings('accessibility');
+                  }}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
@@ -503,7 +552,12 @@ export default function FocusScreen() {
                 </View>
                 <Switch
                   value={gestureOn && !gestureBlocked}
-                  onValueChange={(v) => (gestureBlocked ? explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera') : setGesture(v))}
+                  onValueChange={(v) => {
+                    if (!gestureBlocked) { setGesture(v); return; }
+                    // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.
+                    if (v) pendingEnableRef.current = 'gesture';
+                    explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera');
+                  }}
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"

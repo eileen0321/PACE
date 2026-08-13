@@ -17,7 +17,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_ANDROID_REAL_ADS": "false"
+        "EXPO_PUBLIC_ANDROID_REAL_ADS": "true"
       }
     }
   },
@@ -28,7 +28,7 @@
         "appleTeamId": "328BF833XS"
       },
       "android": {
-        "track": "alpha",
+        "track": "production",
         "releaseStatus": "completed",
         "serviceAccountKeyPath": "C:/MyData/개인Data/jlpt-master_json/project-615a442a-a560-405a-ba6-929475b725df.json"
       }

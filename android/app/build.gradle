@@ -112,11 +112,29 @@ android {
         //     `EXPO_PUBLIC_ANDROID_REAL_ADS`이고, eas.json production에 명시적으로 "false"를 넣었다
         //     (없어도 기본이 테스트 광고지만, "빠뜨린 것"과 "정한 것"을 구분하기 위해 적어 둔다).
         //     프로덕션 트랙에 올리는 날 그 값을 "true"로 바꾼다.
-        versionCode 12
+        // ⛔ 2026-08-13 출시 직전에 잡은 함정 — **`.env`만 고치고 빌드하면 그 변경은 APK/AAB에 안 들어간다.**
+        //   Gradle의 JS 번들 태스크(createBundleReleaseJsAndAssets)는 입력으로 JS 소스만 본다.
+        //   `.env`는 번들 시점에 @expo/env가 읽어 값을 인라인하는데, 그 파일이 바뀌어도 태스크는
+        //   UP-TO-DATE로 건너뛴다. 실제로 EXPO_PUBLIC_ANDROID_REAL_ADS=true로 바꾼 뒤 bundleRelease를
+        //   돌렸는데 나온 AAB 안의 번들은 1시간 전(16:55) 것 그대로였고, 화면에도 "테스트 광고"가
+        //   그대로 떴다 — 그대로 올렸으면 프로덕션 수익이 0이었다.
+        //   → `.env`를 건드린 뒤에는 반드시 번들을 강제 재생성한다:
+        //       rm -rf android/app/build/generated/assets/react && ./gradlew bundleRelease assembleRelease
+        //     그리고 릴리즈 APK를 실기기에 깔아 배너에 "테스트 광고" 배지가 없는지 눈으로 확인한다
+        //     (2026-08-13 확인: 배지 사라지고 AdChoices ⓘ 붙은 실광고 표시. 클릭은 절대 금지).
+        // 🔴 2026-08-13 — **그날이 왔다.** 비공개 테스트 종료 → 프로덕션 트랙 출시본으로 12 → 13.
+        //   이 빌드부터 광고는 **실광고**다(.env의 EXPO_PUBLIC_ANDROID_REAL_ADS=true).
+        //   위 경고는 방향만 뒤집혀 그대로 유효하다 — **이 빌드를 비공개 테스트 트랙에 올리면 안 된다.**
+        //   담긴 것 중 오늘 실기기 검증 완료:
+        //     · 유튜브 영상이 20초에 강제로 넘어가던 회귀(틱톡용 폴백이 유튜브에도 걸렸다)
+        //       검증: near-end 4연속 32/33s·49/50s·47/48s·37/38s, no-progressbar 발사 0회
+        //     · 앱 전환 시 세션 분리, 앱별 사용시간 집계(분석 탭 "YouTube 15m·88% / TikTok 2m·12%")
+        //     · 접근성 OFF→ON 배너 양방향, 서버 날짜 클램프(±1일)
+        versionCode 13
         // ⚠️ bare workflow에서 **진짜 값은 이 파일**이다(위 versionCode 주석 참고). app.json의
         //   expo.version과 반드시 같이 올릴 것 — 2026-08-13에 versionCode만 12로 올리고 이 문자열을
         //   1.0.2로 남겨둬서, 스토어에 1.0.2로 올라갈 뻔했다(QA_FULL_TEST 발견 13).
-        versionName "1.0.3"
+        versionName "1.0.4"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

@@ -96,6 +96,22 @@ export default function FocusScreen() {
   const currentStreak = getCurrentStreak(attendanceHistory);
   // 2026-08-13 — 블루투스 리모컨이 **실제로 연결돼 있는지** (기능 on/off와 별개). 아래 ConnectedDot.
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
+  const refreshBluetooth = useBluetoothStore((s) => s.refresh);
+  // 🔴 2026-08-14 사장님 지적("블루투스 리모컨 옆에 안드처럼 녹색불 만들었어? 제대로 동작해?") —
+  //   isConnected는 useBluetoothStore.refresh()가 마지막으로 호출됐을 때의 스냅샷일 뿐이라(양
+  //   플랫폼 다 getState()가 폴링식 조회지 연결변경 이벤트 구독이 아님 — bluetoothService.ios.ts /
+  //   .android.ts 둘 다 동일 구조), home.tsx의 useFocusEffect가 Home 탭에 포커스될 때만 갱신했다.
+  //   Focus 탭 자체는 refresh()를 한 번도 안 불러서, Home을 거치지 않고 바로 Focus로 들어오거나
+  //   이 탭에 머무는 동안 이어폰을 붙였다 뗐다 해도 점이 그 순간을 절대 못 따라갔다(위 trackingLive와
+  //   같은 클래스의 "표시가 진실과 따로 논다" 버그). 탭 포커스 시 즉시 1회 + 포커스 유지 중엔 짧은
+  //   폴링으로 실제로 "살아있는" 표시가 되게 한다.
+  useFocusEffect(
+    useCallback(() => {
+      refreshBluetooth();
+      const id = setInterval(refreshBluetooth, 3000);
+      return () => clearInterval(id);
+    }, [refreshBluetooth])
+  );
   const autoModeEnabled = useBluetoothStore((s) => s.autoModeEnabled);
   const toggleAutoMode = useBluetoothStore((s) => s.toggleAutoMode);
   // 2026-07-27 사용자 지시 — "손짓/볼륨키/블루투스 핸즈프리" 상태를 Focus 탭에 모아서 보여달라는

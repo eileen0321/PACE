@@ -12,15 +12,30 @@ type GestureCameraPermission = {
 // hooks/useFeedRemoteControl.ios.ts(react-native-track-player)로 직접 수신·처리한다(Pace Feed
 // 화면 안에서만 의미 있는 조작이라 화면 로컬 상태로 충분 — 전역 서비스로 뺄 이유가 없음).
 // 이 파일은 Home/Focus/Settings 등 화면 밖 UI가 "지금 Bluetooth Hands-Free가 준비돼 있다"를
-// 표시할 때 쓰는 자리표시자(placeholder) 스텁이다 — Xcode/실기기가 없어 이번 라운드에서 실제
-// 연결기기 조회(AVAudioSession) 네이티브 코드는 작성/검증하지 못했다. supportsHardwareRemote=false로
-// 정직하게 표시(상위 UI가 이 값으로 "실기기 미검증" 배지를 조건부로 보여줄 수 있게).
+// 표시할 때 쓰는 자리표시자(placeholder) 스텁이었다.
+//
+// 🔴 2026-08-14 사장님 지적("블루투스 리모컨 옆에 안드처럼 녹색불 만들었어? 제대로 동작해?") —
+//   Windows가 focus.tsx(공용 파일)에 홈 카드와 같은 연결 표시 점(연결=초록 펄스/미연결=회색
+//   정적)을 이미 붙여놨는데, 그게 읽는 useBluetoothStore.isConnected가 여기서 **항상 false로
+//   고정**돼 있어 실제로 이어폰이 연결돼 있어도 절대 초록으로 안 바뀌는 상태였다.
+//   확인해보니 네이티브 쪽(modules/pace-gesture/ios/PaceGestureModule.swift의
+//   isBluetoothAudioConnected(), AVAudioSession.currentRoute 기반)은 이미 구현까지 돼 있었는데
+//   JS 쪽 어디서도 그걸 호출하는 코드가 없어 반쪽짜리로 남아 있었다 — 이제 실제로 연결한다.
 export const bluetoothService: BluetoothService = {
   supportsHardwareRemote: false,
 
   async getState(): Promise<BluetoothState> {
+    let isConnected = false;
+    try {
+      const mod = requireOptionalNativeModule<{ isBluetoothAudioConnected(): boolean }>('PaceGesture');
+      isConnected = mod?.isBluetoothAudioConnected?.() ?? false;
+    } catch {
+      isConnected = false;
+    }
     return {
-      isConnected: false,
+      isConnected,
+      // AVAudioSession.currentRoute는 포트 타입만 주지 사용자에게 보여줄 기기 이름까진 안 준다
+      // (안드로이드처럼 BluetoothDevice.getName()에 대응하는 API가 없음) — 필요해지면 별도 조사.
       deviceName: null,
       autoModeEnabled: false,
       nextCount: 0,

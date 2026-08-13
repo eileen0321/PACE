@@ -3132,7 +3132,10 @@ class PaceOverlayService : Service() {
 
     fun renderList() {
       listContainer.removeAllViews()
-      var items = SavedVideosStore.list(applicationContext, kind)
+      // 🔴 2026-08-14 사장님 지시 — 유튜브용/틱톡용 리스트를 나눈다. 지금 보고 있는 앱의 즐겨찾기만
+      //   보여준다(틱톡에서 유튜브 영상이 뜨면 골라도 튕겨 나간다 — Z28에서 항목을 감췄던 이유).
+      val favPlatform = if (isTikTokContext()) "tiktok" else "youtube"
+      var items = SavedVideosStore.list(applicationContext, kind, favPlatform)
       // 🔴 2026-08-09 사장님 지시("자동으로 지워") — videoId도 url도 없는 "껍데기" 행을 목록을 열 때
       //   자동으로 지운다. 2026-08-05에 "videoId를 못 얻으면 낙관적 추가를 되돌린다"로 원인은 막았지만,
       //   **그 이전에 이미 쌓인 행들**은 그대로 남아 있었다(실기기에서 `TikTok/광고`, `AI리더스협회`
@@ -3146,7 +3149,7 @@ class PaceOverlayService : Service() {
       if (shells.isNotEmpty()) {
         shells.forEach { SavedVideosStore.remove(applicationContext, it.id) }
         Log.i("PaceOverlayService", "favorite: removed ${shells.size} unplayable row(s) (no videoId/url)")
-        items = SavedVideosStore.list(applicationContext, kind)
+        items = SavedVideosStore.list(applicationContext, kind, favPlatform)
       }
       // 2026-08-05 — 제목이 비어 있는데 videoId는 아는 항목을 뒤늦게 채워준다.
       // 🔴 2026-08-08 확장 — 제목이 **비어 있는 것만** 고쳤더니, 이미 **틀리게** 저장된 행
@@ -3579,6 +3582,40 @@ class PaceOverlayService : Service() {
 
   // 클립보드 텍스트 하나로 즐겨찾기 행을 만든다. 두 경로가 공유하는 유일한 저장 지점이다.
   private fun saveFavoriteFromClipText(kind: String, clipText: String?, onChanged: () -> Unit) {
+    // 🔴 2026-08-14 사장님 지시 — 틱톡 즐겨찾기. 틱톡을 보고 있었으면 틱톡 링크를 뽑는다.
+    //   유튜브 경로는 아래 그대로 두고, 이 분기만 앞에 붙인다(회귀 위험을 최소화).
+    if (isTikTokContext()) {
+      val tk = extractTikTokVideo(clipText)
+      if (tk == null) {
+        showToast(
+          this,
+          if (isKoreanLocale()) "복사된 틱톡 링크가 없어요 — 공유 → 링크 복사를 먼저 하세요"
+          else "No TikTok link copied — tap Share → Copy link first"
+        )
+        return
+      }
+      val (tkId, tkUrl) = tk
+      // 제목/작성자는 접근성 트리에서 지금 보이는 값을 먼저 써보고(즉시 표시용), 썸네일과
+      // 정확한 제목은 oEmbed로 뒤늦게 채운다 — 유튜브 경로와 동일한 "낙관적 추가" 방식.
+      val info = PaceAccessibilityService.readVisibleTitleChannel()
+      val rowId = SavedVideosStore.insert(
+        applicationContext, kind, tkId, info?.first, info?.second, tkUrl, platform = "tiktok"
+      )
+      if (rowId == null) {
+        showToast(this, if (isKoreanLocale()) "이미 저장된 영상이에요" else "Already saved")
+        return
+      }
+      showToast(this, if (isKoreanLocale()) "추가했어요 ✓" else "Added ✓")
+      onChanged()
+      Thread {
+        val meta = fetchTikTokOEmbed(tkUrl)
+        if (meta != null) {
+          SavedVideosStore.updateMeta(applicationContext, rowId, meta.first, meta.second, meta.third)
+          foregroundPollHandler.post { onChanged() }
+        }
+      }.start()
+      return
+    }
     val videoId = PaceAccessibilityService.extractYouTubeVideoId(clipText)
     if (videoId == null) {
       showToast(
@@ -4623,7 +4660,12 @@ class PaceOverlayService : Service() {
       //   보여주느니 감춘다.
       //   ⚠️ 틱톡 즐겨찾기를 만들려면 링크 추출·썸네일·platform_app 컬럼(Z27)이 같이 필요하다.
       //     그때까지 SavedVideosStore.insert의 "youtube" 리터럴은 **이 가드 덕분에만** 참이다.
-      if (onTikTok) null else MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
+      // 🔴 2026-08-14(2차) 사장님 지시("야 틱톡에 favorite 기능 왜 안 보여", "유튜브용과 틱톡용으로
+      //   리스트를 안 만들었어?") — 감추는 건 답이 아니었다. **틱톡용을 실제로 만들었다**:
+      //   틱톡 링크 추출(extractTikTokVideo) + 제목/썸네일(fetchTikTokOEmbed) + platform_app에
+      //   "tiktok" 저장 + 목록을 지금 보는 앱 기준으로 필터(SavedVideosStore.list(platform)).
+      //   그래서 항목을 다시 노출한다 — 틱톡에서 열면 틱톡 즐겨찾기만 보인다.
+      MenuItem("Favorite", { hidePaceMenu(); showSavedFavoriteList("favorite") }, icon = "★"),
       // 🔴 2026-08-10 사장님 지시 — "hot 쇼츠 밑에 검색 기능 넣으면 되잖아". HOT 바로 아래 위치도 지시대로.
       MenuItem("Search", { hidePaceMenu(); showSearchPanel() }, icon = "⌕"),
     )
@@ -5269,6 +5311,60 @@ private fun fetchYouTubeOEmbed(videoId: String): Pair<String?, String?>? {
   }
 }
 
+/**
+ * 🔴 2026-08-14 — 틱톡 즐겨찾기(사장님 지시 "favorite을 유튜브용과 틱톡용으로 리스트를 나눠라").
+ *
+ * 클립보드에 복사된 틱톡 링크에서 저장에 필요한 것들을 뽑는다. 틱톡 공유시트의 "링크 복사"가
+ * 주는 형태는 두 가지다:
+ *   · 정식  https://www.tiktok.com/@handle/video/7412345678901234567
+ *   · 단축  https://vt.tiktok.com/ZSxxxxxxx/  (vm.tiktok.com도 같은 계열)
+ * 정식은 숫자 id가 그대로 videoId가 되고, 단축은 그 코드를 id로 쓴다(중복 판정용이라 유일하기만
+ * 하면 된다). 어느 쪽이든 **url을 그대로 보관**하므로 나중에 열 때는 그 url을 쓰면 된다.
+ */
+private val TIKTOK_FULL_URL = Regex("""https?://(?:www\.)?tiktok\.com/@[\w.\-]+/video/(\d+)""")
+private val TIKTOK_SHORT_URL = Regex("""https?://(?:vt|vm)\.tiktok\.com/([\w]+)""")
+
+private fun extractTikTokVideo(clipText: String?): Pair<String, String>? {
+  val text = clipText ?: return null
+  TIKTOK_FULL_URL.find(text)?.let { m ->
+    return m.groupValues[1] to m.value
+  }
+  TIKTOK_SHORT_URL.find(text)?.let { m ->
+    return m.groupValues[1] to m.value
+  }
+  return null
+}
+
+/**
+ * 틱톡 oEmbed — 제목/작성자/썸네일을 권한 없이 받는다(공개 엔드포인트).
+ * 유튜브와 달리 썸네일 URL을 videoId로 만들 수 없어서, 이 응답이 **유일한** 썸네일 출처다.
+ * 실패해도 저장은 진행한다(제목/썸네일 없이) — 목록에서 안 보이는 것보다 낫다.
+ */
+private fun fetchTikTokOEmbed(url: String): Triple<String?, String?, String?>? {
+  var conn: java.net.HttpURLConnection? = null
+  return try {
+    conn = (java.net.URL(
+      "https://www.tiktok.com/oembed?url=" + java.net.URLEncoder.encode(url, "UTF-8")
+    ).openConnection() as java.net.HttpURLConnection).apply {
+      connectTimeout = 6000
+      readTimeout = 6000
+      requestMethod = "GET"
+    }
+    if (conn.responseCode != 200) return null
+    val o = org.json.JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+    val title = o.optString("title").takeIf { it.isNotBlank() }
+    val author = o.optString("author_name").takeIf { it.isNotBlank() }
+    val thumb = o.optString("thumbnail_url").takeIf { it.isNotBlank() }
+    Log.i("PaceOverlay", "TikTok oEmbed 확보: $title / $author / thumb=${thumb != null}")
+    Triple(title, author, thumb)
+  } catch (e: Exception) {
+    Log.w("PaceOverlay", "TikTok oEmbed 실패 url=$url", e)
+    null
+  } finally {
+    try { conn?.disconnect() } catch (e: Exception) {}
+  }
+}
+
 private object SavedVideosStore {
   data class SavedVideoRow(
     val id: String,
@@ -5298,7 +5394,15 @@ private object SavedVideosStore {
 
   fun youtubeThumbnailUrl(videoId: String): String = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
 
-  fun list(context: Context, kind: String): List<SavedVideoRow> {
+  /**
+   * 🔴 2026-08-14 사장님 지적("favorite을 유튜브용과 틱톡용으로 리스트를 안 만들었어?") — 안 만들었다.
+   *   테이블에 platform_app 컬럼은 있는데 저장은 "youtube" 리터럴로 고정이었고(Z27) 조회에는
+   *   플랫폼 조건이 아예 없었다. 즉 **리스트가 하나뿐**이고 그 안엔 유튜브만 들어갔다.
+   *   → platform으로 나눠 읽는다. null이면 종전대로 전부(기존 호출부 호환).
+   *   ⚠️ platform_app이 비어 있는 예전 행은 유튜브로 간주한다 — 그때는 유튜브만 저장됐으므로
+   *     그게 사실이고, 이렇게 해야 기존 즐겨찾기가 목록에서 사라지지 않는다.
+   */
+  fun list(context: Context, kind: String, platform: String? = null): List<SavedVideoRow> {
     val userId = getUserId(context) ?: return emptyList()
     val db = openDb(context) ?: return emptyList()
     val out = mutableListOf<SavedVideoRow>()
@@ -5306,10 +5410,16 @@ private object SavedVideosStore {
     // 저장된 항목이 새 "Favorite" 목록에서 사라지지 않도록 같이 읽어온다.
     val kinds = if (kind == "favorite") arrayOf("favorite", "capture") else arrayOf(kind)
     val placeholders = kinds.joinToString(",") { "?" }
+    val platformClause = when (platform) {
+      null -> ""
+      "youtube" -> " AND (platform_app='youtube' OR platform_app IS NULL OR platform_app='')"
+      else -> " AND platform_app=?"
+    }
+    val platformArgs = if (platform != null && platform != "youtube") arrayOf(platform) else emptyArray()
     try {
       db.rawQuery(
-        "SELECT id, video_id, title, channel, url, thumbnail_url FROM saved_videos WHERE user_id=? AND kind IN ($placeholders) ORDER BY added_at DESC",
-        arrayOf(userId, *kinds)
+        "SELECT id, video_id, title, channel, url, thumbnail_url FROM saved_videos WHERE user_id=? AND kind IN ($placeholders)$platformClause ORDER BY added_at DESC",
+        arrayOf(userId, *kinds, *platformArgs)
       ).use { c ->
         while (c.moveToNext()) {
           out.add(
@@ -5335,24 +5445,34 @@ private object SavedVideosStore {
   // 2026-08-01 사장님 지시("Add 누르면 리스트에 추가되면서 공유도 동시에") — videoId/url이 아직 없어도
   // (공유 결과를 기다리는 중) 일단 낙관적으로 행을 만들고, 나중에 updateVideoUrl로 채워 넣을 수 있게
   // 생성된 id를 반환한다.
-  fun insert(context: Context, kind: String, videoId: String?, title: String?, channel: String?, url: String?): String? {
+  /**
+   * 🔴 2026-08-14 — platform/thumbnail을 인자로 받는다. 예전엔 "youtube" 리터럴 + i.ytimg.com
+   *   고정이라(Z27) 틱톡 영상을 저장할 방법 자체가 없었다. 기본값은 유튜브라 기존 호출부는 그대로다.
+   */
+  fun insert(
+    context: Context,
+    kind: String,
+    videoId: String?,
+    title: String?,
+    channel: String?,
+    url: String?,
+    platform: String = "youtube",
+    thumbnailOverride: String? = null,
+  ): String? {
     val userId = getUserId(context) ?: return null
     val db = openDb(context) ?: return null
     return try {
       val id = "sv-${System.currentTimeMillis()}-${(1000..9999).random()}"
-      val thumbnailUrl = videoId?.let { youtubeThumbnailUrl(it) }
+      // 유튜브는 videoId만으로 썸네일 URL을 만들 수 있지만 틱톡은 못 만든다(규칙이 없다) —
+      // 틱톡은 호출부가 oEmbed로 받아온 값을 그대로 넘긴다.
+      val thumbnailUrl = thumbnailOverride
+        ?: if (platform == "youtube") videoId?.let { youtubeThumbnailUrl(it) } else null
       val addedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
         .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
         .format(java.util.Date())
       db.execSQL(
         "INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        // 🔴 2026-08-14 감사(Z27) — 이 "youtube" 리터럴과 위 i.ytimg.com 썸네일은 **가정에 기대고
-        //   있다**: 이 경로로 들어오는 건 유튜브 영상뿐이라는 가정. 지금은 두 겹으로 보장된다 —
-        //   ① saveFavoriteFromClipText가 extractYouTubeVideoId로 유튜브 링크만 통과시키고
-        //   ② P 메뉴의 Favorite 항목이 틱톡에서는 아예 안 뜬다(Z28).
-        //   ⚠️ 틱톡 즐겨찾기를 붙이는 사람은 **이 줄을 반드시 같이 고쳐야 한다.** 안 고치면 틱톡
-        //     영상이 "youtube"로 기록되고 썸네일 URL이 i.ytimg.com으로 나가 깨진다.
-        arrayOf(id, userId, kind, videoId, title, channel, url, thumbnailUrl, "youtube", addedAt)
+        arrayOf(id, userId, kind, videoId, title, channel, url, thumbnailUrl, platform, addedAt)
       )
       id
     } catch (e: Exception) {
@@ -5367,6 +5487,24 @@ private object SavedVideosStore {
   // 2026-08-05 사장님 지적("제목 없는 쇼츠 봤어? 주소 알면 주소로 가서라도 제목 따와야 할 거 아냐") —
   // 맞다. videoId를 아는 이상 제목을 못 채울 이유가 없다. YouTube oEmbed는 **API 키 없이** 공개로
   // 제목/채널을 준다(https://www.youtube.com/oembed?url=…&format=json). 저장 직후 백그라운드로 받아 채운다.
+  /** 위와 같지만 썸네일까지 — 틱톡은 썸네일을 videoId로 만들 수 없어 oEmbed 응답으로만 채운다. */
+  fun updateMeta(context: Context, id: String, title: String?, channel: String?, thumbnailUrl: String?): Boolean {
+    if (title.isNullOrBlank() && channel.isNullOrBlank() && thumbnailUrl.isNullOrBlank()) return false
+    val db = openDb(context) ?: return false
+    return try {
+      db.execSQL(
+        "UPDATE saved_videos SET title=COALESCE(?, title), channel=COALESCE(?, channel), thumbnail_url=COALESCE(?, thumbnail_url) WHERE id=?",
+        arrayOf(title, channel, thumbnailUrl, id)
+      )
+      true
+    } catch (e: Exception) {
+      Log.e("PaceOverlay", "SavedVideosStore.updateMeta failed", e)
+      false
+    } finally {
+      db.close()
+    }
+  }
+
   fun updateTitleChannel(context: Context, id: String, title: String?, channel: String?): Boolean {
     if (title.isNullOrBlank() && channel.isNullOrBlank()) return false
     val db = openDb(context) ?: return false

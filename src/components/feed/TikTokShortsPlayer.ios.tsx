@@ -434,9 +434,38 @@ const INJECTED_JS = `
     } catch(e) {}
   }
 
+  // 2026-08-14(26차) — 사장님 실기기 재현: 로그인 모달은 안 뜨는데(우리 진단이 못 잡음) 틱톡이
+  // "영상을 불러올 수 없음"/"서버 오류"를 보여줌. 이게 정확히 어떤 문구·버튼으로 나오는지 아직
+  // 한 번도 캡처 못 했다 — 진단으로 한 번만 잡는다(클릭은 안 함, 순수 관측).
+  var errorStateDumped = false;
+  function dumpErrorStateOnce(){
+    if (errorStateDumped) return;
+    try {
+      var bt = document.body.innerText || '';
+      var markers = ['불러올 수 없', '서버 오류', '오류가 발생', '다시 시도', 'something went wrong', "couldn't load", 'error occurred'];
+      for (var i = 0; i < markers.length; i++) {
+        if (bt.toLowerCase().indexOf(markers[i].toLowerCase()) !== -1) {
+          errorStateDumped = true;
+          var idx = bt.toLowerCase().indexOf(markers[i].toLowerCase());
+          send({ type: 'domlog', text: '🔴 에러상태 감지("' + markers[i] + '"): ' + bt.slice(Math.max(0, idx - 40), idx + 80).replace(/\n/g, ' ') });
+          var btns = document.querySelectorAll('button, [role="button"], a');
+          var found = [];
+          for (var j = 0; j < btns.length && found.length < 8; j++) {
+            if (!isVisible(btns[j])) continue;
+            var t2 = (btns[j].textContent || '').trim();
+            if (t2) found.push('"' + t2.slice(0, 20) + '"');
+          }
+          send({ type: 'domlog', text: '에러상태 버튼: ' + found.join(', ') });
+          return;
+        }
+      }
+    } catch(e) {}
+  }
+
   function houseKeeping(){
     dismissAppBanner();
     dumpDomOnce();
+    dumpErrorStateOnce();
     var href = '' + location.href;
     // ⚠️ 2026-08-13(20차) 코드 재검토로 발견 — search()가 /search?q=…로 이동시키면 그 결과 페이지는
     // 보통 썸네일 그리드라 자동재생 <video>가 없는 게 정상이다. 이 novideo 체크가 그걸 "재생 실패"로

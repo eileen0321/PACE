@@ -522,14 +522,12 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         domStorageEnabled
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
-        // 2026-08-14 웹서치로 확인(추측 아님, react-native-webview GitHub #1780) —
-        // sharedCookiesEnabled는 "문서화된 대로 안 믿을 만하게 동작한다"고 알려져 있다. 우리는
-        // 데스크톱 UA로 위장하는데, 진짜 Safari(모바일 UA)가 tiktok.com에 남긴 쿠키를 공유
-        // 저장소에서 그대로 물려받으면 "이 쿠키는 모바일 브라우저용인데 지금 데스크톱 브라우저가
-        // 들고 있다"는 불일치가 생긴다 — 봇 탐지의 전형적인 신호. 세션마다 결과가 달랐던 것과
-        // 맞아떨어진다. 꺼서 이 WebView만의 격리된 쿠키 저장소를 쓰게 한다(그래도 우리 자신의
-        // 이전 방문 쿠키는 WKWebView 자체 저장소에 그대로 남아 세션 간 유지된다 — Safari와만 안 섞임).
-        sharedCookiesEnabled={false}
+        // 2026-08-14 되돌림 — sharedCookiesEnabled={false}로 바꾼 뒤 실기기에서 페이지 로딩
+        // 자체가 영원히 안 끝나는 회귀가 났다(같은 폰 Safari로 tiktok.com은 정상 — 네트워크/틱톡
+        // 서버는 멀쩡, WebView 설정 문제로 확정). "모바일 쿠키를 데스크톱 UA가 들고 있어 봇탐지에
+        // 걸린다"는 가설 자체는 여전히 유효할 수 있지만, 끄는 구현이 다른 문제(아마 틱톡의 초기
+        // 리다이렉트/동의 체인이 기존 쿠키 존재를 전제해 무한 대기)를 만든 것으로 보여 원복한다.
+        sharedCookiesEnabled
         onShouldStartLoadWithRequest={(req) => isAllowedNavigation(req.url)}
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).

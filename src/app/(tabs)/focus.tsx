@@ -11,7 +11,8 @@ import { useStatsStore } from '../../store/useStatsStore';
 import { useUserStore } from '../../store/useUserStore';
 import { useDailyBonusStore } from '../../store/useDailyBonusStore';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
-import { bluetoothService, autoNextService } from '../../services/platform';
+import { bluetoothService, autoNextService, overlayService } from '../../services/platform';
+import { useSessionStore } from '../../store/useSessionStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
@@ -75,6 +76,23 @@ export default function FocusScreen() {
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const attendanceHistory = useAttendanceStore((s) => s.history);
   const bonusCredits = useAttendanceStore((s) => s.bonusCredits);
+  // 🔴 2026-08-13 실기기 발견 — 이 화면의 "실시간 추적 중" 배지가 **조건 없이 항상** 떠 있었다.
+  //   접근성이 꺼져 추적이 반쪽인 상태에서도 초록불이라, **홈은 "추적이 꺼져 있어요"라고 하는데
+  //   집중 탭은 "실시간 추적 중"이라고 하는** 정면 모순이 실기기에서 그대로 관측됐다.
+  //   사용자는 둘 중 뭘 믿어야 할지 알 수 없고, 우리도 "왜 자동넘김이 안 되지?"의 원인을 못 짚는다.
+  //   → 홈 배너와 **같은 진실원천**(overlayService.hasAccessibilityPermission)을 쓴다.
+  // 지금 도는 세션의 플랫폼(없으면 null) — 히어로 제목이 이 값을 쓴다.
+  const activePlatform = useSessionStore((s) => (s.status === 'running' ? s.platformApp : null));
+  const [trackingLive, setTrackingLive] = useState(Platform.OS !== 'android');
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const check = () => {
+      overlayService.hasAccessibilityPermission().then(setTrackingLive).catch(() => {});
+    };
+    check();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); });
+    return () => sub.remove();
+  }, []);
   const currentStreak = getCurrentStreak(attendanceHistory);
   // 2026-08-13 — 블루투스 리모컨이 **실제로 연결돼 있는지** (기능 on/off와 별개). 아래 ConnectedDot.
   const isBluetoothConnected = useBluetoothStore((s) => s.isConnected);
@@ -269,12 +287,23 @@ export default function FocusScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + adBannerHeight }]} showsVerticalScrollIndicator={false}>
         {/* 1. Session Control Hero */}
         <LinearGradient colors={['#1A1D26', colors.cardDeep]} style={styles.heroCard}>
-          <View style={styles.liveTag}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveTagText}>{t('focus.liveEngine')}</Text>
-          </View>
+          {/* 접근성이 꺼져 있으면 "추적 중"이라고 하면 안 된다 — 위 trackingLive 주석 참고.
+              탭하면 홈 배너와 동일하게 접근성 설정으로 보낸다(막다른 경고를 만들지 않는다). */}
+          <Pressable
+            style={[styles.liveTag, !trackingLive && styles.liveTagWarning]}
+            disabled={trackingLive}
+            onPress={() => overlayService.requestAccessibilityPermission?.()}
+          >
+            <View style={[styles.liveDot, !trackingLive && styles.liveDotWarning]} />
+            <Text style={[styles.liveTagText, !trackingLive && styles.liveTagTextWarning]}>
+              {trackingLive ? t('focus.liveEngine') : t('focus.permissionNeeded')}
+            </Text>
+          </Pressable>
           <Text style={styles.heroLabel}>{t('focus.focusSession')}</Text>
-          <Text style={styles.heroTitle}>YouTube</Text>
+          {/* 🔴 2026-08-13 — 여기가 "YouTube" 하드코딩이었다. 틱톡 세션 중에도 YouTube라고 떠서
+              사용자가 보는 화면과 앱이 말하는 게 달랐다(발견 12와 같은 계열 — 앱 구분이 UI에서
+              무너지는 지점). 실제 세션의 플랫폼을 쓴다. 세션이 없으면 마지막 선택을 보여준다. */}
+          <Text style={styles.heroTitle}>{activePlatform === 'tiktok' ? 'TikTok' : 'YouTube'}</Text>
 
           <View style={styles.splitRow}>
             <View style={styles.splitCol}>
@@ -534,6 +563,10 @@ const styles = StyleSheet.create({
   liveTag: { position: 'absolute', top: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
   liveTagText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: '#A5B4FC', letterSpacing: 0.5, textTransform: 'uppercase' },
+  // 접근성이 꺼져 추적이 반쪽일 때 — 알약의 "권한 필요" 배지와 같은 앰버로 맞춘다(같은 원인, 같은 색).
+  liveTagWarning: { backgroundColor: '#F5A52433', borderColor: '#F5A5244D' },
+  liveDotWarning: { backgroundColor: '#F5A524' },
+  liveTagTextWarning: { color: '#F5A524' },
   recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
   recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },
   // 2026-07-28 사장님 지시 — 권한 없을 때 관련 토글을 흐리게(disable처럼 보이게) 표시.

@@ -240,6 +240,12 @@ class PaceOverlayService : Service() {
         //   경로를 탔다. 판단 기준은 "지금 무엇이 전경인가"가 아니라 **"직전에 무엇을 보고 있었나"**다.
         //   여기 폴링에서 감시 대상 앱이 잡힐 때마다 남겨두고, 메뉴/검색은 그 값을 쓴다.
         if (usageBasedVisible) lastSupportedAppPackage = usageStatsForeground
+        // 🔴 2026-08-13(2차) — 분 단위 틱의 차감 판정이 읽을 값. lastSupportedAppPackage는 "직전에
+        //   무엇을 보고 있었나"라서 대상 앱을 떠나도 **안 지워진다**(바로 위 주석의 의도) — 차감
+        //   판정에 그걸 쓰면 한 번 유튜브를 본 뒤로는 영원히 참이 된다. "지금 전경인가"는 이 값이다.
+        //   ⚠️ 틱에서 ForegroundAppWatcher.getForegroundPackage()를 다시 부르면 안 되는 이유는
+        //     performTick의 주석 참고(커서를 전진시켜 이 폴링의 이벤트를 뺏는다).
+        lastUsageBasedVisible = usageBasedVisible
         val shouldShow = !selfForeground && ((windowVisibleOrNull ?: eventBasedVisible) || usageBasedVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
@@ -1054,6 +1060,10 @@ class PaceOverlayService : Service() {
     // 2026-08-13 — 위 registerForegroundTracking() 참고. 액티비티 생명주기로 갱신되는 즉시값.
     // 2026-08-13 — 직전에 보고 있던 감시 대상 앱. 검색/메뉴가 "어느 앱 맥락인가"를 판단할 때 쓴다.
     @Volatile private var lastSupportedAppPackage: String? = null
+    // 2026-08-13 — "지금 감시 대상 앱이 전경인가"(UsageStats 기준, 접근성과 무관). 포그라운드 폴링이
+    // 매초 갱신하고, 분 단위 틱의 차감 판정이 읽기만 한다. lastSupportedAppPackage와 달리 대상 앱을
+    // 떠나면 false로 내려간다.
+    @Volatile private var lastUsageBasedVisible: Boolean = false
 
     /** 2026-08-13 — 접근성 서비스가 "전체 창 후보 중 어느 앱을 우선할지" 판단할 때 쓴다
      *  (PaceAccessibilityService.bestTrackedWindow 참고). 폴링이 매초 갱신하는 값이다. */
@@ -2176,7 +2186,17 @@ class PaceOverlayService : Service() {
       val shouldDecrement = when (isPlaying) {
         true -> true
         false -> false
-        null -> SupportedApps.PACKAGES.contains(ForegroundAppWatcher.getForegroundPackage(this))
+        // 🔴 2026-08-13(2차 실기기) — 여기서 ForegroundAppWatcher.getForegroundPackage()를 **직접
+        //   부르면 안 된다.** 그 함수는 순수 조회가 아니라 `cursor`를 전진시키는 **부작용이 있는**
+        //   상태 함수다(UsageEvents를 마지막 조회 이후 증분으로 훑고 커서를 옮긴다). 이미 위
+        //   포그라운드 폴링 루프가 매초 부르고 있는데 여기서 또 부르면 **두 호출이 서로 이벤트를
+        //   뺏는다** — 내 60초 틱이 MOVE_TO_FOREGROUND를 먼저 소비해버리면 폴링 루프는 그 전이를
+        //   영영 못 본다.
+        //   실측: 유튜브가 분명히 포그라운드인데 "대상 앱도 포그라운드가 아님"이 찍혔고(15:49:32),
+        //   같은 시간대에 알약도 사라졌다.
+        // → 이미 매초 갱신돼 있는 캐시(lastSupportedAppPackage)를 **읽기만** 한다. 이 값은 위
+        //   폴링이 "지원 앱이 전면에 보인다"고 확정했을 때만 채워지므로 그대로 쓰면 된다.
+        null -> lastUsageBasedVisible
       }
       if (shouldDecrement && elapsedMinutes > 0) {
         remainingMinutes = (remainingMinutes - elapsedMinutes).coerceAtLeast(0)
@@ -5059,6 +5079,28 @@ class PaceOverlayService : Service() {
         )
       }
       zapBadge?.visibility = if (active) View.VISIBLE else View.GONE
+      // 🔴 2026-08-13 실기기 발견 — 이 배지가 **탭이 안 먹었다.** "권한 필요"라고 띄워만 놓고
+      //   아무 동작도 없었다(탭해도 로그 한 줄 안 남는 걸 adb로 확인). 사용자가 유튜브를 보는
+      //   동안 접근성이 꺼졌다는 걸 알 수 있는 **가장 눈에 잘 띄는 자리**인데 죽어 있었다.
+      //   홈 배너는 Pace를 열어야 보이고 알림은 지나치면 그만이라, 실질적으로 유일하게 상시
+      //   노출되는 유도 지점이 여기다.
+      // → 접근성이 깨진 상태에서만 탭 가능하게 하고, 탭하면 접근성 설정으로 바로 보낸다.
+      //   정상일 때는 클릭을 아예 떼서(false) 기존 알약 탭 동작(P 메뉴)을 방해하지 않는다.
+      isClickable = accessibilityBroken
+      isFocusable = accessibilityBroken
+      setOnClickListener(
+        if (!accessibilityBroken) null
+        else View.OnClickListener {
+          Log.i("PaceOverlay", "권한 필요 배지 탭 — 접근성 설정으로 이동")
+          try {
+            startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+          } catch (e: Exception) {
+            Log.w("PaceOverlay", "open accessibility settings failed", e)
+          }
+        }
+      )
     }
   }
 

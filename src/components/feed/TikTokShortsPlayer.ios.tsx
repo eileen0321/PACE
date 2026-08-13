@@ -44,11 +44,15 @@ type Props = {
 
 const INJECTED_JS_BEFORE_LOAD = `
 (function() {
-  // 2026-08-14(27차) 진단 — 지금까지 모든 로그가 INJECTED_JS(페이지 로드 "완료" 후 주입)에서만
-  // 나갔다. "로딩만 계속 돎"이 재현될 때 로그가 통째로 0줄이었던 게 (a) 이 BeforeContentLoaded
-  // 자체가 전혀 실행 안 된 것인지, (b) 이건 실행됐는데 그 뒤 페이지 로드가 "완료" 판정을 영영
-  //못 받아 INJECTED_JS가 못 도는 것인지 구분이 안 됐다. 여기서 한 줄 찍어 구분한다.
-  try { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() })); } catch(e) {}
+  function send(o) { try { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); } catch(e) {} }
+  // 2026-08-14(27차) 진단으로 실기기에서 확정(추측 아님): injectedJavaScript(페이지가 "완전히
+  // 로드 끝남" 판정을 받은 뒤에만 주입되는 별도 prop)는 틱톡이 로딩 상태에 갇히면(반복 재현)
+  // 그 판정이 영영 안 나서 **한 번도 실행되지 않았다** — 배너닫기/게이트통과/자동넘김 등 핵심
+  // 로직 전부가 여기 있었는데 전부 죽어있던 것. 이 BeforeContentLoaded는 항상 실행되는 게
+  // 로그로 확인됐으므로(아래 진단 라인), 핵심 로직을 전부 여기로 옮기고 "완전 로드"가 아니라
+  // DOMContentLoaded(HTML 파싱 완료 시점 — 훨씬 이르고, 네트워크가 유휴 상태가 되길 기다리지
+  // 않음) 시점에 실행한다. injectedJavaScript prop 자체는 이제 안 쓴다(중복 초기화 방지).
+  send({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() });
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -57,31 +61,17 @@ const INJECTED_JS_BEFORE_LOAD = `
       HTMLVideoElement.prototype.webkitEnterFullscreen = function(){};
     }
   } catch(e) {}
-  // 2026-08-14 — navigator.userAgentData/platform/maxTouchPoints 스푸핑을 시도했다가 실기기에서
-  // 페이지가 아예 안 뜨는(로그 한 줄도 안 나옴 — 이전엔 항상 몇 초 안에 DOM덤프가 찍혔다) 회귀를
-  // 만들어 즉시 되돌린다. 검증 안 된 상태로 실기기에 남겨두면 안 된다는 판단 — 가설 자체(UA-CH
-  // 불일치가 봇탐지 신호)는 여전히 유효할 수 있지만, 구현이 페이지 부트스트랩을 깨뜨린 것으로
-  // 보인다(아마 navigator.platform을 getter-only로 덮어쓴 게 틱톡 번들의 초기화 코드와 충돌).
-  // 다시 시도하려면 이 하나만 개별적으로(다른 변경과 안 섞어서) 검증할 것.
   function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
   try {
-    var mo = new MutationObserver(function(){
+    var mo0 = new MutationObserver(function(){
       var list = document.querySelectorAll('video');
       for (var i = 0; i < list.length; i++) ensureInline(list[i]);
     });
-    mo.observe(document.documentElement || document, { childList: true, subtree: true });
+    mo0.observe(document.documentElement || document, { childList: true, subtree: true });
   } catch(e) {}
-})();
-true;
-`;
 
-const INJECTED_JS = `
-(function() {
-  // domlog는 RN 쪽(onMessage)에서 __DEV__일 때만 PaceGestureLog로 넘긴다 — 여기서 또 게이팅할
-  // 필요 없다(예전엔 window.__PACE_DIAG__를 요구했는데 프로덕션 파일에선 그 값을 아무도 안 세팅해
-  // 진단 로그가 전부 조용히 버려지고 있었다).
-  function send(o) { if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
-
+  function mainInit() {
+  send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -466,6 +456,14 @@ const INJECTED_JS = `
   setInterval(pollActiveVideo, 500);
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);
+  } // mainInit 끝
+
+  // "완전 로드"가 아니라 DOMContentLoaded(또는 이미 그 시점을 지났으면 즉시) 기준으로 실행.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mainInit);
+  } else {
+    mainInit();
+  }
 })();
 true;
 `;
@@ -521,8 +519,9 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         ref={webRef}
         source={{ uri: 'https://www.tiktok.com/foryou' }}
         style={styles.web}
+        // 2026-08-14(28차) — injectedJavaScript(페이지 "완전 로드" 후 주입) prop을 더 이상 안 쓴다
+        // — 핵심 로직 전부가 BeforeContentLoaded 안의 mainInit()(DOMContentLoaded 기준)로 옮겨감.
         injectedJavaScriptBeforeContentLoaded={INJECTED_JS_BEFORE_LOAD}
-        injectedJavaScript={INJECTED_JS}
         javaScriptEnabled
         domStorageEnabled
         allowsInlineMediaPlayback

@@ -6,6 +6,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useUserStore } from '../../store/useUserStore';
+import { teardownSession } from '../../services/sessionTeardown';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { useStatsStore } from '../../store/useStatsStore';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
@@ -488,6 +489,40 @@ export default function HomeScreen() {
     // running인 동안 **무조건** 재개로 빠뜨려서, 쇼츠 진입 코드(openShortsFeed)가 한 번도 실행되지
     // 않았다. 재개는 런처 인텐트라 복원할 태스크가 없으면 유튜브 홈이 열린다. 두 증상의 공통 원인.
     if (useSessionStore.getState().status === 'running') {
+      // 🔴 2026-08-13 발견 12 — **여기서 플랫폼을 비교하지 않던 게 버그였다.** 위 감사 HIGH2 가드는
+      //   "같은 카드 재탭 시 이중 세션 방지"가 목적이었는데 **같은 앱 재탭과 다른 앱 전환을 구분하지
+      //   않아서**, 유튜브 세션 중 틱톡 카드를 눌러도 세션이 그대로 유지됐다. viewing_sessions의
+      //   platform_app은 INSERT 때 한 번 박히고 세션 도중 갱신되는 코드가 없으므로(전수 확인),
+      //   **틱톡 시청시간이 통째로 유튜브로 기록**됐다.
+      //   부수 피해: 홈 "Active" 배지가 엉뚱한 카드에 남고, 분석탭 Platform Breakdown이 앱을 하나로만
+      //   보게 돼 `length > 1`을 못 채우고 섹션째 숨는다 — 2026-08-12에 "틱톡을 봤으면 같이 나와야
+      //   하잖아"라고 지시받은 그 기능이 교차 사용에서 성립하지 않았다(M11의 실사용 재현 경로).
+      //   → 플랫폼이 다르면 **이전 세션을 닫고 새 세션을 연다.** 시간·한도는 앱 구분 없이 공용이라
+      //     (QA_MATRIX 1-4) 사용자 체감은 그대로고 기록만 정확해진다.
+      //   ⚠️ teardown을 **await한 뒤에** startSession을 부른다. 안 기다리면 두 세션이 겹치고,
+      //     /overlay의 마운트 가드(status === 'running')에 새 세션이 막혀 조용히 아무 일도 안 난다.
+      const activePlatform = useSessionStore.getState().platformApp;
+      const activeSessionId = useSessionStore.getState().currentSessionId;
+      if (activePlatform && activePlatform !== platform) {
+        const uid = useUserStore.getState().user?.id;
+        const startedAt = useSessionStore.getState().startedAt;
+        (async () => {
+          if (activeSessionId && uid) {
+            await teardownSession({
+              sessionId: activeSessionId,
+              userId: uid,
+              startedAtMs: startedAt ? startedAt.getTime() : null,
+              // 사용자가 직접 다른 앱으로 갈아탄 것이므로 수동 종료다 — 'unknown'으로 남기면
+              // 종료사유 통계에서 "원인을 모르는 종료"와 섞인다(2026-08-02 규칙).
+              endReason: 'manual_stop',
+            });
+          } else {
+            useSessionStore.getState().finish();
+          }
+          startSession(platform);
+        })().catch(() => {});
+        return;
+      }
       // iOS는 외부 앱을 안 열어 resumePlatformApp이 즉시 return이다 — 예전엔 카드를 눌러도 **아무 일도
       // 일어나지 않았다**(피드에서 나온 뒤 홈에서 재탭 시 먹통). 보던 피드로 되돌려 준다.
       if (Platform.OS === 'ios') { router.push({ pathname: '/feed', params: { platform } }); return; }

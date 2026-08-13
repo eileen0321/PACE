@@ -99,7 +99,10 @@ export type UserSettings = {
 // 끝내 알아내지 못했을 때도 'manual_stop'(사용자가 직접 껐음)으로 기록해서, "정말 직접 끈 것"과
 // "판정에 실패한 것"이 통계상 구분되지 않았다(StatsService의 종료사유 집계가 그대로 왜곡됨).
 // 백엔드는 이 값을 자유 문자열로 저장하고 getOrDefault로 집계하므로 새 값 추가는 안전하다.
-export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop' | 'app_restarted' | 'unknown';
+// 2026-08-13 'discarded_too_short' 추가 — 3초 미만 세션(카드 오탭/즉시 뒤로가기)은 시청으로
+// 기록하지 않되(발견 1·D33), 열린 행을 그대로 두면 고아가 되므로 0초로 닫고 사유를 남긴다.
+// "짧아서 안 세는 것"과 "안 닫은 것"을 구분하기 위한 값이다.
+export type SessionEndStatus = 'completed' | 'daily_limit_reached' | 'sleep_timer_expired' | 'sleep_detected' | 'manual_stop' | 'app_restarted' | 'unknown' | 'discarded_too_short';
 
 export type ViewingSession = {
   id: string;

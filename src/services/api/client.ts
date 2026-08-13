@@ -137,10 +137,14 @@ export const authApi = {
 // 로컬(안드 prefs / iOS AsyncStorage)만으로는 앱을 지웠다 깔면 통째로 초기화돼서 "무료 10분 +
 // 광고 5분"을 무한 반복할 수 있었다. 게스트도 /auth/guest로 계정이 있으므로 비로그인도 보호된다.
 export type FocusAllowance = {
-  date: string;                 // YYYY-MM-DD (클라이언트 로컬 날짜)
+  date: string;                 // YYYY-MM-DD (클라이언트가 보낸 날짜, 서버가 ±1일로 클램프한 값)
   adExtendCount: number;
   timedOut: boolean;
   sessionEndsAt: string | null; // ISO8601(UTC)
+  // 🔴 2026-08-13 — 서버가 아는 오늘(UTC). 기기 날짜 조작과 무관한 **신뢰 가능한 날짜**다.
+  // 출석 크레딧이 이 값을 쓴다(useAttendanceStore) — 로컬 날짜만 보면 설정에서 날짜를 바꿔가며
+  // 무한 적립할 수 있었다(발견 10). 구버전 서버는 이 필드를 안 주므로 optional.
+  serverToday?: string;
 };
 
 export const focusAllowanceApi = {

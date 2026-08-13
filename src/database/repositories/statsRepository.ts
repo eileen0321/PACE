@@ -199,10 +199,15 @@ export async function getWeeklyStats(userId: string): Promise<DailyStats[]> {
 export async function getPreviousWeekStats(userId: string): Promise<DailyStats[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ date: string; total_minutes: number; total_videos: number; longest: number }>(
+    // 🔴 2026-08-13 발견 6 — 이 함수만 열린 행(ended_at IS NULL)을 안 걸러서, 집계 4함수 중
+    //   혼자 규칙이 달랐다(getTodayUsageMinutes/getTodayUsageByApp/getWeeklyStats는 전부
+    //   `CASE WHEN ended_at IS NOT NULL`). 지난주 구간엔 열린 행이 있을 수 없고 있어도
+    //   duration_seconds가 0이라 **결과는 같았지만**, 규칙이 갈려 있는 상태 자체가 이 파일이
+    //   2026-08-04에 겪은 사고("같은 화면 안에서 숫자가 갈림")의 재료다. 형태를 맞춰 둔다.
     `SELECT date(started_at, 'localtime') as date,
-            SUM(duration_seconds) / 60 as total_minutes,
+            SUM(CASE WHEN ended_at IS NOT NULL THEN duration_seconds ELSE 0 END) / 60 as total_minutes,
             SUM(videos_watched) as total_videos,
-            MAX(duration_seconds) as longest
+            MAX(CASE WHEN ended_at IS NOT NULL THEN duration_seconds ELSE 0 END) as longest
      FROM viewing_sessions
      WHERE user_id = ? AND date(started_at, 'localtime') >= date('now', '-13 days', 'localtime') AND date(started_at, 'localtime') < date('now', '-6 days', 'localtime')
      GROUP BY date(started_at, 'localtime')

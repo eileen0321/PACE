@@ -13,7 +13,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { autoNextService, bluetoothService, overlayService, syncAutoNextBuildFlag } from '../services/platform';
-import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow } from '../database/repositories/sessionsRepository';
+import { getOrphanedSessions, closeOrphanedSession, endSession as endSessionRow, startSession as startSessionRow, purgeOldOverlayEvents } from '../database/repositories/sessionsRepository';
 import { backfillSleepFromHistory } from '../services/sleepBackfill';
 import { getTodayUsageMinutes } from '../database/repositories/statsRepository';
 import { useSessionStore } from '../store/useSessionStore';
@@ -287,6 +287,9 @@ export default function RootLayout() {
             : wallClockSeconds;
           await closeOrphanedSession(session.id, durationSeconds, endedAtIso);
         }
+        // 2026-08-13 발견 11 — overlay_events 보관기간(30일) 정리. 고아 세션 정리와 같은
+        // 콜드스타트 1회 경로에 붙인다. 실패해도 부팅을 막지 않는다.
+        purgeOldOverlayEvents().catch(() => {});
         // 2026-07-26 사용자 지적("유튜브는 PIP로 계속 도는데 Pace 추적/오버레이는 안 살아남", "화면을
         // 다시 키웠을 때 오버레이를 띄운다던지") — 삼성 배터리 최적화 등으로 프로세스 자체가
         // 죽으면(위 orphan 정리 대상), YouTube 자체는 별개 프로세스라 계속 재생/PIP로 남아있을 수
@@ -641,8 +644,15 @@ export default function RootLayout() {
             <Stack.Screen name="quick-control-sheet" options={{ presentation: 'transparentModal', animation: 'slide_from_bottom' }} />
             {/* iOS Pace Feed(자체 대체 피드 플레이어) — 2026-07-18 iOS 전략 확정. 풀스크린 재생. */}
             <Stack.Screen name="feed/index" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
-            {/* ⚠️ DEV 전용 WKWebView Shorts POC(원안 ①) — 프로덕션 제출 금지. 화면 자체는 __DEV__ 스텁이지만
-                라우트 등록도 릴리즈에선 아예 빼서 pace://dev/shorts-poc 도달 자체를 막는다(감사 M1, 2026-07-27). */}
+            {/* ⚠️ DEV 전용 WKWebView POC(원안 ①) — 프로덕션 제출 금지.
+                🔴 2026-08-13 발견 4 정정 — 여기 "라우트 등록을 릴리즈에서 빼서 도달 자체를 막는다"고
+                   적혀 있었으나 **그건 사실이 아니다.** expo-router는 파일 기반이라 `app/` 아래 파일이
+                   있으면 그 자체로 라우트가 되고, `<Stack.Screen>`은 **옵션 설정용**일 뿐 라우트의
+                   존재 여부를 좌우하지 않는다. 실제로 `dev/tiktok-poc`은 여기 등록조차 없는데도
+                   파일이 있어 도달 가능하다.
+                → **진짜 방어는 각 화면 파일 안의 `if (!__DEV__)` 스텁 하나뿐이다**
+                   (dev/shorts-poc.tsx:63, dev/tiktok-poc.tsx:360). 그 스텁을 지우면 그 즉시 유출된다.
+                   아래 줄은 dev에서 프레젠테이션만 지정하는 것이지 보안 장치가 아니다. */}
             {__DEV__ && <Stack.Screen name="dev/shorts-poc" options={{ presentation: 'fullScreenModal' }} />}
           </Stack>
           <ToastHost />

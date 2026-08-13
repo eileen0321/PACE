@@ -132,6 +132,24 @@ export async function logOverlayEvent(userId: string, sessionId: string | null, 
   );
 }
 
+// 🔴 2026-08-13 발견 11 — 이 테이블에 **정리 로직이 없었다.** 세션마다 SESSION_STOP/AUTO_NEXT/
+// BREAK_REMINDER 등을 INSERT하는데 상한도 TTL도 없고, 지우는 곳은 clearUserHistory(설정 초기화)뿐이라
+// 일반 사용자는 영원히 안 지운다 → 장기 사용 시 단조 증가.
+// 서버는 같은 문제를 이미 해결해 뒀다(FocusAllowanceService.RETENTION_DAYS=7 + 스케줄러) — 로컬
+// 로그 테이블만 빠져 있었다. 같은 규칙(보관 기간)을 여기에도 적용한다.
+//
+// 왜 30일인가: 이 로그의 용도는 "왜 자동 넘김이 안 됐는지" 같은 **사후 재구성**이고, 그건 며칠 안에
+// 조사한다. 30일이면 충분히 넉넉하고, 하루 수백 행이 쌓여도 1MB를 넘지 않는다.
+// 콜드스타트에 1회만 부른다(_layout.tsx) — 부팅을 늦추지 않게 await하지 않고 흘려보낸다.
+const OVERLAY_EVENT_RETENTION_DAYS = 30;
+
+export async function purgeOldOverlayEvents(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `DELETE FROM overlay_events WHERE created_at < datetime('now', '-${OVERLAY_EVENT_RETENTION_DAYS} days')`
+  );
+}
+
 // 2026-07-20 실기기 감사 중 발견(맥 세션 QA_ISSUES_2026-07-18.md #5) — Settings의 "설정 초기화"가
 // "모든 맞춤형 제한 및 카운터 초기화"를 약속하면서 실제로는 logout()만 호출하고 있었다(로컬 게스트라
 // 재로그인 시 동일 데이터로 그대로 복귀 — 사실상 아무것도 안 지워짐). 진짜로 사용 기록을 지운다.

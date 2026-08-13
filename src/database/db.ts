@@ -43,9 +43,54 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     await ensureColumn(db, 'viewing_sessions', 'status', 'TEXT');
     await ensureColumn(db, 'viewing_sessions', 'synced', 'INTEGER NOT NULL DEFAULT 0');
 
+    // 🔴 2026-08-13 발견 5 — 여기가 **사다리의 유일한 칸**이고, 다음 칸을 올리는 걸 강제하는 수단이
+    //   없다. schema.ts에 컬럼을 추가하면 신규 설치는 SCHEMA_SQL로 바로 생기지만, **기존 설치는
+    //   위 `version >= CURRENT_DB_VERSION`에서 즉시 리턴**해 영영 안 생긴다 — 그리고 그 write는
+    //   호출부의 .catch(()=>{})에 삼켜져 조용히 유실된다(2026-07-27에 실제로 겪은 그 사고).
+    //   → **컬럼을 추가하면 반드시 ①SCHEMA_SQL ②여기 ensureColumn ③CURRENT_DB_VERSION 셋 다 고친다.**
+    //   ⚠️ 아래 개발용 검증이 그 규칙을 지키게 돕는다: dev 빌드에서 스키마와 실제 테이블을 대조해
+    //     빠진 컬럼이 있으면 경고한다(릴리즈에선 돌지 않는다 — 부팅 비용 0).
     await db.execAsync(`PRAGMA user_version = ${CURRENT_DB_VERSION}`);
   } catch (e) {
     if (__DEV__) console.warn('[db] 마이그레이션 실패(무시하고 진행):', String(e));
+  }
+}
+
+/**
+ * 2026-08-13 발견 5 — 마이그레이션 사다리를 안 올렸을 때 **개발 중에** 알아채게 하는 장치.
+ *
+ * SCHEMA_SQL이 선언한 컬럼과 실제 테이블의 컬럼을 대조해, 스키마엔 있는데 테이블엔 없는 게 있으면
+ * 경고한다 — 그게 정확히 "컬럼을 추가하면서 CURRENT_DB_VERSION/ensureColumn을 안 고친" 상태다.
+ * 기존 설치에서만 나는 증상이라 신규 설치로 개발하면 절대 안 보이고, 그래서 2026-07-27에 스토어에
+ * 나간 뒤에야 발견됐다.
+ *
+ * dev 전용 — 릴리즈 부팅에는 영향이 없다. 실패해도 무시한다(진단용이 앱을 깨뜨리면 안 된다).
+ */
+async function warnIfSchemaDrifted(db: SQLite.SQLiteDatabase): Promise<void> {
+  if (!__DEV__) return;
+  try {
+    // `CREATE TABLE IF NOT EXISTS <name> (` … `);` 블록에서 테이블명과 컬럼명을 뽑는다.
+    const blocks = SCHEMA_SQL.matchAll(/CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(([\s\S]*?)\n\);/g);
+    for (const [, table, body] of blocks) {
+      const declared = body
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('--') && !/^(UNIQUE|PRIMARY|FOREIGN|CHECK)\b/i.test(l))
+        .map((l) => l.split(/\s+/)[0])
+        .filter((c) => /^\w+$/.test(c));
+      const actual = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+      const have = new Set(actual.map((c) => c.name));
+      const missing = declared.filter((c) => !have.has(c));
+      if (missing.length > 0) {
+        console.warn(
+          `[db] 🔴 스키마 드리프트 — ${table}에 ${missing.join(', ')} 컬럼이 없다.\n` +
+            `      SCHEMA_SQL엔 있는데 이 기기의 테이블엔 없다 = 마이그레이션이 안 돌았다는 뜻이다.\n` +
+            `      db.ts의 migrate()에 ensureColumn을 추가하고 CURRENT_DB_VERSION을 올릴 것.`
+        );
+      }
+    }
+  } catch {
+    // 진단이 부팅을 막지 않는다.
   }
 }
 
@@ -55,6 +100,7 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       const db = await SQLite.openDatabaseAsync('pace.db');
       await db.execAsync(SCHEMA_SQL);
       await migrate(db);
+      await warnIfSchemaDrifted(db);
       return db;
     })();
   }

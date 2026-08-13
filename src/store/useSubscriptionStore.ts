@@ -122,12 +122,20 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   },
 
   purchase: async (pkg) => {
+    // 🔴 2026-08-13 발견 2 — 개발 빌드에서 과금 경로가 그대로 열려 있었다(K8이 약속하는 "개발 모드
+    //   과금 경로 전부 차단"이 구현돼 있지 않았다). 자매 프로젝트 moa는 같은 이유로 이미 막아 뒀다
+    //   (`6d02dfb`). iOS는 샌드박스라 실결제까진 안 가지만, "개발 중에 실수로 결제 흐름을 태울 수
+    //   있다"는 상태 자체를 남기지 않는 쪽이 맞다.
+    if (__DEV__) throw new Error('DEV_BILLING_BLOCKED');
     if (!RC_KEY) throw new Error('RC_NOT_CONFIGURED'); // restore()와 동일 가드 — RC 미설정 시 미구성 SDK 호출 방지
     const { customerInfo } = await Purchases.purchasePackage(pkg);
     await applyCustomerInfo(customerInfo, set, get);
   },
 
   restore: async () => {
+    // 복원은 과금이 아니지만 같은 이유로 개발 빌드에서 막는다 — 개발 중 계정이 실제 구독 상태로
+    // 바뀌면 무료/프리미엄 게이팅을 테스트할 수 없게 된다.
+    if (__DEV__) throw new Error('DEV_BILLING_BLOCKED');
     if (!RC_KEY) throw new Error('RC_NOT_CONFIGURED');
     const info = await Purchases.restorePurchases();
     await applyCustomerInfo(info, set, get);

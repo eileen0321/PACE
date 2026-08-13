@@ -23,6 +23,7 @@ import { startSession, endSession as endSessionRow, logOverlayEvent } from '../.
 import { getTodayUsageMinutes } from '../../database/repositories/statsRepository';
 import { notifyAccessibilityNeeded, notifyBreakReminder, notifyLimitReached, notifyLowTime } from '../../services/notifications';
 import { pushUnsyncedSessions } from '../../services/sync/backendSync';
+import { teardownSession } from '../../services/sessionTeardown';
 import { CURATED_VIDEOS } from '../../constants/curatedVideos';
 import { launchPlatformApp } from '../../constants/supportedApps';
 import { colors, radius, spacing, typography } from '../../constants/theme';
@@ -338,71 +339,29 @@ export default function OverlaySessionScreen() {
       // useFocusEffect가 "그냥 화면만 Home으로 바꾸는" 리다이렉트를 걸어둔 상태면, 아래 세션-종료
       // 로직(DB 기록/네이티브 ACTION_STOP)을 전부 건너뛴다 — 실제로는 세션이 안 끝났으므로.
       if (keepSessionAliveOnUnmountRef.current) return;
+      // 2026-08-13 — 여기 있던 40여 줄(종료 사유 재조회 · sleep_detected 시각 보정 · 실시청 초
+      // 우선순위 · 네이티브 카운터를 stop 전에 읽기)을 services/sessionTeardown.ts로 뽑았다.
+      // 이유는 그 파일 상단 주석 참고 — 요약하면, 안드로이드에서 세션 행의 수명이 이 컴포넌트보다
+      // 길어서(이 화면은 마운트되자마자 Home으로 replace한다) Home도 같은 종료 로직을 불러야
+      // 하는데(앱 전환 시 세션 분리, 발견 12), 복제하면 두 곳이 갈라진다.
+      // ⚠️ 스토어/네이티브 정리(timer.endSession / autoNext.stop / overlayService.endSession /
+      //   useSessionStore.finish)도 teardownSession의 finally 안으로 함께 옮겼다 — 여기 남겨두면
+      //   await보다 먼저 돌아서 네이티브 카운터가 읽히기 전에 리셋된다(그 순서가 계약이다).
       if (sessionIdRef.current && user.id) {
-        const sessionId = sessionIdRef.current;
-        const userId = user.id;
-        const startedAtMs = sessionStartedAtMsRef.current;
-        (async () => {
-          // 2026-07-26 감사 발견 — endReasonRef가 아직 null이면(tick 기반 daily-limit/sleep-timer
-          // 판정도, AppState 'active' 기반 consumeExpired 효과도 한 번도 못 돈 채 unmount) 네이티브에
-          // 마지막으로 한 번 더 물어본다 — Activity가 sleep-detect 직후 Recents에서 스와이프돼
-          // destroy될 때처럼, 실제로는 sleep_detected/daily_limit_reached인데 아무 판정도 못 받고
-          // 여기 도달하는 경우를 잡기 위해서다. 그래도 null이면(진짜 수동 종료) manual_stop.
-          if (endReasonRef.current == null && Platform.OS === 'android') {
-            const result = await overlayService.consumeExpired().catch(() => null);
-            if (result) {
-              endReasonRef.current = result.reason;
-              sleepOnsetAtMsRef.current = result.sleepOnsetAtMs;
-            }
-          }
-          // 2026-08-02 사장님 지시("원인 구분 못 하는 곳 전수 확인") — 여기 폴백이 'manual_stop'이라
-          // "사용자가 정말 직접 껐다"와 "끝내 사유를 알아내지 못했다"가 통계상 같은 값으로 섞였다.
-          // 위 네이티브 재조회까지 실패한 경우는 진짜로 원인을 모르는 것이므로 'unknown'으로 남긴다 —
-          // 진짜 수동 종료는 stopSession()에서 명시적으로 'manual_stop'을 세우므로 여기 안 온다.
-          const endReason = endReasonRef.current ?? 'unknown';
-          // 2026-07-26 사용자 지적("1시 3분에 잠들었으면 실제 마지막으로 움직인 시각을 써야지") —
-          // sleep_detected면 네이티브가 무진동 임계값을 "넘긴" 시각(now) 대신 실제 마지막 움직임 시각
-          // (sleepOnsetAtMsRef, PaceOverlayService.markExpired 참고)을 세션 종료 시각으로 쓴다 —
-          // 그래야 duration도, 홈 화면 수면 인사이트 배너도 실제 잠든 시각에 가깝다.
-          const effectiveEndedAtMs = endReason === 'sleep_detected' && sleepOnsetAtMsRef.current != null
-            ? sleepOnsetAtMsRef.current
-            : Date.now();
-          // 2026-08-03 사장님 결정("알약 기준이 맞지 않아?") — 예전엔 여기서 벽시계(종료-시작)만 썼다.
-          // 그런데 알약의 남은 시간은 실제 재생 중일 때만 깎이므로(performTick의 isLikelyPlaying 가드),
-          // 세션만 켜두고 안 보면 알약은 그대로인데 통계엔 그 시간이 통째로 쌓이는 모순이 있었다.
-          // 사용자가 이해하는 "사용 시간"은 실제로 본 시간이므로 네이티브가 누적한 실시청 시간을 쓴다.
-          // iOS는 서드파티 앱 재생 상태를 관찰할 수단이 OS에 없어 null → 기존 벽시계로 폴백한다.
-          // ⚠️ getWatchedSeconds()는 endSession()(네이티브 stop)보다 먼저 읽어야 한다 — 아래
-          //    videosWatched와 같은 이유(세션이 닫히면 값이 리셋된다).
-          const wallClockSeconds = startedAtMs ? Math.max(0, Math.round((effectiveEndedAtMs - startedAtMs) / 1000)) : 0;
-          // 2026-08-06 — iOS 통계 일관성. 위 주석대로 예전엔 iOS가 항상 벽시계로 기록했는데, 이제
-          // JS 틱이 "앱이 활성일 때만" 깎으므로 벽시계로 기록하면 **알약은 안 깎였는데 통계에는
-          // 쌓이는** 모순이 iOS에서 그대로 재현된다(안드로이드가 2026-08-03에 없앤 바로 그 모순).
-          // useTimerStore가 실제로 차감한 만큼만 누적해둔 값을 쓴다 — 알약과 정확히 같은 기준.
-          // ⚠️ 이 줄은 반드시 첫 await 앞에서 동기로 읽어야 한다. 아래 timer.endSession()이 이
-          //   IIFE의 await 사이에 끼어들어 스토어를 리셋하기 때문이다(같은 이유로 네이티브 값도
-          //   endSession 전에 읽는다 — 아래 주석 참고).
-          const jsWatchedSeconds = useTimerStore.getState().watchedSeconds;
-          const watchedSeconds = await overlayService.getWatchedSeconds().catch(() => null);
-          // 벽시계를 상한으로 둔다 — 네이티브 누적값이 어떤 이유로든(복구 경로 중복 가산 등) 실제
-          // 경과 시간을 넘어서는 건 정의상 불가능하므로, 넘으면 신뢰하지 않고 벽시계로 자른다.
-          const effectiveWatchedSeconds = watchedSeconds != null ? watchedSeconds : jsWatchedSeconds;
-          const durationSeconds = Math.min(wallClockSeconds, Math.max(0, effectiveWatchedSeconds));
-          // 2026-07-26 — PaceAccessibilityService가 실제 재생위치 신호(끝남/되감김 감지)로 센 진짜
-          // 시청 편수를 읽는다(자동넘김이든 사용자가 직접 넘겼든 다 포함). iOS/접근성 꺼짐은 항상 0 —
-          // 예전엔 개발용 시뮬레이터의 videoIndex를 가짜로 흘려보내다 고쳐서 정직하게 0을 기록했는데
-          // (아래 원래 있던 주석 참고), 이제는 Android에서 진짜 값을 셀 수 있게 됐다. endSession()
-          // (네이티브 stop → 카운터 리셋) 호출 전에 먼저 읽어야 한다.
-          const videosWatched = await overlayService.getVideoWatchCount().catch(() => 0);
-          await endSessionRow(sessionId, durationSeconds, videosWatched, endReason, new Date(effectiveEndedAtMs).toISOString());
-          await pushUnsyncedSessions(userId);
-          logOverlayEvent(userId, sessionId, 'SESSION_STOP', endReason).catch(() => {});
-        })().catch(() => {});
+        teardownSession({
+          sessionId: sessionIdRef.current,
+          userId: user.id,
+          startedAtMs: sessionStartedAtMsRef.current,
+          endReason: endReasonRef.current,
+          sleepOnsetAtMs: sleepOnsetAtMsRef.current,
+        }).catch(() => {});
+      } else {
+        // 세션 행이 없으면(시작 전 언마운트) 정리만 한다.
+        timer.endSession();
+        autoNextRuntime.stop();
+        overlayService.endSession().catch(() => {});
+        useSessionStore.getState().finish();
       }
-      timer.endSession();
-      autoNextRuntime.stop();
-      overlayService.endSession().catch(() => {});
-      useSessionStore.getState().finish();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);

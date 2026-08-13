@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../services/storage/keys';
+import { focusAllowanceApi } from '../services/api/client';
 
 // 2026-07-26 사용자 지시("매일 출석하기 — 매일 크레딧을 받으세요") — 하루 1회 앱을 열면 출석으로
 // 인정하고 크레딧을 지급한다. useFlipStore의 credits(오늘 쉰 시간 기반, 자정마다 리셋)와는 별개
@@ -16,6 +17,22 @@ function todayStr(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// 🔴 2026-08-13 발견 10 — 크레딧 지급 판정에 쓸 **신뢰 가능한 오늘**.
+// 서버가 자기 시각으로 채운 값(FocusAllowanceResponse.serverToday)을 우선 쓰고, 오프라인이거나
+// 구버전 서버면 로컬 날짜로 폴백한다. 표시용(주간 위젯/스트릭)은 로컬 날짜를 그대로 쓴다 —
+// 사용자가 보는 달력은 자기 기기 기준이어야 자연스럽고, 거긴 크레딧이 걸리지 않는다.
+async function trustedTodayStr(): Promise<string> {
+  try {
+    const res = await focusAllowanceApi.get(todayStr());
+    if (typeof res.serverToday === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(res.serverToday)) {
+      return res.serverToday;
+    }
+  } catch {
+    // 오프라인/미인증 — 아래 폴백
+  }
+  return todayStr();
 }
 
 type Persisted = {
@@ -75,9 +92,22 @@ export const useAttendanceStore = create<AttendanceState>((set, get) => ({
   checkInIfNeeded: async () => {
     // load()가 아직 안 끝났으면(레이스) 먼저 기다린다 — AsyncStorage 값을 못 본 채 중복 지급하는 걸 방지.
     if (!get().loaded) await get().load();
-    const today = todayStr();
+    // 🔴 2026-08-13 발견 10 — 예전엔 여기서 기기 로컬 날짜(todayStr)만 봤다. 그래서 **설정에서 날짜를
+    //   N번 바꾸면 5N 크레딧**이 그대로 적립됐고, 그 크레딧은 포커스 세션 연장에 광고 대신 쓸 수 있어
+    //   결과적으로 **광고를 한 번도 안 보고 무제한 연장**이 가능했다. 광고 3회 한도는 서버
+    //   sanitizeDate로 막았지만(f7ae3df) 이 경로가 그대로 남아 있었다.
+    //   → 서버가 내려주는 **신뢰 가능한 오늘**(FocusAllowanceResponse.serverToday, 클라이언트가 보낸
+    //     날짜와 무관하게 서버 시각으로 채워짐)을 우선 쓴다. 새 엔드포인트를 파지 않고, 이미 매 부팅
+    //     호출되는 응답에 얹은 값을 재사용한다.
+    //   ⚠️ 오프라인/구버전 서버면 로컬 날짜로 폴백한다 — 이 앱의 fail-open 원칙대로,
+    //     비행기 안에서 출석이 안 되면 정상 사용자가 손해다. 우회 가능성보다 사용성을 택한다
+    //     (온라인이 되는 순간부터는 서버 날짜가 지배한다).
+    const today = await trustedTodayStr();
     const s = get();
     if (s.lastCheckInDate === today) return { checkedIn: false, earned: 0 };
+    // 단조 가드 — 날짜를 **뒤로** 돌린 뒤 다시 앞으로 오는 식의 반복 수령을 막는다.
+    // 이미 받은 날짜보다 크지 않으면 지급하지 않는다(같은 날 재실행은 위 조건에서 이미 걸린다).
+    if (s.lastCheckInDate && today <= s.lastCheckInDate) return { checkedIn: false, earned: 0 };
 
     const history = [...s.history, today].slice(-HISTORY_DAYS_KEPT);
     const bonusCredits = s.bonusCredits + DAILY_CHECKIN_CREDITS;

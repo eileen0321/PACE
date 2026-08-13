@@ -1296,6 +1296,10 @@ class PaceOverlayService : Service() {
     // 2026-08-13 — PaceAccessibilityService.resumeTrackingIfSessionAlive()가 읽어야 해서 공개.
     // 2026-08-13 — 리모컨 키가 마지막으로 들어온 벽시계 시각. "연결됨" 표시의 근거(재시작 견딤).
     const val PREF_LAST_REMOTE_KEY_AT = "last_remote_key_at"
+    // 2026-08-14 — 리모컨이 키를 보낸 그 입력기기의 InputDevice.getDescriptor(). "지금 연결돼 있는가"는
+    // 현재 InputDevice 목록에 이 값이 있는지로 판정한다(PaceOverlayModule.getBluetoothState).
+    // deviceId와 달리 재연결/재부팅에도 안정적이라 저장해 둘 수 있다(안드로이드 문서 명시).
+    const val PREF_REMOTE_DEVICE_DESCRIPTOR = "remote_device_descriptor"
     const val PREF_SESSION_ACTIVE = "session_active"
     private const val PREF_REMAINING = "session_remaining_minutes"
     private const val PREF_SLEEP_TIMER = "session_sleep_timer_remaining"

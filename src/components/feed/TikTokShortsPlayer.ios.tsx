@@ -327,13 +327,27 @@ const INJECTED_JS = `
       else { video.__paceAdvancing = false; }
     }, 700);
   }
+  // 2026-08-13(25차) 사장님 실기기 지적("포커스 오프인데도 영상이 계속 넘어감") — 유튜브는 FOCUS
+  // OFF(isAutoMode=false)일 때 영상이 끝나면 멈추고 사용자를 기다리는데(feed/index.tsx의 onEnded:
+  // isAutoMode면 goNext(), 아니면 setStatus('PAUSED')), 틱톡은 그 설정을 아예 모른 채 WebView
+  // 안에서 자연종료를 감지하면 무조건 자기가 알아서 다음으로 넘겨버리고 있었다. RN에 "끝났다"고만
+  // 알리고(send ended) 실제로 넘길지는 RN이 결정하게 한다 — 유튜브 플레이어와 똑같은 구조.
+  // isAutoMode면 goNext()→advance()가 이 WebView의 tryAdvance를 다시 트리거하고(아래
+  // window.paceForceAdvance 경로, 기존 그대로 재사용), 아니면 playing=false가 내려와 v.pause()로
+  // 실제로 멈춘다. __paceAdvancing(tryAdvance 재시도 락)과는 별개 플래그를 쓴다 — 여기선 "끝남을
+  // 이미 RN에 알렸는지"만 추적하고, 실제 이동 시도 여부/락은 paceForceAdvance 쪽이 따로 관리한다.
+  function markEndedOnce(video){
+    if (video.__paceEndedNotified) return false;
+    video.__paceEndedNotified = true;
+    return true;
+  }
   function hookVideoEnded(video){
     if (!video || video.__paceEndedHooked) return;
     video.__paceEndedHooked = true;
     try { video.loop = false; } catch(e) {}
     video.addEventListener('ended', function(){
-      if (!markAdvancingOnce(video)) return;
-      setTimeout(function(){ tryAdvance(video); }, 500);
+      if (!markEndedOnce(video)) return;
+      send({ type: 'ended' });
     }, false);
   }
   var endedObserverStarted = false;
@@ -361,7 +375,7 @@ const INJECTED_JS = `
     if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
-    if ((nearEnd || loopedBack) && markAdvancingOnce(v)) { tryAdvance(v); }
+    if ((nearEnd || loopedBack) && markEndedOnce(v)) { send({ type: 'ended' }); }
     pollLastT = t;
   }
 
@@ -500,6 +514,8 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
               if (msg.value > 0 && !ready) { setReady(true); onReady?.(); }
               onProgress?.(msg.value);
             }
+          } else if (msg.type === 'ended') {
+            onEnded();
           } else if (msg.type === 'novideo') {
             if (__DEV__) console.log('[TikTok WV] novideo → skip', JSON.stringify(msg));
             onError?.(-2);

@@ -966,8 +966,29 @@ class PaceAccessibilityService : AccessibilityService() {
       //   의도는 전자(짧은 틱톡 영상)뿐이었다.
       // → 대상 앱 창을 실제로 찾았을 때만(root != null) 폴백을 쏜다.
       //   ⚠️ F10("대상 앱 밖에서는 자동넘김 안 함")이 문서엔 ✅였는데 실제로는 이 경로로 뚫려 있었다.
+      // 🔴 2026-08-13 출시 전 실기기 검증에서 발견 — **유튜브에서도 이 폴백이 발사되고 있었다.**
+      //   실측: 세션 시작 후 유튜브 진입 20초 시점에
+      //     RANGE_INFO none — rootPkg=com.google.android.youtube
+      //     AUTO_NEXT reason=no-progressbar elapsed=20073ms
+      //     VIDEO_ADVANCE looped-back total=179s   ← 잘린 건 3분짜리 영상이었다
+      //   이 else 분기는 "재생위치 텍스트를 못 읽었다"는 뜻인데, 유튜브에서 그건 **앱이 그 순간
+      //   컨트롤을 안 그리고 있다**는 일시적 상태일 뿐이지 "진행바가 없는 짧은 클립"이 아니다.
+      //   아래 1050~1062줄이 적어둔 대로, 바로 그 이유로 2026-08-03에 Tier 2(45초 강제 스와이프)를
+      //   삭제했다("foundTiming=false가 상시로 나와 사장님이 보고 계신 영상을 중간에 끊었다").
+      //   틱톡용으로 넣은 이 20초 폴백이 그걸 더 짧은 주기로 되살린 셈이다.
+      //   ⚠️ 그렇다고 유튜브에서 폴백을 통째로 빼면 **반대쪽으로 부러진다** — 같은 날 실측에서
+      //     폴백을 제거하자 `RANGE_INFO none`이 4분간 52회 찍히는 동안(진행 신호가 아예 없는
+      //     쇼츠였다) 자동넘김이 한 번도 안 걸렸다. 그건 사장님이 신고하신 "포커스 온인데 계속 같은
+      //     영상이 나와"와 정확히 같은 상태다.
+      // → 폴백은 유지하되 **간격을 앱별로 나눈다.** 유튜브는 timing 경로가 정상 동작하는 앱이라
+      //   "못 읽는 구간"은 대개 일시적이므로, 이미 승인된 한 영상 체류 상한(90초)을 그대로 쓴다 —
+      //   일반적인 쇼츠(15~60초)는 절대 중간에 안 끊기고, 진행 신호를 90초째까지 못 읽는
+      //   비정상 상태에서만 넘어간다. 틱톡은 애초에 재생위치 텍스트 경로가 없어 20초 그대로 둔다
+      //   (진행바 없는 틱톡 클립은 짧다는 게 2026-08-12 실측 전제).
+      val hasTimingTextPath = root?.packageName?.toString() == "com.google.android.youtube"
+      val fallbackIntervalMs = if (hasTimingTextPath) MAX_SINGLE_VIDEO_MS else NO_PROGRESSBAR_ADVANCE_MS
       if (frac == null && root != null && isWatching && lastKnownFrac < 0f &&
-          now - lastSwipeAtMs > NO_PROGRESSBAR_ADVANCE_MS) {
+          now - lastSwipeAtMs > fallbackIntervalMs) {
         Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms pkg=${root.packageName}")
         performSwipeUp()
         lastSwipeAtMs = now

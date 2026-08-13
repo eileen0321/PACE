@@ -1304,6 +1304,10 @@ class PaceOverlayService : Service() {
     // 현재 InputDevice 목록에 이 값이 있는지로 판정한다(PaceOverlayModule.getBluetoothState).
     // deviceId와 달리 재연결/재부팅에도 안정적이라 저장해 둘 수 있다(안드로이드 문서 명시).
     const val PREF_REMOTE_DEVICE_DESCRIPTOR = "remote_device_descriptor"
+    // 사용자가 검색/HOT/즐겨찾기에서 **직접 고른** 영상을 자동넘김이 밀어내지 않도록 두는 유예.
+    // 90초 = 한 영상 체류 상한(MAX_SINGLE_VIDEO_MS)과 같은 값 — "고른 영상 하나는 끝까지 볼 수
+    // 있다"가 되면서, 그 뒤로는 평소 규칙으로 자연스럽게 돌아온다.
+    const val AUTO_NEXT_SUSPEND_AFTER_PICK_MS = 90_000L
     const val PREF_SESSION_ACTIVE = "session_active"
     private const val PREF_REMAINING = "session_remaining_minutes"
     private const val PREF_SLEEP_TIMER = "session_sleep_timer_remaining"
@@ -3552,7 +3556,15 @@ class PaceOverlayService : Service() {
       startActivity(
         Intent(this, PaceShareCaptureActivity::class.java)
           .putExtra(PaceShareCaptureActivity.EXTRA_READ_CLIPBOARD, true)
-          .putExtra(PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE, "com.google.android.youtube")
+          // 🔴 2026-08-14 사장님 신고("favorite에서 틱톡에서 add 누르면 왜 유튜브로 가는데") —
+          //   복귀 대상이 **유튜브로 하드코딩**돼 있었다. 틱톡을 보다 Favorite을 누르면 클립보드를
+          //   읽고 돌아올 때 유튜브가 떠서, 보던 영상에서 통째로 튕겨나갔다.
+          //   틱톡 검색 패널 제목·프리셋 칩과 정확히 같은 종류의 누락이다(그때도 유튜브 하드코딩이었다).
+          //   → 지금 보고 있던 앱으로 돌아간다. 못 찾으면 종전대로 유튜브(기존 동작 유지).
+          .putExtra(
+            PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE,
+            currentTrackedPackage() ?: "com.google.android.youtube"
+          )
           .addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
               Intent.FLAG_ACTIVITY_NO_ANIMATION
@@ -3995,6 +4007,12 @@ class PaceOverlayService : Service() {
       }.isSuccess
       if (ok) {
         Log.i("PaceOverlay", "TikTok search opened via $scheme:// keyword=$keyword")
+        // 🔴 2026-08-14 사장님 신고("리스트 눌렀는데 화면 나오고 좀 있다 바로 다른 화면으로 넘어가") —
+        //   검색 결과에서 고른 영상을 우리 자동넘김이 20초 폴백으로 밀어냈다(실측 AUTO_NEXT
+        //   no-progressbar elapsed=20605ms). 검색은 "이걸 보고 싶다"는 가장 명확한 의사표시인데
+        //   그걸 우리가 치우면 기능 자체가 무의미하다. 결과를 고르고 볼 시간을 준다.
+        //   ⚠️ 멈추는 건 **우리가 스스로 넘기는 것**뿐이다 — 손짓·리모컨·직접 스와이프는 그대로 된다.
+        PaceAccessibilityService.suspendAutoNext(AUTO_NEXT_SUSPEND_AFTER_PICK_MS)
         return
       }
     }

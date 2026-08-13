@@ -566,12 +566,54 @@ class PaceOverlayModule : Module() {
           android.view.InputDevice.getDevice(id)?.descriptor == remoteDescriptor
         }
       }.getOrDefault(false)
-      // descriptor를 아직 못 받은 구버전 설치분(이 필드가 생기기 전에 리모컨을 쓴 경우)에만 예전
-      // 시간 기반 판정으로 폴백한다 — 새로 한 번만 누르면 그때부터 정확한 판정으로 올라선다.
-      val remoteRecentlyUsed = if (remoteDescriptor != null) remoteStillAttached
-        else lastRemoteKeyAt > 0L && System.currentTimeMillis() - lastRemoteKeyAt < REMOTE_ALIVE_WINDOW_MS
+      // 🔴 2026-08-14(3차) 사장님 실측 — "맨 처음에 앱 실행하고 리모컨 전원 켜니까 초록불 안 나옴,
+      //   그 뒤로는 됨." 정확한 진단이다. 위 descriptor는 **리모컨 키가 한 번 와야** 저장되므로
+      //   (PaceAccessibilityService.onKeyEvent) 설치 후 처음 연결한 순간에는 항상 null → 회색이다.
+      //   그런데 그 순간에도 리모컨은 이미 HID 입력기기로 붙어 있다(실측: dumpsys input에
+      //   IsExternal:true 1개, BT STATE_CONNECTED).
+      //   → 키 입력을 기다리지 말고 **지금 붙어 있는 입력기기 목록에서 직접 찾는다.**
+      //     ⚠️ InputDevice.isExternal()은 @hide라 앱에서 못 쓴다. 공개 API만으로 내장 버튼과
+       //       가르는 기준:
+      //         · 가상 기기가 아니고(!isVirtual)
+      //         · 키보드 소스를 가지며(SOURCE_KEYBOARD — 리모컨은 볼륨키를 보낸다)
+      //         · VID/PID가 0이 아니다 — 내장 gpio_keys/qpnp_pon류는 0으로 보고되고
+      //           블루투스 HID는 실제 벤더/제품 ID를 싣는다.
+      //     처음 한 번은 무엇을 보고 판단했는지 로그로 남긴다(기기마다 다를 수 있어 실측용).
+      val externalRemoteAttached = runCatching {
+        android.view.InputDevice.getDeviceIds().any { id ->
+          val dev = android.view.InputDevice.getDevice(id) ?: return@any false
+          val isKeyboardish = (dev.sources and android.view.InputDevice.SOURCE_KEYBOARD) != 0
+          val hasHardwareId = dev.vendorId != 0 || dev.productId != 0
+          val match = !dev.isVirtual && isKeyboardish && hasHardwareId
+          if (match) Log.i("PaceOverlay", "BT 리모컨 후보 감지 — name=${dev.name} vid=${dev.vendorId} pid=${dev.productId} desc=${dev.descriptor}")
+          match
+        }
+      }.getOrDefault(false)
+      // 🔴 2026-08-14(2차) 사장님 재신고 "블루투스 전원 안 들어가 있는데 초록색인데" — **여전히
+      //   초록이었다.** 바로 위 descriptor 판정은 정확하지만, descriptor는 "이 빌드에서 리모컨 키가
+      //   한 번이라도 온" 뒤에야 생긴다(PaceAccessibilityService onKeyEvent에서 저장). 그 전에는
+      //   여기 6시간 폴백이 그대로 돌아서 **리모컨을 꺼도 6시간 동안 초록**이라는 원래 증상이
+      //   고스란히 남아 있었다 — 고쳤다고 적어둔 바로 그 버그가 실기기에선 안 고쳐진 상태.
+      //   실측(01:05): 리모컨 전원 OFF인데 초록. 같은 순간 `dumpsys input`에 외부 입력기기가
+      //   **하나도 없었다**(전부 IsExternal:false = 내장 버튼). 연결 안 됨이 명백한데 화면은
+      //   연결됐다고 말했다.
+      // → 시간 기반 폴백을 **없앤다.** descriptor를 모르면 "연결됐다"고 주장하지 않는다(회색).
+      //   업그레이드 직후 첫 한 번은 회색이지만 리모컨을 한 번 누르는 순간 descriptor가 잡혀 그
+      //   뒤로는 항상 정확하다. 이 점은 "리모컨이 실제로 붙어 있나"를 보려고 만든 표시이므로
+      //   (2026-08-13 사장님 지시), 모르면서 초록을 켜는 것보다 모른다고 말하는 쪽이 옳다.
+      // descriptor를 이미 아는 경우가 가장 정확하고(그 리모컨 하나를 특정한다), 모르면 위 하드웨어
+      // 판별로 답한다 — 둘 다 "지금 붙어 있나"를 재는 값이라 시간 폴백처럼 늦게까지 남지 않는다.
+      val remoteRecentlyUsed = remoteStillAttached || externalRemoteAttached
       mapOf(
-        "isConnected" to ((deviceInfo?.first ?: false) || remoteRecentlyUsed),
+        // 🔴 2026-08-14 사장님 지적("우리 블루투스 리모컨은 오디오 거르게 되어 있잖아. 오디오
+        //   블루투스면 연결이 되어 있어도 회색이어야 하지 않아?") — 맞다. 여기가 `오디오 기기 연결
+        //   OR 리모컨 붙음`이라, **이어폰만 연결해도 초록**이었다. 이 점이 붙어 있는 행은
+        //   "블루투스 리모컨"이고, 이 표시를 만든 목적 자체가 "리모컨이 실제로 붙어 있나"다
+        //   (2026-08-13 사장님 지시) — 오디오 기기는 그 질문의 답이 아니다.
+        //   오디오 항이 원래 있었던 이유는 리모컨을 감지할 방법이 없던 시절의 대용품이었는데,
+        //   이제 descriptor로 리모컨을 직접 확인하므로 대용품은 필요 없고 오탐만 남는다.
+        //   deviceName(표시용 이름)은 오디오 정보를 그대로 두되, 연결 판정에서는 뺀다.
+        "isConnected" to remoteRecentlyUsed,
         "deviceName" to deviceInfo?.second,
         "autoModeEnabled" to (prefs?.getBoolean(PaceOverlayService.PREF_AUTO_MODE, false) ?: false),
         "nextCount" to (prefs?.getInt("bt_next_count", 0) ?: 0),

@@ -141,6 +141,8 @@ class PaceAccessibilityService : AccessibilityService() {
   private var fgProbedPackage: String? = null
   // 같은 near-end 구간에서 반복 발사를 막기 위한 마지막 발사 시각(checkPlaybackAndMaybeSwipe 참고).
   private var lastNearEndFireAtMs = 0L
+  // 사용자가 검색으로 직접 고른 영상을 우리가 밀어내지 않도록 두는 유예(위 suspendAutoNext 참고).
+  @Volatile private var autoNextSuspendedUntilMs = 0L
   private fun pollTargetPackage(): String? {
     val fromEvent = currentForegroundPackage
     if (SupportedApps.PACKAGES.contains(fromEvent)) return fromEvent
@@ -426,6 +428,31 @@ class PaceAccessibilityService : AccessibilityService() {
     // 동일한 supportedAppWindowVisible() 재사용) — 접근성이 꺼져있으면(instance==null) false로 안전
     // 폴백, 기존 UsageStatsManager 기반 판정만 그대로 적용된다.
     fun isSupportedAppWindowVisible(): Boolean = instance?.supportedAppWindowVisible() ?: false
+
+    /**
+     * 🔴 2026-08-14 사장님 실기기 신고 — "틱톡에서 가수로 검색해서 리스트 눌렀는데 화면 나오고
+     *   좀 있다 바로 다른 화면으로 넘어가."
+     *
+     * 실측 로그로 원인 확정:
+     *   01:19:42  AUTO_NEXT reason=no-progressbar elapsed=20605ms pkg=…trill → dispatchGesture
+     *
+     * **사용자가 검색해서 고른 영상**을 우리가 일반 피드처럼 20초 폴백으로 밀어냈다. 고르자마자
+     * 뺏기는 셈이라 검색 기능 자체가 무의미해진다. 자동넘김의 목적은 "끝난 영상을 넘겨주는 것"이지
+     * 사용자가 방금 명시적으로 선택한 영상을 치우는 게 아니다.
+     *
+     * → 검색으로 진입하는 순간 자동넘김만 잠시 멈춘다. 손짓·리모컨 같은 **사용자 조작은 그대로
+     *   동작한다** — 멈추는 건 우리가 스스로 넘기는 것뿐이다.
+     */
+    fun suspendAutoNext(durationMs: Long) {
+      val service = instance ?: return
+      val now = SystemClock.elapsedRealtime()
+      service.autoNextSuspendedUntilMs = now + durationMs
+      // 시간 기반 판정의 기준점도 지금으로 당긴다 — 안 그러면 유예가 끝나는 순간 이미 임계를
+      // 넘긴 상태라 즉시 한 번 발사된다(광고 복귀 리셋과 같은 이유).
+      service.lastSwipeAtMs = now
+      service.videoStartedAtMs = now
+      Log.i("PaceAccessibility", "자동넘김 ${durationMs}ms 유예 — 사용자가 직접 고른 영상")
+    }
 
     // 위와 같지만 "접근성이 안 붙어 있어서 물어볼 수 없음"(null)과 "물어봤더니 없음"(false)을 구분한다.
     // 알약 표시 판정(PaceOverlayService.foregroundPollRunnable)이 이 구분을 필요로 한다 — 접근성이
@@ -928,6 +955,10 @@ class PaceAccessibilityService : AccessibilityService() {
       lastFracAtMs = now       // 길이 추정도 광고 구간을 빼고 다시 잡게
       Log.i("PaceAccessibility", "광고 복귀 — 자동넘김 시계 리셋(광고 보는 동안 흐른 시간은 시청으로 안 센다)")
     }
+    // 사용자가 검색으로 직접 고른 영상을 보고 있는 동안은 **우리가 스스로 넘기지 않는다**
+    // (suspendAutoNext 주석 참고). 관측(재생 감지·영상 전환 카운트·수면감지 증거)은 그대로 돌아야
+    // 하므로 폴링 자체를 멈추지 않고, 아래 발사 지점들에서만 이 값을 본다.
+    val autoNextSuspended = now < autoNextSuspendedUntilMs
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
@@ -980,7 +1011,7 @@ class PaceAccessibilityService : AccessibilityService() {
         // 넘겨버렸다(2026-07-24 손짓 재무장 강화로 고친 "두 번씩 넘어감"과 겉증상은 같지만 원인은
         // 손짓이 아니라 이 폴링 로직 자체였음). nearEnd일 때만(Pace가 스스로 "곧 끝난다"고 판단해
         // 능동적으로 넘겨야 하는 유일한 경우) 실제로 스와이프한다 — loopedBack은 카운트/상태 갱신만.
-        if (nearEnd && isWatching) {
+        if (nearEnd && isWatching && !autoNextSuspended) {
           performSwipeUp()
           lastSwipeAtMs = now
         } else if (loopedBack && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS && totalSec != lastAdvanceTotalSec) {
@@ -1062,7 +1093,7 @@ class PaceAccessibilityService : AccessibilityService() {
       //   (진행바 없는 틱톡 클립은 짧다는 게 2026-08-12 실측 전제).
       val hasTimingTextPath = root?.packageName?.toString() == "com.google.android.youtube"
       val fallbackIntervalMs = if (hasTimingTextPath) MAX_SINGLE_VIDEO_MS else NO_PROGRESSBAR_ADVANCE_MS
-      if (frac == null && root != null && isWatching && lastKnownFrac < 0f &&
+      if (frac == null && root != null && isWatching && !autoNextSuspended && lastKnownFrac < 0f &&
           now - lastSwipeAtMs > fallbackIntervalMs) {
         Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms pkg=${root.packageName}")
         performSwipeUp()
@@ -1118,7 +1149,7 @@ class PaceAccessibilityService : AccessibilityService() {
           //     비정상적으로 긴 것만 잘린다. 짧은 영상을 끊는 건 기본 동작을 해치는 것이라 피한다.
           val stuckOnSameVideoMs = if (videoStartedAtMs > 0L) now - videoStartedAtMs else 0L
           val overStay = stuckOnSameVideoMs >= MAX_SINGLE_VIDEO_MS
-          if (isWatching && (remainMs <= NEAR_END_LEAD_MS || overStay) && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+          if (isWatching && !autoNextSuspended && (remainMs <= NEAR_END_LEAD_MS || overStay) && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
             val why = if (overStay) "over-stay(${stuckOnSameVideoMs}ms)" else "frac-predict"
             Log.d("PaceAccessibility", "AUTO_NEXT reason=$why frac=$frac est=${estimatedDurationMs}ms remain=${remainMs}ms")
             performSwipeUp()

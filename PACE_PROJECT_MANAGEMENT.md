@@ -9150,3 +9150,46 @@ sleep 필요"를 실측 관례로 명시한다 — 우리가 로드 직후(1.5~3
 없음"/"서버 오류"가 재현되는지(토큰 타이밍 가설이 맞았는지 여부). 여전히 서버 오류가 나면
 클라이언트 쪽에서 더 할 수 있는 게 많지 않을 가능성이 높다 — 그때는 Apple Screen Time API
 경로(안드처럼 진짜 네이티브 앱 실행) 재검토를 사장님과 논의할 것.
+
+### 2026-08-13~14 — FOCUS OFF인데도 자동넘김되던 버그 + 로딩 무한대기 근본원인 발견 + QA_MATRIX K1-K10 iOS 누락 지적
+
+실기기 재확인 중 사장님 실측 지적: "첫영상 나오고 2초뒤에 다른영상 나오고 그다음은 포커스
+오프인데도 몇개 영상이 넘어가곡". **원인**: 틱톡 WebView 내부(`hookVideoEnded`/
+`pollActiveVideo`)가 앱의 `isAutoMode`/Focus 상태와 무관하게 영상이 자연 종료되면 **WebView가
+스스로** 다음 영상으로 넘어가고 있었다 — 유튜브 플레이어는 종료를 RN에 알리기만 하고
+`onEnded`(`isAutoMode ? goNext() : setStatus('PAUSED')`)가 결정하는 구조인데 틱톡만 그 계약을
+안 지켰다. 같은 클래스의 2차 버그도 발견: `onEnded` prop이 선언만 되고 `onMessage`에서 실제로
+호출되는 곳이 없었다(죽은 콜백). `markEndedOnce`로 분리해 `{type:'ended'}`를 RN에 보내고
+`onMessage`에 `else if (msg.type==='ended') onEnded()` 추가 — 이제 유튜브와 동일하게 RN이 결정.
+
+**사장님 지적(더 근본적)**: "git에 안드가 만든 sanity 너도 같이 만들고 테스트하랬더니 이런
+기본기능을 놓쳐?" — `QA_MATRIX.md`의 K1-K10(Part 2 공용 sanity 체크리스트)을 iOS 틱톡 작업에
+**한 번도 안 돌렸다**는 지적, 정확함. 🍎 칼럼이 K1-K10 전부 비어 있음 — **다음 세션 필수**로
+이 표를 실제로 채울 것(추측/생략 금지, 실기기로).
+
+같은 밤 별도로: "로딩만 계속 돎" 증상 재조사 중 **근본 원인 확정**(추측 아니라 진단 로그로):
+`injectedJavaScript`(react-native-webview)는 페이지가 "완전 로드" 상태에 도달해야만 실행되는데,
+틱톡 페이지가 그 상태에 영영 도달하지 못하는 경우가 있어 — 배너 처리/로그인게이트/자동넘김
+전체 메인 로직이 **한 번도 실행되지 않은 채** 조용히 멈춰 있었다. `injectedJavaScriptBeforeContentLoaded`
+맨 위에 진단 로그를 심어 그것만 찍히고 메인 로직 로그가 전혀 안 찍히는 걸로 확정. 전체 로직을
+`mainInit()` 함수로 묶어 `injectedJavaScriptBeforeContentLoaded`로 통째로 이전, `document.readyState`
+기반으로 스스로 실행 타이밍을 관리하도록 재구성(`17d96ca`). **이 재구성이 실제로 "로딩 무한대기"/
+"서버 오류"를 해결하는지는 아직 실기기로 검증 못 했다** — 다음 세션 최우선 1순위.
+
+### 2026-08-14 — iOS 블루투스 연결 표시 점("녹색불") 실제로 연결
+
+사장님 질문: "너 블루투스 리모컨 옆에 안드처럼 녹색불 만들었어? 제대로 동작해?" 확인 결과 **반쪽만
+돼 있었다**:
+- `bluetoothService.ios.ts`의 `getState()`가 `isConnected: false`로 **하드코딩된 스텁**이었다.
+  네이티브 쪽(`modules/pace-gesture/ios/PaceGestureModule.swift`)엔 `isBluetoothAudioConnected()`
+  (`AVAudioSession.currentRoute` 기반)가 이미 구현까지 돼 있었는데, JS 어디에서도 그걸 호출하는
+  코드가 없어 실제로 이어폰이 붙어 있어도 점이 절대 초록으로 안 바뀌었다. → 실제로 연결.
+- 추가로 발견: `useBluetoothStore.refresh()`는 이벤트 구독이 아니라 **폴링식 스냅샷 조회**다
+  (안드도 동일 구조 — `bluetoothService.android.ts`의 `getState()`도 매번 호출 시점의
+  `PaceOverlay.getBluetoothState()` 스냅샷일 뿐, 연결 변경 이벤트를 쏘지 않음). 그런데 이 refresh를
+  부르는 곳이 `home.tsx`(Home 탭 포커스 시 `useFocusEffect`) 하나뿐이었다 — Focus 탭은 점을
+  **읽기만** 하고 갱신은 한 번도 안 시켰다. Home을 거치지 않고 Focus로 바로 들어오거나, Focus
+  탭에 머무는 동안 이어폰을 붙였다 떼도 점이 못 따라가는 상태. `focus.tsx`에 탭 포커스 시 즉시
+  refresh + 포커스 유지 중 3초 폴링 추가.
+- `tsc` 클린 확인 후 커밋/푸시(`1e854d3`). **실기기 미검증** — 다음 세션에서 실제 AirPods/블루투스
+  리모컨 연결·해제로 점이 즉시(3초 내) 반응하는지 확인 필요.

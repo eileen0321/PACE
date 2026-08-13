@@ -2125,7 +2125,32 @@ class PaceOverlayService : Service() {
       }
       val remainingBefore = remainingMinutes
       val isPlaying = PaceAccessibilityService.isLikelyPlaying()
-      if (isPlaying != false && elapsedMinutes > 0) {
+      // 🔴 2026-08-13 실기기 재현 — **여기가 "기본 기능이 안 된다"의 정체였다.**
+      //   예전 조건은 `isPlaying != false`, 즉 **관측 불가(null)여도 차감**이었고 주석은 그걸
+      //   "안전하게 항상 차감 쪽으로 폴백"이라고 불렀다. 방향이 반대였다.
+      //
+      //   실측(Galaxy Note20, 13:32~13:36): 앱을 재설치하면 **안드로이드가 접근성 서비스를 끈다.**
+      //   그러면 isLikelyPlaying()이 null이 되고("startPlaybackTracking() called but instance is
+      //   null — usage-time will fall back to always-decrement" 로그가 그대로 남는다),
+      //   **Pace 홈 화면만 띄워둔 4분 동안 일일 한도가 3분 깎였다**(7m → 10m). 유튜브도 틱톡도
+      //   켠 적이 없다. 사용자 입장에선 "아무것도 안 했는데 한도가 사라진다".
+      //
+      //   이건 QA_MATRIX 1-3이 못 박아 둔 원칙과 정면으로 어긋난다 — *"오차 방향은 자는 사람을
+      //   못 잡는 쪽이어야지 보는 사람 화면을 끄는 쪽이면 안 된다."* 수면감지는 사용자에게 유리한
+      //   쪽으로 폴백하는데 시간 차감만 불리한 쪽으로 폴백하고 있었다.
+      //
+      // → 관측이 불가능할 때(null)는 **대상 앱이 실제로 포그라운드일 때만** 차감한다.
+      //   ForegroundAppWatcher는 UsageStats 기반이라 **접근성과 무관하게 동작**한다(그래서 알약
+      //   표시가 접근성 없이도 되던 것과 같은 근거다).
+      //   ⚠️ 이 변경이 "접근성을 꺼서 무제한 시청" 우회를 만들지 않는다 — 접근성이 꺼져 있어도
+      //     유튜브/틱톡이 포그라운드면 그대로 깎인다. 안 깎이는 건 **대상 앱이 아닐 때**뿐이고,
+      //     그건 애초에 깎으면 안 되는 시간이다.
+      val shouldDecrement = when (isPlaying) {
+        true -> true
+        false -> false
+        null -> SupportedApps.PACKAGES.contains(ForegroundAppWatcher.getForegroundPackage(this))
+      }
+      if (shouldDecrement && elapsedMinutes > 0) {
         remainingMinutes = (remainingMinutes - elapsedMinutes).coerceAtLeast(0)
         // 2026-08-03 — 통계를 알약과 같은 기준으로 맞추기 위한 "실제 시청 시간" 누적(위 ACTION_START
         // 주석 참고). 차감이 실제로 일어난 틱에서만 더하므로 알약이 보는 시간과 정확히 일치한다.
@@ -2134,6 +2159,8 @@ class PaceOverlayService : Service() {
         prefs.edit().putInt(PREF_WATCHED_SECONDS, prefs.getInt(PREF_WATCHED_SECONDS, 0) + elapsedMinutes * 60).apply()
       } else if (isPlaying == false) {
         Log.d("PaceOverlay", "tick skipped decrement — playback not detected (paused/backgrounded)")
+      } else if (isPlaying == null) {
+        Log.w("PaceOverlay", "tick skipped decrement — 접근성 미연결이고 대상 앱도 포그라운드가 아님(안 보는 시간은 안 깎는다)")
       }
       checkAccessibilityRevoked()
       checkOverlayPermissionRevoked()

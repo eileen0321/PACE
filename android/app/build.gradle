@@ -107,7 +107,7 @@ android {
         // ⚠️ 광고는 **테스트 광고**다(EXPO_PUBLIC_USE_REAL_ADS 미설정). 비공개 테스트 트랙에 실광고를
         //   실으면 테스터 클릭이 무효 트래픽으로 잡혀 AdMob 계정 정지 위험 — 2026-08-10에 7→8→9로
         //   되돌린 그 규칙 그대로다. 실광고는 프로덕션 트랙에서만.
-        versionCode 11
+        versionCode 12
         versionName "1.0.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

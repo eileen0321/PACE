@@ -36,7 +36,10 @@ import static org.mockito.Mockito.*;
 class FocusAllowanceServiceTest {
 
     private static final Long USER_ID = 42L;
-    private static final LocalDate TODAY = LocalDate.of(2026, 8, 10);
+    // 🔴 2026-08-13 — 고정 날짜를 쓰면 안 된다. 서버가 클라이언트 날짜를 ±1일로 클램프하게 되면서
+    //   (FocusAllowanceService.sanitizeDate — 기기 날짜 조작으로 하루 3회 한도가 새로 생기던 우회 차단)
+    //   과거의 고정 날짜는 전부 클램프 대상이 된다. 테스트는 "오늘"을 기준으로 잡아야 규칙과 어긋나지 않는다.
+    private static final LocalDate TODAY = LocalDate.now(java.time.ZoneOffset.UTC);
 
     private FocusAllowanceRepository repository;
     private FocusAllowanceService service;
@@ -232,5 +235,31 @@ class FocusAllowanceServiceTest {
         service.purgeOldRows();
 
         verify(repository).deleteByAllowanceDateBefore(eq(LocalDate.now().minusDays(7)));
+    }
+/**
+     * 🔴 2026-08-13 — 기기 날짜만 바꾸면 하루 3회 한도가 새로 생기던 우회를 막은 뒤 그 규칙을 고정한다.
+     * 서버 날짜와 ±1일까지는 그대로 인정해야 한다(타임존 폭 UTC-12~UTC+14 = 26시간). 그 밖은 클램프.
+     */
+    @Test
+    void 날짜가_서버와_1일_이내면_그대로_쓴다() {
+        LocalDate yesterday = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1);
+        when(repository.findByUserIdAndAllowanceDate(eq(USER_ID), eq(yesterday))).thenReturn(Optional.empty());
+
+        service.get(USER_ID, yesterday);
+
+        verify(repository).findByUserIdAndAllowanceDate(eq(USER_ID), eq(yesterday));
+    }
+
+    @Test
+    void 날짜를_크게_돌리면_서버_날짜로_클램프한다() {
+        LocalDate serverToday = LocalDate.now(java.time.ZoneOffset.UTC);
+        LocalDate faked = serverToday.plusDays(30); // 기기 날짜를 한 달 앞으로
+        when(repository.findByUserIdAndAllowanceDate(eq(USER_ID), eq(serverToday))).thenReturn(Optional.empty());
+
+        service.get(USER_ID, faked);
+
+        // 조작한 날짜가 아니라 서버 날짜로 조회돼야 한다 = 새 허용량이 생기지 않는다.
+        verify(repository).findByUserIdAndAllowanceDate(eq(USER_ID), eq(serverToday));
+        verify(repository, never()).findByUserIdAndAllowanceDate(eq(USER_ID), eq(faked));
     }
 }

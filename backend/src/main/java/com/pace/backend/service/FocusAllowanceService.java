@@ -53,20 +53,47 @@ public class FocusAllowanceService {
         if (deleted > 0) log.info("[FocusAllowance] 보관기간({}일) 경과 {}건 삭제 (cutoff={})", RETENTION_DAYS, deleted, cutoff);
     }
 
+    /**
+     * 🔴 2026-08-13 — 클라이언트가 보낸 날짜를 **그대로 믿으면 안 된다.**
+     *
+     * 기기 날짜만 바꾸면 매일치 허용량(광고 연장 3회)이 새로 생긴다. 2026-08-10에 "앱 지웠다 깔면
+     * 우회되는 거 아니냐"는 지적으로 재설치 경로는 막았는데, **앱을 지울 필요도 없는 더 쉬운 문**이
+     * 옆에 열려 있었다. 서버 병합이 max/OR라 한 번 늘어난 값은 회수 경로도 없다.
+     *
+     * ⚠️ 그렇다고 서버 날짜로 **강제**하면 안 된다 — FocusAllowanceSyncRequest 주석이 적어둔 대로
+     *   클라이언트 로컬 날짜를 쓰는 데는 정당한 이유가 있다(서버 타임존으로 계산하면 자정 경계에서
+     *   해외 사용자가 손해를 본다). 실제 타임존 폭은 UTC-12~UTC+14로 **26시간**이므로, 서버 날짜와
+     *   ±1일을 벗어나는 값은 정상 사용으로 설명되지 않는다.
+     *
+     * → ±1일 밖이면 서버 날짜로 클램프한다. 정상 사용자는 영향이 없고 날짜를 돌린 우회만 막힌다.
+     */
+    private LocalDate sanitizeDate(LocalDate requested) {
+        LocalDate serverToday = LocalDate.now(java.time.ZoneOffset.UTC);
+        if (requested == null) return serverToday;
+        long diff = Math.abs(java.time.temporal.ChronoUnit.DAYS.between(serverToday, requested));
+        if (diff <= 1) return requested;
+        log.warn("[FocusAllowance] 클라이언트 날짜가 서버와 {}일 차이 — 서버 날짜로 클램프 (요청={}, 서버={})",
+                diff, requested, serverToday);
+        return serverToday;
+    }
+
     @Transactional(readOnly = true)
     public FocusAllowanceResponse get(Long userId, LocalDate date) {
-        return repository.findByUserIdAndAllowanceDate(userId, date)
+        LocalDate safeDate = sanitizeDate(date);
+        return repository.findByUserIdAndAllowanceDate(userId, safeDate)
                 .map(FocusAllowanceResponse::of)
-                .orElseGet(() -> FocusAllowanceResponse.empty(date));
+                .orElseGet(() -> FocusAllowanceResponse.empty(safeDate));
     }
 
     @Transactional
     public FocusAllowanceResponse sync(Long userId, FocusAllowanceSyncRequest request) {
-        FocusAllowance allowance = repository.findByUserIdAndAllowanceDate(userId, request.date())
+        // 위 sanitizeDate 주석 참고 — 클라이언트 날짜를 그대로 쓰면 기기 날짜만 바꿔도 허용량이 새로 생긴다.
+        LocalDate safeDate = sanitizeDate(request.date());
+        FocusAllowance allowance = repository.findByUserIdAndAllowanceDate(userId, safeDate)
                 .orElseGet(() -> {
                     FocusAllowance created = new FocusAllowance();
                     created.setUserId(userId);
-                    created.setAllowanceDate(request.date());
+                    created.setAllowanceDate(safeDate);
                     return created;
                 });
 

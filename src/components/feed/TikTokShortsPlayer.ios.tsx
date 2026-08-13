@@ -62,6 +62,33 @@ const INJECTED_JS_BEFORE_LOAD = `
     }
   } catch(e) {}
   function ensureInline(v){ try { v.setAttribute('playsinline','true'); v.setAttribute('webkit-playsinline','true'); v.playsInline = true; } catch(e) {} }
+  // 2026-08-14(실기기 재현) — MutationObserver로 나중에 playsinline을 붙이는 방식은 **비동기라
+  // 진다**: 틱톡이 같은 틱(synchronous)에서 <video>를 만들고 바로 .play()를 부르면, WKWebView
+  // 엔진은 그 순간의 DOM 속성(playsinline 없음)만 보고 즉시 네이티브 전체화면으로 승격한다 —
+  // MutationObserver 콜백은 그 뒤(다음 마이크로태스크)에나 도착해 이미 늦는다. 네이티브
+  // 전체화면은 RN 뷰 트리 전체(P버튼 포함)를 덮는 모달이라, 이게 실기기에서 "같은 영상 반복 +
+  // P메뉴 실종"의 실제 원인이었다(웹서치 확인: WKWebView는 playsinline 부재 시 자동 승격이 JS로
+  // 가로챌 수 있는 메서드 호출이 아니라 엔진 내부 결정이라 webkitEnterFullscreen 오버라이드로도
+  // 못 막음). → video 엘리먼트가 **생성되는 그 순간**(createElement)과 **play()가 불리는 그
+  // 순간** 둘 다에서 동기적으로 playsinline을 강제한다 — 레이스 자체를 없앤다. MutationObserver는
+  // innerHTML 등 createElement를 안 거치는 경로를 위한 3중 안전망으로 유지.
+  try {
+    var origCreateElement = document.createElement;
+    document.createElement = function(tagName) {
+      var el = origCreateElement.apply(document, arguments);
+      try { if (String(tagName).toLowerCase() === 'video') ensureInline(el); } catch(e) {}
+      return el;
+    };
+  } catch(e) {}
+  try {
+    if (typeof HTMLMediaElement !== 'undefined' && HTMLMediaElement.prototype.play) {
+      var origPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        ensureInline(this);
+        return origPlay.apply(this, arguments);
+      };
+    }
+  } catch(e) {}
   try {
     var mo0 = new MutationObserver(function(){
       var list = document.querySelectorAll('video');

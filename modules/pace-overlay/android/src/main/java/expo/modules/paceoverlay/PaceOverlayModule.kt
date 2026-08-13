@@ -566,6 +566,29 @@ class PaceOverlayModule : Module() {
           android.view.InputDevice.getDevice(id)?.descriptor == remoteDescriptor
         }
       }.getOrDefault(false)
+      // 🔴 2026-08-14(3차) 사장님 실측 — "맨 처음에 앱 실행하고 리모컨 전원 켜니까 초록불 안 나옴,
+      //   그 뒤로는 됨." 정확한 진단이다. 위 descriptor는 **리모컨 키가 한 번 와야** 저장되므로
+      //   (PaceAccessibilityService.onKeyEvent) 설치 후 처음 연결한 순간에는 항상 null → 회색이다.
+      //   그런데 그 순간에도 리모컨은 이미 HID 입력기기로 붙어 있다(실측: dumpsys input에
+      //   IsExternal:true 1개, BT STATE_CONNECTED).
+      //   → 키 입력을 기다리지 말고 **지금 붙어 있는 입력기기 목록에서 직접 찾는다.**
+      //     ⚠️ InputDevice.isExternal()은 @hide라 앱에서 못 쓴다. 공개 API만으로 내장 버튼과
+       //       가르는 기준:
+      //         · 가상 기기가 아니고(!isVirtual)
+      //         · 키보드 소스를 가지며(SOURCE_KEYBOARD — 리모컨은 볼륨키를 보낸다)
+      //         · VID/PID가 0이 아니다 — 내장 gpio_keys/qpnp_pon류는 0으로 보고되고
+      //           블루투스 HID는 실제 벤더/제품 ID를 싣는다.
+      //     처음 한 번은 무엇을 보고 판단했는지 로그로 남긴다(기기마다 다를 수 있어 실측용).
+      val externalRemoteAttached = runCatching {
+        android.view.InputDevice.getDeviceIds().any { id ->
+          val dev = android.view.InputDevice.getDevice(id) ?: return@any false
+          val isKeyboardish = (dev.sources and android.view.InputDevice.SOURCE_KEYBOARD) != 0
+          val hasHardwareId = dev.vendorId != 0 || dev.productId != 0
+          val match = !dev.isVirtual && isKeyboardish && hasHardwareId
+          if (match) Log.i("PaceOverlay", "BT 리모컨 후보 감지 — name=${dev.name} vid=${dev.vendorId} pid=${dev.productId} desc=${dev.descriptor}")
+          match
+        }
+      }.getOrDefault(false)
       // 🔴 2026-08-14(2차) 사장님 재신고 "블루투스 전원 안 들어가 있는데 초록색인데" — **여전히
       //   초록이었다.** 바로 위 descriptor 판정은 정확하지만, descriptor는 "이 빌드에서 리모컨 키가
       //   한 번이라도 온" 뒤에야 생긴다(PaceAccessibilityService onKeyEvent에서 저장). 그 전에는
@@ -578,7 +601,9 @@ class PaceOverlayModule : Module() {
       //   업그레이드 직후 첫 한 번은 회색이지만 리모컨을 한 번 누르는 순간 descriptor가 잡혀 그
       //   뒤로는 항상 정확하다. 이 점은 "리모컨이 실제로 붙어 있나"를 보려고 만든 표시이므로
       //   (2026-08-13 사장님 지시), 모르면서 초록을 켜는 것보다 모른다고 말하는 쪽이 옳다.
-      val remoteRecentlyUsed = remoteStillAttached
+      // descriptor를 이미 아는 경우가 가장 정확하고(그 리모컨 하나를 특정한다), 모르면 위 하드웨어
+      // 판별로 답한다 — 둘 다 "지금 붙어 있나"를 재는 값이라 시간 폴백처럼 늦게까지 남지 않는다.
+      val remoteRecentlyUsed = remoteStillAttached || externalRemoteAttached
       mapOf(
         // 🔴 2026-08-14 사장님 지적("우리 블루투스 리모컨은 오디오 거르게 되어 있잖아. 오디오
         //   블루투스면 연결이 되어 있어도 회색이어야 하지 않아?") — 맞다. 여기가 `오디오 기기 연결

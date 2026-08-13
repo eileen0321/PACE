@@ -104,11 +104,19 @@ android {
         //     검증: 23:07:14 홈 이동 후 CHAIN resync='null' ×4, fire/advance 0건
         //   함께 담기지만 미검증: Focus 타임아웃 플래그 prefs 영속화, 재설치 견디는 기기 id(SSAID),
         //   서버 허용량 연동(실패는 fail-open이라 앱을 깨뜨리지 않는다).
-        // ⚠️ 광고는 **테스트 광고**다(EXPO_PUBLIC_USE_REAL_ADS 미설정). 비공개 테스트 트랙에 실광고를
-        //   실으면 테스터 클릭이 무효 트래픽으로 잡혀 AdMob 계정 정지 위험 — 2026-08-10에 7→8→9로
-        //   되돌린 그 규칙 그대로다. 실광고는 프로덕션 트랙에서만.
+        // ⚠️ 광고는 **테스트 광고**다. 비공개 테스트 트랙(eas.json submit.android.track=alpha)에
+        //   실광고를 실으면 테스터 클릭이 무효 트래픽으로 잡혀 AdMob 계정 정지 위험 —
+        //   2026-08-10에 7→8→9로 되돌린 그 규칙 그대로다. 실광고는 프로덕션 트랙에서만.
+        //   🔴 2026-08-13 정정 — 여기 적혀 있던 `EXPO_PUBLIC_USE_REAL_ADS 미설정`은 **틀린 근거**였다.
+        //     그 이름을 읽는 코드는 없다(주석에만 존재). 실제 스위치는 adsConfig.ts의
+        //     `EXPO_PUBLIC_ANDROID_REAL_ADS`이고, eas.json production에 명시적으로 "false"를 넣었다
+        //     (없어도 기본이 테스트 광고지만, "빠뜨린 것"과 "정한 것"을 구분하기 위해 적어 둔다).
+        //     프로덕션 트랙에 올리는 날 그 값을 "true"로 바꾼다.
         versionCode 12
-        versionName "1.0.2"
+        // ⚠️ bare workflow에서 **진짜 값은 이 파일**이다(위 versionCode 주석 참고). app.json의
+        //   expo.version과 반드시 같이 올릴 것 — 2026-08-13에 versionCode만 12로 올리고 이 문자열을
+        //   1.0.2로 남겨둬서, 스토어에 1.0.2로 올라갈 뻔했다(QA_FULL_TEST 발견 13).
+        versionName "1.0.3"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

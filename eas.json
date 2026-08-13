@@ -6,16 +6,10 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_USE_REAL_ADS": "false"
-      }
+      "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_USE_REAL_ADS": "false"
-      }
+      "distribution": "internal"
     },
     "production": {
       "channel": "production",
@@ -23,7 +17,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_USE_REAL_ADS": "true"
+        "EXPO_PUBLIC_ANDROID_REAL_ADS": "false"
       }
     }
   },

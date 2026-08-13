@@ -81,6 +81,10 @@ class PaceOverlayService : Service() {
   private var tickCarryMs = 0L
   private var remainingLabel: TextView? = null
   private var autoBadge: TextView? = null
+  // 🔴 2026-08-14 — FOCUS 배지의 **원래** 탭 동작(FOCUS ON/OFF 토글). applyAutoBadgeStyle()이
+  //   접근성이 깨졌을 때 "접근성 설정으로 보내기"로 리스너를 갈아끼우는데, 정상으로 돌아오면
+  //   이걸 되붙여야 한다. 예전엔 그 자리에 null을 넣어서 평상시 배지 탭이 죽어 있었다.
+  private var autoBadgeToggleListener: View.OnClickListener? = null
   // 2026-07-31 사장님 지시(오버레이 P 메뉴) — "화면이 작아지는" 문제(P를 누르면 곧장 앱으로
   // 전환돼 유튜브가 백그라운드로 밀림)를 해결하기 위해, P를 누르면 앱 전환 없이 이 작은 드롭다운
   // 메뉴(별도 오버레이 창)가 먼저 뜬다. "앱으로"만 실제로 앱을 전경으로 가져오고, Saved/Favorite은
@@ -2510,7 +2514,13 @@ class PaceOverlayService : Service() {
       textSize = 9f
       setTypeface(typeface, android.graphics.Typeface.BOLD)
       isClickable = true
-      setOnClickListener {
+      // 🔴 2026-08-14 — 이 리스너를 필드에 보관한다. 어젯밤 "권한 필요 배지가 탭이 안 먹는다"를
+      //   고치면서 applyAutoBadgeStyle()이 `setOnClickListener(if (!accessibilityBroken) null else …)`로
+      //   리스너를 갈아끼우게 됐는데, **정상 상태에서 null로 덮어쓰는 게 문제였다.** 여기서 붙인
+      //   FOCUS ON/OFF 토글이 그 순간 통째로 사라진다 — applyAutoBadgeStyle()은 상태가 바뀔 때마다
+      //   도니까 사실상 **평상시 FOCUS 배지 탭이 죽어 있었다.** 보관해뒀다가 정상 상태에서 되붙인다.
+      //   (병렬 세션이 같은 걸 잡아 고치던 중 작업이 유실돼 여기서 마무리한다.)
+      autoBadgeToggleListener = View.OnClickListener {
         // 2026-08-01 사용자 지시 — "FOCUS OFF" 상태에서 탭했을 때, 그게 자유의사로 끈 게 아니라
         // 무료 사용자의 Focus Session이 시간 다 돼서 자동으로 꺼진 경우라면 그냥 바로 재활성화하지
         // 않는다(광고 없이 무한정 다시 켤 수 있던 구멍). 앱을 열어 JS의 보상형 광고 유도 모달
@@ -2537,7 +2547,7 @@ class PaceOverlayService : Service() {
         // 권한이 멀쩡한 사용자가 연장 자체를 못 하게 된다(PaceAccessibilityService 주석 참고).
         if (!PaceAccessibilityService.isEnabled(applicationContext) || !PaceAccessibilityService.isAliveOrRebinding()) {
           showAccessibilityRequiredOverlay()
-          return@setOnClickListener
+          return@OnClickListener // 리스너를 필드로 뺐으므로 라벨이 setOnClickListener가 아니다
         }
         if (!autoNextEnabled && hasPendingFocusSessionTimeout(applicationContext) && !isPremium(applicationContext)) {
           showExtendChoiceOverlay()
@@ -2548,6 +2558,7 @@ class PaceOverlayService : Service() {
           persistState()
         }
       }
+      setOnClickListener(autoBadgeToggleListener)
     }
     statusPill.addView(autoBadge)
     bar.addView(statusPill, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -5113,10 +5124,15 @@ class PaceOverlayService : Service() {
       //   노출되는 유도 지점이 여기다.
       // → 접근성이 깨진 상태에서만 탭 가능하게 하고, 탭하면 접근성 설정으로 바로 보낸다.
       //   정상일 때는 클릭을 아예 떼서(false) 기존 알약 탭 동작(P 메뉴)을 방해하지 않는다.
-      isClickable = accessibilityBroken
-      isFocusable = accessibilityBroken
+      // 🔴 2026-08-14 — 정상 상태에서 `null`로 덮어쓰면 배지 생성 시 붙인 **FOCUS ON/OFF 토글이
+      //   통째로 사라진다**(이 함수는 상태가 바뀔 때마다 도니까 사실상 평상시 탭이 죽는다).
+      //   원래 리스너를 보관해뒀다가 되붙인다(autoBadgeToggleListener 선언부 주석 참고).
+      //   ⚠️ isClickable도 항상 true여야 한다 — 예전엔 accessibilityBroken일 때만 true라 정상
+      //     상태에서 탭 자체가 안 먹었다.
+      isClickable = true
+      isFocusable = true
       setOnClickListener(
-        if (!accessibilityBroken) null
+        if (!accessibilityBroken) autoBadgeToggleListener
         else View.OnClickListener {
           Log.i("PaceOverlay", "권한 필요 배지 탭 — 접근성 설정으로 이동")
           try {

@@ -338,6 +338,15 @@ export default function FocusScreen() {
     if (pendingEnableRef.current === 'gesture' && accOk && camOk) {
       pendingEnableRef.current = null;
       setGesture(true);
+    } else if (pendingEnableRef.current === 'gesture' && !camOk) {
+      // 🔴 2026-08-14 — 여기서 안 비우면 "켜달라"는 의도가 ref에 남는다. 나중에 사용자가 **다른
+      //   이유로** 카메라 권한을 주는 순간(예: 다른 기능에서 허용) 위 AppState 재확인이 그걸 소비해
+      //   **누른 적도 없는 손짓이 저절로 켜진다.** 방금 병렬 세션이 고친 "손짓이 동의 없이 켜지던 것"
+      //   (59fb492, 실측 WAVE 오탐으로 영상이 저절로 넘어감)과 같은 종류의 사고다.
+      //   카메라는 이 자리에서 사용자가 방금 답을 준 경우(거부)이므로 의도를 여기서 확실히 버린다.
+      //   ⚠️ 접근성은 시스템 설정으로 나갔다 오는 경로라 이 시점에 "거부"를 알 수 없다 — 그래서
+      //     위 accessibility 분기에서는 절대 비우지 않는다(복귀 후 재확인이 소비한다).
+      pendingEnableRef.current = null;
     }
   };
 

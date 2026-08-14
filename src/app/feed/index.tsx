@@ -118,7 +118,7 @@ export default function PaceFeedScreen() {
   // (딥링크 등)는 전부 지금까지의 동작(YouTube)을 그대로 유지해야 하므로 기본값은 'youtube'.
   // 틱톡은 큐레이션(비디오 큐/HOT/검색/즐겨찾기)이 없어 이 화면의 YouTube 전용 로직 대부분이
   // 적용 안 되고, 재생만 TikTokShortsPlayer로 바뀐다 — 아래 각 지점에서 platform으로 분기.
-  const { platform: platformParam } = useLocalSearchParams<{ platform?: string }>();
+  const { platform: platformParam, debugAction } = useLocalSearchParams<{ platform?: string; debugAction?: string }>();
   const platform: 'youtube' | 'tiktok' = platformParam === 'tiktok' ? 'tiktok' : 'youtube';
   // fullScreenModal 프레젠테이션에선 SafeAreaView의 top edge가 0으로 잡혀 상단바가 시스템 상태바와
   // 겹친다(overlay/index.tsx와 동일 이슈) → useSafeAreaInsets로 명시 보정, 0이면 47로 폴백.
@@ -558,6 +558,77 @@ export default function PaceFeedScreen() {
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
   const pauseWaveRef = useRef<(() => void) | null>(null);
   const playerRef = useRef<ShortsPlayerHandle>(null);
+  // 2026-08-15 — "현재 영상 즐겨찾기 추가"를 버튼(onAddCurrent)과 아래 디버그 자동트리거 둘 다에서
+  // 쓰도록 뽑았다. 실기기 재보고("눌러도 리스트에 안 뜬다")를 잡으려고 시뮬레이터로 재현하려 했는데
+  // WKWebView 콘텐츠 위 좌표 클릭(AppleScript/CGEvent 둘 다)이 못 미더워서(정확한 좌표에도 반응
+  // 없음, 원인 미상) 버튼 탭 자체를 딥링크로 우회할 길을 만든다 — __DEV__ 전용, 프로덕션에 영향 없음.
+  const addCurrentToFavorites = useCallback(async () => {
+    if (!userId) return;
+    if (platform === 'tiktok') {
+      const videoUrl = await playerRef.current?.getCurrentVideoUrl?.();
+      if (__DEV__) console.log('[addFavorite] getCurrentVideoUrl ->', videoUrl);
+      if (!videoUrl) {
+        useToastStore.getState().show(t('overlay.openFailed'));
+        return;
+      }
+      const idMatch = videoUrl.match(/\/video\/(\d+)/);
+      const userMatch = videoUrl.match(/\/@([\w.-]+)\//);
+      const meta = await fetchTikTokOEmbed(videoUrl);
+      if (__DEV__) console.log('[addFavorite] oEmbed ->', JSON.stringify(meta));
+      await addSavedVideo({
+        userId,
+        kind: 'favorite',
+        videoId: idMatch ? idMatch[1] : null,
+        title: meta.title,
+        channel: meta.author ?? (userMatch ? userMatch[1] : null),
+        url: videoUrl,
+        platformApp: 'tiktok',
+        thumbnailOverride: meta.thumbnailUrl,
+      }).then(() => { if (__DEV__) console.log('[addFavorite] addSavedVideo OK'); })
+        .catch((e) => { if (__DEV__) console.log('[addFavorite] addSavedVideo FAILED', String(e)); });
+      useToastStore.getState().show(t('overlay.addCurrentSuccess'));
+      return;
+    }
+    const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
+    if (!vid) return;
+    const matchesQueue = current?.videoId === vid;
+    await addSavedVideo({
+      userId,
+      kind: 'favorite',
+      videoId: vid,
+      title: matchesQueue ? (current?.title ?? null) : null,
+      channel: matchesQueue ? (current?.channelTitle ?? null) : null,
+      url: `https://www.youtube.com/shorts/${vid}`,
+      platformApp: 'youtube',
+    }).catch(() => {});
+    useToastStore.getState().show(t('overlay.addCurrentSuccess'));
+  }, [userId, platform, current, t]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=addFavorite로 들어오면 영상이 뜨고
+  // 몇 초 뒤(재생 안정화 대기) 위 addCurrentToFavorites를 자동 호출한다. 시뮬레이터/실기기 클릭
+  // 시뮬레이션 없이 "현재 영상 추가" 버튼 로직을 그대로 검증하기 위한 통로 — 프로덕션(TestFlight/
+  // App Store 빌드)에서는 __DEV__가 false라 이 useEffect 자체가 조용히 no-op.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'addFavorite' || !userId) return;
+    const timer = setTimeout(async () => {
+      await addCurrentToFavorites();
+      setActiveSavedList('favorite'); // 결과를 스크린샷으로 바로 확인할 수 있게 목록을 자동으로 연다.
+    }, 8000); // mainInit/로그인게이트 처리까지 안정적으로 끝나길 기다린다(4초는 너무 일렀다).
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction, userId]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=advance. FOCUS ON(isAutoMode=true)
+  // 상태에서 playerRef.advance()를 강제로 걸어 tryAdvance의 "전환 성공 후 명시적 play()" 수정
+  // (2026-08-15, "다음 영상으로 안 넘어감"/"소리가 나왔다 안 나왔다" 재보고)이 실제로 새 영상을
+  // 재생 상태로 만드는지 자연종료를 기다리지 않고 바로 검증한다.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'advance') return;
+    setIsAutoMode(true);
+    const timer = setTimeout(() => { playerRef.current?.advance(); }, 8000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
   // 2026-08-08 — 무음스위치가 켜져 있어도 사용자가 볼륨키를 누르면(방향 무관) "소리를 원한다"는 신호로
   // 보고 **이 피드 화면을 나갈 때까지**(앱을 벗어나거나 화면을 벗어날 때, 즉 이 컴포넌트가 새로
   // 마운트될 때) 강제 무음을 놓아준다(2026-08-09 사장님 지시 — 유튜브/인스타그램 관행과 동일).
@@ -965,49 +1036,7 @@ export default function PaceFeedScreen() {
             platform={platform}
             onClose={() => setActiveSavedList(null)}
             onOpenVideo={playInFeed}
-            onAddCurrent={async () => {
-              if (!userId) return;
-              // 2026-08-15 — 틱톡은 큐가 없어 current(유튜브 전용)가 항상 null이다. 여기서 조용히
-              // return하면 눌러도 아무 반응이 없는 것처럼 보인다(이 코드베이스가 계속 지적해온
-              // "왜 안 되는지 알 방법이 없다" 패턴) — WebView에서 직접 지금 영상의 permalink를
-              // 물어보고, 실패하면 토스트로 알린다.
-              if (platform === 'tiktok') {
-                const videoUrl = await playerRef.current?.getCurrentVideoUrl?.();
-                if (!videoUrl) {
-                  useToastStore.getState().show(t('overlay.openFailed'));
-                  return;
-                }
-                const idMatch = videoUrl.match(/\/video\/(\d+)/);
-                const userMatch = videoUrl.match(/\/@([\w.-]+)\//);
-                const meta = await fetchTikTokOEmbed(videoUrl);
-                await addSavedVideo({
-                  userId,
-                  kind: 'favorite',
-                  videoId: idMatch ? idMatch[1] : null,
-                  title: meta.title,
-                  channel: meta.author ?? (userMatch ? userMatch[1] : null),
-                  url: videoUrl,
-                  platformApp: 'tiktok',
-                  thumbnailOverride: meta.thumbnailUrl,
-                }).catch(() => {});
-                useToastStore.getState().show(t('overlay.addCurrentSuccess'));
-                return;
-              }
-              const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
-              if (!vid) return;
-              // 스와이프 모드에선 title/channel을 정확히 못 읽어 videoId+url만 저장(썸네일은 videoId로 구성).
-              const matchesQueue = current?.videoId === vid;
-              await addSavedVideo({
-                userId,
-                kind: 'favorite',
-                videoId: vid,
-                title: matchesQueue ? (current?.title ?? null) : null,
-                channel: matchesQueue ? (current?.channelTitle ?? null) : null,
-                url: `https://www.youtube.com/shorts/${vid}`,
-                platformApp: 'youtube',
-              }).catch(() => {});
-              useToastStore.getState().show(t('overlay.addCurrentSuccess'));
-            }}
+            onAddCurrent={addCurrentToFavorites}
           />
         )}
         {showShortsHot && <ShortsHotOverlay onClose={() => setShowShortsHot(false)} onOpenVideo={playInFeed} />}

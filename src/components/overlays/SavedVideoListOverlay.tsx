@@ -36,12 +36,16 @@ async function fetchYouTubeOEmbed(videoId: string): Promise<{ title: string; cha
 export function SavedVideoListOverlay({
   userId,
   kind,
+  platform,
   onClose,
   onAddCurrent,
   onOpenVideo,
 }: {
   userId: string;
   kind: SavedVideoKind;
+  // 2026-08-15 — 안드 파리티(64730a1): 지금 보고 있는 플랫폼의 즐겨찾기만 보여준다. 미지정 시
+  // 기존처럼 전체 반환(호출부가 "현재 플랫폼" 개념이 없는 화면 대비 — getSavedVideos 주석 참고).
+  platform?: string;
   onClose: () => void;
   // iOS 전용 — 피드가 현재 영상 정보를 직접 알아서(Android처럼 공유시트 캡처가 불필요) "현재 영상 추가"를
   // 넘겨준다. 주어졌을 때만 favorite 리스트 상단에 추가 버튼을 렌더한다. 추가 후 리스트 새로고침.
@@ -81,14 +85,14 @@ export function SavedVideoListOverlay({
   }, []);
 
   const reload = useCallback(() => {
-    getSavedVideos(userId, kind).then((list) => {
+    getSavedVideos(userId, kind, platform).then((list) => {
       const shells = list.filter((v) => isBlank(v.videoId) && isBlank(v.url));
       const finalList = shells.length > 0 ? list.filter((v) => !(isBlank(v.videoId) && isBlank(v.url))) : list;
       if (shells.length > 0) shells.forEach((v) => removeSavedVideo(v.id).catch(() => {}));
       setItems(finalList);
       backfillBlankTitles(finalList);
     }).catch(() => setItems([]));
-  }, [userId, kind, backfillBlankTitles]);
+  }, [userId, kind, platform, backfillBlankTitles]);
 
   useEffect(() => { reload(); }, [reload]);
 

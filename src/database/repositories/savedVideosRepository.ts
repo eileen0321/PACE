@@ -61,11 +61,16 @@ export async function addSavedVideo(params: {
   channel: string | null;
   url: string | null;
   platformApp: string | null;
+  // 2026-08-15 안드 파리티(64730a1의 thumbnailOverride) — youtubeThumbnailUrl(videoId)는 유튜브
+  // 전용 공식 썸네일 URL 컨벤션이라 videoId만으로 구성 가능하지만, 틱톡은 그런 컨벤션이 없어
+  // videoId(숫자 ID)로 만들면 깨진 URL이 된다. 준 값이 있으면 그걸 그대로 쓰고, 없으면(유튜브)
+  // 기존처럼 videoId로 구성한다.
+  thumbnailOverride?: string | null;
 }): Promise<SavedVideo> {
   const db = await getDb();
   const id = `sv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const addedAt = new Date().toISOString();
-  const thumbnailUrl = params.videoId ? youtubeThumbnailUrl(params.videoId) : null;
+  const thumbnailUrl = params.thumbnailOverride !== undefined ? params.thumbnailOverride : (params.videoId ? youtubeThumbnailUrl(params.videoId) : null);
   await db.runAsync(
     `INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -85,16 +90,22 @@ export async function addSavedVideo(params: {
   };
 }
 
-export async function getSavedVideos(userId: string, kind: SavedVideoKind): Promise<SavedVideo[]> {
+// 🔴 2026-08-15 — 안드로이드(64730a1 "틱톡 즐겨찾기 — 유튜브용/틱톡용 리스트 분리")와 동일한 파리티
+// 갭이 iOS에도 있었다: addSavedVideo는 platformApp을 저장하는데(692cc86) 조회는 그걸 전혀 안 걸러서
+// 유튜브/틱톡 즐겨찾기가 한 리스트에 섞여 있었다. platform을 주면 그 값(+구버전 platform_app이 NULL인
+// 행 — 이 컬럼 도입 전에 저장된, 전부 유튜브였던 행)만 반환한다. 안 주면(예: Focus 탭 전체 목록처럼
+// "지금 보는 특정 플랫폼"이 없는 화면) 기존처럼 전부 반환 — 호출부 전수 변경 불필요.
+export async function getSavedVideos(userId: string, kind: SavedVideoKind, platform?: string): Promise<SavedVideo[]> {
   const db = await getDb();
   // 2026-08-01 사장님 지시 — Saved/Favorite 병합(네이티브 P 메뉴와 동일). 'favorite' 조회 시 예전
   // 'capture' 저장분도 같은 리스트에 함께 보여준다(마이그레이션 없이 조회 시점 병합). 'capture'는 P
   // 메뉴에서 제거됐지만 타입/호출 호환을 위해 유지.
   const kinds: SavedVideoKind[] = kind === 'favorite' ? ['favorite', 'capture'] : [kind];
   const placeholders = kinds.map(() => '?').join(',');
+  const platformClause = platform ? (platform === 'youtube' ? 'AND (platform_app = ? OR platform_app IS NULL)' : 'AND platform_app = ?') : '';
   const rows = await db.getAllAsync<SavedVideoRow>(
-    `SELECT * FROM saved_videos WHERE user_id = ? AND kind IN (${placeholders}) ORDER BY added_at DESC`,
-    [userId, ...kinds]
+    `SELECT * FROM saved_videos WHERE user_id = ? AND kind IN (${placeholders}) ${platformClause} ORDER BY added_at DESC`,
+    platform ? [userId, ...kinds, platform] : [userId, ...kinds]
   );
   return rows.map(rowToSavedVideo);
 }

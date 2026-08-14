@@ -96,6 +96,21 @@ function DailyRemaining() {
 // 같은 우회로가 남아 있었다(앱 재시작 한 번이면 광고 없이 10분). useFocusSessionStore로 옮겨
 // AsyncStorage에 영속화한다 — 안드로이드가 같은 값을 prefs에 두는 것과 같은 수명.
 
+// 2026-08-15 — "현재 영상 즐겨찾기 추가"의 틱톡 버전(안드 fetchTikTokOEmbed 파리티, 64730a1).
+// 틱톡은 유튜브처럼 videoId만으로 공식 썸네일 URL을 구성할 방법이 없어(그런 컨벤션 자체가 없음)
+// 이 응답(oEmbed, API 키 불필요)이 제목/작성자/썸네일의 유일한 출처다. 실패해도 저장 자체는
+// 진행한다(안드 커밋 사유와 동일 — 목록에서 통째로 빠지는 것보다 제목 없는 항목이 낫다).
+async function fetchTikTokOEmbed(videoUrl: string): Promise<{ title: string | null; author: string | null; thumbnailUrl: string | null }> {
+  try {
+    const res = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(videoUrl)}`);
+    if (!res.ok) return { title: null, author: null, thumbnailUrl: null };
+    const json = (await res.json()) as { title?: string; author_name?: string; thumbnail_url?: string };
+    return { title: json.title ?? null, author: json.author_name ?? null, thumbnailUrl: json.thumbnail_url ?? null };
+  } catch {
+    return { title: null, author: null, thumbnailUrl: null };
+  }
+}
+
 export default function PaceFeedScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -921,10 +936,11 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
-            // 🔴 2026-08-13 — HOT/즐겨찾기는 유튜브 videoId 큐를 전제해 틱톡에선 성립 안 하지만,
-            // 검색은 QA_MATRIX.md 1-4b(안드 → 맥 세션 요청)대로 "입력은 우리 UI, 결과는 틱톡
-            // 화면"으로 성립한다 — hiddenActions에서 뺀다(아래 onSelect가 platform으로 분기).
-            hiddenActions={platform === 'tiktok' ? ['hot', 'favorite'] : undefined}
+            // 🔴 2026-08-13 — HOT은 유튜브 videoId 큐를 전제해 틱톡에선 성립 안 한다(hiddenActions
+            // 유지). 검색은 QA_MATRIX.md 1-4b대로 "입력은 우리 UI, 결과는 틱톡 화면"으로 성립하고,
+            // 즐겨찾기도 2026-08-15부터 WebView에서 직접 permalink를 뽑아 지원하므로(getCurrentVideoUrl
+            // 참고) 더 이상 숨길 이유가 없다 — 둘 다 hiddenActions에서 뺐다.
+            hiddenActions={platform === 'tiktok' ? ['hot'] : undefined}
             onSelect={(action) => {
               // 2026-08-09 파리티 — 안드로이드 ada6c09(같은 자리에 뜨는 오버레이 창들이 서로 겹쳐
               // 보이던 문제)와 같은 계열 버그가 iOS에도 독립적으로 있었다: HOT이 열린 채로 P를 다시
@@ -946,10 +962,37 @@ export default function PaceFeedScreen() {
           <SavedVideoListOverlay
             userId={userId}
             kind={activeSavedList}
+            platform={platform}
             onClose={() => setActiveSavedList(null)}
             onOpenVideo={playInFeed}
             onAddCurrent={async () => {
               if (!userId) return;
+              // 2026-08-15 — 틱톡은 큐가 없어 current(유튜브 전용)가 항상 null이다. 여기서 조용히
+              // return하면 눌러도 아무 반응이 없는 것처럼 보인다(이 코드베이스가 계속 지적해온
+              // "왜 안 되는지 알 방법이 없다" 패턴) — WebView에서 직접 지금 영상의 permalink를
+              // 물어보고, 실패하면 토스트로 알린다.
+              if (platform === 'tiktok') {
+                const videoUrl = await playerRef.current?.getCurrentVideoUrl?.();
+                if (!videoUrl) {
+                  useToastStore.getState().show(t('overlay.openFailed'));
+                  return;
+                }
+                const idMatch = videoUrl.match(/\/video\/(\d+)/);
+                const userMatch = videoUrl.match(/\/@([\w.-]+)\//);
+                const meta = await fetchTikTokOEmbed(videoUrl);
+                await addSavedVideo({
+                  userId,
+                  kind: 'favorite',
+                  videoId: idMatch ? idMatch[1] : null,
+                  title: meta.title,
+                  channel: meta.author ?? (userMatch ? userMatch[1] : null),
+                  url: videoUrl,
+                  platformApp: 'tiktok',
+                  thumbnailOverride: meta.thumbnailUrl,
+                }).catch(() => {});
+                useToastStore.getState().show(t('overlay.addCurrentSuccess'));
+                return;
+              }
               const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
               if (!vid) return;
               // 스와이프 모드에선 title/channel을 정확히 못 읽어 videoId+url만 저장(썸네일은 videoId로 구성).

@@ -612,11 +612,38 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 이 컨테이너의 id가 곧 영상의 숫자 ID라는 게 TikTok 웹의 잘 알려진 DOM 패턴이라, 그걸로
       // 작성자 링크와 조합해 정식 permalink를 재구성한다. 못 맞으면(구조 변경 등) 아래에서 여전히
       // 진단 로그를 남긴다.
+      // 2026-08-15(4차, 실기기+시뮬레이터 진단으로 확정) — container.id는 "one-column-item-0"
+      // 같은 화면상 순번이지 영상 숫자ID가 아니었다(잘 알려진 패턴이라던 가정이 틀림, 실물 덤프로
+      // 확인). 대신 작성자 링크(href="/@username")는 확실히 뽑힌다 — 그 username으로 SSR
+      // 하이드레이션 JSON(__UNIVERSAL_DATA_FOR_REHYDRATION__, 로그인게이트 조사 때 이미 실존 확인한
+      // 그 script 태그)을 훑어 author.uniqueId가 같은 아이템을 찾아 진짜 id를 가져온다 — 정확한
+      // JSON 경로를 모르니 구조를 안 타고 값 자체로 재귀 탐색(구조가 바뀌어도 덜 깨지게).
+      function findVideoIdByUsername(username){
+        try {
+          var script = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+          if (!script) return null;
+          var data = JSON.parse(script.textContent || script.innerText || '{}');
+          var found2 = null;
+          var seen = [];
+          function walk(node, depth){
+            if (found2 || !node || typeof node !== 'object' || depth > 12 || seen.indexOf(node) !== -1) return;
+            seen.push(node);
+            if (node.author && (node.author.uniqueId === username) && node.id && /^\\d+$/.test(String(node.id))) {
+              found2 = String(node.id);
+              return;
+            }
+            for (var key in node) {
+              if (found2) return;
+              walk(node[key], depth + 1);
+            }
+          }
+          walk(data, 0);
+          return found2;
+        } catch(eJ) { return null; }
+      }
       function findByContainerId(){
         var container = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
         if (!container) return null;
-        var vid = (container.id || '').trim();
-        if (!/^\\d+$/.test(vid)) return null;
         var authorWrap = container.querySelector('[data-e2e="video-author-avatar"]');
         var username = null;
         if (authorWrap) {
@@ -632,6 +659,8 @@ const INJECTED_JS_BEFORE_LOAD = `
           }
         }
         if (!username) return null;
+        var vid = findVideoIdByUsername(username);
+        if (!vid) return null;
         return 'https://www.tiktok.com/@' + username + '/video/' + vid;
       }
       var found = null;

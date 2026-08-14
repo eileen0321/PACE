@@ -50,9 +50,10 @@ class PaceAccessibilityService : AccessibilityService() {
   // 너무 오래된 값은 "모른다"로 취급하고 폴백(UsageStatsManager)을 타게 한다.
   private var currentForegroundPackageAtMs = 0L
   private var lastKnownCurrentSec = -1
-  // 2026-08-04 — 직전 영상 전환 시점의 영상 길이(초). "유튜브가 같은 영상을 반복 재생하는 것"과
-  // "사용자가 다음 영상으로 넘긴 것"을 가르는 데 쓴다(아래 loopedBack 분기 주석 참고).
-  private var lastAdvanceTotalSec = -1
+  // 2026-08-04 도입 → 🔴 2026-08-15 기준 교체. "유튜브가 같은 영상을 반복 재생하는 것"과 "사용자가
+  // 다음 영상으로 넘긴 것"을 영상 길이로 가른다. 단 기준은 **직전 폴링에서 보고 있던 길이**여야 한다
+  // (전환 시점의 길이를 쓰면 틀린다 — 아래 loopedBack 분기 주석의 07:58 실측 참고).
+  private var lastObservedTotalSec = -1
   // 🔴 2026-08-12 실기기(틱톡) — 재생위치(timing)를 마지막으로 **읽어낸** 시각. "재생 중인가"가
   // 아니라 "이 앱을 우리가 관측할 수 있는가"를 나타낸다. 수면감지가 이 값에 의존한다: 아래
   // loopedBack 분기의 markUserActivity()(=손가락으로 직접 넘겼다는 **유일한** '깨어있음' 증거,
@@ -81,6 +82,10 @@ class PaceAccessibilityService : AccessibilityService() {
   // (startPlaybackTracking)마다 0으로 리셋 — companion getVideoCount()로 JS가 읽는다.
   private var videoAdvanceCount = 0
   private var lastSwipeAtMs = 0L
+  // 🔴 2026-08-15 — 우리가 방금 제스처를 쐈다는 **명시적 표시**. dispatchSwipe()에서만 세운다.
+  // 이 시각 안에 관측된 영상 전환은 "우리가 만든 전환"이라 사용자 활동으로 인정하지 않는다
+  // (근거는 selfAdvanceAttributed() 주석).
+  private var selfAdvanceArmedUntilMs = 0L
   private var lastVolumeKeySwipeAtMs = 0L
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
   // 재생 화면에 부하가 걸릴 수 있다는 지적 — 한 번 찾은 SeekBar 노드를 캐싱해서, 다음 폴링부터는
@@ -200,6 +205,11 @@ class PaceAccessibilityService : AccessibilityService() {
     // 우리 스와이프 직후의 재생위치 하락(loopedBack)까지 사용자 활동으로 오인하면 수면감지가 영원히
     // 리셋돼 무력화되므로, 우리 스와이프로부터 이 시간이 지난 뒤의 전환만 사용자 조작으로 인정한다.
     private const val MANUAL_SWIPE_MIN_GAP_MS = 3000L
+    // 🔴 2026-08-15 — 위 3초는 **자동넘김 발사 간격 제어**로는 맞지만 "누가 넘겼나" 판정에는 너무 짧다.
+    // 접근성 노드 갱신이 폴링보다 ~2.5초 느리다는 건 이 파일이 이미 여러 번 실측해 기록해둔 사실이라
+    // 우리 스와이프의 결과가 3초 창 밖에서 관측되는 일이 흔하다. 그러면 "사용자가 손으로 넘겼다"로
+    // 오인 → 수면감지 무입력 시계 리셋. 전환 관측 지연을 넉넉히 덮는 별도 창을 attribution 전용으로 쓴다.
+    private const val SELF_ADVANCE_ATTRIBUTION_MS = 8000L
     // 한국어 로케일 실측: "0분 5초 중 0분 2초"(현재 중 전체). 콜론 포맷("0:05 / 0:15")도 방어적으로
     // 같이 시도 — YouTube 앱 버전/기기 로케일이 다르면 문구가 바뀔 수 있다.
     private val KOREAN_TIME_PATTERN = Pattern.compile("(\\d+)분\\s*(\\d+)초\\s*중\\s*(\\d+)분\\s*(\\d+)초")
@@ -470,6 +480,17 @@ class PaceAccessibilityService : AccessibilityService() {
       // 수면감지 무진동 시계를 리셋한다(PaceOverlayService.markUserActivity 참고).
       PaceOverlayService.markUserActivity()
       instance?.let { service -> if (up) service.performSwipeUp() else service.performSwipeDown() }
+    }
+
+    /**
+     * 스와이프가 **아닌** 경로로 우리가 영상을 바꿀 때 거는 표시(HOT 이어서재생의 startActivity 등).
+     * dispatchSwipe()와 같은 attribution 창을 걸어, 그 결과로 관측될 영상 전환이 "사용자가 깨어있다"는
+     * 증거로 오인되지 않게 한다 — 이어서재생은 영상이 끝날 때마다 무한히 도는 경로라, 여기가 뚫려
+     * 있으면 US26(밤새 자동재생)이 자동넘김을 꺼도 그대로 재현된다.
+     */
+    fun markSelfAdvance() {
+      val service = instance ?: return
+      service.selfAdvanceArmedUntilMs = SystemClock.elapsedRealtime() + SELF_ADVANCE_ATTRIBUTION_MS
     }
 
     // 2026-07-19 Hard Block Mode(Settings에서 사용자가 직접 켜야만 호출됨, 기본 OFF) — 한도 도달 시
@@ -984,6 +1005,11 @@ class PaceAccessibilityService : AccessibilityService() {
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
+      // 🔴 2026-08-15 — **직전 폴링에서 보고 있던 영상의 길이.** 아래 loopedBack 판정이 "같은 영상이
+      // 반복된 건지"를 이 값과 비교해서 가른다(예전엔 lastAdvanceTotalSec을 봤는데 그건 전환 시점의
+      // 값이라 틀렸다 — 아래 그 자리 주석에 실측 근거).
+      val prevTotalSec = lastObservedTotalSec
+      lastObservedTotalSec = totalSec
       // 관측 가능성 도장 — 위 lastTimingReadAtMs 주석 참고(수면감지 게이트가 이 신선도를 본다).
       lastTimingReadAtMs = now
       // 2026-08-02 출시 전 정리 — 여기 있던 "timing current=Xs total=Ys" 로그 제거. 재생위치 폴링이
@@ -1036,7 +1062,7 @@ class PaceAccessibilityService : AccessibilityService() {
         if (nearEnd && isWatching && !autoNextSuspended) {
           performSwipeUp()
           lastSwipeAtMs = now
-        } else if (loopedBack && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS && totalSec != lastAdvanceTotalSec) {
+        } else if (loopedBack && !selfAdvanceAttributed(now) && totalSec != prevTotalSec) {
           // 2026-08-04 실기기 검증 중 발견 — 여기에 **제3의 주체**가 있었다: 유튜브가 스스로 같은
           // 영상을 무한 반복하는 경우다. 그때도 재생 위치가 0으로 떨어져 loopedBack이 뜨는데, 예전
           // 조건("우리가 방금 스와이프한 게 아니면 사용자가 넘긴 것")은 그걸 전부 "사용자가 직접
@@ -1049,6 +1075,17 @@ class PaceAccessibilityService : AccessibilityService() {
           // 영상으로 넘기면 대개 달라진다. 완벽한 식별자는 아니지만(길이가 같은 다른 영상이 연달아
           // 올 수 있음) 그 경우는 "사용자 입력으로 한 번 더 인정"하는 안전한 방향의 오차라, 자던
           // 사람을 깨우지 않는다.
+          //
+          // 🔴 2026-08-15 실측 — 그 길이 비교의 **기준값이 틀려 있었다.** 예전엔 lastAdvanceTotalSec
+          //   (= 직전 '전환이 일어난 순간'의 길이)과 비교했는데, near-end로 우리가 넘길 때 그 순간
+          //   읽히는 길이는 아직 **넘어가기 전 영상**의 것이다. 그래서 새 영상이 스스로 반복하면
+          //   길이가 당연히 달라 보여 그대로 통과했다:
+          //     07:58:02 near-end total=33s (여기서 기준이 33으로 박힘) → 새 영상은 56s
+          //     07:58:59 looped-back total=56s  → 56 != 33 → "사용자가 넘겼다"로 오인, 시계 리셋
+          //   즉 2026-08-04에 막았다고 생각한 유튜브 자체 반복이 자동넘김과 겹치면 그대로 다시 샜다.
+          //   → **직전 폴링에서 보고 있던 길이**(prevTotalSec)와 비교한다. 같은 영상이 반복되면
+          //     폴링 사이에 길이가 바뀔 수 없으므로 정확히 걸러진다.
+          Log.d("PaceAccessibility", "VIDEO_ADVANCE looped-back → manual (total ${prevTotalSec}s→${totalSec}s)")
           // 2026-08-02 실기기 근본원인("오버레이가 자꾸 사라짐" — prefs에 expire_reason=sleep_detected,
           // expired=true로 확인). 수면감지는 가속도계(폰의 물리적 움직임)만 보고, 깨어있음 증거로는
           // markUserActivity()(손짓/핑거스냅/BT 리모컨 경로)만 인정했다. 그런데 폰을 거치대나 책상에
@@ -1059,9 +1096,6 @@ class PaceAccessibilityService : AccessibilityService() {
           // 무진동 시계를 리셋한다.
           PaceOverlayService.markUserActivity()
         }
-        // 다음 loopedBack에서 "같은 영상 반복인지"를 비교할 기준. nearEnd(우리가 넘긴 경우)에도
-        // 갱신해야, 우리가 넘긴 직후의 첫 loopedBack이 길이 비교로 잘못 걸리지 않는다.
-        lastAdvanceTotalSec = totalSec
         lastKnownCurrentSec = -1
         return
       }
@@ -1139,9 +1173,11 @@ class PaceAccessibilityService : AccessibilityService() {
         if (prev >= 0f && frac < prev - LOOP_BACK_FRAC_DROP) {
           // 진행률이 확 떨어졌다 = 영상이 끝나 반복됐거나 사용자가 넘겼다.
           videoAdvanceCount++
-          if (now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
-            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=frac-loop prev=$prev now=$frac count=$videoAdvanceCount")
+          if (!selfAdvanceAttributed(now)) {
+            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=frac-loop prev=$prev now=$frac count=$videoAdvanceCount (manual)")
             PaceOverlayService.markUserActivity()
+          } else {
+            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=frac-loop prev=$prev now=$frac count=$videoAdvanceCount (self — 깨어있음 증거 아님)")
           }
           estimatedDurationMs = -1L // 새 영상 — 길이 추정을 처음부터 다시 한다
           videoStartedAtMs = now  // over-stay 상한도 새 영상 기준으로 리셋
@@ -1187,10 +1223,12 @@ class PaceAccessibilityService : AccessibilityService() {
         lastTimingReadAtMs = now // 지문을 읽었다는 것 자체가 "이 앱을 관측할 수 있다"는 뜻
         if (lastVideoFingerprint != null && fp != lastVideoFingerprint) {
           videoAdvanceCount++
-          if (now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
-            // 우리가 넘긴 직후가 아닌데 영상이 바뀌었다 = 사용자가 손으로 넘겼다 = 깨어있음.
+          if (!selfAdvanceAttributed(now)) {
+            // 우리가 넘긴 게 아닌데 영상이 바뀌었다 = 사용자가 손으로 넘겼다 = 깨어있음.
             Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=fingerprint count=$videoAdvanceCount (manual)")
             PaceOverlayService.markUserActivity()
+          } else {
+            Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=fingerprint count=$videoAdvanceCount (self — 깨어있음 증거 아님)")
           }
         }
         lastVideoFingerprint = fp
@@ -1554,7 +1592,29 @@ class PaceAccessibilityService : AccessibilityService() {
   }
 
 
+  /** 지금 관측된 영상 전환이 **우리가 쏜 제스처의 결과**인가. true면 사용자 활동으로 세지 않는다. */
+  private fun selfAdvanceAttributed(now: Long): Boolean = now < selfAdvanceArmedUntilMs
+
+  /**
+   * 🔴 2026-08-15 밤샘 실측으로 잡은 결함(QA_FULL_TEST US26) — "시청시간을 줄이는 앱"이 사용자가
+   * 잠든 사이 **스스로 영상 84편을 넘기며 4시간을 시청으로 적립**했다. 수면감지 로그는 밤새 0줄.
+   *
+   * 원인은 순환이었다. 수면감지의 유일한 '깨어있음' 증거가 **영상 전환**인데(폰을 책상에 두고
+   * 손가락으로만 넘기는 사용자를 자는 걸로 오판하지 않으려고 2026-08-02에 넣었다), 자동넘김이
+   * 바로 그 영상 전환을 계속 만들어냈다. 우리가 넘김 → 전환 관측 → "사용자가 깨어있다" → 무입력
+   * 시계 리셋 → 10분 임계에 영원히 도달 못 함. 실측 84회/338분 = 평균 4분마다 리셋, 임계는 10분.
+   *
+   * 기존 방어는 MANUAL_SWIPE_MIN_GAP_MS(3초) 시간창 하나뿐이었는데, 이 파일이 스스로 기록해둔
+   * "접근성 노드 갱신이 폴링보다 ~2.5초 느리다"와 정면으로 부딪힌다 — 경계에 걸쳐 샌다.
+   *
+   * → 시간 추정 대신 **우리가 쐈다는 사실을 직접 표시**한다. 모든 제스처가 이 한 곳을 지나므로
+   *   여기서만 무장하면 빠짐이 없다. 손짓·볼륨키·BT 리모컨 같은 사람 입력도 이 함수를 거치지만,
+   *   그 경로는 입력을 받은 **그 순간** swipeOnce()에서 이미 markUserActivity()로 인정받는다 —
+   *   그 뒤에 따라오는 화면 전환은 우리가 만든 것이 맞으므로 여기서 빼는 게 정확하다.
+   *   즉 사용자 활동으로 남는 건 "우리가 안 쐈는데 영상이 바뀐 경우" = 진짜 손가락 스와이프뿐이다.
+   */
   private fun dispatchSwipe(path: Path, durationMs: Long = SWIPE_FLING_MS) {
+    selfAdvanceArmedUntilMs = SystemClock.elapsedRealtime() + SELF_ADVANCE_ATTRIBUTION_MS
     val gesture = GestureDescription.Builder()
       .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
       .build()

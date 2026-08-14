@@ -4539,6 +4539,9 @@ class PaceOverlayService : Service() {
                           PaceAccessibilityService.stopFavoriteChainWatch()
                           return@startFavoriteChainWatch
                         }
+                        // 2026-08-15 US26 — 이 전환은 **우리가 만든 것**이다. 표시해두지 않으면
+                        // 수면감지가 "사용자가 손으로 넘겼다"로 읽어 무입력 시계를 리셋한다.
+                        PaceAccessibilityService.markSelfAdvance()
                         try {
                           // 2026-08-15 — 검색 결과 탭과 같은 이유로 setPackage를 명시한다(그쪽 주석 참고).
                           // 이어서재생은 영상이 끝날 때마다 도는 경로라, 매번 App Link 라우팅을 태우면

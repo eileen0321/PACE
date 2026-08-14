@@ -936,10 +936,11 @@ export default function PaceFeedScreen() {
           <PaceMenu
             top={Math.max(insets.top, 47) + 44}
             onClose={() => setShowPaceMenu(false)}
-            // 🔴 2026-08-13 — HOT/즐겨찾기는 유튜브 videoId 큐를 전제해 틱톡에선 성립 안 하지만,
-            // 검색은 QA_MATRIX.md 1-4b(안드 → 맥 세션 요청)대로 "입력은 우리 UI, 결과는 틱톡
-            // 화면"으로 성립한다 — hiddenActions에서 뺀다(아래 onSelect가 platform으로 분기).
-            hiddenActions={platform === 'tiktok' ? ['hot', 'favorite'] : undefined}
+            // 🔴 2026-08-13 — HOT은 유튜브 videoId 큐를 전제해 틱톡에선 성립 안 한다(hiddenActions
+            // 유지). 검색은 QA_MATRIX.md 1-4b대로 "입력은 우리 UI, 결과는 틱톡 화면"으로 성립하고,
+            // 즐겨찾기도 2026-08-15부터 WebView에서 직접 permalink를 뽑아 지원하므로(getCurrentVideoUrl
+            // 참고) 더 이상 숨길 이유가 없다 — 둘 다 hiddenActions에서 뺐다.
+            hiddenActions={platform === 'tiktok' ? ['hot'] : undefined}
             onSelect={(action) => {
               // 2026-08-09 파리티 — 안드로이드 ada6c09(같은 자리에 뜨는 오버레이 창들이 서로 겹쳐
               // 보이던 문제)와 같은 계열 버그가 iOS에도 독립적으로 있었다: HOT이 열린 채로 P를 다시

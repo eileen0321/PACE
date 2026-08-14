@@ -749,6 +749,36 @@ class PaceOverlayModule : Module() {
       } ?: false
     }
 
+    /**
+     * 🔴 2026-08-15 — URL을 **유튜브 앱으로 직행**시켜 연다(App Link 라우팅 우회).
+     *
+     * JS의 `Linking.openURL`은 패키지를 지정할 방법이 없어서, 안드로이드가 매번 "이 https URL을
+     * 어느 앱이 처리할지"를 결정하는 라우팅 단계를 탄다. 유튜브가 죽어 있는 콜드 상태에서 그
+     * 단계가 몇 초를 먹는다 — 실측으로 **6초 넘게 완전한 검은 화면**이었다(QA_FULL_TEST US25의
+     * 실측 표 참고. `setPackage`를 붙이면 1초 내 표시로 바뀌고 Shorts 세로 화면도 그대로 유지된다).
+     *
+     * 네이티브 오버레이(P 메뉴)의 재생 경로 4곳은 Kotlin에서 직접 `setPackage`를 붙여 고쳤는데,
+     * **집중 탭의 보관함만 JS(`focus.tsx` onOpenSaved)에서 열어서** 그 수정이 닿지 않았다.
+     * 그 한 곳을 위해 같은 동작을 JS에도 열어준다.
+     *
+     * @return 열었으면 true. false면 호출부가 기존 `Linking.openURL`로 폴백한다
+     *         (유튜브 미설치/비활성 — 그땐 느리더라도 열리는 게 낫다).
+     */
+    Function("openUrlInYouTube") { url: String ->
+      appContext.reactContext?.let { context ->
+        try {
+          context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            setPackage("com.google.android.youtube")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          })
+          true
+        } catch (e: Exception) {
+          Log.w("PaceOverlayModule", "openUrlInYouTube failed — JS가 Linking으로 폴백", e)
+          false
+        }
+      } ?: false
+    }
+
     Function("cacheAuthToken") { token: String ->
       appContext.reactContext?.let { context ->
         context.getSharedPreferences(PaceOverlayService.PREFS_NAME, Context.MODE_PRIVATE)

@@ -3325,9 +3325,17 @@ class PaceOverlayService : Service() {
             //     동작은 토글과 무관하게 항상 같다 — 엉뚱한 근거만 지운다.
             hideSavedFavoriteList()
             try {
-              startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              // 2026-08-15 — 검색 결과 탭과 같은 이유로 setPackage 명시(그쪽 주석에 실측 표 있음).
+              // 없으면 App Link 라우팅을 타서 콜드 상태에서 6초+ 검은 화면이 된다.
+              startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.google.android.youtube")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              })
             } catch (e: Exception) {
-              Log.w("PaceOverlayService", "재생 실패", e)
+              Log.w("PaceOverlayService", "재생 — 명시 패키지 실패, 라우팅 폴백", e)
+              try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              } catch (e2: Exception) { Log.w("PaceOverlayService", "재생 실패", e2) }
             }
           }
         }
@@ -4511,7 +4519,12 @@ class PaceOverlayService : Service() {
                 Log.i("PaceOverlayService", "HOT tapped category=$category queueSize=${chainQueue.size}")
                 try {
                   val url = "https://www.youtube.com/shorts/${item.videoId}"
-                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                  // 2026-08-15 — 검색 결과 탭과 같은 이유로 setPackage 명시(그쪽 주석에 실측 표 있음).
+                  // HOT은 사용자가 목록에서 고르는 경로라 지연이 그대로 체감된다.
+                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    setPackage("com.google.android.youtube")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  })
                   ShortsHotStore.markWatched(applicationContext, category, item.videoId)
                   // ⚠️ 감시 시작을 늦추는 이유는 즐겨찾기에서 이미 겪은 것과 같다 — startFavoriteChainWatch는
                   //   "지금 화면에 보이는 제목"을 기준으로 잡는데, startActivity 직후엔 아직 이전 영상

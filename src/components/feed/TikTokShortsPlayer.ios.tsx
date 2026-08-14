@@ -233,10 +233,31 @@ const INJECTED_JS_BEFORE_LOAD = `
         // 크롬 버튼이 아닌, 텍스트를 가진 "말단"(자식 엘리먼트 없는) 요소들을 카테고리 칩으로 보고
         // 몇 개 클릭한 뒤 "계속"을 누른다. ⚠️ "로그인"/OAuth류는 여전히 안 건드린다.
         try {
-          var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          // 2026-08-15 실기기 발견(추측 아님, 로그로 확정) — 이 TreeWalker가 SHOW_TEXT로 body 전체를
+          // 훑는데, <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__">의 텍스트 콘텐츠(SSR 하이드레이션용
+          // JSON, 화면엔 안 보임)도 DOM상 엄연한 텍스트 노드라 같이 걸린다. 이 JSON이 모달 문구를
+          // 데이터로도 들고 있어서(다국어 리소스 등) 실제 눈에 보이는 모달보다 먼저(문서상 앞쪽에
+          // 있어서) 매칭돼버렸다 — 그 결과 anchor가 <script> 안이라 카테고리 칩이 매번 0개로 나오고
+          // 게이트를 영원히 못 넘었다("사용약관"이 뭐냐는 질문도 이 로그인 게이트 자체를 보고 하신
+          // 것 — 그 모달 하단 고정 링크 중 하나). script/style/보이지 않는 조상은 걸러내고, 매칭된
+          // anchor가 실제로 안 보이면 계속 다음 후보를 찾는다.
+          var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode: function(node) {
+              var p = node.parentElement;
+              while (p) {
+                var tag = p.tagName;
+                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+                p = p.parentElement;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          });
           var textNode = null;
           while (walker.nextNode()) {
-            if ((walker.currentNode.nodeValue || '').indexOf('무엇을 시청하고') !== -1) { textNode = walker.currentNode; break; }
+            var cur = walker.currentNode;
+            if ((cur.nodeValue || '').indexOf('무엇을 시청하고') !== -1 && cur.parentElement && isVisible(cur.parentElement)) {
+              textNode = cur; break;
+            }
           }
           var anchor = textNode ? textNode.parentElement : null;
           var modalRoot = null;
@@ -410,7 +431,21 @@ const INJECTED_JS_BEFORE_LOAD = `
     goToNext(video);
     setTimeout(function(){
       var nowActive = getActiveVideo();
-      if (nowActive && nowActive !== video) { video.__paceAdvancing = false; return; }
+      if (nowActive && nowActive !== video) {
+        video.__paceAdvancing = false;
+        // 2026-08-15 실기기 발견("FOCUS ON인데 다음 영상으로 안 넘어감", "소리가 나왔다 안
+        // 나왔다") — 슬라이드 DOM은 실제로 옮겨갔는데(nowActive가 바뀜) 새 video가 그냥
+        // 멈춰 있는 경우가 있었다. 여기까지는 goToNext()의 합성 스크롤/포인터/터치 이벤트가
+        // 트리거지, 틱톡 자신의 재생 로직이 항상 같이 따라온다는 보장이 없다 — 그래서
+        // 화면상으론 "안 넘어감"(그대로 멈춘 이전 프레임)으로 보이고, 어떤 영상은 재생되고
+        // 어떤 건 멈춰만 있으니 "소리가 나왔다 안 나왔다"로 체감된 것도 같은 원인일 수 있다.
+        // → 전환 성공을 확인한 시점에 새 video가 paused면 명시적으로 play()를 부른다. 이
+        // 시점은 이미 이전의 진짜 사용자 탭으로 페이지 전체가 자동재생 허용을 받은 뒤라
+        // (WebKit 자동재생 정책은 엘리먼트가 아니라 페이지/문서 단위) muted 여부와 무관하게
+        // 통과할 것으로 기대한다.
+        try { ensureInline(nowActive); if (nowActive.paused) nowActive.play().catch(function(){}); } catch(e2) {}
+        return;
+      }
       if (attemptsLeft > 0) { tryAdvance(video, attemptsLeft - 1); }
       else { video.__paceAdvancing = false; }
     }, 700);

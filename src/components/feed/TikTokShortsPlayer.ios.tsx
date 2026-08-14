@@ -604,6 +604,18 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 슬라이드 경계(있으면)까지만 올라간다 — 그 밖(사이드바 등)의 다른 영상 링크를 잘못 줍지 않게.
       var slide = v.closest ? v.closest('.swiper-slide') : null;
       var found = findIn(slide) || findIn(v.parentElement) || findIn(v.closest ? v.closest('article') : null) || findIn(document.body);
+      // 2026-08-15 진단(실기기 재현) — <a href> 방식이 실제 DOM에서 안 잡히는 경우를 대비해
+      // SPA가 흔히 갱신하는 og:url/canonical 메타도 같이 시도, 그래도 없으면 무엇을 봤는지 로그.
+      if (!found) {
+        var og = document.querySelector('meta[property="og:url"]');
+        var canon = document.querySelector('link[rel="canonical"]');
+        var metaUrl = (og && og.getAttribute('content')) || (canon && canon.getAttribute('href')) || null;
+        if (metaUrl && VIDEO_LINK_RE.test(metaUrl)) found = metaUrl;
+      }
+      if (!found) {
+        var anyVideoLinks = document.querySelectorAll('a[href*="/video/"]');
+        send({ type: 'domlog', text: '즐겨찾기: 현재영상 URL 못 찾음. location=' + location.href + ' /video/ 링크 총 ' + anyVideoLinks.length + '개' });
+      }
       send({ type: 'currentVideoUrl', url: found });
     } catch(e) { send({ type: 'currentVideoUrl', url: null }); }
   };

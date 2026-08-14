@@ -131,11 +131,35 @@ public class PaceGestureModule: Module {
   // 이미 같은 역할(다음 넘김)을 하므로 상호 배타적으로 둔다. Android(PaceOverlayService.kt
   // isBluetoothAudioConnected)와 동일한 결정, 이쪽은 AVAudioSession.currentRoute로 판단.
   // ⚠️ 실기기(Xcode) 미검증 — Mac 세션에서 실기기로 빌드/확인 필요.
+  // 🔴 2026-08-15 사장님 지적 — 이 함수가 useBluetoothStore의 "리모컨 연결됨" 초록불로 쓰이는데,
+  // 정작 아이팟/버즈 같은 순수 오디오 기기만 연결돼도 초록이 켜졌다. Android가 같은 날 겪고 고친
+  // 문제(55e4e0b, "오디오 기기면 회색이어야지")와 같은 클래스 — 다만 Android는 InputDevice.descriptor로
+  // 진짜 리모컨을 직접 구분할 공식 API가 있는데(HID 프로파일을 앱에 노출) iOS는 그 계층 자체를
+  // 시스템이 통째로 삼키고 앱한텐 절대 안 준다(Apple Developer Forums 확인 — 서드파티 앱이 HID
+  // 기기 종류를 알 방법 자체가 없음). 완전히 같은 정확도는 불가능 — 대신 PaceVolumeKeyModule이
+  // 이미 볼륨키 하이재킹 스킵 판단에 쓰던 "이름으로 진짜 오디오 기기 거르기" 휴리스틱(2026-08-05
+  // 사장님 지시)을 여기도 적용한다: A2DP(구조적으로 순수 스트리밍 전용이라 리모컨일 수 없음)이거나
+  // 포트 이름이 알려진 헤드폰 브랜드와 일치하면 "진짜 오디오 기기"로 보고 회색 처리, 그 외
+  // BT 오디오 라우트(이름 모를 기기 — 저가 리모컨류가 여기 걸릴 가능성이 있음)만 초록으로 남긴다.
+  private static let KNOWN_AUDIO_BRANDS = [
+    "airpods", "beats", "galaxy buds", "buds", "jbl", "bose", "sony", "soundcore",
+    "anker", "powerbeats", "echo", "sonos",
+  ]
   private func isBluetoothAudioConnected() -> Bool {
     let bluetoothPortTypes: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
     let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-    let connected = outputs.contains { bluetoothPortTypes.contains($0.portType) }
-    paceGLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
+    let btOutputs = outputs.filter { bluetoothPortTypes.contains($0.portType) }
+    guard !btOutputs.isEmpty else {
+      paceGLog("PACEBT isBTConnected=false outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
+      return false
+    }
+    let isKnownAudioAccessory = btOutputs.contains { port in
+      if port.portType == .bluetoothA2DP { return true }
+      let name = port.portName.lowercased()
+      return Self.KNOWN_AUDIO_BRANDS.contains { name.contains($0) }
+    }
+    let connected = !isKnownAudioAccessory
+    paceGLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue }) knownAudio=\(isKnownAudioAccessory)") // 진단(BT스피커 테스트 후 제거)
     return connected
   }
 

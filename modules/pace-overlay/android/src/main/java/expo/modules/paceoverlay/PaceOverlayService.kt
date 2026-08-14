@@ -4144,9 +4144,31 @@ class PaceOverlayService : Service() {
             chainQueue.clear()
             PaceAccessibilityService.stopFavoriteChainWatch()
             try {
+              // 🔴 2026-08-15 사장님 신고("검색해서 리스트에 있는걸 선택하면 로딩하는데 한참 걸려") —
+              //   원인은 **setPackage가 없었던 것**이다. 그게 없으면 안드로이드가 이 https URL을
+              //   어느 앱이 처리할지 App Link 라우팅으로 매번 결정하는데, 유튜브가 죽어 있는
+              //   콜드 상태에서 그 단계가 몇 초를 먹는다.
+              //   실측(실제 검색 결과 videoId, 스크린샷 크기로 화면 변화 판정 —
+              //   15,044바이트 = 완전한 검은 화면):
+              //     setPackage 없음: 1s·2s·3s·4s·6s 전부 검은 화면 → 9s에야 표시
+              //     setPackage 있음: **1s에 이미 표시**(검은 화면 구간 자체가 없음)
+              //   Shorts 세로 화면도 그대로 유지된다(스크린샷 확인: 하단 탭 Shorts 선택,
+              //   좋아요/공유/리믹스/진행바 정상) — vnd.youtube://처럼 일반 플레이어로 빠지지 않는다.
+              //   ⚠️ 처음엔 "빠르고+Shorts+특정영상인 조합이 유튜브 앱에 없다"고 결론냈는데 틀렸다.
+              //     setPackage를 안 붙인 상태로만 스킴 4종을 비교해서 나온 오판이었다(웹 조사 후 정정).
               startActivity(Intent(Intent.ACTION_VIEW,
-                Uri.parse("https://www.youtube.com/shorts/${item.videoId}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (e: Exception) { Log.w("PaceOverlayService", "검색 결과 재생 실패", e) }
+                Uri.parse("https://www.youtube.com/shorts/${item.videoId}")).apply {
+                setPackage("com.google.android.youtube")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              })
+            } catch (e: Exception) {
+              // 유튜브 미설치/비활성 등으로 명시 패키지가 실패하면 기존처럼 라우팅에 맡긴다(느리지만 열리긴 한다).
+              Log.w("PaceOverlayService", "검색 결과 재생 — 명시 패키지 실패, 라우팅 폴백", e)
+              try {
+                startActivity(Intent(Intent.ACTION_VIEW,
+                  Uri.parse("https://www.youtube.com/shorts/${item.videoId}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              } catch (e2: Exception) { Log.w("PaceOverlayService", "검색 결과 재생 실패", e2) }
+            }
           }
         }
         val thumb = ImageView(this).apply {
@@ -4505,9 +4527,19 @@ class PaceOverlayService : Service() {
                           return@startFavoriteChainWatch
                         }
                         try {
-                          startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                          // 2026-08-15 — 검색 결과 탭과 같은 이유로 setPackage를 명시한다(그쪽 주석 참고).
+                          // 이어서재생은 영상이 끝날 때마다 도는 경로라, 매번 App Link 라우팅을 태우면
+                          // 전환마다 그 지연이 그대로 쌓인다.
+                          startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).apply {
+                            setPackage("com.google.android.youtube")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                          })
                         } catch (e: Exception) {
-                          Log.w("PaceOverlayService", "HOT 체이닝 재생 실패", e)
+                          // 명시 패키지가 실패하면(유튜브 미설치/비활성) 기존 라우팅 방식으로 폴백.
+                          Log.w("PaceOverlayService", "HOT 체이닝 — 명시 패키지 실패, 라우팅 폴백", e)
+                          try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(next)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                          } catch (e2: Exception) { Log.w("PaceOverlayService", "HOT 체이닝 재생 실패", e2) }
                         }
                         if (chainQueue.isEmpty()) PaceAccessibilityService.stopFavoriteChainWatch()
                       }

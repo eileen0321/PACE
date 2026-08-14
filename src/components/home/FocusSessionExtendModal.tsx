@@ -57,7 +57,11 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
   // toggleAutoMode 게이트 참고) 여기 체크는 혹시 다른 경로로 열려도 안전하게 우회시키는 벨트.
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const adWatchCount = useFocusExtendAdStore((s) => s.count);
-  const adLimitReached = !isPremium && adWatchCount >= FOCUS_EXTEND_AD_DAILY_LIMIT;
+  // 2026-08-15 — __DEV__ 전용 우회. 서버 카운터가 max-merge라(FocusAllowanceService.java 참고)
+  // 로컬만 지워도 다음 load()에서 서버 값으로 도로 채워져 실질적으로 리셋이 불가능하다. 실사용자
+  // 로직/서버 데이터는 전혀 안 건드리고, 개발 빌드에서만 반복 테스트가 막히지 않게 한다 —
+  // __DEV__는 릴리즈 빌드에서 항상 false라 프로덕션 동작은 이 줄 추가 전과 100% 동일하다.
+  const adLimitReached = !__DEV__ && !isPremium && adWatchCount >= FOCUS_EXTEND_AD_DAILY_LIMIT;
 
   const onWatchAd = () => {
     if (adLimitReached) {

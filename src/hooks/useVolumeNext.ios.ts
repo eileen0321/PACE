@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { requireNativeModule } from 'expo-modules-core';
+import { bluetoothService } from '../services/platform';
 
 // iOS 볼륨 버튼(에어팟/버즈/다이소 BT 리모컨) → Short 넘김 (2026-07-21 사용자 지시 (2)(3)).
 // modules/pace-volumekey(AVAudioSession.outputVolume KVO)를 감싼다. Metro가 iOS에서만 이 .ios.ts 선택.
@@ -31,6 +32,10 @@ export function useVolumeNext({ enabled, onNext, onPrevious }: { enabled: boolea
       return;
     }
     const sub = mod.addListener('onVolumeButton', (payload) => {
+      // 2026-08-15 — 리모컨 "연결됨" 점의 유일하게 신뢰 가능한 신호(bluetoothService.ios.ts 주석
+      // 참고). 폰 물리 볼륨버튼과는 실기기에서 구분이 안 되지만(iOS 플랫폼 한계, 기존 주석 참고),
+      // 최소한 "무언가 눌렸다"는 사실 자체는 정직하게 보여준다.
+      bluetoothService.reportRemoteActivity();
       if (payload?.direction === 'down' && onPrevRef.current) {
         if (__DEV__) console.log('[volumekey] 🔉 볼륨↓ → previous');
         onPrevRef.current();

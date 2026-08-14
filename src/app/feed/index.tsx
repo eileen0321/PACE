@@ -24,6 +24,8 @@ import { startSession, endSession } from '../../database/repositories/sessionsRe
 import { notifyLowTime, notifyLimitReached, notifyBreakReminder } from '../../services/notifications';
 import type { SessionEndStatus } from '../../types/models';
 import { overlayService } from '../../services/platform';
+import { useBluetoothStore } from '../../store/useBluetoothStore';
+import { ConnectedDot } from '../../components/ui/ConnectedDot';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
@@ -237,6 +239,20 @@ export default function PaceFeedScreen() {
   const hardBlockMode = useSettingsStore((s) => s.settings.hardBlockMode);
   const [limitBlocked, setLimitBlocked] = useState(false);
   const userId = useUserStore((s) => s.user?.id);
+  // 2026-08-15 — BT 리모컨 "연결됨" 점(QA_MATRIX K-계열 실기기 재확인 중 사장님 지적). iOS는 이
+  // 신호(onVolumeButton 최근 발생 여부)가 이 화면 안에서만 만들어진다(bluetoothService.ios.ts,
+  // useVolumeNext.ios.ts 주석 참고) — 그래서 표시도 여기서 한다(Focus 탭은 구조적으로 항상 회색).
+  const remoteConnected = useBluetoothStore((s) => s.isConnected);
+  // 🔴 useBluetoothStore.autoModeEnabled는 Android 전용 값(항상 false 고정, iOS getState() 참고) —
+  // iOS의 실제 핸즈프리 마스터 스위치는 focus.tsx와 동일하게 settings.handsFreeEnabled(순수 JS
+  // 설정)다. 여기서 잘못 autoModeEnabled를 썼으면 이 배지가 영원히 안 뜨는 새 버그가 될 뻔했다.
+  const handsFreeMasterOn = useSettingsStore((s) => s.settings.handsFreeEnabled);
+  useEffect(() => {
+    const refresh = () => useBluetoothStore.getState().refresh().catch(() => {});
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, []);
   // 2026-08-01 사장님 지적 — 피드(웹뷰) P 버튼이 홈 이동만 하고 P 메뉴를 안 띄웠다. overlay/index.tsx와
   // 동일하게 공용 PaceMenu(앱으로/Shorts HOT/Saved/Favorite) + SavedVideoListOverlay를 그대로 재사용.
   const [showPaceMenu, setShowPaceMenu] = useState(false);
@@ -638,6 +654,19 @@ export default function PaceFeedScreen() {
   // 사장님 실기기 재현이 바로 이것. ref 초기값(false)은 컴포넌트가 새로 마운트될 때만 자연히 리셋되므로,
   // 폴링 effect 안에서는 더 이상 건드리지 않는다(아래).
   const userSilentOverrideRef = useRef(false);
+  // 2026-08-15 — 마지막으로 확인된 무음 스위치 상태. YouTubeShortsPlayer의 initialMuted prop으로
+  // 넘겨서, 새 영상(WebView 콜드 스타트)이 뜨자마자 이미 알고 있는 값으로 시작하게 한다 — 없으면
+  // checkSilentSwitch()가 비동기(200~300ms)라 그동안 소리가 새는 "나왔다가 안 나와" 증상이 생긴다
+  // (사장님 실기기 지적). 세션 중 아직 한 번도 확인 안 된 아주 첫 영상만 기본값(false)이라 기존과
+  // 동일하게 살짝 샐 수 있음 — 그 뒤로는 이 ref가 계속 최신값을 들고 있어 문제없다.
+  const lastKnownSilentRef = useRef(false);
+  // 2026-08-15(2차) 사장님 지적("1분 넘게 리모컨 안 눌렀는데 왜 안 꺼지고 볼륨도 안 켜져") — 아래
+  // onSilentUnmute 억제를 volumeKeyRemote(설정 토글, 켜놓으면 계속 true)로만 걸었더니 리모컨을 실제로
+  // 안 쓴 지 오래여도(BT 아이콘은 이미 회색) 폰 물리 볼륨버튼이 계속 안 먹혔다 — 배지(remoteConnected,
+  // 3초 폴링이라 지연 있음)와 다른 기준을 썼던 게 원인. 이 ref는 실제 onNext/onPrevious 콜백에서 그
+  // 자리에서 바로 갱신해 지연 없이 "정말 방금 리모컨을 썼는지"를 판단한다 — 배지와 같은 60초 창.
+  const remoteActivityAtRef = useRef(0);
+  const REMOTE_MUTE_SUPPRESS_WINDOW_MS = 60_000;
 
   // 2026-08-07 무음스위치 강제 반영 — WKWebView가 <video> 오디오 재생 시 물리 무음 스위치를 원천적으로
   // 무시하는 유명한 iOS 플랫폼 버그다(rdar://28716885, WebKit bug 167788 — AVAudioSession 카테고리를
@@ -660,16 +689,29 @@ export default function PaceFeedScreen() {
     let cancelled = false;
     const check = () => {
       mod!.checkSilentSwitch().then((isSilent) => {
+        if (cancelled) return;
+        lastKnownSilentRef.current = isSilent;
         // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
-        if (!cancelled && !userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);
+        if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);
       }).catch(() => {});
     };
     check();
     const id = setInterval(check, 2000);
-    // 2026-08-08 — 리모컨 토글(volumeKeyRemote)과 무관하게 재생 중엔 항상 켜서, 볼륨키를 누르면(방향
-    // 무관) 무음스위치가 켜져 있어도 소리를 낸다(위 userSilentOverrideRef 주석 참고).
+    // 2026-08-08 — 원래는 리모컨 토글과 무관하게 항상 켜서, 볼륨키를 누르면(방향 무관) 무음스위치가
+    // 켜져 있어도 소리를 냈다(유튜브/인스타그램의 "폰 물리 볼륨버튼을 누르면 무음이라도 소리 난다"
+    // 관행 재현).
+    // 🔴 2026-08-15 사장님 지시("무음이면 무음으로 해, 리모컨으로 해도") — iOS는 볼륨 변화가 폰
+    // 물리버튼에서 온 건지 BT 리모컨에서 온 건지 구분할 API가 없다(이 세션에서 여러 번 재확인된
+    // 플랫폼 한계). 리모컨 토글(volumeKeyRemote)이 켜진 동안은 리모컨으로 넘기다가 실수로/의도치
+    // 않게 무음이 풀리는 걸 막기 위해, 이 강제 언뮤트를 아예 끈다 — 그 시간 동안은 물리 볼륨버튼을
+    // 눌러도 더 이상 소리가 안 난다(리모컨과 구분 불가하므로 트레이드오프, 무음 우선). 리모컨 토글이
+    // 꺼져 있으면(리모컨을 안 쓰는 평소) 기존 2026-08-08 동작 그대로 유지.
     mod.startSilentUnmuteWatch();
     const sub = mod.addListener('onSilentUnmute', () => {
+      // 리모컨을 최근(60초 이내, 배지와 동일 창) 실제로 쓴 경우만 억제 — 그 밖엔(폰 물리버튼이거나
+      // 리모컨을 안 쓴 지 오래됐으면) 기존 2026-08-08 동작(눌리면 무조건 언뮤트) 그대로.
+      const recentlyUsedRemote = Date.now() - remoteActivityAtRef.current < REMOTE_MUTE_SUPPRESS_WINDOW_MS;
+      if (volumeKeyRemote && recentlyUsedRemote) return;
       userSilentOverrideRef.current = true;
       playerRef.current?.setMuted(false);
     });
@@ -679,7 +721,7 @@ export default function PaceFeedScreen() {
       sub.remove();
       mod!.stopSilentUnmuteWatch();
     };
-  }, [playing]);
+  }, [playing, volumeKeyRemote]);
 
   // 2026-07-29 사장님 지시 — "무입력 idle 하드상한". 유튜브는 ~30분 무입력이면 "Continue watching?"으로
   // 스스로 멈추는데, PACE 자동모드의 프로그램 넘김(advance 주입)이 그 idle 타이머를 계속 리셋해 유튜브가
@@ -851,8 +893,8 @@ export default function PaceFeedScreen() {
   // 으로 하이재킹(토글 OFF면 폰 볼륨 항상 정상). Android는 접근성 오버레이(Kotlin) 별도 — co-session 확인 필요.
   useVolumeNext({
     enabled: isAutoMode && volumeKeyRemote,
-    onNext: () => { markUserInput(); goNext(); },
-    onPrevious: () => { markUserInput(); goPrev(); },
+    onNext: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goNext(); },
+    onPrevious: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goPrev(); },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면
@@ -906,6 +948,7 @@ export default function PaceFeedScreen() {
             ref={playerRef}
             videoId={forcedVideoId ?? current!.videoId}
             playing={playing}
+            initialMuted={lastKnownSilentRef.current}
             onProgress={handleProgress}
             onVideoChange={(id) => { currentVideoIdRef.current = id; }}
             onUserSwipe={(dir, moved) => {
@@ -984,22 +1027,32 @@ export default function PaceFeedScreen() {
               </>
             )}
           </Pressable>
-          <Pressable
-            onPress={() => {
-              // 2026-08-09 — activeSavedList/showShortsHot이 이미 열려 있는 채로 P를 다시 눌러 메뉴를
-              // 띄우면 그 위에 겹쳐 그려졌다(위 onSelect 주석과 같은 원인). 여기서도 형제를 닫는다.
-              setShowPaceMenu((v) => {
-                const next = !v;
-                if (next) { setActiveSavedList(null); setShowShortsHot(false); setShowShortsSearch(false); }
-                return next;
-              });
-            }}
-            hitSlop={12}
-            style={styles.appIconBtn}
-          >
-            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-            <Text style={styles.appIconText}>P</Text>
-          </Pressable>
+          <View>
+            <Pressable
+              onPress={() => {
+                // 2026-08-09 — activeSavedList/showShortsHot이 이미 열려 있는 채로 P를 다시 눌러 메뉴를
+                // 띄우면 그 위에 겹쳐 그려졌다(위 onSelect 주석과 같은 원인). 여기서도 형제를 닫는다.
+                setShowPaceMenu((v) => {
+                  const next = !v;
+                  if (next) { setActiveSavedList(null); setShowShortsHot(false); setShowShortsSearch(false); }
+                  return next;
+                });
+              }}
+              hitSlop={12}
+              style={styles.appIconBtn}
+            >
+              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+              <Text style={styles.appIconText}>P</Text>
+            </Pressable>
+            {/* 2026-08-15 — 리모컨 "최근 감지됨" 점(bluetoothService.ios.ts 주석 참고, 정적 연결
+                판정 아님). appIconBtn은 overflow:hidden이라 그 안에 넣으면 잘려서 별도 형제로 얹는다.
+                핸즈프리 마스터가 꺼져 있으면 리모컨 자체가 감지될 일이 없어 숨긴다(Focus 탭과 동일 게이팅). */}
+            {handsFreeMasterOn && (
+              <View pointerEvents="none" style={styles.remoteDotBadge}>
+                <ConnectedDot connected={remoteConnected} />
+              </View>
+            )}
+          </View>
         </View>
 
         {/* 공용 P 메뉴(overlay/index.tsx와 동일 배선) — 앱으로/Shorts HOT/Saved/Favorite */}
@@ -1227,6 +1280,9 @@ const styles = StyleSheet.create({
   // 우상단 "P" 앱 아이콘(복귀용) — 온보딩/오버레이의 보라 P 배지와 동일 톤(2026-07-21).
   // 글래스모피즘 P(사용자 지시) — solid 보라 대신 프로스티드 글래스 원. 영상을 덜 가리게 반투명.
   appIconBtn: { width: 36, height: 36, borderRadius: radius.pill, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' },
+  // 리모컨 "최근 감지됨" 점 — appIconBtn 우상단에 얹는 작은 배지. 어두운 배경을 깔아 영상 위에서도
+  // 점 색(초록/회색)이 또렷이 보이게 한다.
+  remoteDotBadge: { position: 'absolute', top: -2, right: -2, width: 12, height: 12, borderRadius: 6, backgroundColor: 'rgba(20,20,20,0.85)', alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.25)' },
   // 상단 세션 토글 필(항상 표시) — OFF는 "▶ START SESSION"(중립 테두리), ON은 "● SESSION ON"(초록 테두리).
   sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   sessionPillOn: { borderColor: colors.success },

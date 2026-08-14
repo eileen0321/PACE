@@ -255,4 +255,8 @@ export const bluetoothService: BluetoothService = {
       return false;
     }
   },
+
+  // no-op — Android는 InputDevice.descriptor로 정적 연결 판정을 이미 정확히 하므로(getState()의
+  // isConnected가 진실원천) iOS처럼 사후적 활동 신호가 필요 없다.
+  reportRemoteActivity() {},
 };

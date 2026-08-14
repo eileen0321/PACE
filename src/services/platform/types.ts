@@ -270,6 +270,17 @@ export interface BluetoothService {
    */
   hasCameraPermission(): Promise<boolean>;
   requestCameraPermission(): Promise<boolean>;
+  /**
+   * 2026-08-15 사장님 실기기 지적 — iOS "리모컨 연결됨" 점이 AVAudioSession.currentRoute(오디오
+   * 라우트) 기반이었는데, 실제 저가 BT 클리커는 오디오 프로파일이 아니라 순수 HID로 붙어서 애초에
+   * 라우트에 안 잡힌다(웹서치로 재확인 — iOS는 서드파티 앱에 HID 기기 연결 상태를 절대 안 준다,
+   * Android의 InputDevice.descriptor 같은 API 자체가 없음). 대신 실제로 리모컨 키가 눌려
+   * onVolumeButton(PaceVolumeKeyModule, 볼륨키 KVO+MPRemoteCommandCenter 겸용)이 발생한 시각을
+   * 기록해두고, "최근에 감지된 적 있음"으로 점을 켠다 — 정적 연결 상태가 아니라 사후적(reactive)
+   * 신호라는 걸 명확히 하기 위해 이름도 상태 조회가 아니라 "활동 보고"로 둔다. Android는 이미
+   * InputDevice로 정확한 정적 판정을 하므로 no-op.
+   */
+  reportRemoteActivity(): void;
 }
 
 // 2026-07-26 사용자 지시로 iOS Screen Time(FamilyControls) 차단 기능 전면 삭제 — Apple의

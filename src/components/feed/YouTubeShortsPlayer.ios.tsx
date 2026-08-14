@@ -56,6 +56,19 @@ type Props = {
   onAudioDiag?: (text: string) => void;
   /** 프리로드 모드 — 다음 영상 페이지를 미리 로드만(재생·소리 없음). 활성화(false 전환) 시 처음부터 재생. */
   preload?: boolean;
+  /**
+   * 2026-08-15 사장님 지시("무음이면 소리 안 나게 하라고") — 이 WebView가 처음 뜰 때(콜드 스타트)
+   * 물리 무음 스위치가 이미 켜져 있는 걸 부모가 알고 있으면 미리 알려준다. 없으면 항상 "먼저 소리로
+   * 재생 시도"(아래 tryAudible/goAudible 주석 — 무음으로 시작하면 유튜브가 오디오 트랙 자체를 안
+   * 붙여 나중에 풀어도 영영 무음이 되는 2026-08-05 확정 회귀가 있어 되돌릴 수 없음)라 무음 스위치가
+   * 켜져 있어도 checkSilentSwitch()가 비동기로 확인되는 200~300ms 동안 소리가 샜다 — "나왔다가
+   * 안 나와"로 체감된 원인. window.__paceForceSilent를 미리 세팅해두면 goAudible()이 최초 재생
+   * 성공 직후(오디오 트랙은 이미 정상 붙은 뒤) 곧바로 무음 처리한다 — play() 호출 자체의 muted
+   * 상태는 안 건드리므로 위 회귀와 다른 경로(setMuted()가 런타임에 쓰는 것과 동일한, 이미 검증된
+   * 분기)다. 세션 중 이미 한 번이라도 무음 여부를 확인했다면 그 값이 이어지고(feed/index.tsx의
+   * lastKnownSilentRef), 앱을 막 켠 아주 첫 영상만 이 값이 없어 기존과 동일하게 살짝 샐 수 있다.
+   */
+  initialMuted?: boolean;
 };
 
 // youtube.com/shorts 페이지의 실제 <video>에 붙어 ready/ended/progress를 RN으로 보내고 play/pause 전역함수 노출.
@@ -608,7 +621,7 @@ function acceptLanguageHeader(): string {
 export type { ShortsPlayerHandle };
 
 export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function YouTubeShortsPlayer(
-  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload, listMode }: Props,
+  { videoId, playing, onEnded, onReady, onError, onProgress, onAudioDiag, onVideoChange, onUserSwipe, onNotShorts, preload, listMode, initialMuted }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -696,7 +709,7 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
         source={source}
         injectedJavaScript={NAV_MODE === 'swipe' ? INJECTED_JS_SWIPE : INJECTED_JS}
         // 페이지 로드 전에 프리로드 여부를 심어, attach()가 재생/소리를 켤지(활성) 로드만 할지(프리로드) 결정.
-        injectedJavaScriptBeforeContentLoaded={`window.__PACE_DIAG__=${__DEV__ ? 'true' : 'false'};window.__pacePreload=${preload ? 'true' : 'false'};window.__paceListMode=${listMode ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__PACE_DIAG__=${__DEV__ ? 'true' : 'false'};window.__pacePreload=${preload ? 'true' : 'false'};window.__paceListMode=${listMode ? 'true' : 'false'};window.__paceForceSilent=${initialMuted ? 'true' : 'false'};(function(){try{var s=document.createElement('style');s.textContent='.ytp-unmute,.ytp-unmute-box,.ytp-unmute-icon{display:none!important}';(document.head||document.documentElement).appendChild(s);}catch(e){}})();true;`}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled

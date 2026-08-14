@@ -92,13 +92,6 @@ public class PaceGestureModule: Module {
       return false
     }
 
-    // 블루투스 오디오(에어팟/버즈/BT 리모컨) 연결 여부 — AVAudioSession.currentRoute 기반.
-    // 볼륨키→다음 넘김을 "BT 연결 시에만" 켜기 위해 피드가 사용(사용자 지시: 폰 볼륨키로는 안 넘어가게).
-    // 기존 useBluetoothStore.isConnected(iOS 스텁, 항상 false) 대체 — 그 스텁 때문에 볼륨키가 영영 비활성이었음.
-    Function("isBluetoothAudioConnected") { () -> Bool in
-      return self.isBluetoothAudioConnected()
-    }
-
     OnDestroy {
       self.headDetector?.stop()
       self.waveDetector?.stop()
@@ -125,43 +118,14 @@ public class PaceGestureModule: Module {
     d.start()
   }
 
-  // 2026-07-23 사용자 지시 — 핑거스냅(AVAudioSession .playAndRecord + Voice Processing)이 블루투스
-  // 리모컨의 오디오 세션과 충돌할 수 있다는 QA 지적(볼륨키 모듈과 category 다툼, 재생 ducking/reroute
-  // 가능성) 반영: 블루투스 오디오 출력이 이미 연결돼 있으면 핑거스냅을 아예 켜지 않는다 — 리모컨이
-  // 이미 같은 역할(다음 넘김)을 하므로 상호 배타적으로 둔다. Android(PaceOverlayService.kt
-  // isBluetoothAudioConnected)와 동일한 결정, 이쪽은 AVAudioSession.currentRoute로 판단.
-  // ⚠️ 실기기(Xcode) 미검증 — Mac 세션에서 실기기로 빌드/확인 필요.
-  // 🔴 2026-08-15 사장님 지적 — 이 함수가 useBluetoothStore의 "리모컨 연결됨" 초록불로 쓰이는데,
-  // 정작 아이팟/버즈 같은 순수 오디오 기기만 연결돼도 초록이 켜졌다. Android가 같은 날 겪고 고친
-  // 문제(55e4e0b, "오디오 기기면 회색이어야지")와 같은 클래스 — 다만 Android는 InputDevice.descriptor로
-  // 진짜 리모컨을 직접 구분할 공식 API가 있는데(HID 프로파일을 앱에 노출) iOS는 그 계층 자체를
-  // 시스템이 통째로 삼키고 앱한텐 절대 안 준다(Apple Developer Forums 확인 — 서드파티 앱이 HID
-  // 기기 종류를 알 방법 자체가 없음). 완전히 같은 정확도는 불가능 — 대신 PaceVolumeKeyModule이
-  // 이미 볼륨키 하이재킹 스킵 판단에 쓰던 "이름으로 진짜 오디오 기기 거르기" 휴리스틱(2026-08-05
-  // 사장님 지시)을 여기도 적용한다: A2DP(구조적으로 순수 스트리밍 전용이라 리모컨일 수 없음)이거나
-  // 포트 이름이 알려진 헤드폰 브랜드와 일치하면 "진짜 오디오 기기"로 보고 회색 처리, 그 외
-  // BT 오디오 라우트(이름 모를 기기 — 저가 리모컨류가 여기 걸릴 가능성이 있음)만 초록으로 남긴다.
-  private static let KNOWN_AUDIO_BRANDS = [
-    "airpods", "beats", "galaxy buds", "buds", "jbl", "bose", "sony", "soundcore",
-    "anker", "powerbeats", "echo", "sonos",
-  ]
-  private func isBluetoothAudioConnected() -> Bool {
-    let bluetoothPortTypes: Set<AVAudioSession.Port> = [.bluetoothA2DP, .bluetoothLE, .bluetoothHFP]
-    let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-    let btOutputs = outputs.filter { bluetoothPortTypes.contains($0.portType) }
-    guard !btOutputs.isEmpty else {
-      paceGLog("PACEBT isBTConnected=false outputs=\(outputs.map { $0.portType.rawValue })") // 진단(BT스피커 테스트 후 제거)
-      return false
-    }
-    let isKnownAudioAccessory = btOutputs.contains { port in
-      if port.portType == .bluetoothA2DP { return true }
-      let name = port.portName.lowercased()
-      return Self.KNOWN_AUDIO_BRANDS.contains { name.contains($0) }
-    }
-    let connected = !isKnownAudioAccessory
-    paceGLog("PACEBT isBTConnected=\(connected) outputs=\(outputs.map { $0.portType.rawValue }) knownAudio=\(isKnownAudioAccessory)") // 진단(BT스피커 테스트 후 제거)
-    return connected
-  }
+  // 2026-08-15 — "리모컨 연결됨" 판정에 AVAudioSession.currentRoute를 썼던 이전 버전(isBluetoothAudioConnected)은
+  // 삭제했다: 실기기 재확인 결과 저가 BT 클리커는 오디오 프로파일이 아니라 순수 HID로 붙어 애초에
+  // 라우트에 안 잡히고(영원히 회색), 반대로 이름 모를 BT 오디오 기기는 리모컨이 아닌데도 초록이 되는
+  // 정반대 오류도 있었다. iOS는 HID 기기 연결 상태를 서드파티 앱에 아예 안 준다(Apple Developer
+  // Forums 확인, Android InputDevice.descriptor에 대응하는 API가 구조적으로 없음) — 대신
+  // PaceVolumeKeyModule의 onVolumeButton(리모컨 키 입력) 발생 시각을 JS가 직접 기록해 "최근
+  // 감지됨"으로 표시한다(bluetoothService.ios.ts 참고). 이 파일에서 오디오 라우트로 리모컨을
+  // 판정하는 로직은 더 이상 없다.
 
   private func startHead() {
     guard #available(iOS 11.0, *), ARFaceTrackingConfiguration.isSupported else {
@@ -181,7 +145,7 @@ public class PaceGestureModule: Module {
 // MARK: - 핑거스냅 감지 제거 (2026-08-03) — 애플 심사 90683(NSMicrophoneUsageDescription 누락).
 // MD C6: 마이크 기반 핑거스냅은 애플 심사 불허 + 이미 비활성 결정(iOS는 useFeedRemoteControl가 'wave'만 start).
 // 마이크 API(requestRecordPermission/.playAndRecord/AVAudioEngine.installTap)를 참조하던 SnapDetector/startSnap을
-// 통째로 제거해 바이너리에서 마이크 참조 자체를 없앤다. (isBluetoothAudioConnected는 currentRoute만 읽어 유지.)
+// 통째로 제거해 바이너리에서 마이크 참조 자체를 없앤다.
 
 // MARK: - 고개짓(턱 끄덕임) 감지 (ARKit 얼굴 트래킹, TrueDepth 기기 전용)
 @available(iOS 11.0, *)

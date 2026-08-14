@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated as RNAnimated, AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -18,6 +18,7 @@ import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { GlassSurface } from '../../components/ui/GlassSurface';
+import { ConnectedDot } from '../../components/ui/ConnectedDot';
 import { GestureFlickIllustration } from '../../components/home/GestureFlickIllustration';
 import { RemoteClickIllustration } from '../../components/home/RemoteClickIllustration';
 import { useAdBannerStore } from '../../store/useAdBannerStore';
@@ -40,31 +41,6 @@ const DAY_INDEX_KEYS: TranslationKey[] = [
 // 단순화. 원본은 minutesWatched를 로컬 데모 state로 관리했는데, Pace는 실제 useStatsStore
 // (todayUsageMinutes) 데이터로 대체했다 — "죽은 코드/가짜 데이터로 남기지 말라"는 별도 지시에 따름.
 // Break Reminder/Healthy Pause 토글도 실제 useSettingsStore에 연결.
-/** 🔴 2026-08-13 사장님 지시 — 홈 플랫폼 카드의 활성 표시와 **같은 기호**(연결=초록 펄스 /
- * 미연결=회색 정적). "기능을 켰는가"와 "리모컨이 실제로 붙어 있는가"는 다른 정보인데 지금까지
- * 후자를 볼 방법이 없었다. PlatformPickerCard의 statusDot과 같은 크기00b7같은 색00b7같은 주기를 쓴다. */
-function ConnectedDot({ connected }: { connected: boolean }) {
-  const pulse = useRef(new RNAnimated.Value(0.4)).current;
-  useEffect(() => {
-    if (!connected) { pulse.setValue(1); return; }
-    const loop = RNAnimated.loop(RNAnimated.sequence([
-      RNAnimated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-      RNAnimated.timing(pulse, { toValue: 0.4, duration: 700, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [pulse, connected]);
-  return (
-    <RNAnimated.View
-      style={[
-        { width: 6, height: 6, borderRadius: 3 },
-        { backgroundColor: connected ? colors.successLight : 'rgba(255,255,255,0.3)' },
-        { opacity: pulse },
-      ]}
-    />
-  );
-}
-
 export default function FocusScreen() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -550,6 +526,10 @@ export default function FocusScreen() {
                   {/* ⚠️ 2026-08-13(2차) 사장님 지적("블루투스 왼쪽에 있으니 손짓과 글자 배열이 안 맞잖아,
                       오른쪽으로 바꾸든지") — 라벨 **앞**에 두니 이 줄만 글자 시작 위치가 점+간격만큼
                       밀려 아래 손짓 행과 어긋났다. 라벨 **뒤**로 옮겨 두 행의 글자가 같은 x에서 시작한다. */}
+                  {/* 🔴 2026-08-15 — iOS는 이 점의 실제 신호원(리모컨 키 입력)이 /feed 화면 안에서만
+                      발생한다(PaceVolumeKey가 거기서만 켜짐) — Focus 탭에선 리모컨을 눌러도 이 점이
+                      절대 안 켜진다(구조적 한계, 사장님 승인된 트레이드오프). 실시간 확인은 피드
+                      화면 상단 배지(feed/index.tsx)에서. Android는 InputDevice 정적 판정이라 여기서도 정확. */}
                   <Text style={[styles.interventionTitle, bluetoothBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.bluetoothRemoteLabel')}</Text>
                   <ConnectedDot connected={isBluetoothConnected} />
                   {bluetoothBlocked ? (

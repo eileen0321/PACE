@@ -15,33 +15,42 @@ type GestureCameraPermission = {
 // 표시할 때 쓰는 자리표시자(placeholder) 스텁이었다.
 //
 // 🔴 2026-08-14 사장님 지적("블루투스 리모컨 옆에 안드처럼 녹색불 만들었어? 제대로 동작해?") —
-//   Windows가 focus.tsx(공용 파일)에 홈 카드와 같은 연결 표시 점(연결=초록 펄스/미연결=회색
-//   정적)을 이미 붙여놨는데, 그게 읽는 useBluetoothStore.isConnected가 여기서 **항상 false로
-//   고정**돼 있어 실제로 이어폰이 연결돼 있어도 절대 초록으로 안 바뀌는 상태였다.
-//   확인해보니 네이티브 쪽(modules/pace-gesture/ios/PaceGestureModule.swift의
-//   isBluetoothAudioConnected(), AVAudioSession.currentRoute 기반)은 이미 구현까지 돼 있었는데
-//   JS 쪽 어디서도 그걸 호출하는 코드가 없어 반쪽짜리로 남아 있었다 — 이제 실제로 연결한다.
+//   처음엔 modules/pace-gesture/ios/PaceGestureModule.swift의 isBluetoothAudioConnected()
+//   (AVAudioSession.currentRoute 기반)를 연결했는데, 2026-08-15 실기기 재확인 결과 **오디오
+//   프로파일로 안 잡히는 저가 BT 클리커(순수 HID)는 애초에 currentRoute에 안 나타나** 영영
+//   회색이었다(반대로 이름 모를 BT "오디오" 기기는 리모컨이 아닌데도 초록이 되는 정반대 오류도
+//   있었음). 웹서치 재확인 — iOS는 서드파티 앱에 HID 기기의 연결 상태를 절대 노출하지 않는다
+//   (Android InputDevice.descriptor에 대응하는 API가 구조적으로 없음, Apple Developer Forums·
+//   공식 문서로 확인). 그래서 "지금 연결돼 있는가"를 정적으로 판정하는 건 iOS에서 불가능하다고
+//   결론 — 대신 실제 리모컨 키 입력(onVolumeButton, useVolumeNext.ios.ts가 보고)이 있었던 시각을
+//   기준으로 "최근에 감지됨"만 보여준다(REMOTE_ACTIVITY_WINDOW_MS 이내). 이 신호는 리모컨이 실제로
+//   동작하는 /feed 화면 안에서만 발생하므로(PaceVolumeKey.start()가 거기서만 켜짐), 점도 그
+//   화면(top bar)에서 봐야 의미가 있다 — Focus 탭의 점은 항상 회색이어도 정상(사장님 승인,
+//   "2번" 방안: 화면 이동 + 정직한 사후적 표시).
+let lastRemoteActivityAtMs: number | null = null;
+// ⚠️ feed/index.tsx의 REMOTE_MUTE_SUPPRESS_WINDOW_MS(무음 강제해제 억제 창)와 같은 값으로 맞춰야 한다
+// — 배지가 회색이 됐는데 폰 볼륨버튼은 계속 안 먹히는(또는 반대) 불일치를 막기 위한 의도적 중복.
+const REMOTE_ACTIVITY_WINDOW_MS = 60_000;
+
 export const bluetoothService: BluetoothService = {
   supportsHardwareRemote: false,
 
   async getState(): Promise<BluetoothState> {
-    let isConnected = false;
-    try {
-      const mod = requireOptionalNativeModule<{ isBluetoothAudioConnected(): boolean }>('PaceGesture');
-      isConnected = mod?.isBluetoothAudioConnected?.() ?? false;
-    } catch {
-      isConnected = false;
-    }
+    const isConnected =
+      lastRemoteActivityAtMs != null && Date.now() - lastRemoteActivityAtMs < REMOTE_ACTIVITY_WINDOW_MS;
     return {
       isConnected,
-      // AVAudioSession.currentRoute는 포트 타입만 주지 사용자에게 보여줄 기기 이름까진 안 준다
-      // (안드로이드처럼 BluetoothDevice.getName()에 대응하는 API가 없음) — 필요해지면 별도 조사.
+      // 사후적 활동 신호만 있고 기기 이름은 어차피 iOS에서 못 얻는다(위 주석 참고) — 항상 null.
       deviceName: null,
       autoModeEnabled: false,
       nextCount: 0,
       previousCount: 0,
       autoToggleCount: 0,
     };
+  },
+
+  reportRemoteActivity() {
+    lastRemoteActivityAtMs = Date.now();
   },
 
   async next() {},

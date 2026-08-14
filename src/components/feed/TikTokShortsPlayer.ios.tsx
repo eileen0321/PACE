@@ -591,7 +591,12 @@ const INJECTED_JS_BEFORE_LOAD = `
     try {
       var v = getActiveVideo();
       if (!v) { send({ type: 'currentVideoUrl', url: null }); return; }
-      var VIDEO_LINK_RE = /\/@[\w.-]+\/video\/\d+/;
+      // ⚠️ 이 파일 전체가 큰 템플릿 리터럴 문자열이라(INJECTED_JS_BEFORE_LOAD), 정규식 안의 백슬래시
+      // escape는 반드시 두 배로 써야 살아남는다 — 한 배로 쓰면 템플릿 리터럴이 "인식 못하는 이스케이프
+      // 시퀀스"로 보고 백슬래시를 조용히 삭제해 정규식이 깨진다. 이 주석 안에도 실제 백슬래시 시퀀스를
+      // 예시로 적으면 안 된다(주석도 같은 문자열의 일부라 똑같이 잘려나간다 — 직접 겪은 버그).
+      // 앞서 다른 곳(에러상태 문자열 개행 제거)에서 못 잡았던 나머지 인스턴스를 여기서 전수 수정.
+      var VIDEO_LINK_RE = /\\/@[\\w.-]+\\/video\\/\\d+/;
       function findIn(root){
         if (!root || !root.querySelectorAll) return null;
         var links = root.querySelectorAll('a[href*="/video/"]');
@@ -601,23 +606,85 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
         return null;
       }
+      // 2026-08-15(3차) — 실기기+시뮬레이터 둘 다로 확정: 틱톡 "추천" 피드는 슬라이드 안에 <video>
+      // 하나뿐이고 그 어디에도 /video/ 링크 자체가 없다(진단 덤프로 실물 확인). 대신 data-e2e 훅
+      // 목록에 recommend-list-item-container(컨테이너)/video-author-avatar(작성자)가 실존한다 —
+      // 이 컨테이너의 id가 곧 영상의 숫자 ID라는 게 TikTok 웹의 잘 알려진 DOM 패턴이라, 그걸로
+      // 작성자 링크와 조합해 정식 permalink를 재구성한다. 못 맞으면(구조 변경 등) 아래에서 여전히
+      // 진단 로그를 남긴다.
+      function findByContainerId(){
+        var container = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+        if (!container) return null;
+        var vid = (container.id || '').trim();
+        if (!/^\\d+$/.test(vid)) return null;
+        var authorWrap = container.querySelector('[data-e2e="video-author-avatar"]');
+        var username = null;
+        if (authorWrap) {
+          var a = authorWrap.tagName === 'A' ? authorWrap : authorWrap.querySelector('a');
+          var href = a ? a.getAttribute('href') : null;
+          var m = href ? href.match(/\\/@([\\w.-]+)/) : null;
+          if (m) username = m[1];
+          if (!username) {
+            var img = authorWrap.querySelector('img');
+            var alt = img ? (img.getAttribute('alt') || '') : '';
+            var m2 = alt.match(/@([\\w.-]+)/);
+            if (m2) username = m2[1];
+          }
+        }
+        if (!username) return null;
+        return 'https://www.tiktok.com/@' + username + '/video/' + vid;
+      }
+      var found = null;
+      try { found = findByContainerId(); } catch(eC) {}
       // 슬라이드 경계(있으면)까지만 올라간다 — 그 밖(사이드바 등)의 다른 영상 링크를 잘못 줍지 않게.
       var slide = v.closest ? v.closest('.swiper-slide') : null;
-      var found = findIn(slide) || findIn(v.parentElement) || findIn(v.closest ? v.closest('article') : null) || findIn(document.body);
-      // 2026-08-15 진단(실기기 재현) — <a href> 방식이 실제 DOM에서 안 잡히는 경우를 대비해
-      // SPA가 흔히 갱신하는 og:url/canonical 메타도 같이 시도, 그래도 없으면 무엇을 봤는지 로그.
+      if (!found) { try { found = findIn(slide) || findIn(v.parentElement) || findIn(v.closest ? v.closest('article') : null) || findIn(document.body); } catch(e0) {} }
+      // 2026-08-15 진단(실기기+시뮬레이터 재현: getCurrentVideoUrl이 항상 null) — <a href> 방식이
+      // 실제 DOM에서 안 잡힌다. SPA가 흔히 갱신하는 og:url/canonical 메타도 같이 시도, 그래도
+      // 없으면 실제 DOM이 어떻게 생겼는지 직접 덤프한다(추측 그만하고 실물을 본다).
       if (!found) {
-        var og = document.querySelector('meta[property="og:url"]');
-        var canon = document.querySelector('link[rel="canonical"]');
-        var metaUrl = (og && og.getAttribute('content')) || (canon && canon.getAttribute('href')) || null;
-        if (metaUrl && VIDEO_LINK_RE.test(metaUrl)) found = metaUrl;
+        try {
+          var og = document.querySelector('meta[property="og:url"]');
+          var canon = document.querySelector('link[rel="canonical"]');
+          var metaUrl = (og && og.getAttribute('content')) || (canon && canon.getAttribute('href')) || null;
+          if (metaUrl && VIDEO_LINK_RE.test(metaUrl)) found = metaUrl;
+        } catch(e1) {}
       }
       if (!found) {
-        var anyVideoLinks = document.querySelectorAll('a[href*="/video/"]');
-        send({ type: 'domlog', text: '즐겨찾기: 현재영상 URL 못 찾음. location=' + location.href + ' /video/ 링크 총 ' + anyVideoLinks.length + '개' });
+        try {
+          var anyVideoLinks = document.querySelectorAll('a[href*="/video/"]');
+          send({ type: 'domlog', text: '즐겨찾기: URL못찾음. loc=' + location.href + ' /video/링크=' + anyVideoLinks.length });
+        } catch(e2) {}
+        try {
+          var dbgContainer = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+          var dbgAuthor = dbgContainer ? dbgContainer.querySelector('[data-e2e="video-author-avatar"]') : null;
+          send({ type: 'domlog', text: '즐겨찾기: container.id=' + (dbgContainer ? dbgContainer.id : 'null') + ' authorHTML(300)=' + (dbgAuthor ? dbgAuthor.outerHTML.slice(0, 300) : 'null') });
+        } catch(e6) {}
+        // 2026-08-15(2차) — 슬라이드 안엔 <video> 하나뿐이라 링크 방식 자체가 안 통한다는 걸
+        // 확인했다(700자 덤프로 실물 확인). 링크가 아니라 data-e2e 훅(틱톡이 자동화테스트/분석용으로
+        // 붙이는 안정적 속성)을 뒤져서 실제로 뭐가 있는지 목록화 — 다음 라운드에 정확한 셀렉터를
+        // 잡기 위한 정찰. 어떤 값이 실존하는지 전혀 모르니 값 자체를 그대로 로그로 남긴다.
+        try {
+          var e2eEls = document.querySelectorAll('[data-e2e]');
+          var e2eVals = [];
+          for (var q = 0; q < e2eEls.length && e2eVals.length < 40; q++) {
+            var val = e2eEls[q].getAttribute('data-e2e');
+            if (val && e2eVals.indexOf(val) === -1) e2eVals.push(val);
+          }
+          send({ type: 'domlog', text: '즐겨찾기: data-e2e 목록(' + e2eVals.length + '): ' + e2eVals.join(', ') });
+        } catch(e5) {}
+        try {
+          var dumpRoot = slide || v.parentElement || document.body;
+          // 부모로 3단계 더 올라가 액션바(좋아요/댓글/공유/유저명)가 포함될 만한 범위로 넓힌다.
+          for (var up = 0; up < 3 && dumpRoot.parentElement; up++) dumpRoot = dumpRoot.parentElement;
+          send({ type: 'domlog', text: '즐겨찾기: 슬라이드HTML(900자): ' + (dumpRoot.outerHTML || '').slice(0, 900) });
+        } catch(e3) {}
       }
       send({ type: 'currentVideoUrl', url: found });
-    } catch(e) { send({ type: 'currentVideoUrl', url: null }); }
+    } catch(e) {
+      try { send({ type: 'domlog', text: '즐겨찾기: 예외 ' + (e && e.message) }); } catch(e4) {}
+      send({ type: 'currentVideoUrl', url: null });
+    }
   };
 
   var startedAt = Date.now();

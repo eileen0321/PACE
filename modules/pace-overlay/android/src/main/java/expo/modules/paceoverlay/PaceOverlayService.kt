@@ -3122,7 +3122,16 @@ class PaceOverlayService : Service() {
     if (isFavorite) {
       // 사용자가 무엇을 해야 하는지 한 줄로 알려준다 — 이게 없으면 버튼만 보고 왜 안 되는지 모른다.
       panel.addView(TextView(this).apply {
-        text = "In YouTube: Share → Copy link, then tap above"
+        // 🔴 2026-08-14 — 안내문이 "In YouTube"로 하드코딩돼 있어서 틱톡에서 열어도 유튜브를
+        //   가리켰다(검색 패널 제목·프리셋 칩·Favorite 복귀 패키지와 같은 계열의 누락). 한국어
+        //   로케일도 없어서 영어만 나왔다 — 지금 보는 앱과 로케일에 맞춘다.
+        text = if (isTikTokContext()) {
+          if (isKoreanLocale()) "틱톡에서: 공유 → 링크 복사 후 위를 누르세요"
+          else "In TikTok: Share → Copy link, then tap above"
+        } else {
+          if (isKoreanLocale()) "유튜브에서: 공유 → 링크 복사 후 위를 누르세요"
+          else "In YouTube: Share → Copy link, then tap above"
+        }
         textSize = 11f
         setTextColor(Color.parseColor("#99FFFFFF"))
       }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {

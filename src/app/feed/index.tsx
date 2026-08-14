@@ -946,6 +946,7 @@ export default function PaceFeedScreen() {
           <SavedVideoListOverlay
             userId={userId}
             kind={activeSavedList}
+            platform={platform}
             onClose={() => setActiveSavedList(null)}
             onOpenVideo={playInFeed}
             onAddCurrent={async () => {

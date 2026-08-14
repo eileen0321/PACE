@@ -486,6 +486,7 @@ export default function OverlaySessionScreen() {
           <SavedVideoListOverlay
             userId={user.id}
             kind={activeSavedList}
+            platform={platform ?? undefined}
             onClose={() => setActiveSavedList(null)}
           />
         )}

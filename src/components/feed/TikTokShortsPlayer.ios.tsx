@@ -450,7 +450,9 @@ const INJECTED_JS_BEFORE_LOAD = `
         try {
           ensureInline(nowActive);
           if (typeof window.__paceMuted === 'boolean') nowActive.muted = window.__paceMuted;
-          if (nowActive.paused) nowActive.play().catch(function(){});
+          var wasPaused = nowActive.paused;
+          if (wasPaused) nowActive.play().catch(function(){});
+          send({ type: 'domlog', text: '자동넘김: 전환 성공, wasPaused=' + wasPaused + ' muted=' + nowActive.muted });
         } catch(e2) {}
         return;
       }

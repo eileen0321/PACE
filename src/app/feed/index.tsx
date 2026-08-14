@@ -617,6 +617,18 @@ export default function PaceFeedScreen() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction, userId]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=advance. FOCUS ON(isAutoMode=true)
+  // 상태에서 playerRef.advance()를 강제로 걸어 tryAdvance의 "전환 성공 후 명시적 play()" 수정
+  // (2026-08-15, "다음 영상으로 안 넘어감"/"소리가 나왔다 안 나왔다" 재보고)이 실제로 새 영상을
+  // 재생 상태로 만드는지 자연종료를 기다리지 않고 바로 검증한다.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'advance') return;
+    setIsAutoMode(true);
+    const timer = setTimeout(() => { playerRef.current?.advance(); }, 8000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
   // 2026-08-08 — 무음스위치가 켜져 있어도 사용자가 볼륨키를 누르면(방향 무관) "소리를 원한다"는 신호로
   // 보고 **이 피드 화면을 나갈 때까지**(앱을 벗어나거나 화면을 벗어날 때, 즉 이 컴포넌트가 새로
   // 마운트될 때) 강제 무음을 놓아준다(2026-08-09 사장님 지시 — 유튜브/인스타그램 관행과 동일).

@@ -174,7 +174,12 @@
 3. D7/D8/D9(사장님 결정 대기) 중 하나라도 정리되면 그에 맞춰 마저 구현.
 4. Home/온보딩/스플래시 WIP 스모크 테스트(이전부터 밀려있던 항목, 아직 미완).
 
-**Mac 세션(다음 작업)** → **📄 먼저 `MAC_HANDOFF_ANDROID_IMPL_2026-08-04.md`를 읽을 것.**
+**Mac 세션(다음 작업)** → **📄 먼저 §6 "2026-08-14(밤)~15" 항목(가장 최근 로그)을 읽을 것.**
+백슬래시 버그 재발 패턴, 즐겨찾기 유튜브/틱톡 분리+틱톡 현재영상추가 신규 구현, 자동넘김 회귀
+2건, BT 점 브랜드 필터(실기기 미검증), QA_MATRIX K1/K5/K10 실측 정리돼 있음. **다음 세션 최우선은
+그 항목 맨 끝 "다음 세션(Mac) 최우선" 4개**(실기기 재검증, K5 체크포인트 flush 설계, K10
+FOCUS-종속 여부 결정, QA_MATRIX K3/K4/K6~K9 나머지). 아래는 그 이전(2026-08-04) 인계 —
+아직 안 끝난 항목이 있으면 이어서 참고: **📄 `MAC_HANDOFF_ANDROID_IMPL_2026-08-04.md`.**
 Windows 세션이 Android에 구현한 것을 **코드로 전수 재확인해** iOS 관점으로 정리한 인계 문서다
 (🟢이미 양쪽 적용 4건 / 🔴iOS 작업 필요 6건 / ⛔iOS 구조적 불가 3건 / ⚠️가짜 UI 2건 + §8 체크리스트).
 최우선은 **§4-1 iOS 쇼츠를 유튜브 알고리즘에 맡기기**(사장님 설계 확정, "아이폰에서 다 같은 영상"의
@@ -9275,3 +9280,103 @@ injectJavaScript 실패가 실제 에러 메시지로 콘솔에 뜨기 시작**�
 높은 확신) + QA_MATRIX K1-K10 iOS 칸 + 자동 다음영상이 실제로 우리 로직(tryAdvance)으로
 동작하는지 확인(그동안 죽어있었으니 이전의 "자동 다음영상 확인됨" 기록은 TikTok 자체 기본
 동작이었을 가능성 재검토).
+
+### 2026-08-14(밤)~15 — 위 다음 세션 항목 전부 처리: 백슬래시 버그 2차 발견, 즐겨찾기 유튜브/틱톡
+분리 + 틱톡 "현재 영상 추가" 신규 구현, 자동넘김 무음유출 회귀 수정, BT 점 브랜드 화이트리스트,
+QA_MATRIX K1/K5/K10 실측 — Mac 세션, 사장님 취침 중 자율 진행("기능 전수 다 확인해",
+"유투브쪽 사이드 이슈 안나게 하고 유투브도 다 전수 검사하고 밤새")
+
+**1. 백슬래시 이스케이프 버그 2차 파동(재발 방지 패턴 확립)** — 위에서 고친 `.replace(/\n/g,' ')`
+외에, 즐겨찾기 URL 추출용으로 새로 짠 `VIDEO_LINK_RE`와 `findByContainerId()` 내부 정규식들에서
+**같은 버그가 또 났다**(`\/`, `\w`, `\d`가 TS 템플릿 리터럴 단계에서 먼저 escape 처리돼 진짜
+문자로 치환됨 — 코드뿐 아니라 그 버그를 설명하는 주석 안에서도 재발). Node `eval` 기반 템플릿
+리터럴 평가 스크립트(단순 `new Function(rawText)`는 escape 처리를 안 해서 거짓 음성을 낸다)로
+검증해 전수 수정. **`TikTokShortsPlayer.ios.tsx`의 `INJECTED_JS_BEFORE_LOAD`(거대 백틱 문자열) 안에
+백슬래시를 쓸 땐 항상 두 겹(`\\d`, `\\w`, `\\/`)으로 — 코드와 주석 둘 다** — 이 파일을 다음에
+또 건드릴 때 최우선으로 기억할 것.
+
+**2. 즐겨찾기 유튜브/틱톡 리스트 분리 (안드 `64730a1` 파리티, 커밋 `3fb18b6`)** — 사장님 지적
+"현재 영상 추가 눌러도 리스트에 추가 안돼" 조사 중, 진짜 원인 발견: `getSavedVideos`가
+`platform_app`으로 전혀 필터링을 안 해서 유튜브/틱톡 즐겨찾기가 한 리스트에 섞여 있었다(추가 자체는
+됐는데 화면에 "안 보인 것"으로 오인). `getSavedVideos(userId, kind, platform?)`에 옵션 3번째
+인자 추가 — 있으면 `platform_app = ? OR platform_app IS NULL`(레거시 행은 유튜브로 간주)로 필터,
+없으면 기존과 동일(Focus 탭처럼 플랫폼 무관하게 봐야 하는 화면은 그대로 안 넘김).
+`SavedVideoListOverlay`/`overlay/index.tsx`/`feed/index.tsx`에 `platform` prop 배선.
+
+**3. 틱톡 "현재 영상 즐겨찾기 추가" 신규 구현 (커밋 `82c1e95`, `af24f09`, `9ce1a0a`)** — 그동안
+`hiddenActions`에서 틱톡일 때 Favorite 자체가 숨겨져 있었다(`af24f09`로 해제). 유튜브와 달리
+틱톡은 현재 재생 중인 videoId를 RN이 직접 모른다(WebView 안에서만 앎) — WebView 쪽에
+`window.paceGetCurrentVideoUrl`을 새로 만들어 브릿지: (1차 시도, 실패) `<a href="/video/...">`
+링크가 활성 영상 근처에 있을 거라 가정했으나 DOM엔 그런 링크가 없었다(900자 덤프로 확인).
+(2차 시도, 실패) `recommend-list-item-container`의 `id`가 숫자 영상ID일 거라 가정했으나 실제론
+`"one-column-item-0"` 같은 **순번**이었다(진단 덤프로 확인, `9ce1a0a`가 이 오판을 바로잡음).
+**최종 성공 경로**: 컨테이너 안 `video-author-avatar`에서 `@username` 추출 →
+`document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__')`(틱톡 SSR 하이드레이션 JSON)를
+재귀 탐색해 `author.uniqueId === username`인 항목의 실제 숫자 `id` 조회 → URL 조립. RN 쪽은
+`getCurrentVideoUrl(): Promise<string|null>`(1.5초 타임아웃 폴백)을 imperative handle에 추가,
+`fetchTikTokOEmbed`(틱톡 공개 oEmbed, API 키 불필요)로 제목/썸네일 채워 `addSavedVideo`(신규
+`thumbnailOverride` 옵션 파라미터 추가)에 저장. 시뮬레이터 디버그 트리거(`debugAction=addFavorite`,
+8초 뒤 자동 실행) + SQLite 직접 조회로 실제 저장까지 확인.
+
+**4. 자동넘김 회귀 2건 수정 (실기기 재보고, 커밋은 로컬 반영·PM 미기록이었음)** — (a) "포커스
+온인데 다음 영상 안 넘어감": `goToNext()`의 합성 스크롤/터치가 슬라이드 DOM 전환은 성공시켜도
+틱톡 자신의 재생 로직이 항상 따라오는 게 아니라서, 전환된 새 video가 `paused` 상태로 멈춰있는
+경우가 있었다 — 전환 성공 확인 시점에 `paused`면 명시적으로 `play()` 호출 (`TikTokShortsPlayer.ios.tsx`
+`tryAdvance()`). (b) 그 수정이 낸 회귀 "소리가 잠깐 났다 안 남": 새 video가 자기 기본 muted
+상태(대개 소리 있음)로 재생을 시작해 RN의 무음스위치 폴링(최대 2초 주기)이 따라잡기 전까지
+찰나 소리가 샜다 — `window.__paceMuted`(RN이 `setMuted` 부를 때마다 최신값 저장)를 `play()`
+직전에 동기 적용해 그 틈을 제거. 코드 상세는 `TikTokShortsPlayer.ios.tsx:436-461` 주석 참고.
+
+**5. iOS 블루투스 점 — 오디오 기기 브랜드 화이트리스트 제외 (커밋 `b67ae4a`)** — 위 "2026-08-14"
+항목에서 JS 배선(하드코딩 `false` → 네이티브 호출)까지는 됐지만, "이어폰만 붙어도 초록불"이라는
+후속 지적에 안드처럼 기기 타입 구분을 시도. **웹서치로 확인(추측 아님)**: iOS는 BT HID 기기
+타입(키보드/클리커 등)을 구분할 공개 API가 전혀 없다(Apple Developer Forums) — HID 입력은
+시스템이 전부 소비해 앱에는 합성된 키/볼륨 이벤트로만 전달되고, 열거 가능한 타입 있는 기기
+목록이 없다. `GameController` 프레임워크도 화이트리스트된 게임패드 클래스만 인식하고 범용
+클리커는 인식 못 함 — 안드 `InputDevice.descriptor` 같은 경로가 iOS엔 없다(하드 플랫폼 제약).
+차선책: 기존에 볼륨키 하이재킹을 스킵할지 판단하던 `PaceVolumeKeyModule.swift`의
+`isKnownAudioAccessoryConnected()` 브랜드 화이트리스트(`airpods,beats,galaxy buds,buds,jbl,bose,
+sony,soundcore,anker,powerbeats,echo,sonos`) 로직을 `PaceGestureModule.swift`의
+`isBluetoothAudioConnected()`(점 표시용)에도 그대로 이식 — A2DP는 무조건 오디오로 간주,
+HFP/LE는 포트 이름이 화이트리스트에 매칭되면 오디오로 간주해 "리모컨 연결됨"에서 제외. 실기기
+빌드는 0 에러로 완료했으나 **시뮬레이터엔 BT 하드웨어가 없어 실제 검증 못 함 — 다음 세션 실기기
++ 실제 AirPods/블루투스 리모컨 필수**.
+
+**6. 시뮬레이터 자율 테스트 방법론 확립** — 사장님 지시("니가 시뮬레이터로 확인할 수 있는거
+아냐?", "기능 전수 다 확인해")에 따라 실제 손가락 탭 없이 자체 검증하는 도구 체계를 정립:
+`xcrun simctl openurl`(딥링크 내비게이션) + `xcrun simctl io booted screenshot`(Read 툴로 직접
+확인) + `xcrun simctl spawn booted log stream`(실시간 네이티브 로그) + SQLite 직접 쿼리(DB 상태
+검증) + `feed/index.tsx`에 `__DEV__` 전용 `debugAction` 쿼리 파라미터(`addFavorite`, `advance`)를
+추가해 버튼 탭과 동일한 코드 경로를 딜레이 후 자동 트리거. AppleScript/Quartz CGEvent 좌표 클릭은
+작은 타겟(P 버튼)엔 끝내 안 먹혔다(원인 미상, 큰 타겟은 성공) — 재시도 대신 이 딥링크 방식으로
+완전히 우회. **`debugAction` 스캐폴딩은 프로덕션에 유지**(`__DEV__` 가드라 릴리즈 빌드에선 절대
+안 뜸, 다음에도 유용).
+
+**7. QA_MATRIX.md 2부 K1~K10 iOS 칸 실측/확인 (사장님 지적 "sanity 테스트 안 돌렸냐" 정확했음)**
+— 상세는 `QA_MATRIX.md` "🍎 2026-08-15 iOS K1~K10" 항목 참고, 요약만:
+- **K1 ✅ 실측** — `FOCUS ON | 1m`(2:08) → 80초 실경과 후 `FOCUS OFF`(2:10)로 정확히 전환 확인.
+- **K5 ⚠️ 실측, 중요 발견** — 시청 중 `simctl terminate`(하드킬)로 완전종료 후 재실행: **완전종료
+  순간의 "라이브 세그먼트"는 DB 행 자체가 안 생긴다**(iOS `flushWatchTime`이 언마운트/백그라운드/
+  수면감지 시점에만 `startSession→endSession`을 한 번에 묶어 부르는 구조라, 그 전에 죽으면 INSERT도
+  안 나감 — orphan row 0건으로 직접 확인). 반대로 **이미 flush된 시청시간(567초)은 재실행 후에도
+  리셋·중복집계 없이 정확히 보존**됨(DB 직접 대조) — "게이트가 완전히 풀로 리셋"되는 사고는 아니지만,
+  "완전종료 직전 구간"은 일일한도에 전혀 안 잡히는 정확도 결함(사용자에게 유리한 방향). `_layout.tsx`의
+  orphan 복구(`app_restarted`)는 안드로이드의 즉시-INSERT 구조(`overlay/index.tsx`) 대응이라 iOS
+  경로에선 사실상 발동 안 함 — 다음 세션에서 "주기적 체크포인트 flush" 도입 검토 권장.
+- **K10 ⚠️ 코드 확인** — 검색 결과 선택(`playInFeed`)은 `forcedListRef=null`로 단일 영상만 넘기지만,
+  **그 영상 종료 후엔 현재 FOCUS(`isAutoMode`) 상태를 그대로 따라간다** — FOCUS ON이면 검색으로 고른
+  영상이 끝난 뒤 일반 피드로 자동 이어짐. "고른 것만 재생, 자동 진행 없음"이 검색이라는 행위로
+  보장되는 게 아니라 FOCUS 토글에 종속 — **의도한 동작인지 사장님 확인 필요**.
+- K2는 코드 확인만(백그라운드 시 `watchSegmentStartRef=null`로 시간 제외 — 설계상 정상), K3/K4/K6/
+  K7/K8/K9는 실기기·실시간(광고/재설치/오프라인/15~20분 무입력)이 필요해 이번엔 미시도 — **다음
+  세션 최우선**, 특히 **K8(수면감지 오탐)은 안드에서 실제로 터진 케이스라 iOS도 반드시 확인**.
+
+**다음 세션(Mac) 최우선**:
+1. **실기기 재검증 필수** — 이번 세션 전부 시뮬레이터 기준(BT 하드웨어 없음, 합성 탭 없음, 벽시계
+   경과는 재현했지만 실제 며칠씩 걸리는 광고/재설치/오프라인 시나리오는 미시도). 특히 BT 점
+   브랜드 필터(§5)와 K3/K4/K6/K7/K8/K9.
+2. **K5 체크포인트 flush 설계 검토** — 완전종료 직전 구간이 통째로 유실되는 현재 구조가 제품
+   결정으로 괜찮은지, 아니면 주기적(예: 1분마다) flush로 유실 구간을 줄일지.
+3. **K10 FOCUS-종속 동작이 의도인지 확인** — 검색으로 고른 영상 후 자동 이어짐 여부를 FOCUS
+   토글과 분리할지 사장님 결정 필요.
+4. `debugAction` 디버그 스캐폴딩은 그대로 유지(프로덕션 무해, `__DEV__` 가드).

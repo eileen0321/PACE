@@ -312,6 +312,18 @@ export default function FocusScreen() {
   }, []);
   const onOpenSaved = useCallback((item: SavedVideo) => {
     if (!item.url) return;
+    // 🔴 2026-08-15 — 🤖는 Linking.openURL을 쓰면 App Link 라우팅을 타서 유튜브가 죽어 있을 때
+    //   **6초 넘게 검은 화면**이 된다(QA_FULL_TEST US25 실측). Linking에는 패키지를 지정할 방법이
+    //   없어서, 네이티브에 setPackage를 붙여 여는 함수를 뒀다. 실패하면(유튜브 미설치/비활성)
+    //   기존 경로로 폴백한다 — 느리더라도 열리는 게 낫다. iOS는 해당 없음(라우팅 단계 자체가 없다).
+    if (Platform.OS === 'android') {
+      try {
+        const { PaceOverlay } = require('../../../modules/pace-overlay');
+        if (PaceOverlay?.openUrlInYouTube?.(item.url)) return;
+      } catch {
+        // 네이티브 미링크 — 아래 폴백
+      }
+    }
     Linking.openURL(item.url).catch(() => {});
   }, []);
   const explainAndOpenSettings = async (reason: 'camera' | 'accessibility') => {

@@ -61,11 +61,16 @@ export async function addSavedVideo(params: {
   channel: string | null;
   url: string | null;
   platformApp: string | null;
+  // 2026-08-15 안드 파리티(64730a1의 thumbnailOverride) — youtubeThumbnailUrl(videoId)는 유튜브
+  // 전용 공식 썸네일 URL 컨벤션이라 videoId만으로 구성 가능하지만, 틱톡은 그런 컨벤션이 없어
+  // videoId(숫자 ID)로 만들면 깨진 URL이 된다. 준 값이 있으면 그걸 그대로 쓰고, 없으면(유튜브)
+  // 기존처럼 videoId로 구성한다.
+  thumbnailOverride?: string | null;
 }): Promise<SavedVideo> {
   const db = await getDb();
   const id = `sv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const addedAt = new Date().toISOString();
-  const thumbnailUrl = params.videoId ? youtubeThumbnailUrl(params.videoId) : null;
+  const thumbnailUrl = params.thumbnailOverride !== undefined ? params.thumbnailOverride : (params.videoId ? youtubeThumbnailUrl(params.videoId) : null);
   await db.runAsync(
     `INSERT INTO saved_videos (id, user_id, kind, video_id, title, channel, url, thumbnail_url, platform_app, added_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

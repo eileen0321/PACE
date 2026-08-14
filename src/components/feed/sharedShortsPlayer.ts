@@ -14,6 +14,10 @@ export type ShortsPlayerHandle = {
    *  같은 WebView를 틱톡 검색 URL로 이동시킨다(QA_MATRIX.md 1-4b 맥 세션 요청 참고). 빈 문자열이면
    *  검색에서 나가 다시 /foryou 피드로 돌아간다. */
   search?: (query: string) => void;
+  /** 2026-08-15 — 틱톡 전용(선택 프로퍼티). YouTube는 useShortsQueueStore.current로 지금 영상을
+   *  이미 알고 있어(videoId/title/channel) 이 메서드가 필요 없다 — 틱톡은 큐가 없어 "지금 보이는
+   *  영상"을 WebView 안에서 직접 찾아 알려줘야 "현재 영상 즐겨찾기 추가"가 동작한다. 못 찾으면 null. */
+  getCurrentVideoUrl?: () => Promise<string | null>;
 };
 
 // http(s)만 허용 → 앱 딥링크(youtube://, tiktok://)/앱스토어(itms-apps://) 등 "앱에서 열기"

@@ -443,7 +443,15 @@ const INJECTED_JS_BEFORE_LOAD = `
         // 시점은 이미 이전의 진짜 사용자 탭으로 페이지 전체가 자동재생 허용을 받은 뒤라
         // (WebKit 자동재생 정책은 엘리먼트가 아니라 페이지/문서 단위) muted 여부와 무관하게
         // 통과할 것으로 기대한다.
-        try { ensureInline(nowActive); if (nowActive.paused) nowActive.play().catch(function(){}); } catch(e2) {}
+        // 2026-08-15 실기기 재보고("소리가 잠깐 나고 안 나는 걸로 바뀜") — 새 video가 자기 자신의
+        // 기본 muted 상태(대개 false, 즉 소리 있음)로 재생을 시작해서, RN의 무음스위치 폴링(최대
+        // 2초 주기, setMuted 프로퍼티 참고)이 따라잡기 전까지 잠깐 소리가 샜다. window.__paceMuted
+        // (RN이 setMuted를 부를 때마다 최신값 저장)를 play() 전에 즉시 적용해 그 틈을 없앤다.
+        try {
+          ensureInline(nowActive);
+          if (typeof window.__paceMuted === 'boolean') nowActive.muted = window.__paceMuted;
+          if (nowActive.paused) nowActive.play().catch(function(){});
+        } catch(e2) {}
         return;
       }
       if (attemptsLeft > 0) { tryAdvance(video, attemptsLeft - 1); }
@@ -571,6 +579,34 @@ const INJECTED_JS_BEFORE_LOAD = `
     var v = getActiveVideo();
     if (v && markAdvancingOnce(v)) tryAdvance(v);
   };
+  // 2026-08-15 — "현재 영상 즐겨찾기 추가"(iOS는 useShortsQueueStore.current로 읽던 유튜브 전용
+  // 경로라 틱톡에선 vid가 항상 null이라 조용히 아무 일도 안 났다. 안드는 extractTikTokVideo로
+  // 자체 해결했지만(캡처 액티비티가 접근성 트리에서 URL을 긁음), iOS는 그 경로 자체가 없다 — 여기,
+  // 우리가 이미 "지금 보이는 video"를 알고 있는 WebView 안에서 직접 permalink를 찾는 게 가장
+  // 정확하다. 틱톡 영상 카드엔 정식 공유 링크(/@user/video/1234...)가 DOM 어딘가(공유 버튼 data,
+  // 혹은 슬라이드 안 앵커)에 항상 박혀 있다 — 활성 video의 조상을 슬라이드 경계까지 올라가며 그
+  // 패턴의 <a href>를 찾는다. RN이 injectJavaScript로 이걸 부르고 postMessage로 결과를 돌려받는
+  // 요청/응답 구조(paceForceAdvance와 달리 값을 되돌려줘야 해서 별도 메시지 타입 필요).
+  window.paceGetCurrentVideoUrl = function(){
+    try {
+      var v = getActiveVideo();
+      if (!v) { send({ type: 'currentVideoUrl', url: null }); return; }
+      var VIDEO_LINK_RE = /\/@[\w.-]+\/video\/\d+/;
+      function findIn(root){
+        if (!root || !root.querySelectorAll) return null;
+        var links = root.querySelectorAll('a[href*="/video/"]');
+        for (var i = 0; i < links.length; i++) {
+          var href = links[i].getAttribute('href') || '';
+          if (VIDEO_LINK_RE.test(href)) return href.indexOf('http') === 0 ? href : ('https://www.tiktok.com' + href);
+        }
+        return null;
+      }
+      // 슬라이드 경계(있으면)까지만 올라간다 — 그 밖(사이드바 등)의 다른 영상 링크를 잘못 줍지 않게.
+      var slide = v.closest ? v.closest('.swiper-slide') : null;
+      var found = findIn(slide) || findIn(v.parentElement) || findIn(v.closest ? v.closest('article') : null) || findIn(document.body);
+      send({ type: 'currentVideoUrl', url: found });
+    } catch(e) { send({ type: 'currentVideoUrl', url: null }); }
+  };
 
   var startedAt = Date.now();
   startEndedObserver();
@@ -597,6 +633,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
+  // 2026-08-15 — getCurrentVideoUrl()의 요청/응답 다리. injectJavaScript는 결과를 동기로 못
+  // 돌려주므로(fire-and-forget), 요청 시점에 여기 resolver를 심어두고 onMessage의
+  // 'currentVideoUrl'이 도착하면 그걸로 resolve한다. 동시에 하나만 진행 가능(현재 영상 하나에
+  // 대한 요청이라 실제로 겹칠 일이 없음) — 새 요청이 오면 이전 걸 null로 흘려보낸다.
+  const currentVideoUrlResolverRef = useRef<((url: string | null) => void) | null>(null);
 
   // 유튜브 플레이어와 같은 handle 시그니처를 맞추되, 틱톡은 큐레이션이 없어 advance/previous가
   // 스와이프 큐 이동이 아니라 "지금 재생 중인 video에 대해 다음 영상 시도"를 직접 트리거한다
@@ -607,7 +648,9 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
     },
     previous: () => {},
     setMuted: (muted) => {
-      webRef.current?.injectJavaScript(`(function(){var v=document.querySelector('video'); if(v){v.muted=${muted};}})();true;`);
+      // window.__paceMuted에도 저장 — 자동넘김(tryAdvance)이 새 video로 옮겨간 직후 이 값을
+      // 즉시 적용해야, RN의 다음 무음스위치 폴링(최대 2초)까지 잠깐 소리가 새는 걸 막는다.
+      webRef.current?.injectJavaScript(`(function(){window.__paceMuted=${muted};var v=document.querySelector('video'); if(v){v.muted=${muted};}})();true;`);
     },
     // QA_MATRIX.md 1-4b(맥 세션 요청) — 안드로이드가 이미 구현한 "검색은 우리 UI, 결과는 틱톡
     // 화면" 패턴의 iOS 버전. 딥링크로 외부 앱/브라우저를 여는 대신, 이미 떠 있는 같은 WebView를
@@ -620,6 +663,19 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         : 'https://www.tiktok.com/foryou';
       webRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
     },
+    // "현재 영상 즐겨찾기 추가"의 틱톡 버전 — WebView 안에서 지금 활성 video의 공유 permalink를
+    // 찾아 돌려준다(shared/ShortsPlayerHandle에 선택 프로퍼티로 추가, YouTube는 큐의 current로
+    // 이미 알고 있어 구현 안 함). 1.5초 안에 응답이 없으면(페이지 전환 중 등) null로 포기.
+    getCurrentVideoUrl: () => new Promise<string | null>((resolve) => {
+      currentVideoUrlResolverRef.current = resolve;
+      webRef.current?.injectJavaScript('window.paceGetCurrentVideoUrl && window.paceGetCurrentVideoUrl(); true;');
+      setTimeout(() => {
+        if (currentVideoUrlResolverRef.current === resolve) {
+          currentVideoUrlResolverRef.current = null;
+          resolve(null);
+        }
+      }, 1500);
+    }),
   }), []);
 
   useEffect(() => {
@@ -682,7 +738,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
-          let msg: { type?: string; value?: number } = {};
+          let msg: { type?: string; value?: number; url?: string | null } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
@@ -702,6 +758,10 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             }
           } else if (msg.type === 'ended') {
             onEnded();
+          } else if (msg.type === 'currentVideoUrl') {
+            const resolve = currentVideoUrlResolverRef.current;
+            currentVideoUrlResolverRef.current = null;
+            resolve?.(msg.url ?? null);
           } else if (msg.type === 'novideo') {
             if (__DEV__) console.log('[TikTok WV] novideo → skip', JSON.stringify(msg));
             onError?.(-2);

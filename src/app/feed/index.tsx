@@ -1040,7 +1040,13 @@ export default function PaceFeedScreen() {
       )}
       {/* 2026-07-22 감사수정: isRefilling 중엔 current가 잠깐 null이어도 에러화면 대신 위 스피너를 보인다
           (스킵이 refill보다 빨라 큐가 순간적으로 빌 때 "로드 실패"가 번쩍이던 문제). */}
-      {!isLoading && !isRefilling && !current && (
+      {/* 🔴 2026-08-15 실기기 발견 — 이 블록이 platform 분기가 없었다. 틱톡은 큐(useShortsQueueStore)를
+          아예 안 써서 isLoading/isRefilling이 항상 false, current가 항상 null이라 이 조건이 **항상
+          참**이었다 — 즉 이 "영상을 불러오지 못했습니다" 에러 오버레이가 매번 렌더링되고 있었는데,
+          그동안은 WebView(react-native-webview)의 네이티브 레이어가 JSX 순서와 무관하게 그 위를
+          덮어서 우연히 안 보였을 뿐이다(WebView 재구성/리컴포지션이 일어나는 시점엔 그대로 드러남 —
+          Metro 재시작 뒤 재현). 유튜브 큐 전용 화면이므로 명시적으로 플랫폼을 가른다. */}
+      {platform === 'youtube' && !isLoading && !isRefilling && !current && (
         <View style={styles.centerState}>
           <Feather name="cloud-off" size={28} color={colors.textSecondary} />
           <Text style={styles.stateText}>

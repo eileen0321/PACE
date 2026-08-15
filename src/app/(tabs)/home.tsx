@@ -714,13 +714,20 @@ export default function HomeScreen() {
             statusText={
               activeSessionPlatform === 'tiktok'
                 ? 'Active'
-                : 'Track viewing time and build healthier habits.'
+                : capabilities.supportsHandsFreeControl && isBluetoothConnected
+                  ? '🎧 Hands-Free Ready'
+                  : 'Track viewing time and build healthier habits.'
             }
             cover={TIKTOK_COVER}
             gradientFrom="rgba(13,148,136,0.35)"
             onPress={() => onSelectPlatform('tiktok')}
             isActive={activeSessionPlatform === 'tiktok'}
-            features={['⏱ Focus Session']}
+            // 🔴 2026-08-16 사장님 지적("유튜브에만 왜 핸즈프리가 있고 틱톡엔 없어") — BT 리모컨은
+            // useVolumeNext가 playerRef.current?.advance()를 부르는 방식이라 플랫폼 무관하게
+            // 동작한다(TikTokShortsPlayer도 같은 advance() 인터페이스 구현, 오늘 밤 실제로 검증됨).
+            // 틱톡 카드에만 이 배지가 빠져있던 건 카드 추가(2026-08-11~13) 당시 유튜브 카드의
+            // capabilities.supportsHandsFreeControl 조건을 안 옮겨온 누락이었다.
+            features={[...(capabilities.supportsHandsFreeControl ? ['🎧 Hands-Free'] : []), '⏱ Focus Session']}
             largeButton
           />
         </View>

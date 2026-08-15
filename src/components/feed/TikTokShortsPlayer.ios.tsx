@@ -163,9 +163,29 @@ const INJECTED_JS_BEFORE_LOAD = `
   try {
     var mo0 = new MutationObserver(function(){
       var list = document.querySelectorAll('video');
-      for (var i = 0; i < list.length; i++) ensureInline(list[i]);
+      for (var i = 0; i < list.length; i++) {
+        ensureInline(list[i]);
+        // 2026-08-15 사장님 실기기 재보고("전환될 때 소리 잠깐 남, 니가 고친 500ms 안전망도 아직
+        // 들림") — 폴링(500ms든 tryAdvance든)은 새 video가 이미 재생을 시작한 "뒤"에야 따라잡아
+        // 그 틈만큼 소리가 샌다. 이 MutationObserver는 새 <video> 요소가 DOM에 **삽입되는 그 순간**
+        // (재생 시작 전, playsinline 강제와 같은 타이밍)에 발화하므로, 여기서 무음을 걸면 TikTok
+        // 자신의 첫 play() 호출보다 항상 먼저 적용된다 — 폴링 지연 자체가 없어진다.
+        if (typeof window.__paceMuted === 'boolean') { try { list[i].muted = window.__paceMuted; } catch(e2) {} }
+      }
     });
     mo0.observe(document.documentElement || document, { childList: true, subtree: true });
+  } catch(e) {}
+  // 2026-08-15 — 위 MutationObserver는 "새로" 삽입되는 video만 잡는다. TikTok이 기존 <video>
+  // 요소를 재사용(같은 엘리먼트를 다음 슬라이드에 재활용)하면 삽입 이벤트가 없어 못 잡는다 — play
+  // 이벤트를 캡처 단계(capture: true, 버블링을 안 기다려 가장 먼저 실행)로 문서 전체에 걸어 두 번째
+  // 안전망을 둔다. 이것도 500ms 폴링보다 훨씬 빠르다(이벤트 자체가 발화 즉시 동기 실행).
+  try {
+    document.addEventListener('play', function(ev){
+      var t = ev.target;
+      if (t && t.tagName === 'VIDEO' && typeof window.__paceMuted === 'boolean' && t.muted !== window.__paceMuted) {
+        t.muted = window.__paceMuted;
+      }
+    }, true);
   } catch(e) {}
 
   function mainInit() {

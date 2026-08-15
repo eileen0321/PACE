@@ -1076,6 +1076,12 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onShouldStartLoadWithRequest={(req) => isAllowedNavigation(req.url)}
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).
+        // 🔴 2026-08-15(9차) 재검증 — "유튜브는 모바일 UA로 전체화면인데 왜 틱톡은 안 되냐" 질문에
+        // 답하려고 시뮬레이터에서 모바일 UA(유튜브와 동일값)로 다시 테스트: 레이아웃은 기대대로
+        // 완벽(네이티브 앱과 동일하게 꽉 참+아이콘 오버레이+하단 탭바까지) BUT 자동 넘김 고착 버그가
+        // 그대로 재현됨(1차 넘김 후 2차 시도가 같은 영상에 멈춤, "TikTok 열기" 유도 모달까지 계속
+        // 뜸) — 2026-08-12 판단이 여전히 유효함을 재확인. 화면보다 시청 기능이 우선이라 데스크톱
+        // UA 유지, 세로 레터박싱은 이 UA를 유지한 채 다른 방법(RN 오버레이 재구현 등)으로 풀 것.
         userAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         // 🔴 2026-08-14(31~34차) — injectedJavaScriptBeforeContentLoaded/imperative injectJavaScript
         // 둘 다 시각적으로 확인이 안 돼(라임 outline/DOM 마커 테스트) react-native-webview+Fabric

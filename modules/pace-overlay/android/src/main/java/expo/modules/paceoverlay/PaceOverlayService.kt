@@ -1434,6 +1434,12 @@ class PaceOverlayService : Service() {
         Log.w("PaceOverlayService", "triggerNext() aborted — isSupportedAppWindowVisible()=false")
         return
       }
+      // 🔴 2026-08-15 — 사용자가 검색으로 직접 고른 영상은 손짓으로도 넘기지 않는다.
+      //   (근거는 PaceAccessibilityService.isAutoNextSuspended() 주석 — 실측 23:58:23)
+      if (PaceAccessibilityService.isAutoNextSuspended()) {
+        Log.i("PaceOverlayService", "triggerNext() 보류 — 사용자가 직접 고른 영상 재생 중(손짓 오탐으로 날리지 않는다)")
+        return
+      }
       Log.i("PaceOverlayService", "triggerNext() -> swipeOnce(up=true)")
       PaceAccessibilityService.swipeOnce(up = true)
       bumpBluetoothCounter(context, "bt_next_count")
@@ -3647,6 +3653,17 @@ class PaceOverlayService : Service() {
             PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE,
             currentTrackedPackage() ?: "com.google.android.youtube"
           )
+          // ⚠️ 2026-08-16 — 여기 플래그는 **아직 손대지 말 것.** 사장님 "favorite에 add 누르면
+          //   앱이 아니라 아예 런처 홈으로 가면서 창이 작아졌다 커진다"를 고치려고 MULTIPLE_TASK를
+          //   넣어봤다가 되돌렸다. 실측 로그가 보여준 실제 전이는 이렇다:
+          //     00:25:15.553  LauncherActivity(com.sec.android.app.launcher)  ← 런처 홈이 실제로 뜬다
+          //     00:25:15.623  onTaskStackChanged → youtube MainActivity
+          //   즉 "Pace 앱 홈이 비친다"가 아니라 **런처가 드러난다**. 원인은 taskAffinity=""로 만든
+          //   자기 태스크가 noHistory로 끝나는 순간 **밑에 아무것도 없는 빈 태스크**가 되어 사라지고,
+          //   그 사이 런처가 노출되는 것으로 보인다. MULTIPLE_TASK는 매번 새 빈 태스크를 강제하므로
+          //   오히려 이 경로를 더 확실하게 만든다 — 그래서 원복했다.
+          //   제대로 고치려면 "끝난 뒤 무엇이 드러나는가"를 설계해야 한다(복귀 인텐트를 finish보다
+          //   먼저 태우거나, 자기 태스크를 안 만들거나). 근거 없이 플래그만 바꾸지 말 것.
           .addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
               Intent.FLAG_ACTIVITY_NO_ANIMATION

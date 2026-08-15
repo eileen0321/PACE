@@ -475,6 +475,20 @@ class PaceAccessibilityService : AccessibilityService() {
     // 있을 때만 예전 이벤트/UsageStats 기반 판정으로 폴백해야 하기 때문이다.
     fun supportedAppWindowVisibleOrNull(): Boolean? = instance?.supportedAppWindowVisible()
 
+    /**
+     * 🔴 2026-08-15 — 사용자가 **검색으로 직접 고른 영상**을 보는 중인가(suspendAutoNext 유예 중).
+     *
+     * 자동넘김은 이 유예를 지키는데 손짓/리모컨이 타는 triggerNext()는 **아예 안 보고 있었다.**
+     * 그래서 사장님이 "양다일 검색해서 고른 영상이 조금 보이다 넘어간다"고 하신 그 상황이 난다 —
+     * 23:58:23 WAVE(handSize=0.131) → triggerNext → 고른 영상이 그대로 날아갔다.
+     * 직접 고른 영상은 "다음으로 넘어가고 싶지 않다"는 의사가 가장 뚜렷한 경우다. 자동넘김이
+     * 참아주는 구간이라면 오탐 가능성이 있는 손짓은 **더더욱** 참아야 한다.
+     */
+    fun isAutoNextSuspended(): Boolean {
+      val service = instance ?: return false
+      return SystemClock.elapsedRealtime() < service.autoNextSuspendedUntilMs
+    }
+
     // 2026-07-19: Bluetooth Hands-Free Next/Previous — 위 interval 기반 Auto Next 루프와 별개로,
     // 리모컨 버튼 1회 입력에 스와이프 1회로 즉시 응답하는 단발성 트리거. 감시 대상 앱이 포그라운드가
     // 아니어도(예: 사용자가 Pace 쪽을 보고 있어도) 그냥 시도한다 — 리모컨을 눌렀다는 것 자체가 이미

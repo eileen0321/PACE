@@ -256,18 +256,20 @@ const INJECTED_JS_BEFORE_LOAD = `
       '[class*="ey5qmgg1"]{width:auto!important;max-width:none!important}';
     (document.head || document.documentElement).appendChild(gridFixStyle);
   } catch(eGridFix) {}
-  // 🔴 2026-08-15(4차, 미해결) — /foryou 영상이 393x793 뷰포트 안에서 352x626로 사방 여백을 두고
-  // 렌더링되는 문제 발견(사장님 지적 "화면 작게 보이는데"). 실측(ARTICLE.ehcbpkw0 조상 체인):
-  // ARTICLE 자체는 420px 고정폭(뷰포트 393보다 넓음, 데스크톱 카드 고정값 추정)+16px 패딩, 그
-  // 유일한 자식(DIV.ehcbpkw2, 영상+아이콘 레일)은 626px 높이로 부모의 가용 높이(761)보다 135px
-  // 작다. ehcbpkw2에 인라인 style이 전혀 없어(getAttribute('style')==='') JS가 매 프레임
-  // 되돌리는 게 아니라 정적 CSS 규칙인데도, [class*=ehcbpkw2]{height:100%!important} +
-  // [class*=ehcbpkw0]{width:100%!important} 오버라이드가 실기기 재검증(수치 그대로, 420/626
-  // 불변)에서 전혀 안 먹힘 — 원인 미확정(다른 상위 stylesheet가 더 늦게 삽입되며 이기는 중이거나,
-  // 실측한 클래스명이 실제 매칭 대상이 아니었을 가능성). 사이드바/그리드와 달리 여기는 반복
-  // 실기기 재시작 자체가 매번 냉시작 무음 블립을 유발해 추가 진단을 이번 세션에서 보류 —
-  // 다음 세션 과제(document.styleSheets로 규칙이 실제 등록됐는지, computed height 값 자체를
-  // 먼저 확인할 것).
+  // 🔴 2026-08-15(5차, 미해결) — /foryou에서 ARTICLE.ehcbpkw0(420px, 뷰포트 393보다 27px 넓음)와
+  // 그 자식 ehcbpkw2(400px, left=10이라 오른쪽 끝이 410 — 뷰포트 밖으로 17px 튀어나감)가 뷰포트보다
+  // 넓어 우측 좋아요/댓글/공유 아이콘 열의 오른쪽 끝이 화면 밖으로 밀려 잘려 보였다(사장님 지적
+  // "사이드에 메뉴들이 짤려서"). 4차 시도(외부 <style> 태그로 [class*=...]{width:...!important})는
+  // 실기기 재검증에서 전혀 안 먹혔다. 5차 시도(엘리먼트 인라인 style을 JS로 직접
+  // el.style.setProperty(prop, val, 'important') 설정 — 인라인 !important는 문서 순서/명시도와
+  // 무관하게 최우선이라는 이론)도 실기기 재검증 결과 모순된 결과가 나왔다: getAttribute('style')엔
+  // "width:393px!important"가 실제로 들어가 있는데 같은 순간 getBoundingClientRect().width는
+  // 여전히 420이었다(MAIN.er8k1k70) — 인라인 !important조차 안 먹히는 건 transform:scale류나
+  // flex-grow가 width를 무시하고 재계산하는 경우가 의심되지만 미확정. 되돌림 — 매 houseKeeping
+  // 틱마다 좌표 기준으로 재계산하는 구조라 잘못하면 계단식으로 계속 줄어들 위험도 있어(레벨별로
+  // 373/379.5/372.75/374.5로 제각각 나온 값이 그 정황) 지금 상태로 실기기에 남겨두는 것도 위험
+  // 판단. 다음 세션 과제: getComputedStyle(el).transform과 부모의 display/flex-grow부터 확인할 것
+  // — 반복 실기기 재시작 자체가 매번 냉시작 무음 블립을 유발하므로 이번 세션은 여기서 중단.
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로

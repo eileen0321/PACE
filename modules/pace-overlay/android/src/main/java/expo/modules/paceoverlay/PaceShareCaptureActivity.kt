@@ -98,6 +98,26 @@ class PaceShareCaptureActivity : Activity() {
       //     시스템이 우리 태스크를 다시 앞으로 되돌리기 때문이다.
       //     → 복귀는 **오래 사는 PaceOverlayService**가 약간의 지연 뒤에 수행한다(returnToPackage 콜백).
       val back = intent?.getStringExtra(EXTRA_RETURN_TO_PACKAGE)
+      // 🔴 2026-08-16 실기기 재현으로 확정 — 사장님 "favorite에 add 누르면 아예 런처 홈으로 가면서
+      //   창이 작아졌다 커진다". 내가 직접 눌러 재현했고 로그에 LauncherActivity가 116줄 찍혔다.
+      //   아래 8/14 주석의 가정("태스크째 없애면 시스템이 직전 태스크=유튜브로 바로 돌아간다")이
+      //   이 기기에서 틀리다. 실제로는 **런처**로 떨어진다.
+      //   서비스 콜백(onReturnRequested)의 700ms 지연은 오늘 제거했지만 그것만으로는 부족했다 —
+      //   그 경로는 다른 프로세스를 한 번 거치므로(실측 180ms) 그 사이 런처가 드러난다.
+      //   → **이 액티비티가 자기 손으로, 사라지기 전에** 복귀 인텐트를 먼저 쏜다. Activity 컨텍스트라
+      //     태스크 전환이 곧바로 예약되고, 그 다음 우리 태스크가 없어지므로 드러날 틈이 없다.
+      //   ⚠️ 위 "1차 시도가 안 먹혔다"는 그때 finish()여서 우리 태스크가 남아 시스템이 그걸 다시
+      //     앞으로 올렸기 때문이다. 지금은 finishAndRemoveTask()라 그 전제가 사라졌다.
+      //     서비스 콜백은 안전망으로 그대로 남긴다(기기별 복귀 선택 차이 대비).
+      if (!back.isNullOrBlank()) {
+        runCatching {
+          packageManager.getLaunchIntentForPackage(back)?.let {
+            it.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            startActivity(it)
+            Log.i("PaceShareCapture", "복귀 인텐트 직접 발사 pkg=$back")
+          }
+        }.onFailure { Log.w("PaceShareCapture", "복귀 인텐트 직접 발사 실패", it) }
+      }
       if (!back.isNullOrBlank()) onReturnRequested?.invoke(back)
       onReturnRequested = null
       // 🔴 2026-08-14 사장님 지적("유튜브에서 favorite 누르면 왜 앱 홈으로 갔다가 다시 유튜브로 가는데") —

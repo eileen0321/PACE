@@ -3589,8 +3589,20 @@ class PaceOverlayService : Service() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         val clip = cm.primaryClip
         if (clip == null || clip.itemCount == 0) {
-          // 진짜로 비어 있을 수도 있고, 플랫폼이 막은 것일 수도 있다 — 구분이 안 되므로 폴백한다.
-          denied = true
+          // 🔴 2026-08-16 사장님 "favorite에 add 누르면 아예 런처 홈으로 가면서 번쩍인다".
+          //   내가 직접 눌러 재현했고 로그가 원인을 그대로 보여줬다:
+          //     clipboard via focused overlay unavailable -> capture activity fallback
+          //     clipboard(focused)=null      ← 액티비티까지 띄웠는데 결과가 null
+          //   즉 **클립보드가 애초에 비어 있었는데** 액티비티를 띄워 화면만 흔들고 아무것도 못 얻었다.
+          //   원래 주석("진짜 비었는지 플랫폼이 막았는지 구분이 안 된다")이 이 폴백의 근거였는데,
+          //   구분할 방법이 있다 — **우리 창이 실제로 포커스를 받았는가**다.
+          //   포커스를 받은 상태에서 null이면 Android 10+ 제약이 아니라 그냥 빈 클립보드다.
+          //   그 경우 액티비티를 띄울 이유가 없다(띄워도 똑같이 null이라는 걸 오늘 실측으로 확인).
+          //   → 번쩍임은 "정말로 포커스를 못 받은" 소수 상황에서만 남는다. 평소엔 아예 안 뜬다.
+          denied = !panel.hasWindowFocus()
+          if (!denied) {
+            Log.i("PaceOverlayService", "클립보드가 비어 있다(포커스는 정상) — 액티비티를 띄우지 않는다")
+          }
         } else {
           clipText = clip.getItemAt(0).coerceToText(this).toString()
         }
@@ -3619,7 +3631,21 @@ class PaceOverlayService : Service() {
     // 저장이 끝나면 사용자를 유튜브로 되돌린다. 액티비티가 스스로 하면 finish()에 밀려 안 먹힌다
     // (실기기 확인 — 저장 직후 최상단이 Pace MainActivity였다).
     PaceShareCaptureActivity.onReturnRequested = { pkg ->
-      foregroundPollHandler.postDelayed({
+      // 🔴 2026-08-16 실측으로 확정 — 사장님 "favorite에 add 누르면 앱이 아니라 아예 런처 홈으로
+      //   가면서 창이 작아졌다 커진다". 로그의 실제 전이:
+      //     00:25:15.553  LauncherActivity(com.sec.android.app.launcher)  ← 런처가 드러난다
+      //     00:25:15.623  onTaskStackChanged → youtube MainActivity
+      //   2026-08-14에 finishAndRemoveTask()로 바꾸면서 "그러면 시스템이 직전 태스크(유튜브)로 바로
+      //   돌아가 중간 화면이 안 생긴다"고 적었는데, **그 가정이 이 기기에서 틀렸다.** 우리 태스크를
+      //   없애면 시스템은 유튜브가 아니라 런처로 떨어진다. 그리고 복귀는 여기서 700ms **뒤에** 나가니,
+      //   그 700ms가 통째로 런처 노출 구간이 된다 — 사장님이 보시는 게 정확히 이것이다.
+      //   → 지연을 없앤다. 이 콜백은 PaceShareCaptureActivity가 finishAndRemoveTask()를 부르기
+      //     **직전에** 호출하므로(그쪽 finally 블록 순서), 즉시 보내면 우리 태스크가 사라지는 시점엔
+      //     이미 유튜브 복귀가 진행 중이라 런처가 드러날 틈이 없다.
+      //   ⚠️ 700ms는 원래 "startActivity+finish()가 안 먹혔다"에 대한 대증요법이었는데, 그때는
+      //     finish()라 우리 태스크가 남아 시스템이 그걸 다시 앞으로 올리던 상황이었다. 지금은
+      //     finishAndRemoveTask()라 그 전제 자체가 사라졌다.
+      foregroundPollHandler.post({
         try {
           val i = packageManager.getLaunchIntentForPackage(pkg)
           if (i == null) {
@@ -3632,7 +3658,7 @@ class PaceOverlayService : Service() {
         } catch (e: Exception) {
           Log.w("PaceOverlayService", "유튜브 복귀 실패", e)
         }
-      }, 700L)
+      })
     }
     PaceShareCaptureActivity.pendingCallback = cb@{ clipText ->
       foregroundPollHandler.post { saveFavoriteFromClipText(kind, clipText, onChanged) }

@@ -15,7 +15,7 @@ public record FocusAllowanceResponse(
         boolean timedOut,
         Instant sessionEndsAt,
         /**
-         * 🔴 2026-08-13 추가 — **서버가 아는 오늘(UTC)**. 클라이언트가 보낸 날짜와 무관하게 항상
+         * 🔴 2026-08-13 추가 — **서버 시계로 계산한 오늘**. 클라이언트가 보낸 날짜와 무관하게 항상
          * 서버 시각으로 채운다.
          *
          * 왜 필요한가: 출석 크레딧(+5/일)이 기기 로컬 날짜만 보고 지급돼서, 설정에서 날짜를 N번
@@ -30,17 +30,39 @@ public record FocusAllowanceResponse(
          */
         LocalDate serverToday
 ) {
-    // ⚠️ 이름을 `serverToday()`로 두면 record 컴포넌트의 접근자와 충돌한다(접근자는 public이어야 함).
-    private static LocalDate utcToday() {
-        return LocalDate.now(java.time.ZoneOffset.UTC);
+    /**
+     * 🔴 2026-08-15 — 여기가 UTC 고정이었던 것이 실사용 버그를 만들었다(사장님: "오늘 계속 테스트하던
+     * 기기인데 왜 갑자기 출석 보상이 뜬 거야").
+     *
+     * 클라이언트의 todayStr()은 **기기 로컬 날짜**(한국이면 KST)인데 여기는 **UTC 날짜**를 돌려줬다.
+     * 한국은 UTC+9라 매일 **KST 00:00~08:59 동안 서버가 '어제'를 오늘이라고 말한다.** 그 시간대에
+     * 출석하면 lastCheckInDate가 어제 날짜로 박히고, KST 09:00에 UTC 날짜가 넘어가는 순간
+     * `lastCheckInDate !== today`가 되어 **같은 하루에 출석 보상이 두 번** 나간다.
+     * 오늘 실제로 그렇게 떴다.
+     *
+     * serverToday를 넣은 목적은 "기기 날짜 조작 방지"였지 "UTC 강제"가 아니었다 — 지켜야 할 것은
+     * **시계의 출처**(서버)지 시간대가 아니다. 그래서 시계는 서버 것을 그대로 쓰고, 시간대만
+     * 클라이언트가 알려준 오프셋을 적용한다. 사용자가 오프셋을 위조해도 얻을 수 있는 건 최대 하루치
+     * 선취뿐이고, 그건 useAttendanceStore의 단조 가드(이미 받은 날짜보다 크지 않으면 미지급)가
+     * 그다음 날 상쇄한다.
+     */
+    private static LocalDate todayIn(Integer tzOffsetMinutes) {
+        java.time.ZoneOffset zone = java.time.ZoneOffset.UTC;
+        if (tzOffsetMinutes != null) {
+            // UTC 오프셋 유효 범위는 -12:00 ~ +14:00. 벗어난 값은 위조/버그이므로 UTC로 떨어뜨린다.
+            int clamped = Math.max(-12 * 60, Math.min(14 * 60, tzOffsetMinutes));
+            zone = java.time.ZoneOffset.ofTotalSeconds(clamped * 60);
+        }
+        return java.time.Instant.now().atOffset(zone).toLocalDate();
     }
 
-    public static FocusAllowanceResponse of(FocusAllowance a) {
+    public static FocusAllowanceResponse of(FocusAllowance a, Integer tzOffsetMinutes) {
         return new FocusAllowanceResponse(
-                a.getAllowanceDate(), a.getAdExtendCount(), a.isTimedOut(), a.getSessionEndsAt(), utcToday());
+                a.getAllowanceDate(), a.getAdExtendCount(), a.isTimedOut(), a.getSessionEndsAt(),
+                todayIn(tzOffsetMinutes));
     }
 
-    public static FocusAllowanceResponse empty(LocalDate date) {
-        return new FocusAllowanceResponse(date, 0, false, null, utcToday());
+    public static FocusAllowanceResponse empty(LocalDate date, Integer tzOffsetMinutes) {
+        return new FocusAllowanceResponse(date, 0, false, null, todayIn(tzOffsetMinutes));
     }
 }

@@ -24,6 +24,9 @@ import { AppHeader } from '../../components/ui/AppHeader';
 import { SessionHeroCard } from '../../components/home/SessionHeroCard';
 import { PlatformPickerCard } from '../../components/home/PlatformPickerCard';
 import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
+// 🔴 2026-08-15 — 날짜 문자열은 반드시 이걸로 만든다. toISOString()은 **UTC 날짜**라 한국(UTC+9)에서는
+// 매일 KST 09:00에 하루가 넘어가 버린다. 같은 실수로 출석 보상이 하루 두 번 지급됐다(utils/date.ts 주석).
+import { toLocalDateStr } from '../../utils/date';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
@@ -231,7 +234,7 @@ export default function HomeScreen() {
   // 닫았으면, 같은 날 안에는 아래 두 트리거(포그라운드 복귀/탭 재포커스) 어느 쪽이 다시 불러도 배너를
   // 채우지 않는다. STORAGE_KEYS.insightDismissedDate 참고.
   const maybeSetTodaysInsight = useCallback(async (uid: string) => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = toLocalDateStr(new Date());
     const dismissedDate = await AsyncStorage.getItem(STORAGE_KEYS.insightDismissedDate).catch(() => null);
     if (dismissedDate === todayStr) return;
     const message = await getTodaysInsightMessage(uid).catch(() => null);
@@ -314,7 +317,7 @@ export default function HomeScreen() {
   // 이미 오늘 시도했으면 그냥 닫기만 한다. 매번 확실히 주면 "선물"이 아니라 "기능"이 되어버려서
   // 확률로 둔다(예상 못한 즐거움 원칙).
   const onTapInsightGift = useCallback(async () => {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = toLocalDateStr(new Date());
     try {
       const claimed = await AsyncStorage.getItem(STORAGE_KEYS.insightGiftClaimedDate);
       if (claimed !== todayStr && Math.random() < 0.3) {
@@ -348,7 +351,7 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!todaysInsight) return;
     const timer = setTimeout(() => {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = toLocalDateStr(new Date());
       AsyncStorage.setItem(STORAGE_KEYS.insightDismissedDate, todayStr).catch(() => {});
       setTodaysInsight(null); // Animated.View의 exiting(FadeOut 800ms)이 부드럽게 지운다
     }, AUTO_DISMISS_MS);

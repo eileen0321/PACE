@@ -28,8 +28,11 @@ public class FocusAllowanceController {
     @GetMapping
     public FocusAllowanceResponse get(
             @AuthenticationPrincipal Long userId,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return focusAllowanceService.get(userId, date != null ? date : LocalDate.now());
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            // 🔴 2026-08-15 — 응답의 serverToday를 이 시간대로 계산한다(FocusAllowanceResponse.todayIn 주석).
+            // 없으면(구버전 앱) 예전처럼 UTC — 기존 동작이라 회귀는 없다.
+            @RequestParam(required = false) Integer tzOffsetMinutes) {
+        return focusAllowanceService.get(userId, date != null ? date : LocalDate.now(), tzOffsetMinutes);
     }
 
     /** 광고 보상/연장/타임아웃이 실제로 일어난 순간에 올린다. 서버는 병합만 하고 덮어쓰지 않는다. */

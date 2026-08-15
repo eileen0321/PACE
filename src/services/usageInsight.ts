@@ -5,6 +5,8 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { resolveSystemLocale } from './i18n';
 import { insightApi, type InsightBundle } from './api/client';
 import { STAT_TEMPLATES, HEALING_ITEMS, QUOTE_ITEMS, TIP_ITEMS, type FlatContent } from './insightContent';
+// 🔴 2026-08-15 — UTC 날짜(toISOString) 금지. 한국에서 KST 09:00에 하루가 넘어간다(utils/date.ts 주석).
+import { toLocalDateStr } from '../utils/date';
 
 // 2026-07-28 사장님 지시("몇시에 잠들었습니다 말고 다른 노티로 만드는건 어때") → 2026-07-29 확장
 // 지시("배너 뜨는 조건도 랜덤으로, 문구도 신조어/힐링/명언까지 훨씬 다양하게") — 사용 습관 통계
@@ -48,7 +50,7 @@ let memoryBundleDate: string | null = null;
 let inFlight: Promise<InsightBundle> | null = null;
 
 async function getBundle(): Promise<InsightBundle> {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = toLocalDateStr(new Date());
   if (memoryBundle && memoryBundleDate === todayStr) return memoryBundle;
 
   if (!inFlight) {

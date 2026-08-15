@@ -78,11 +78,11 @@ public class FocusAllowanceService {
     }
 
     @Transactional(readOnly = true)
-    public FocusAllowanceResponse get(Long userId, LocalDate date) {
+    public FocusAllowanceResponse get(Long userId, LocalDate date, Integer tzOffsetMinutes) {
         LocalDate safeDate = sanitizeDate(date);
         return repository.findByUserIdAndAllowanceDate(userId, safeDate)
-                .map(FocusAllowanceResponse::of)
-                .orElseGet(() -> FocusAllowanceResponse.empty(safeDate));
+                .map(a -> FocusAllowanceResponse.of(a, tzOffsetMinutes))
+                .orElseGet(() -> FocusAllowanceResponse.empty(safeDate, tzOffsetMinutes));
     }
 
     @Transactional
@@ -118,6 +118,7 @@ public class FocusAllowanceService {
         }
 
         allowance.setUpdatedAt(Instant.now());
-        return FocusAllowanceResponse.of(repository.save(allowance));
+        // sync 응답의 serverToday는 출석 판정에 안 쓰인다(그쪽은 get만 본다) — UTC 그대로 둔다.
+        return FocusAllowanceResponse.of(repository.save(allowance), null);
     }
 }

@@ -343,6 +343,40 @@ const INJECTED_JS_BEFORE_LOAD = `
       }
       if (!v || bestOverlap <= 0) return;
       var container = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+      // 🔴 사장님 실기기 지적("하단 글자도 짤리고, 화면 사이즈도 못맞춰?") — 원인: 16:9 가로 영상처럼
+      // 스케일을 스킵하는(비표준 비율) 영상에서도 아이콘을 먼저 숨기고 RN 오버레이를 풀스크린 기준
+      // 위치에 띄워버려서, 실제로는 작게(letterbox) 남은 원래 영상 위로 오버레이가 엉뚱하게 겹치고
+      // 자막과도 부딪혔다. **순서를 바꾼다** — 먼저 이 영상을 풀스크린 처리할지 결정하고, "한다"고
+      // 확정된 경우에만 페이지 아이콘을 숨기고 RN 오버레이를 띄운다. 스킵하는 영상은 페이지 자체
+      // UI(아이콘·자막 위치 전부 서로 맞게 설계된 원본)를 하나도 안 건드리고 그대로 둔다.
+      var videoSection = v, sguard = 0;
+      while (videoSection && videoSection.tagName !== 'SECTION' && sguard < 8) {
+        videoSection = videoSection.parentElement;
+        sguard++;
+      }
+      var target = videoSection || v;
+      var r = target.getBoundingClientRect();
+      var willFullscreen = false;
+      var scale = 1;
+      if (r.height && r.height < vh - 1) {
+        scale = vh / r.height;
+        var scaleForWidth = r.width ? vw / r.width : scale;
+        // 3:4(0.75) 등 9:16과 크게 다른 비율의 영상은 균일 스케일 시 폭이 뷰포트 밖으로 크게
+        // 밀려나 잘려 보인다(실측 확인) — 폭 기준 배율과 25% 넘게 차이나면 스킵.
+        if (scale > 1.01 && scale <= 2.2 && scale / scaleForWidth <= 1.25) {
+          willFullscreen = true;
+        }
+      }
+      if (!willFullscreen) {
+        if (target.style.getPropertyValue('transform')) {
+          target.style.removeProperty('transform');
+        }
+        if (window.__paceLastIconState !== null) {
+          window.__paceLastIconState = null;
+          send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+        }
+        return;
+      }
       var likeEl = container ? container.querySelector('[data-e2e="like-icon"]') : document.querySelector('[data-e2e="like-icon"]');
       if (likeEl) {
         var el = likeEl, guard = 0, railSection = null;
@@ -391,24 +425,6 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 값을 그대로 보고하지만 실제 디코딩된 프레임 레이어는 별도 트랙이라 transform이 안 먹힘).
       // video 자체가 아니라 그걸 감싸는 SECTION(비디오 전용 래퍼, 일반 DOM 레이어라 컴포지팅 정상
       // 적용)에 transform을 건다.
-      var videoSection = v, sguard = 0;
-      while (videoSection && videoSection.tagName !== 'SECTION' && sguard < 8) {
-        videoSection = videoSection.parentElement;
-        sguard++;
-      }
-      var target = videoSection || v;
-      var r = target.getBoundingClientRect();
-      if (!r.height || r.height >= vh - 1) return;
-      var scale = vh / r.height;
-      if (scale <= 1.01 || scale > 2.2) return;
-      // 🔴 사장님 실기기 지적("위아래 화면이 짤리고") — 실측으로 원인 확정: 모든 영상이 9:16이라고
-      // 가정하고 높이 기준으로만 균일(scale())하게 키웠는데, 이 영상은 SECTION의 aspect-ratio가
-      // 3:4(0.75)였다 — 높이를 793(뷰포트)까지 키우니 균일 스케일 때문에 폭이 595까지 같이
-      // 늘어나(뷰포트 393보다 훨씬 넓음) 화면 밖으로 크게 밀려나며 보이는 부분이 이상하게
-      // 잘렸다. 폭 기준으로 계산한 배율(vw/r.width)과 비교해 너무 차이나면(원본 비율이 9:16과
-      // 크게 다른 영상) 안전하게 스킵 — 레터박싱된 원래 모습이 찌그러진 크롭보다 낫다.
-      var scaleForWidth = r.width ? vw / r.width : scale;
-      if (scale / scaleForWidth > 1.25) return;
       target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
     } catch(eIconScale) {}

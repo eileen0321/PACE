@@ -299,50 +299,18 @@ const INJECTED_JS_BEFORE_LOAD = `
     } catch(eMainWidth) {}
   }
   enforceMainWidth();
-  // 🔴 2026-08-15(8차) — video를 감싸는 SECTION.ezfgn9c0에 aspect-ratio:9/16이 고정돼 세로 여백이
-  // 남는 문제(7차 코멘트 참고). height:100%(퍼센트)로 풀려던 7차 시도는 검은 화면 회귀를 냈다 —
-  // 웹서치로 원인 확인: 퍼센트 높이는 조상 체인 전체가 "확정된"(px 등) 높이를 가져야 하는데
-  // 이 체인은 flex+position:absolute가 섞여 있어 한 군데라도 auto/퍼센트면 0으로 무너진다
-  // (WebKit/Chrome 공통의 잘 알려진 문제 — css-tricks.com/aspect-ratio-boxes 등). min-width 수정이
-  // 성공했던 이유가 바로 이거였다 — 그때도 퍼센트가 아니라 vw를 **px 값**으로 직접 넣었다. 같은
-  // 방식으로 height도 vh를 퍼센트가 아니라 px로 직접 지정해 확정된 값을 준다.
-  function enforceVideoHeight(){
-    try {
-      if (String(location.pathname||'').indexOf('foryou') === -1) return;
-      var vh = window.innerHeight || 0;
-      if (!vh) return;
-      var v = document.querySelector('video');
-      if (!v) return;
-      var sectionEl = null;
-      var flexParent = null;
-      var walk = v;
-      var guard = 0;
-      while (walk && guard < 20) {
-        if (walk.tagName === 'SECTION') { sectionEl = walk; flexParent = walk.parentElement; break; }
-        walk = walk.parentElement;
-        guard++;
-      }
-      if (!sectionEl) return;
-      function apply(){
-        if (sectionEl.style.getPropertyValue('height') === vh + 'px') return;
-        sectionEl.style.setProperty('aspect-ratio', 'auto', 'important');
-        sectionEl.style.setProperty('min-height', '0', 'important');
-        sectionEl.style.setProperty('max-height', 'none', 'important');
-        sectionEl.style.setProperty('height', vh + 'px', 'important');
-        if (flexParent) {
-          flexParent.style.setProperty('flex', '0 0 ' + vh + 'px', 'important');
-          flexParent.style.setProperty('height', vh + 'px', 'important');
-        }
-      }
-      apply();
-      if (!sectionEl.getAttribute('data-pace-height-observed')) {
-        sectionEl.setAttribute('data-pace-height-observed', '1');
-        var mo3 = new MutationObserver(apply);
-        mo3.observe(sectionEl, { attributes: true, attributeFilter: ['style'] });
-      }
-    } catch(eVideoHeight) {}
-  }
-  enforceVideoHeight();
+  // 🔴 2026-08-15(7차, 미해결) — 폭은 고쳤는데 사장님이 실기기 스크린샷으로 재확인("이게 전체창으로
+  // 뜬거냐") — 위아래로도 여전히 카드처럼 떠 있다. 실측(getComputedStyle)으로 원인 확정: video를
+  // 감싸는 SECTION.ezfgn9c0에 aspect-ratio:9/16(0.5625)이 고정돼 있다(h=619는 min-height가 아니라
+  // 이 비율 때문 — 348*16/9=618.67, 정확히 일치). 뷰포트(예: 402x812)가 9:16보다 세로로 더 긴
+  // 비율이라 폭 기준 9:16 박스는 절대 뷰포트 전체 높이를 못 채운다. video 자체는 이미
+  // object-fit:cover라 박스 비율만 풀면 네이티브 틱톡처럼 크롭해서 꽉 찰 것으로 예상했다.
+  // 실제 시도(SECTION에 aspect-ratio:auto+height:100%!important, 부모 flex:1 1 auto 강제)는
+  // 시뮬레이터 스크린샷에서 영상이 통째로 안 보이는(검은 화면, 진행바만 움직임) 심각한 회귀를
+  // 내서 즉시 되돌림 — 이 체인 어딘가(아마 절대위치 자손들의 컨테이닝 블록 계산)가 height:100%
+  // 전파에 더 예민하게 반응하는 것으로 보임. 폭 수정(min-width, 검증됨)만 남기고 높이는 다음
+  // 세션 과제로 남긴다 — 다음엔 aspect-ratio만 먼저 단독으로 풀어보고(height:100% 없이) 단계적으로
+  // 반응을 확인할 것.
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -771,7 +739,6 @@ const INJECTED_JS_BEFORE_LOAD = `
     dismissAppBanner();
     hideLeftRailByGeometry();
     enforceMainWidth();
-    enforceVideoHeight();
     dumpDomOnce();
     dumpErrorStateOnce();
     var href = '' + location.href;

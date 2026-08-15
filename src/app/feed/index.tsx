@@ -986,6 +986,7 @@ export default function PaceFeedScreen() {
             key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
+            initialMuted={lastKnownSilentRef.current}
             onProgress={handleProgress}
             onReady={clearForcedTransitionCover}
             onEnded={onEnded}

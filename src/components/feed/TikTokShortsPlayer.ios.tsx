@@ -49,6 +49,17 @@ type Props = {
   onError?: (code: number) => void;
   /** 재생 진행률(0~1) — 피드의 고개짓 카메라 배터리 게이팅용(유튜브 플레이어와 동일 용도). */
   onProgress?: (fraction: number) => void;
+  /**
+   * 2026-08-15 — 유튜브 쪽(YouTubeShortsPlayer.ios.tsx)에 넣은 것과 같은 목적: 이 WebView가
+   * 콜드 스타트할 때 물리 무음 스위치 상태를 미리 알려줘서, RN의 첫 checkSilentSwitch() 응답
+   * (200~300ms 비동기)이 오기 전에 새 video가 TikTok 기본 상태(대개 muted=false)로 잠깐 소리
+   * 내며 재생되는 걸 막는다. window.__paceMuted를 이 값으로 미리 세팅한 뒤 나머지 스크립트를
+   * 붙인다 — onLoadStart/onLoad 재주입(아래, 실기기에서 동작 확인됨)과
+   * injectedJavaScriptBeforeContentLoaded prop(이 환경에서 실행 안 될 수 있다고 기록돼 있었으나
+   * 2026-08-15 유튜브 쪽에서 domlog(__PACE_DIAG__ 게이트)가 실제로 찍히는 걸 확인해 그 기록이
+   * RNW 16.0.0 업그레이드 이전 것일 가능성이 높음 — 안전하게 양쪽 다 세팅) 양쪽에 다 쓴다.
+   */
+  initialMuted?: boolean;
 };
 
 const INJECTED_JS_BEFORE_LOAD = `
@@ -765,7 +776,7 @@ true;
 `;
 
 export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function TikTokShortsPlayer(
-  { playing, onEnded, onReady, onError, onProgress }: Props,
+  { playing, onEnded, onReady, onError, onProgress, initialMuted }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -851,6 +862,9 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
     );
   }, [ready, playing]);
 
+  // 위 Props 주석 참고 — window.__paceMuted를 스크립트 본문보다 먼저 세팅해 콜드 스타트 무음샘 확보.
+  const injectedScriptWithMuteSeed = `window.__paceMuted=${initialMuted ? 'true' : 'false'};` + INJECTED_JS_BEFORE_LOAD;
+
   return (
     <View style={styles.container}>
       <WebView
@@ -859,7 +873,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         style={styles.web}
         // 2026-08-14(28차) — injectedJavaScript(페이지 "완전 로드" 후 주입) prop을 더 이상 안 쓴다
         // — 핵심 로직 전부가 BeforeContentLoaded 안의 mainInit()(DOMContentLoaded 기준)로 옮겨감.
-        injectedJavaScriptBeforeContentLoaded={INJECTED_JS_BEFORE_LOAD}
+        injectedJavaScriptBeforeContentLoaded={injectedScriptWithMuteSeed}
         javaScriptEnabled
         domStorageEnabled
         allowsInlineMediaPlayback
@@ -892,8 +906,8 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         // 이유는 — react-native-webview 13.x의 injectedJavaScriptBeforeContentLoaded prop이
         // (raw 시각 테스트로는) 안 먹혔던 것도 사실이라, prop보다 이 imperative 경로가 더 신뢰도가
         // 높다고 판단해서다.
-        onLoadStart={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
-        onLoad={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
+        onLoadStart={() => { webRef.current?.injectJavaScript(injectedScriptWithMuteSeed); }}
+        onLoad={() => { webRef.current?.injectJavaScript(injectedScriptWithMuteSeed); }}
         onError={(e) => { if (__DEV__) console.log('[TikTok WV] onError', e.nativeEvent?.code); }}
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}

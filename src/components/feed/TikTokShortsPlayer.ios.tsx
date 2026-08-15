@@ -208,11 +208,34 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 강제해봤지만 실기기/시뮬레이터 재검증 결과 효과 없었다(그리드 트랙이 고정 px로 박혀있을
   // 가능성 — 더 깊은 조사 필요, 사이드바처럼 컨테이너 하나 숨기는 걸로 안 끝남). 사이드바 숨김
   // (아래, 효과 확인됨)만 우선 반영하고 이건 다음 세션 과제로 남긴다.
-  try {
-    var hideStyle = document.createElement('style');
-    hideStyle.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
-    (document.head || document.documentElement).appendChild(hideStyle);
-  } catch(eHide) {}
+  // 🔴 2026-08-15(2차) — 위 클래스명 셀렉터(DivSideNavContainer)는 /foryou·/explore(같은 SPA
+  // 라우트)에서만 통했다. /live로 들어가면 완전히 다른 클래스 체계(실측: tiktok-1w5o2is,
+  // tiktok-13e8rmi, eyxny660 등 — 뒤에 안정적인 컴포넌트명이 안 붙는 순수 해시라 *= 매칭 자체가
+  // 불가능)를 써서 사이드바가 그대로 노출됐다(실기기 확인). "화면 위에 검은 View를 고정폭으로
+  // 덮어씌우자"는 대안도 시도했지만 /explore처럼 이미 리플로우가 된 페이지에서 정상 콘텐츠(첫
+  // 카테고리 탭)까지 잘라먹는 새 부작용을 냄 — 되돌림. 최종: 클래스명이 아니라 **기하학적
+  // 특징**(왼쪽 끝에 붙어있고 화면 세로 대부분을 차지하는 좁은 컬럼)으로 찾아 숨긴다 — /live
+  // 실측치(width 72~200px, height 652~812px)와 /foryou의 DivSideNavContainer가 공통으로 갖는
+  // 패턴이라 클래스명이 또 바뀌어도 안 깨진다. <video>를 담고 있는 컨테이너는 절대 안 숨기게
+  // 방어(실제 영상 컬럼이 우연히 이 기준에 걸리는 사고 방지). mainInit에서 1회 + houseKeeping에서
+  // 매 틱(자가치유, SPA 라우트 전환 대응) 둘 다 호출.
+  function hideLeftRailByGeometry(){
+    try {
+      var vh = window.innerHeight || 0;
+      if (!vh) return;
+      var all = document.querySelectorAll('div');
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.style && el.style.display === 'none') continue;
+        var r = el.getBoundingClientRect();
+        if (r.left > 4 || r.width <= 0 || r.width > 220) continue;
+        if (r.height < vh * 0.5) continue;
+        if (el.querySelector('video')) continue;
+        el.style.setProperty('display', 'none', 'important');
+      }
+    } catch(eGeo) {}
+  }
+  hideLeftRailByGeometry();
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -639,6 +662,7 @@ const INJECTED_JS_BEFORE_LOAD = `
 
   function houseKeeping(){
     dismissAppBanner();
+    hideLeftRailByGeometry();
     dumpDomOnce();
     dumpErrorStateOnce();
     var href = '' + location.href;

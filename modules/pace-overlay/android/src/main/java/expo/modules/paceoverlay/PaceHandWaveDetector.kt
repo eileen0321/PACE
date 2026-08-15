@@ -242,7 +242,16 @@ object PaceHandWaveDetector {
   // → 0.20으로 올린다. 위 실측에서 오탐 무리 20건(59%)이 통째로 걸러지고, 의도적 손짓(0.25~0.35)은
   //   여유 있게 통과한다. 이 값은 "얼마나 크게 보이는가"라 조명·속도와 무관해 sweep보다 훨씬 안정적이다.
   // ⚠️ 다음에 이 값을 만질 때도 위처럼 **발동 로그의 handSize 전수 분포**를 먼저 뽑아서 정할 것.
-  private const val MIN_HAND_SIZE = 0.20
+  // 2026-08-15 실기기 — 0.20은 틀린 처방이었다. 사장님이 손짓을 10번 넘게 했는데 30초 동안
+  // near-miss 로그조차 한 줄도 안 남았다(19:55:52~19:56:22). 성공한 두 번의 handSize가 0.274/0.230,
+  // 즉 **임계값 바로 위**였다 — 손을 렌즈에 바짝 붙여야만 겨우 걸리는 상태였다.
+  // 결정적으로, 이 값을 0.20으로 올리게 만든 그 오탐의 실측 handSize가 **0.209**였다.
+  // 0.20은 그 오탐을 막지도 못하면서 진짜 손짓만 잘라냈다 — 크기는 사람과 커튼을 가르는 축이 아니다.
+  // 그 역할은 이제 얼굴 게이트(shouldTrustHandSignal)가 제대로 맡는다. 원래 0.03보다는 높게 두어
+  // 명백한 노이즈만 거르고, 실사용 거리는 되돌린다.
+  private const val MIN_HAND_SIZE = 0.08
+  // 크기로 버린 프레임도 최소한 흔적은 남긴다 — 위 30초 공백이 진단을 통째로 막았다.
+  private const val SMALL_HAND_LOG_INTERVAL_MS = 1000L
   // 재무장 조건 — 트리거 시점 손 크기의 이 비율 이하로 작아져야 "손을 치웠다"로 인정.
   // 2026-08-01 사용자 지적("두번씩 넘어가는거 여전함") — 0.75는 실제 "훠이" 동작 중간에 손이
   // 살짝 오므라들거나 흔들리는 정도로도 우연히 만족되기 쉬웠다(한 번의 연속 동작인데 중간에
@@ -286,6 +295,7 @@ object PaceHandWaveDetector {
   // ── 사람 존재 확인(2026-08-15) ──
   private var faceDetector: com.google.mediapipe.tasks.vision.facedetector.FaceDetector? = null
   private var lastFaceCheckAtMs = 0L
+  private var lastSmallHandLogAtMs = 0L
   /** 이 세션에서 마지막으로 얼굴을 본 시각. 0 = 아직 한 번도 못 봄. */
   @Volatile private var lastFaceSeenAtMs = 0L
   /** 이 세션에서 얼굴을 **한 번이라도** 봤는가 — 아래 게이트의 안전장치가 이 값을 본다. */
@@ -777,7 +787,14 @@ object PaceHandWaveDetector {
     val wrist = landmarks[0]
     val middleMcp = landmarks[9]
     val handSize = hypot((wrist.x() - middleMcp.x()).toDouble(), (wrist.y() - middleMcp.y()).toDouble())
-    if (handSize < MIN_HAND_SIZE) return
+    if (handSize < MIN_HAND_SIZE) {
+      val nowMs = System.currentTimeMillis()
+      if (nowMs - lastSmallHandLogAtMs >= SMALL_HAND_LOG_INTERVAL_MS) {
+        lastSmallHandLogAtMs = nowMs
+        Log.d(TAG, "손 감지됨이나 너무 작아 무시 handSize=$handSize (min=$MIN_HAND_SIZE) — 더 가까이 대야 함")
+      }
+      return
+    }
 
     val now = System.currentTimeMillis()
 

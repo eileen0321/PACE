@@ -1656,7 +1656,21 @@ class PaceAccessibilityService : AccessibilityService() {
       Log.w("PaceAccessibility", "제스처 취소 — 광고 표시 중(오클릭 방지)")
       return
     }
-    selfAdvanceArmedUntilMs = SystemClock.elapsedRealtime() + SELF_ADVANCE_ATTRIBUTION_MS
+    val dispatchedAtMs = SystemClock.elapsedRealtime()
+    selfAdvanceArmedUntilMs = dispatchedAtMs + SELF_ADVANCE_ATTRIBUTION_MS
+    // 🔴 2026-08-15 실기기 — 사장님이 오래 신고해오신 "안 눌렀는데 두세 개씩 넘어간다"의 정체.
+    //   손짓/리모컨/볼륨키가 타는 swipeOnce() 경로는 **lastSwipeAtMs를 갱신하지 않았다.** 자동넘김은
+    //   그 값 하나로 "마지막으로 넘긴 지 얼마나 됐나"를 재므로, 사람이 방금 넘긴 걸 모른 채 자기
+    //   임계(틱톡 20초 / 유튜브 90초)를 그대로 채워 곧바로 한 번 더 발사한다. 실측:
+    //     19:56:24.430 VIDEO_ADVANCE fingerprint      ← 손짓으로 넘어간 결과
+    //     19:56:24.955 AUTO_NEXT no-progressbar elapsed=46000ms  ← 0.5초 뒤 자동넘김이 또 발사
+    //   손짓을 쓸수록 심해진다 — 손으로 넘길 때마다 자동넘김 시계는 계속 늙어가기 때문이다.
+    //   → 스와이프가 전부 지나는 이 한 곳에서 시계를 맞춘다. 누가 시켰든 **화면이 넘어갔다는
+    //     사실은 하나**이므로, 자동넘김·손짓·리모컨이 같은 시계를 공유해야 맞다.
+    //   videoStartedAtMs도 같이 되돌린다 — 새 영상이 시작되는 시점이므로 over-stay(90초) 상한도
+    //   그 영상 기준으로 다시 세는 게 옳다. 조금 이르게 잡히지만 "덜 끊는" 안전한 방향의 오차다.
+    lastSwipeAtMs = dispatchedAtMs
+    videoStartedAtMs = dispatchedAtMs
     val gesture = GestureDescription.Builder()
       .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
       .build()

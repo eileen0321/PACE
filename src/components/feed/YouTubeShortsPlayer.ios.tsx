@@ -216,6 +216,18 @@ true;
 const INJECTED_JS_SWIPE = `
 (function () {
   function send(o) { if (o && o.type === 'domlog' && !window.__PACE_DIAG__) return; if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  // 2026-08-15 — 틱톡 쪽에서 사장님이 실기기로 직접 잡은 것과 같은 종류의 누출이 여기도 있었다
+  // (실기기 확인: debugAction=advance로 스와이프 전환 중 소리 남). 기존 500ms 폴링(pollTick, 아래)은
+  // 새 <video>가 이미 재생을 시작한 "뒤"에야 window.__paceForceSilent를 적용해 그 틈만큼 샜다.
+  // document 전체에 play 이벤트를 capture 단계(버블링 안 기다림, 재생 시작과 동기)로 걸어 폴링
+  // 지연 없이 즉시 무음을 적용한다 — 이 스크립트는 injectedJavaScript(페이지당 1회, 스와이프 모드는
+  // 리로드가 없어 재주입도 없음)로 들어오므로 중복 등록 걱정이 없다.
+  try {
+    document.addEventListener('play', function (ev) {
+      var t = ev.target;
+      if (t && t.tagName === 'VIDEO' && window.__paceForceSilent && !t.muted) { t.muted = true; }
+    }, true);
+  } catch (e) {}
   var reportedReady = false, reportedEnded = false, lastT = -1;
   var curHref = '' + location.href, curV = null, globalsOn = false;
   // 2026-08-05 — URL에서 영상 id만 뽑는다. 재부착 판단을 href 전체가 아니라 **id**로 해야 한다(아래 참고).

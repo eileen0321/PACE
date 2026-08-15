@@ -7,6 +7,10 @@ import { Feather } from '@expo/vector-icons';
 import { YouTubeShortsPlayer, SWIPE_NAV, type ShortsPlayerHandle } from '../../components/feed/YouTubeShortsPlayer';
 import { TikTokShortsPlayer } from '../../components/feed/TikTokShortsPlayer';
 import { useShortsQueueStore } from '../../store/useShortsQueueStore';
+// 이 화면은 iOS 전용(home.tsx의 Platform.OS==='ios' 분기로만 진입)이라 플랫폼 배럴을 거치지 않고
+// 구체 .ios 모듈을 직접 쓴다(moduleSuffixes(tsconfig.json)가 .ios를 우선하므로 타입도 정확) —
+// 무음샘 값을 화면(useRef) 대신 프로세스 생명주기로 옮긴 이유는 아래 checkSilentSwitch 폴링 자리 참고.
+import { getLastKnownSilent, setLastKnownSilent } from '../../services/platform/bluetoothService';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
@@ -23,7 +27,6 @@ import { useUserStore } from '../../store/useUserStore';
 import { startSession, endSession } from '../../database/repositories/sessionsRepository';
 import { notifyLowTime, notifyLimitReached, notifyBreakReminder } from '../../services/notifications';
 import type { SessionEndStatus } from '../../types/models';
-import { overlayService } from '../../services/platform';
 import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { ConnectedDot } from '../../components/ui/ConnectedDot';
 import { PaceMenu } from '../../components/overlays/PaceMenu';
@@ -518,7 +521,6 @@ export default function PaceFeedScreen() {
   // Android는 같은 값을 네이티브 미러에도 반영(설정 화면 참고), iOS는 이 값을 그대로 JS 타이머에 쓴다.
   useEffect(() => {
     if (!isAutoMode) {
-      overlayService.endSession().catch(() => {}); // iOS: Live Activity 종료(Android: no-op 아님, 별도 경로)
       return;
       // ⚠️ 여기서 스토어를 비우지 않는다 — 이 분기는 "사용자가 껐다"만이 아니라 백그라운드 이탈
       //   (AppState effect)과 첫 마운트에도 탄다. 비우면 잠깐 나갔다 온 사용자의 남은 시간이
@@ -541,21 +543,13 @@ export default function PaceFeedScreen() {
     // 토스트/Live Activity에 쓰는 "이번 세션 길이" — 맥 수정의 durationMinutes와 같은 의미지만
     // 설정값이 아니라 **실제 남은 시간**에서 뽑는다(이어받은 세션이면 그게 맞는 값이다).
     const durationMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
-    // iOS Live Activity/다이나믹아일랜드에 Focus Session 카운트다운 표시(스펙 §1-E). remainingMinutes만
-    // 실제로 쓰이고 나머지 필드는 iOS overlayService가 무시(인터페이스 호환용 기본값).
-    overlayService.startSession({
-      dailyLimitMinutes,
-      remainingMinutes: durationMinutes, // 새 세션이면 설정값, 이어받았으면 남은 시간
-      autoNext: true,
-      sleepTimerMinutes: 0,
-      breakIntervalMinutes: 0,
-      notifyRemaining: false,
-      notifyLimit: false,
-      notifyBreak: false,
-      hardBlockMode: false,
-      sleepStillnessMinutes: 10, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
-      bluetoothVolumeKeySkipEnabled: false, // iOS overlayService는 무시(no-op) — 인터페이스 호환용 기본값
-    }).catch(() => {});
+    // 🔴 2026-08-15 사장님 지적("5분이 앱 안에 이미 보이는데 굳이 노티가 필요해?", "안드는 안 띄우잖아")
+    // — 맞는 지적이라 Live Activity(다이나믹 아일랜드) 시작 호출을 뺐다. 이 기능의 존재 이유는
+    // "앱을 벗어나 다른 앱을 쓰는 동안에도 남은시간을 보여주는 것"인데, iOS는 앱을 벗어나는 순간
+    // (AppState background, 바로 위 분기) Focus 세션 자체가 즉시 종료되도록 이미 짜여 있어 그
+    // 상황 자체가 발생하지 않는다 — 앱 안에 있는 동안은 이미 상단 "FOCUS ON | Nm" 필로 같은 정보가
+    // 보인다. 즉 실제로 보일 기회가 없는 채 시작 시점의 노티/다이나믹아일랜드 팝업만 만들고 있었다.
+    // durationMinutes 계산은 유지 — 종료 토스트(아래)가 여전히 이 값을 쓴다.
     const timer = setTimeout(() => {
       // "타임아웃으로 꺼짐"(수동 off와 구분) — 재개 시 광고 게이트의 유일한 근거. 스토어가 영속화한다.
       useFocusSessionStore.getState().markTimedOut();
@@ -683,12 +677,15 @@ export default function PaceFeedScreen() {
   // 사장님 실기기 재현이 바로 이것. ref 초기값(false)은 컴포넌트가 새로 마운트될 때만 자연히 리셋되므로,
   // 폴링 effect 안에서는 더 이상 건드리지 않는다(아래).
   const userSilentOverrideRef = useRef(false);
-  // 2026-08-15 — 마지막으로 확인된 무음 스위치 상태. YouTubeShortsPlayer의 initialMuted prop으로
+  // 2026-08-15 — 마지막으로 확인된 무음 스위치 상태. YouTube/TikTok 플레이어의 initialMuted prop으로
   // 넘겨서, 새 영상(WebView 콜드 스타트)이 뜨자마자 이미 알고 있는 값으로 시작하게 한다 — 없으면
   // checkSilentSwitch()가 비동기(200~300ms)라 그동안 소리가 새는 "나왔다가 안 나와" 증상이 생긴다
-  // (사장님 실기기 지적). 세션 중 아직 한 번도 확인 안 된 아주 첫 영상만 기본값(false)이라 기존과
-  // 동일하게 살짝 샐 수 있음 — 그 뒤로는 이 ref가 계속 최신값을 들고 있어 문제없다.
-  const lastKnownSilentRef = useRef(false);
+  // (사장님 실기기 지적).
+  // 🔴 2026-08-15(2차) — 처음엔 이 화면의 useRef였는데, 사장님이 "계속 재현되는데?"로 재확인 —
+  // 화면(useRef)은 피드 화면에 새로 들어갈 때마다(재시작·재진입 전부) 초기화돼서 "아직 한 번도
+  // 확인 안 됨" 상태가 매번 새로 생겼다. getLastKnownSilent()/setLastKnownSilent()(bluetoothService.ios.ts,
+  // 모듈 레벨이라 앱 프로세스 생명주기 동안 유지)로 옮겨 진짜 "이 프로세스에서 처음 여는 순간"에만
+  // 모르는 상태가 되게 한다 — checkSilentSwitch 자체가 비동기라 그 첫 순간 자체는 구조적으로 못 없앰.
   // 2026-08-15(2차) 사장님 지적("1분 넘게 리모컨 안 눌렀는데 왜 안 꺼지고 볼륨도 안 켜져") — 아래
   // onSilentUnmute 억제를 volumeKeyRemote(설정 토글, 켜놓으면 계속 true)로만 걸었더니 리모컨을 실제로
   // 안 쓴 지 오래여도(BT 아이콘은 이미 회색) 폰 물리 볼륨버튼이 계속 안 먹혔다 — 배지(remoteConnected,
@@ -719,7 +716,7 @@ export default function PaceFeedScreen() {
     const check = () => {
       mod!.checkSilentSwitch().then((isSilent) => {
         if (cancelled) return;
-        lastKnownSilentRef.current = isSilent;
+        setLastKnownSilent(isSilent);
         // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
         if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);
       }).catch(() => {});
@@ -986,7 +983,7 @@ export default function PaceFeedScreen() {
             key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
-            initialMuted={lastKnownSilentRef.current}
+            initialMuted={getLastKnownSilent() ?? false}
             onProgress={handleProgress}
             onReady={clearForcedTransitionCover}
             onEnded={onEnded}
@@ -1000,7 +997,7 @@ export default function PaceFeedScreen() {
             ref={playerRef}
             videoId={forcedVideoId ?? current!.videoId}
             playing={playing}
-            initialMuted={lastKnownSilentRef.current}
+            initialMuted={getLastKnownSilent() ?? false}
             onProgress={handleProgress}
             onVideoChange={(id) => { currentVideoIdRef.current = id; }}
             onUserSwipe={(dir, moved) => {

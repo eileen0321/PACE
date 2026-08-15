@@ -32,6 +32,24 @@ let lastRemoteActivityAtMs: number | null = null;
 // — 배지가 회색이 됐는데 폰 볼륨버튼은 계속 안 먹히는(또는 반대) 불일치를 막기 위한 의도적 중복.
 const REMOTE_ACTIVITY_WINDOW_MS = 60_000;
 
+// 🔴 2026-08-15 사장님 실기기 재현("계속 재현되는데") — 콜드 스타트 무음샘(feed/index.tsx의
+// lastKnownSilentRef)이 화면(useRef) 로컬이라, 피드 화면에 새로 들어갈 때마다(재시작·재진입)
+// "무음스위치를 아직 한 번도 확인 못한" 상태가 매번 새로 생겼다 — 매 재현마다 정직하게 재현된
+// 것이었다. 이 값을 앱 프로세스 전체 생명주기 동안 기억하는 모듈 레벨 값으로 옮긴다 — 진짜
+// "이 프로세스에서 처음 여는 순간"에만 모르는 상태고, 그 뒤로는(피드를 나갔다 다시 들어와도)
+// 마지막으로 확인된 값을 즉시 쓴다. null=아직 한 번도 확인 안 됨(그때만 유튜브의 "먼저 소리로
+// 시도" 기본 동작이 살아있음 — 이건 구조적으로 못 없앤다, checkSilentSwitch 자체가 비동기라
+// 앱이 그 첫 응답을 받기 전엔 iOS 스위치 상태를 알 방법이 아예 없다).
+let lastKnownSilent: boolean | null = null;
+
+// feed/index.tsx가 매번 새로 useRef 만드는 대신 이 프로세스 레벨 값을 읽고/쓴다 — 위 주석 참고.
+export function getLastKnownSilent(): boolean | null {
+  return lastKnownSilent;
+}
+export function setLastKnownSilent(silent: boolean): void {
+  lastKnownSilent = silent;
+}
+
 export const bluetoothService: BluetoothService = {
   supportsHardwareRemote: false,
 

@@ -256,20 +256,49 @@ const INJECTED_JS_BEFORE_LOAD = `
       '[class*="ey5qmgg1"]{width:auto!important;max-width:none!important}';
     (document.head || document.documentElement).appendChild(gridFixStyle);
   } catch(eGridFix) {}
-  // 🔴 2026-08-15(5차, 미해결) — /foryou에서 ARTICLE.ehcbpkw0(420px, 뷰포트 393보다 27px 넓음)와
-  // 그 자식 ehcbpkw2(400px, left=10이라 오른쪽 끝이 410 — 뷰포트 밖으로 17px 튀어나감)가 뷰포트보다
-  // 넓어 우측 좋아요/댓글/공유 아이콘 열의 오른쪽 끝이 화면 밖으로 밀려 잘려 보였다(사장님 지적
-  // "사이드에 메뉴들이 짤려서"). 4차 시도(외부 <style> 태그로 [class*=...]{width:...!important})는
-  // 실기기 재검증에서 전혀 안 먹혔다. 5차 시도(엘리먼트 인라인 style을 JS로 직접
-  // el.style.setProperty(prop, val, 'important') 설정 — 인라인 !important는 문서 순서/명시도와
-  // 무관하게 최우선이라는 이론)도 실기기 재검증 결과 모순된 결과가 나왔다: getAttribute('style')엔
-  // "width:393px!important"가 실제로 들어가 있는데 같은 순간 getBoundingClientRect().width는
-  // 여전히 420이었다(MAIN.er8k1k70) — 인라인 !important조차 안 먹히는 건 transform:scale류나
-  // flex-grow가 width를 무시하고 재계산하는 경우가 의심되지만 미확정. 되돌림 — 매 houseKeeping
-  // 틱마다 좌표 기준으로 재계산하는 구조라 잘못하면 계단식으로 계속 줄어들 위험도 있어(레벨별로
-  // 373/379.5/372.75/374.5로 제각각 나온 값이 그 정황) 지금 상태로 실기기에 남겨두는 것도 위험
-  // 판단. 다음 세션 과제: getComputedStyle(el).transform과 부모의 display/flex-grow부터 확인할 것
-  // — 반복 실기기 재시작 자체가 매번 냉시작 무음 블립을 유발하므로 이번 세션은 여기서 중단.
+  // 🔴 2026-08-15(6차, 해결) — /foryou 영상이 뷰포트보다 작게 렌더링되며 우측 좋아요/댓글/공유
+  // 아이콘 열이 화면 밖으로 잘려 보이던 문제(사장님 지적 "사이드에 메뉴들이 짤려서"). 4~5차
+  // (외부 스타일시트, 인라인 style로 width/max-width 강제)는 전부 실패 — 원인을 몰라 엉뚱한
+  // 속성을 붙잡고 있었다. 실측(getComputedStyle)으로 진짜 원인 확정: 영상을 감싸는
+  // MAIN.er8k1k70에 **min-width:420px**가 걸려있다. CSS 스펙상 min-width는 충돌 시 width/
+  // max-width를 항상 이긴다 — 그래서 width만 아무리 !important로 눌러도 min-width가 더 큰 값을
+  // 갖고 있으면 렌더링 폭은 절대 안 줄어든다(4~5차가 매번 "인라인엔 값이 들어갔는데 실제 렌더
+  // 폭은 그대로"였던 이유). min-width를 0으로 같이 강제하니 즉시 뷰포트에 맞게 줄어듦을
+  // 시뮬레이터 스크린샷으로 확인. flex-basis도 함께 지정하는 이유는 MAIN이 flex item이라
+  // width만으로는 flex-basis:auto 상태에서 재계산될 수 있어서다.
+  function enforceMainWidth(){
+    try {
+      if (String(location.pathname||'').indexOf('foryou') === -1) return;
+      var vw = window.innerWidth || 0;
+      if (!vw) return;
+      var v = document.querySelector('video');
+      if (!v) return;
+      var mainEl = null;
+      var walk = v;
+      var guard = 0;
+      while (walk && guard < 20) {
+        if (walk.tagName === 'MAIN') { mainEl = walk; break; }
+        walk = walk.parentElement;
+        guard++;
+      }
+      if (!mainEl) return;
+      function apply(){
+        if (mainEl.style.getPropertyValue('min-width') === '0px') return;
+        mainEl.style.setProperty('min-width', '0', 'important');
+        mainEl.style.setProperty('flex', '0 1 ' + vw + 'px', 'important');
+        mainEl.style.setProperty('flex-basis', vw + 'px', 'important');
+        mainEl.style.setProperty('width', vw + 'px', 'important');
+        mainEl.style.setProperty('max-width', vw + 'px', 'important');
+      }
+      apply();
+      if (!mainEl.getAttribute('data-pace-width-observed')) {
+        mainEl.setAttribute('data-pace-width-observed', '1');
+        var mo2 = new MutationObserver(apply);
+        mo2.observe(mainEl, { attributes: true, attributeFilter: ['style'] });
+      }
+    } catch(eMainWidth) {}
+  }
+  enforceMainWidth();
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -697,6 +726,7 @@ const INJECTED_JS_BEFORE_LOAD = `
   function houseKeeping(){
     dismissAppBanner();
     hideLeftRailByGeometry();
+    enforceMainWidth();
     dumpDomOnce();
     dumpErrorStateOnce();
     var href = '' + location.href;
@@ -947,33 +977,20 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증: video 없음, path=' + location.pathname }));
             return;
           }
-          var lines = [];
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐헤더 path=' + location.pathname + ' vw=' + vw + ' vh=' + vh }));
           var el = v;
           var depth = 0;
           var article = null;
-          var shortChild = null;
-          while (el && depth < 14) {
+          while (el && depth < 16) {
             var r = el.getBoundingClientRect();
             var cs = window.getComputedStyle(el);
             var cn = String(el.className||'').split(' ').pop();
-            lines.push(depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' t=' + Math.round(r.top) + ' l=' + Math.round(r.left) + ' pad=' + cs.padding + ' pos=' + cs.position + ' inline=' + (el.getAttribute('style')||''));
+            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' l=' + Math.round(r.left) + ' pad=' + cs.padding + ' tf=' + cs.transform;
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐' + line }));
             if (el.tagName === 'ARTICLE') article = el;
-            if (article && !shortChild && el !== article && el.parentElement === article) shortChild = el;
             el = el.parentElement;
             depth++;
           }
-          var sibLines = [];
-          if (article) {
-            var kids = article.children;
-            for (var i=0;i<kids.length;i++){
-              var kr = kids[i].getBoundingClientRect();
-              var kcs = window.getComputedStyle(kids[i]);
-              var kcn = String(kids[i].className||'').split(' ').pop();
-              sibLines.push(i + ':' + kids[i].tagName + '.' + kcn + ' w=' + Math.round(kr.width) + ' h=' + Math.round(kr.height) + ' t=' + Math.round(kr.top) + ' disp=' + kcs.display);
-            }
-          }
-          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증 path=' + location.pathname + ' vw=' + vw + ' vh=' + vh + ' ' + JSON.stringify(lines) }));
-          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐ARTICLE자식들: ' + JSON.stringify(sibLines) }));
         } catch(e) {
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '영상크기검증실패: ' + e.message }));
         }

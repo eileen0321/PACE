@@ -299,6 +299,18 @@ const INJECTED_JS_BEFORE_LOAD = `
     } catch(eMainWidth) {}
   }
   enforceMainWidth();
+  // 🔴 2026-08-15(7차, 미해결) — 폭은 고쳤는데 사장님이 실기기 스크린샷으로 재확인("이게 전체창으로
+  // 뜬거냐") — 위아래로도 여전히 카드처럼 떠 있다. 실측(getComputedStyle)으로 원인 확정: video를
+  // 감싸는 SECTION.ezfgn9c0에 aspect-ratio:9/16(0.5625)이 고정돼 있다(h=619는 min-height가 아니라
+  // 이 비율 때문 — 348*16/9=618.67, 정확히 일치). 뷰포트(예: 402x812)가 9:16보다 세로로 더 긴
+  // 비율이라 폭 기준 9:16 박스는 절대 뷰포트 전체 높이를 못 채운다. video 자체는 이미
+  // object-fit:cover라 박스 비율만 풀면 네이티브 틱톡처럼 크롭해서 꽉 찰 것으로 예상했다.
+  // 실제 시도(SECTION에 aspect-ratio:auto+height:100%!important, 부모 flex:1 1 auto 강제)는
+  // 시뮬레이터 스크린샷에서 영상이 통째로 안 보이는(검은 화면, 진행바만 움직임) 심각한 회귀를
+  // 내서 즉시 되돌림 — 이 체인 어딘가(아마 절대위치 자손들의 컨테이닝 블록 계산)가 height:100%
+  // 전파에 더 예민하게 반응하는 것으로 보임. 폭 수정(min-width, 검증됨)만 남기고 높이는 다음
+  // 세션 과제로 남긴다 — 다음엔 aspect-ratio만 먼저 단독으로 풀어보고(height:100% 없이) 단계적으로
+  // 반응을 확인할 것.
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -985,7 +997,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             var r = el.getBoundingClientRect();
             var cs = window.getComputedStyle(el);
             var cn = String(el.className||'').split(' ').pop();
-            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' l=' + Math.round(r.left) + ' pad=' + cs.padding + ' tf=' + cs.transform;
+            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' ar=' + cs.aspectRatio + ' of=' + cs.objectFit + ' disp=' + cs.display;
             window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐' + line }));
             if (el.tagName === 'ARTICLE') article = el;
             el = el.parentElement;

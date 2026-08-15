@@ -26,6 +26,8 @@ export type ShortsPlayerHandle = {
    *  제대로 나오는지 실기기 탭 없이 확인하기 위한 범용 진단 클릭 — data-e2e 값으로 요소를 찾아
    *  .click()한다(찾은 요소가 없으면 domlog로 실패를 보고, 그냥 조용히 넘어가지 않는다). */
   debugClickByDataE2E?: (name: string) => void;
+  /** 2026-08-15 — "/foryou 작게 보인다" 미해결 조사용, 다음 세션에서 이어서 쓸 진단 훅. */
+  debugVerifyVideoSize?: () => void;
 };
 
 // http(s)만 허용 → 앱 딥링크(youtube://, tiktok://)/앱스토어(itms-apps://) 등 "앱에서 열기"

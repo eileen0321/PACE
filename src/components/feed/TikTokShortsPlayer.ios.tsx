@@ -256,6 +256,18 @@ const INJECTED_JS_BEFORE_LOAD = `
       '[class*="ey5qmgg1"]{width:auto!important;max-width:none!important}';
     (document.head || document.documentElement).appendChild(gridFixStyle);
   } catch(eGridFix) {}
+  // 🔴 2026-08-15(4차, 미해결) — /foryou 영상이 393x793 뷰포트 안에서 352x626로 사방 여백을 두고
+  // 렌더링되는 문제 발견(사장님 지적 "화면 작게 보이는데"). 실측(ARTICLE.ehcbpkw0 조상 체인):
+  // ARTICLE 자체는 420px 고정폭(뷰포트 393보다 넓음, 데스크톱 카드 고정값 추정)+16px 패딩, 그
+  // 유일한 자식(DIV.ehcbpkw2, 영상+아이콘 레일)은 626px 높이로 부모의 가용 높이(761)보다 135px
+  // 작다. ehcbpkw2에 인라인 style이 전혀 없어(getAttribute('style')==='') JS가 매 프레임
+  // 되돌리는 게 아니라 정적 CSS 규칙인데도, `[class*="ehcbpkw2"]{height:100%!important}` +
+  // `[class*="ehcbpkw0"]{width:100%!important}` 오버라이드가 실기기 재검증(수치 그대로, 420/626
+  // 불변)에서 전혀 안 먹힘 — 원인 미확정(다른 상위 stylesheet가 더 늦게 삽입되며 이기는 중이거나,
+  // 실측한 클래스명이 실제 매칭 대상이 아니었을 가능성). 사이드바/그리드와 달리 여기는 반복
+  // 실기기 재시작 자체가 매번 냉시작 무음 블립을 유발해 추가 진단을 이번 세션에서 보류 —
+  // 다음 세션 과제(document.styleSheets로 규칙이 실제 등록됐는지, computed height 값 자체를
+  // 먼저 확인할 것).
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -918,6 +930,50 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         } catch(e) {
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
+    },
+    // __DEV__ 전용 — "/foryou 화면이 작게 보인다"(2026-08-15) 미해결 조사용, 다음 세션에서 이어서
+    // 쓸 것(위 mainInit의 4차 코멘트 참고). 실제 <video> 요소와 그 조상들의 렌더링 크기·인라인
+    // style을 뷰포트와 비교해 숫자로 확인.
+    debugVerifyVideoSize: () => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var vw = window.innerWidth, vh = window.innerHeight;
+          var v = document.querySelector('video');
+          if (!v) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증: video 없음, path=' + location.pathname }));
+            return;
+          }
+          var lines = [];
+          var el = v;
+          var depth = 0;
+          var article = null;
+          var shortChild = null;
+          while (el && depth < 14) {
+            var r = el.getBoundingClientRect();
+            var cs = window.getComputedStyle(el);
+            var cn = String(el.className||'').split(' ').pop();
+            lines.push(depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' t=' + Math.round(r.top) + ' l=' + Math.round(r.left) + ' pad=' + cs.padding + ' pos=' + cs.position + ' inline=' + (el.getAttribute('style')||''));
+            if (el.tagName === 'ARTICLE') article = el;
+            if (article && !shortChild && el !== article && el.parentElement === article) shortChild = el;
+            el = el.parentElement;
+            depth++;
+          }
+          var sibLines = [];
+          if (article) {
+            var kids = article.children;
+            for (var i=0;i<kids.length;i++){
+              var kr = kids[i].getBoundingClientRect();
+              var kcs = window.getComputedStyle(kids[i]);
+              var kcn = String(kids[i].className||'').split(' ').pop();
+              sibLines.push(i + ':' + kids[i].tagName + '.' + kcn + ' w=' + Math.round(kr.width) + ' h=' + Math.round(kr.height) + ' t=' + Math.round(kr.top) + ' disp=' + kcs.display);
+            }
+          }
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증 path=' + location.pathname + ' vw=' + vw + ' vh=' + vh + ' ' + JSON.stringify(lines) }));
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐ARTICLE자식들: ' + JSON.stringify(sibLines) }));
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '영상크기검증실패: ' + e.message }));
         }
       })(); true;`);
     },

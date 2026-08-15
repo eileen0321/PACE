@@ -666,6 +666,15 @@ export default function PaceFeedScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction, debugE2E]);
 
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=verifyVideoSize. "/foryou 화면이
+  // 작게 보인다"(2026-08-15) 미해결 조사용, 다음 세션에서 이어서 쓸 것.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'verifyVideoSize') return;
+    const t = setTimeout(() => { playerRef.current?.debugVerifyVideoSize?.(); }, 10000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testPrev. 2026-08-15 사장님 지시("니가
   // 테스트를 전체 다 해야 할거 아냐") — 실기기 리모컨 물리 입력 없이 goPrev()를 직접 호출해 TikTok
   // no-op 토스트 수정(feed.tiktokNoPrevious)이 실제로 발동하는지 로그로 자체 검증한다.

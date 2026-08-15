@@ -190,6 +190,24 @@ const INJECTED_JS_BEFORE_LOAD = `
 
   function mainInit() {
   send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
+  // 🔴 2026-08-15 사장님 지적("사람아이콘 눌르면 팔로우 화면이 왜 짤려", "세로줄로 메뉴 뜨는거
+  // 맞아?") — 2026-08-12 QA_MATRIX에 이미 "알려진 부작용, 후속 작업"으로 기록돼 있던 항목이다:
+  // 자동넘김을 살리려고 의도적으로 데스크톱 UA를 쓰는데(위 userAgent prop 주석 참고 — 모바일 UA는
+  // 자동넘김이 1회 이동 후 영구 고착됐었다), 그 대가로 틱톡 데스크톱 UI(왼쪽 세로 사이드바 —
+  // 추천/탐색/팔로잉/라이브 등)가 그대로 딸려나와 좁은 화면에서 팔로우 같은 하위 페이지가 눌려
+  // 잘렸다. 실측(data-e2e 덤프)으로 확정한 컨테이너를 CSS로 숨긴다 — 유튜브 플레이어가 이미 하는
+  // 것과 같은 패턴(불필요 UI를 injected CSS로 제거). class 앞부분(css-xxxxxx)은 빌드마다 바뀌는
+  // 해시라 *= 부분일치로 뒤쪽 안정적인 컴포넌트명(DivHeaderContainer)만 잡는다.
+  // 실측(data-e2e="nav-following" 조상 체인, 2회 시도 끝에 확정)으로 찾은 진짜 사이드바 컨테이너들.
+  // DivSideNavContainer=보이는 아이콘 목록, DivSideNavPlaceholderContainer=레이아웃에서 그만큼
+  // 폭을 미리 비워두는 자리표시자 — 아이콘만 숨기고 이걸 안 숨기면 빈 공간만 남아 영상이 여전히
+  // 안 차므로 둘 다 숨긴다. 1차 시도(DivHeaderContainer, 로고 조상 기준)는 실기기 스크린샷으로
+  // 실패 확정됨(로고와 세로 아이콘 목록이 다른 하위트리였다) — 지금 건 실제로 확인된 값.
+  try {
+    var hideStyle = document.createElement('style');
+    hideStyle.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
+    (document.head || document.documentElement).appendChild(hideStyle);
+  } catch(eHide) {}
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로

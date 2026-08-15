@@ -502,8 +502,11 @@ class PaceOverlayService : Service() {
    * - 넷플릭스처럼 **조용히 끄지 않고 묻는다** — 오탐 비용을 거의 0으로 만든다.
    *
    * 1단계(의심): 사용자 입력이 SLEEP_NO_INPUT_ENTER_MS 동안 없음 + 실제 재생 중.
-   * 2단계(확정): 의심이 SLEEP_CONFIRM_AFTER_MS 더 지속 + 밤 시간대 + 보조 신호 1개 이상
-   *              (어둡다 / 눕혀졌다 / 충전 중 / BT 이어폰 빠짐).
+   * 2단계(확정): 의심이 SLEEP_CONFIRM_AFTER_MS 더 지속 + **아래 둘 중 하나**
+   *   · 야간 경로 — 밤 시간대 + 보조 신호 1개 이상(어둡다 / 눕혀졌다 / 충전 중 / BT 이어폰 빠짐)
+   *   · 상시 경로 — 시간대·보조신호와 무관하게 무입력이 SLEEP_NO_INPUT_ANYTIME_MS를 넘음
+   *     (2026-08-15 추가 — "낮에 켜두고 나가면 아무것도 안 끊는다"를 막는다)
+   *   양쪽 모두 canObserveWatchEvidence()는 필수.
    * 확정 후: 팝업을 띄우고 SLEEP_PROMPT_TIMEOUT_MS 안에 반응이 없어야 비로소 true.
    */
   private fun evaluateSleepStages(isPlaying: Boolean?): Boolean {
@@ -569,10 +572,18 @@ class PaceOverlayService : Service() {
       //   ⚠️ 이 게이트는 SUSPECT 분기 안에만 둔다 — PROMPTED에까지 걸면 2026-08-06 교착(전체화면
       //     프롬프트가 감시 앱 창을 가려 스스로 30초 타임아웃에 도달 못 함)이 그대로 재현된다.
       val observable = PaceAccessibilityService.canObserveWatchEvidence()
-      if (!isWithinSleepDetectionWindow() || !supporting || !observable) {
-        Log.d("PaceOverlay", "SLEEP confirm held — window=${isWithinSleepDetectionWindow()} observable=$observable dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone")
+      // 🔴 2026-08-15 — 확정 경로가 둘이다(위 SLEEP_NO_INPUT_ANYTIME_MS 주석 참고).
+      //   ① 야간 경로: 밤 시간대 + 보조신호 1개 이상 → 15분이면 묻는다(기존).
+      //   ② 상시 경로: 시간대·보조신호와 무관하게 무입력이 45분을 넘으면 묻는다(신규).
+      // observable은 **양쪽 모두에 필수**다 — 재생위치를 못 읽는 앱(틱톡)에서는 사용자가 손으로
+      // 직접 넘겨도 무입력 시계가 리셋되지 않아, 멀쩡히 보고 있어도 100% 오판한다(2026-08-12 실측).
+      val nightPath = isWithinSleepDetectionWindow() && supporting
+      val anytimePath = noInputMs >= SLEEP_NO_INPUT_ANYTIME_MS
+      if (!observable || (!nightPath && !anytimePath)) {
+        Log.d("PaceOverlay", "SLEEP confirm held — observable=$observable night=$nightPath(window=${isWithinSleepDetectionWindow()} dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone) anytime=$anytimePath(noInputMs=$noInputMs)")
         return false
       }
+      Log.i("PaceOverlay", "SLEEP confirm passed via ${if (nightPath) "night" else "anytime"} path (noInputMs=$noInputMs)")
       sleepStage = SLEEP_STAGE_PROMPTED
       sleepPromptedAtMs = now
       Log.d("PaceOverlay", "SLEEP stage=PROMPTED — asking '아직 보고 계세요?'")
@@ -1204,6 +1215,14 @@ class PaceOverlayService : Service() {
 
     private const val SLEEP_WINDOW_START_HOUR = 22 // 22:00
     private const val SLEEP_WINDOW_END_HOUR = 9 // 09:00 (다음날)
+    // 🔴 2026-08-15 사장님 지적 — "낮에 켜두고 나가면 아무것도 안 끊는다"는 게 말이 되냐.
+    // 맞는 지적이다. 위 밤 시간대 + 보조신호 게이트는 **끄기 전에 물어본다**는 사실을 계산에 안 넣은
+    // 설계였다. 넷플릭스는 오후 2시에도 "아직 보고 계세요?"를 묻는다 — 물어보는 데 시간대는 필요 없다.
+    // 다만 낮에 무입력 15분(10+5)만으로 물으면, 손짓/자동넘김으로 **정상적으로 손 안 대고 보는**
+    // 사용자를 15분마다 귀찮게 한다(핸즈프리는 이 앱이 파는 기능이라 그걸 오탐 취급하면 안 된다).
+    // → 시간대 무관 경로는 임계만 훨씬 길게 잡는다. 이 정도 무입력이면 시간대와 상관없이 한 번
+    //   물어볼 만하고, 애초에 "총 시청시간을 줄인다"는 제품 목적에도 부합한다.
+    private const val SLEEP_NO_INPUT_ANYTIME_MS = 45 * 60 * 1000L
     // Flip Mode의 LINEAR_ACCEL_EPSILON(1.2)보다 살짝 낮게 — 여긴 "완전히 멈췄다"를 원하므로
     // Flip Mode(오탐 완화용 보조 게이트)보다 더 엄격하게 잡아도 무방.
     private const val STILLNESS_WAKE_EPSILON = 1.0f

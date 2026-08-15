@@ -355,6 +355,17 @@ const INJECTED_JS_BEFORE_LOAD = `
         sguard++;
       }
       var target = videoSection || v;
+      // 🔴 사장님 실기기 지적("화면이 계속 사이즈가 변경되는데") — 심각한 버그였다: 스케일을 적용하고
+      // 나면 target의 실제 렌더 높이가 vh 근처로 바뀌는데, 3초마다 도는 이 함수가 매번
+      // getBoundingClientRect()로 다시 재서 "이미 커진 상태"를 "r.height >= vh-1이니 커질 필요
+      // 없음(willFullscreen=false)"으로 오판하고 방금 건 transform을 지워버렸다 — 그럼 다음 틱엔
+      // 다시 작아진 걸 감지해 재적용 → 3초 주기로 커졌다 작아졌다 무한 반복하고 있었다. 이 video
+      // SECTION(target)에 대해 "풀스크린 처리할지 여부"는 **한 번만 결정**하고 데이터 속성에
+      // 박아둔다 — 이후 틱에서는 그 결정을 다시 재보지 않고 그대로 둔다(같은 target=같은 video인
+      // 동안은 유효, 다음 영상으로 넘어가면 target 자체가 바뀌어 속성이 없는 새 엘리먼트라 자연히
+      // 다시 결정됨).
+      var decided = target.getAttribute('data-pace-fs-decided');
+      if (decided) return;
       var r = target.getBoundingClientRect();
       var willFullscreen = false;
       var scale = 1;
@@ -367,10 +378,8 @@ const INJECTED_JS_BEFORE_LOAD = `
           willFullscreen = true;
         }
       }
+      target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       if (!willFullscreen) {
-        if (target.style.getPropertyValue('transform')) {
-          target.style.removeProperty('transform');
-        }
         if (window.__paceLastIconState !== null) {
           window.__paceLastIconState = null;
           send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });

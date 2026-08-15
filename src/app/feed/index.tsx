@@ -641,7 +641,24 @@ export default function PaceFeedScreen() {
   useEffect(() => {
     if (!__DEV__ || debugAction !== 'advance') return;
     setIsAutoMode(true);
-    const timer = setTimeout(() => { playerRef.current?.advance(); }, 8000);
+    // 🔴 2026-08-15 — 틱톡은 유튜브보다 느리게 뜬다(관심사 게이트 6초 대기 등, 실측 확인됨). 8초
+    // 고정 지연은 유튜브 기준으로 잡혔던 값이라 틱톡에서 advance()가 비디오도 안 뜬 시점에 발사돼
+    // 자체 검증이 무의미했다 — 플랫폼별로 늘린다.
+    const delay = platform === 'tiktok' ? 14000 : 8000;
+    const timer = setTimeout(() => { playerRef.current?.advance(); }, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testPrev. 2026-08-15 사장님 지시("니가
+  // 테스트를 전체 다 해야 할거 아냐") — 실기기 리모컨 물리 입력 없이 goPrev()를 직접 호출해 TikTok
+  // no-op 토스트 수정(feed.tiktokNoPrevious)이 실제로 발동하는지 로그로 자체 검증한다.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'testPrev') return;
+    const timer = setTimeout(() => {
+      const result = goPrev();
+      console.log(`[debugAction=testPrev] platform=${platform} goPrev()=${result}`);
+    }, 6000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction]);

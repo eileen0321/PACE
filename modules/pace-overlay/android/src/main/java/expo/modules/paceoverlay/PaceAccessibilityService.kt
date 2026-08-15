@@ -302,6 +302,11 @@ class PaceAccessibilityService : AccessibilityService() {
       if (!service.isWatching) {
         service.isWatching = true
         service.lastKnownCurrentSec = -1
+        // 🔴 2026-08-15 — "이번 세션에서 재생위치를 읽어봤는가"를 세션 경계에서 초기화한다.
+        //   아래 blindOnYouTube 게이트가 이 값을 보는데, 리셋을 안 하면 **다른 앱(틱톡)에서 읽은
+        //   기록**이 남아 유튜브의 눈먼 구간을 그대로 통과시킨다. 게이트의 문장("이번 세션에서
+        //   한 번도 못 읽었으면")과 실제 동작을 일치시킨다.
+        service.lastTimingReadAtMs = 0L
         service.lastSwipeAtMs = SystemClock.elapsedRealtime()
         service.ensurePollingScheduled()
         Log.d("PaceAccessibility", "startWatching() -> polling started (intervalMs=$intervalMs, 안전 타임아웃 폴백은 2026-08-03에 삭제돼 더 이상 쓰이지 않음)")
@@ -1149,8 +1154,29 @@ class PaceAccessibilityService : AccessibilityService() {
       //   (진행바 없는 틱톡 클립은 짧다는 게 2026-08-12 실측 전제).
       val hasTimingTextPath = root?.packageName?.toString() == "com.google.android.youtube"
       val fallbackIntervalMs = if (hasTimingTextPath) MAX_SINGLE_VIDEO_MS else NO_PROGRESSBAR_ADVANCE_MS
+      // 🔴 2026-08-15 실기기 — 사장님 "포커스 세션 켜니까 영상 하나 나오다 바로 다음으로 넘어가."
+      //   실측:
+      //     18:13:02 접근성 재바인딩(APK 재설치 직후) + startWatching
+      //     18:13~18:14:32 RANGE_INFO none / visited=46   ← 90초 내내 트리가 얕아 아무것도 못 읽음
+      //     18:14:32 AUTO_NEXT reason=no-progressbar elapsed=90178ms  ← 눈 감고 발사, 보던 영상이 잘림
+      //     18:17:31 VIDEO_ADVANCE near-end current=177s total=178s   ← 이후엔 정상으로 복구
+      //   원인: **유튜브가 이미 떠 있는 상태에서 우리 접근성 서비스가 새로 바인딩되면 그 창의
+      //   노드 트리가 한동안 불완전하다.** 그 구간엔 재생시간 텍스트도 진행바도 안 잡힌다.
+      //   출시 후에는 **앱이 업데이트될 때마다** 모든 사용자에게 이 구간이 생긴다.
+      //
+      //   → 유튜브는 재생시간을 읽는 정상 경로가 **있는** 앱이다. 이번 세션에서 그걸 한 번도 못
+      //     읽었다면 그건 "영상이 길다"가 아니라 **우리가 눈이 먼 상태**다. 눈이 먼 채로 90초
+      //     타이머만 보고 넘기는 건 추측이고, 그 추측의 대가를 사용자가 치른다(보던 영상이 잘림).
+      //     한 번이라도 읽은 뒤라면 그 앱에서 관측이 가능하다는 게 증명된 것이므로, 일시적으로
+      //     못 읽는 구간에 대해 기존 90초 폴백을 그대로 쓴다.
+      //   ⚠️ 틱톡에는 이 게이트를 걸지 않는다 — 거긴 진행바가 아예 없는 클립이 정상이라,
+      //     "한 번도 못 읽음"이 곧 고장을 뜻하지 않는다. 그쪽은 20초 폴백이 유일한 진행 수단이다.
+      val blindOnYouTube = hasTimingTextPath && lastTimingReadAtMs == 0L
+      if (blindOnYouTube && now - lastSwipeAtMs > fallbackIntervalMs) {
+        Log.w("PaceAccessibility", "no-progressbar 폴백 보류 — 유튜브인데 이번 세션에서 재생위치를 한 번도 못 읽었다(관측 불능 상태에서 추측으로 넘기지 않는다) elapsed=${now - lastSwipeAtMs}ms")
+      }
       if (frac == null && root != null && isWatching && !autoNextSuspended && lastKnownFrac < 0f &&
-          now - lastSwipeAtMs > fallbackIntervalMs) {
+          !blindOnYouTube && now - lastSwipeAtMs > fallbackIntervalMs) {
         Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms pkg=${root.packageName}")
         performSwipeUp()
         lastSwipeAtMs = now

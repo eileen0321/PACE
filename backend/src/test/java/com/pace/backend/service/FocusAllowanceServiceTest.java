@@ -202,7 +202,7 @@ class FocusAllowanceServiceTest {
     void 기록이_없으면_빈_허용량을_돌려준다() {
         when(repository.findByUserIdAndAllowanceDate(USER_ID, TODAY)).thenReturn(Optional.empty());
 
-        FocusAllowanceResponse result = service.get(USER_ID, TODAY);
+        FocusAllowanceResponse result = service.get(USER_ID, TODAY, null);
 
         assertThat(result.date()).isEqualTo(TODAY);
         assertThat(result.adExtendCount()).isZero();
@@ -215,7 +215,7 @@ class FocusAllowanceServiceTest {
         Instant endsAt = Instant.now().plus(3, ChronoUnit.MINUTES);
         stored(2, true, endsAt);
 
-        FocusAllowanceResponse result = service.get(USER_ID, TODAY);
+        FocusAllowanceResponse result = service.get(USER_ID, TODAY, null);
 
         assertThat(result.adExtendCount()).isEqualTo(2);
         assertThat(result.timedOut()).isTrue();
@@ -245,7 +245,7 @@ class FocusAllowanceServiceTest {
         LocalDate yesterday = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1);
         when(repository.findByUserIdAndAllowanceDate(eq(USER_ID), eq(yesterday))).thenReturn(Optional.empty());
 
-        service.get(USER_ID, yesterday);
+        service.get(USER_ID, yesterday, null);
 
         verify(repository).findByUserIdAndAllowanceDate(eq(USER_ID), eq(yesterday));
     }
@@ -256,7 +256,7 @@ class FocusAllowanceServiceTest {
         LocalDate faked = serverToday.plusDays(30); // 기기 날짜를 한 달 앞으로
         when(repository.findByUserIdAndAllowanceDate(eq(USER_ID), eq(serverToday))).thenReturn(Optional.empty());
 
-        service.get(USER_ID, faked);
+        service.get(USER_ID, faked, null);
 
         // 조작한 날짜가 아니라 서버 날짜로 조회돼야 한다 = 새 허용량이 생기지 않는다.
         verify(repository).findByUserIdAndAllowanceDate(eq(USER_ID), eq(serverToday));

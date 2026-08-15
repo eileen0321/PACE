@@ -534,6 +534,11 @@ class PaceOverlayService : Service() {
       sleepStage = SLEEP_STAGE_AWAKE
       return true
     }
+    // 🔴 2026-08-15 — 이 문도 조용했다. 아래 무입력 리셋 로그와 함께, "SLEEP 로그가 없다"는 상태를
+    //   더 이상 원인 불명으로 두지 않기 위한 것이다(오늘 그 침묵 때문에 두 번 잘못 진단했다).
+    if (isPlaying == false && sleepStage != SLEEP_STAGE_AWAKE && sleepStage != SLEEP_STAGE_PROMPTED) {
+      Log.i("PaceOverlay", "SLEEP 단계 해제 — 재생이 멈춘 것으로 확인됨(isPlaying=false) stage=$sleepStage→AWAKE")
+    }
     if (isPlaying == false && sleepStage != SLEEP_STAGE_PROMPTED) {
       // 프롬프트를 띄운 뒤 사용자가 다른 앱으로 나가버린 경우처럼, 떠 있는 프롬프트가 남아 있을 수
       // 있다 — AWAKE로 되돌릴 때 같이 치운다(안 떠 있으면 no-op).
@@ -546,6 +551,15 @@ class PaceOverlayService : Service() {
     val noInputMs = now - lastUserInputAtMs
 
     if (noInputMs < SLEEP_NO_INPUT_ENTER_MS) {
+      // 🔴 2026-08-15 — 여기가 **조용했던 것이 가장 큰 문제였다.** 22:29:15에 SUSPECT가 뜬 뒤
+      //   22:34~22:39 다섯 틱 동안 SLEEP 로그가 한 줄도 안 나왔는데, 그 침묵의 정체를 밖에서
+      //   판별할 방법이 없었다(단계가 조용히 AWAKE로 풀리면 다시 10분을 채우기 전까지 무음이다).
+      //   무입력 시계가 언제/얼마나 되돌아갔는지가 이 기능 전체의 급소인데(오늘만 자동넘김·유튜브
+      //   자체반복·손짓 오탐 셋이 여기를 건드렸다) 그걸 보여주는 로그가 없었다.
+      //   단계가 실제로 풀릴 때만 남긴다 — 매 틱 찍으면 로그가 도배된다.
+      if (sleepStage != SLEEP_STAGE_AWAKE) {
+        Log.i("PaceOverlay", "SLEEP 단계 해제 — 무입력 시계가 리셋됐다(noInputMs=$noInputMs < $SLEEP_NO_INPUT_ENTER_MS) stage=$sleepStage→AWAKE")
+      }
       sleepStage = SLEEP_STAGE_AWAKE
       return false
     }
@@ -558,7 +572,12 @@ class PaceOverlayService : Service() {
     }
 
     if (sleepStage == SLEEP_STAGE_SUSPECT) {
-      if (now - sleepSuspectSinceMs < SLEEP_CONFIRM_AFTER_MS) return false
+      // 대기 구간도 1분에 한 번은 살아있다는 걸 남긴다 — SUSPECT 이후 확정 전까지 5분이 통째로
+      // 무음이라, "멈춘 것"과 "기다리는 중"이 구분되지 않았다.
+      if (now - sleepSuspectSinceMs < SLEEP_CONFIRM_AFTER_MS) {
+        Log.d("PaceOverlay", "SLEEP SUSPECT 유지 — 확정까지 ${SLEEP_CONFIRM_AFTER_MS - (now - sleepSuspectSinceMs)}ms 남음(noInputMs=$noInputMs)")
+        return false
+      }
       // 보조 신호 — 하나라도 맞아야 확정한다. 센서가 없는 기기에서는 해당 조건이 그냥 false가 되고
       // 나머지로 판단하므로 기능이 죽지 않는다.
       val dark = lastLuxAvg in 0.0..SLEEP_DARK_LUX

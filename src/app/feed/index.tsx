@@ -732,9 +732,23 @@ export default function PaceFeedScreen() {
     try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
     if (!mod) return;
     let cancelled = false;
+    // 2026-08-15(3차) 사장님 실기기 재현("무음인데 소리남", 폰 무음스위치 실측 확인) —
+    // checkSilentSwitch()는 0.2초 시스템사운드 타이밍으로 스위치 상태를 "추정"하는 우회라(iOS에
+    // 직접 읽는 API가 없음, 위 코멘트 참고) 타이밍이 흔들리면(연속 실기기 재시작·콘솔 스트리밍 등
+    // 시스템 부하 시) 실제로는 무음인데 "무음 아님"으로 잘못 읽는 순간이 드물게 생긴다. 무음(true)
+    // 오독은 무해(그냥 조용해질 뿐)하니 즉시 반영하지만, "무음 아님"(false) 쪽은 오독이면 바로
+    // 소리가 새므로 연속 2회 같은 값이 나올 때만 반영한다(최악 지연 +2초, 실제로 스위치를 막 끈
+    // 경우도 다음 폴링에서 바로 확정되니 체감상 무시할 수준).
+    let notSilentStreak = 0;
     const check = () => {
       mod!.checkSilentSwitch().then((isSilent) => {
         if (cancelled) return;
+        if (isSilent) {
+          notSilentStreak = 0;
+        } else {
+          notSilentStreak++;
+          if (notSilentStreak < 2) return;
+        }
         setLastKnownSilent(isSilent);
         // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
         if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);

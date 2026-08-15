@@ -112,7 +112,7 @@ export default function StatsScreen() {
   const thisWeekStats = weeklyStats.filter((d) => d.date >= mondayStr);
   const totalMinutesThisWeek = thisWeekStats.reduce((acc, d) => acc + d.totalMinutes, 0);
   const weeklyAvgMinutes = elapsedDaysThisWeek ? Math.round(totalMinutesThisWeek / elapsedDaysThisWeek) : 0;
-  const streak = computeStreak(weeklyStats, todayStr);
+  const streak = computeStreak(weeklyStats, todayStr, dailyLimitMinutes);
   const todayEntry = weeklyStats.find((d) => d.date === todayStr);
   const longestSessionMinutes = todayEntry ? Math.round(todayEntry.longestSessionSeconds / 60) : 0;
   const bestDay = pickBestDay(weeklyStats, dailyLimitMinutes);
@@ -391,16 +391,34 @@ function formatMinSec(totalSeconds: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-function computeStreak(weeklyStats: DailyStats[], todayStr: string): number {
+/**
+ * "안전 시청 유지"(healthyStreak) — **한도를 지킨 날**이 며칠 연속인가.
+ *
+ * 🔴 2026-08-15 출시 검증에서 발견 — 이 함수가 재던 건 정반대였다. 조건이 `totalMinutes > 0`,
+ * 즉 **시청한 날**을 세고 있었다. 그래서
+ *   · 많이 볼수록 "안전 시청" 연속 일수가 올라가고
+ *   · **아예 안 본 날에는 연속이 끊겼다**(가장 안전한 날이 기록을 깨는 셈)
+ * 실측: 오늘 한도의 567%(340분/60분)를 봤는데 화면은 "안전 시청 유지 3일 연속"이라고 표시했다.
+ * 총 시청시간을 줄이자는 앱의 대표 지표가 정확히 반대 행동을 칭찬하고 있었다.
+ *
+ * 기록이 없는 날(=0분)은 **한도를 지킨 날로 센다.** 다만 사용자가 존재하기도 전의 날짜까지
+ * 거슬러 세면 신규 사용자에게 없던 기록이 생기므로, 알고 있는 가장 이른 날짜에서 멈춘다.
+ */
+function computeStreak(weeklyStats: DailyStats[], todayStr: string, dailyLimitMinutes: number): number {
   const byDate = new Map(weeklyStats.map((d) => [d.date, d.totalMinutes]));
+  // 알고 있는 가장 이른 기록일 — 그 이전은 "안 봤다"가 아니라 "모른다"라서 세지 않는다.
+  const earliestKnown = weeklyStats.reduce<string | null>(
+    (min, d) => (min === null || d.date < min ? d.date : min),
+    null
+  ) ?? todayStr;
   let streak = 0;
   const cursor = new Date(todayStr + 'T00:00:00');
   for (let i = 0; i < 7; i++) {
     const key = toLocalDateStr(cursor);
-    if ((byDate.get(key) ?? 0) > 0) {
-      streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
-    } else break;
+    if (key < earliestKnown) break;
+    if ((byDate.get(key) ?? 0) > dailyLimitMinutes) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
   }
   return streak;
 }

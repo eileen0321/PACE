@@ -52,6 +52,22 @@ import kotlin.math.hypot
 object PaceHandWaveDetector {
   private const val TAG = "PaceHandWaveDetector"
   private const val MODEL_ASSET = "hand_landmarker.task"
+  // 🔴 2026-08-15 사장님 지적 — "사람이 앞에 있을 때를 먼저 인식하고 손을 인식해야 하는 거 아냐?"
+  // 정확히 맞는 지적이고, 지금까지 순서가 거꾸로였다. 이 감지기는 **사람이 있든 없든 손 모양만**
+  // 찾는다. 그래서 커튼 흔들림·지나가는 그림자·이불 주름이 손으로 잡히고(실측 08:58:23
+  // handSize=0.209), 그 오탐이 markUserActivity()를 태워 **수면감지를 통째로 무력화한다**
+  // (QA_FULL_TEST US26-b). 사람이 앞에 있을 때만 손을 인정하면 그 오탐이 원인에서 사라진다.
+  //
+  // 모델은 tasks-vision 0.10.29에 **이미 들어 있다**(새 의존성 없음). BlazeFace short-range,
+  // float16 230KB — 근거리(~2m) 전면 카메라용이라 이 용도에 정확히 맞는다.
+  private const val FACE_MODEL_ASSET = "blaze_face_short_range.tflite"
+  // 얼굴 확인 주기. 사람이 있다/없다는 초 단위로 바뀌는 값이 아니라 1초면 충분하고, 손 인식
+  // 프레임 예산(PROCESS_INTERVAL_MS 150ms)을 뺏지 않는 게 이 값의 존재 이유다 — 손짓이 잘 안
+  // 된다는 보고가 이미 있는 상태라(US21) 손 쪽 처리량은 1프레임도 줄이면 안 된다.
+  private const val FACE_INTERVAL_MS = 1000L
+  // 얼굴을 마지막으로 본 뒤 이만큼 안에 들어온 손 신호만 인정한다. 고개를 돌리거나 잠깐 화면
+  // 밖으로 나가는 정도(초 단위)로 손짓이 죽으면 안 되므로 넉넉하게 잡는다.
+  private const val FACE_PRESENCE_GRACE_MS = 15_000L
   private const val PROCESS_INTERVAL_MS = 150L
   // 2026-08-05 실측 — "매 넘김마다 첫 손짓이 안 된다"의 정체를 처음으로 숫자로 확인했다.
   // 실기기 로그(사장님이 실제로 손짓한 구간, WAVE 67회에서 연속 손짓 인접 간격 n=41):
@@ -267,6 +283,13 @@ object PaceHandWaveDetector {
   @Volatile private var startGeneration = 0
   private var cameraProvider: ProcessCameraProvider? = null
   private var handLandmarker: HandLandmarker? = null
+  // ── 사람 존재 확인(2026-08-15) ──
+  private var faceDetector: com.google.mediapipe.tasks.vision.facedetector.FaceDetector? = null
+  private var lastFaceCheckAtMs = 0L
+  /** 이 세션에서 마지막으로 얼굴을 본 시각. 0 = 아직 한 번도 못 봄. */
+  @Volatile private var lastFaceSeenAtMs = 0L
+  /** 이 세션에서 얼굴을 **한 번이라도** 봤는가 — 아래 게이트의 안전장치가 이 값을 본다. */
+  @Volatile private var faceEverSeen = false
   // 2026-08-02 실기기 tombstone으로 근본원인 확정 — SIGSEGV(fault addr 0x1a0)가 detectAsync →
   // sendLiveStreamData → PacketCreator.createProto 네이티브 경로에서 두 번 발생했고, 그때마다 앱
   // 프로세스가 통째로 죽었다. 죽으면 같은 프로세스에 있는 PaceAccessibilityService까지 함께 죽고,
@@ -352,6 +375,31 @@ object PaceHandWaveDetector {
     sweepStreak = 0
     lastTriggerAtMs = 0L
     lastLandmarkAtMs = 0L // 새 세션 — 이전 세션의 "마지막으로 손을 본 시각"이 남으면 유예 판정이 틀어진다
+    lastFaceCheckAtMs = 0L
+    lastFaceSeenAtMs = 0L
+    faceEverSeen = false
+
+    // 얼굴 감지기는 **동기 IMAGE 모드**로 만든다. 손 쪽(LIVE_STREAM 비동기)과 달리 초당 1회만
+    // 부르므로 콜백을 얽을 이유가 없고, BlazeFace short-range는 128x128 CPU 추론이라 분석 스레드를
+    // 잠깐 잡아도 무시할 만하다. 실패해도 손 인식은 그대로 살려둔다 — 얼굴은 어디까지나 게이트다.
+    faceDetector = try {
+      com.google.mediapipe.tasks.vision.facedetector.FaceDetector.createFromOptions(
+        context,
+        com.google.mediapipe.tasks.vision.facedetector.FaceDetector.FaceDetectorOptions.builder()
+          .setBaseOptions(
+            BaseOptions.builder()
+              .setModelAssetPath(FACE_MODEL_ASSET)
+              .setDelegate(Delegate.CPU)
+              .build()
+          )
+          .setRunningMode(RunningMode.IMAGE)
+          .setMinDetectionConfidence(0.5f)
+          .build()
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "FaceDetector init failed — 손짓은 게이트 없이 기존대로 동작한다", e)
+      null
+    }
 
     try {
       handLandmarker = HandLandmarker.createFromOptions(
@@ -460,6 +508,10 @@ object PaceHandWaveDetector {
     synchronized(landmarkerLock) {
       try { handLandmarker?.close() } catch (_: Exception) {}
       handLandmarker = null
+      try { faceDetector?.close() } catch (_: Exception) {}
+      faceDetector = null
+      faceEverSeen = false
+      lastFaceSeenAtMs = 0L
     }
     analysisExecutor?.shutdownNow()
     analysisExecutor = null
@@ -477,7 +529,10 @@ object PaceHandWaveDetector {
     framesIn++
     if (now - lastHeartbeatAtMs >= HEARTBEAT_MS) {
       lastHeartbeatAtMs = now
-      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn running=$running")
+      // 2026-08-15 — 얼굴 상태를 여기 얹는다. 얼굴 게이트는 "어두운 방에서 얼굴을 못 봐서 손짓이
+      // 죽는가"를 실측해야 신뢰할 수 있는데, 그걸 볼 수 있는 주기적 신호가 이것뿐이다.
+      val faceAge = if (faceEverSeen) "${now - lastFaceSeenAtMs}ms전" else "없음"
+      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
     }
     if (!running || now - lastProcessedAtMs < PROCESS_INTERVAL_MS) {
       proxy.close()
@@ -493,10 +548,20 @@ object PaceHandWaveDetector {
       // 화면에 남아있는 시간대와 정확히 겹침)을 그대로 돌리고 있었다 — 어차피 버려질 결과였다.
       // 밝기 기반 occlusion 안전망은 계속 싸게 돌려서(위) 냉각기간 중 새 렌즈 가림도 놓치지 않되,
       // 비싼 손 랜드마크 추론만 냉각기간 동안 건너뛴다.
-      if (now - lastTriggerAtMs <= REFRACTORY_MS) return
+      // 2026-08-15 — 얼굴 확인은 **손의 냉각기간과 무관하게** 자체 주기로 돈다. 사람이 자리를 뜬
+      // 순간이 하필 냉각기간과 겹쳤다고 그 1초를 건너뛸 이유가 없다. 비싼 YUV→Bitmap 변환은 둘 중
+      // 하나라도 필요할 때만 한 번 하고 **같은 비트맵을 나눠 쓴다**(변환을 두 번 하지 않는다).
+      val faceDue = faceDetector != null && now - lastFaceCheckAtMs >= FACE_INTERVAL_MS
+      val handDue = now - lastTriggerAtMs > REFRACTORY_MS
+      if (!faceDue && !handDue) return
       val bitmap = yuv420ToBitmap(proxy)
       if (bitmap != null) {
         val rotated = rotateBitmap(bitmap, proxy.imageInfo.rotationDegrees)
+        if (faceDue) {
+          lastFaceCheckAtMs = now
+          detectFace(rotated, now)
+        }
+        if (!handDue) return
         val mpImage = BitmapImageBuilder(rotated).build()
         // 락 안에서 running을 한 번 더 확인한다 — 위 라인들을 도는 사이에 stop()이 걸렸을 수 있고,
         // 그 경우 handLandmarker는 이미 닫혔거나 닫히는 중이다(널 체크만으로는 close()가 진행 중인
@@ -510,6 +575,53 @@ object PaceHandWaveDetector {
     } finally {
       proxy.close()
     }
+  }
+
+  /**
+   * 사람이 카메라 앞에 있는지 한 번 확인한다(초당 1회). 결과는 시각만 기록하고 판단은 호출부에 맡긴다.
+   *
+   * 얼굴 감지가 실패해도(어두움/각도) 조용히 지나간다 — 여기서 손짓을 직접 막지 않는다.
+   * 게이트 판단은 아래 shouldTrustHandSignal()에 모아두었고, 그쪽에 안전장치가 있다.
+   */
+  private fun detectFace(bitmap: android.graphics.Bitmap, now: Long) {
+    try {
+      val result = faceDetector?.detect(BitmapImageBuilder(bitmap).build()) ?: return
+      if (result.detections().isNotEmpty()) {
+        if (!faceEverSeen) Log.i(TAG, "FACE 첫 인식 — 이제부터 손짓 게이트가 작동한다")
+        faceEverSeen = true
+        lastFaceSeenAtMs = now
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "face detect failed", e)
+    }
+  }
+
+  /**
+   * 지금 잡힌 손 신호를 믿어도 되는가 — **사람이 앞에 있을 때만 손을 인정한다**(2026-08-15).
+   *
+   * 안전장치가 핵심이다: **이 세션에서 얼굴을 한 번도 못 봤으면 게이트를 걸지 않는다.**
+   *   · 얼굴이 잡히는 환경(밝은 방, 정면) → 커튼/그림자 오탐이 차단된다. 오늘보다 낫다.
+   *   · 얼굴이 안 잡히는 환경(깜깜한 방, 폰이 천장을 봄) → 게이트가 아예 안 걸려 **오늘과 똑같이**
+   *     동작한다. 침대에서 쓰는 핸즈프리를 조용히 죽이지 않는다.
+   * 즉 어느 쪽으로도 지금보다 나빠지지 않는다. 이 안전장치 없이 "얼굴 없으면 무조건 차단"으로 두면,
+   * 어두운 방에서 손짓이 통째로 죽는 걸 사용자는 원인도 모른 채 겪게 된다.
+   */
+  private fun shouldTrustHandSignal(now: Long): Boolean {
+    if (faceDetector == null || !faceEverSeen) return true // 게이트 미적용(위 안전장치)
+    return now - lastFaceSeenAtMs <= FACE_PRESENCE_GRACE_MS
+  }
+
+  /**
+   * 사람이 자리를 비운 지 얼마나 됐나(ms). 판단 불가면 -1.
+   *
+   * 수면감지가 "무입력 시간"으로 **추측**하던 것을 이 값으로 **직접** 알 수 있다 — 자동넘김이
+   * 켜져 있으면 깨어 있어도 아무 입력이 없다는 게 무입력 지표의 근본 한계였다(사장님 지적).
+   * 얼굴을 한 번도 못 본 세션에서는 -1을 돌려준다 — "사람이 없다"와 "카메라가 사람을 못 본다"를
+   * 구분하지 못하면 어두운 방에서 멀쩡히 보던 세션을 끊게 된다.
+   */
+  fun personAbsentForMs(): Long {
+    if (!running || faceDetector == null || !faceEverSeen) return -1L
+    return System.currentTimeMillis() - lastFaceSeenAtMs
   }
 
   // Y평면(휘도) 바이트를 그대로 평균 — YUV_420_888에서 Y가 곧 밝기이므로 비트맵 변환 없이 가장 싸게
@@ -545,6 +657,14 @@ object PaceHandWaveDetector {
   private fun fireTrigger(reason: String, onWave: () -> Unit) {
     val now = System.currentTimeMillis()
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
+    // 2026-08-15 — 렌즈 가림도 사람이 앞에 있을 때만 인정한다. 이불이 덮이거나 폰이 엎어져도
+    // 밝기는 똑같이 급감하는데, 그건 "다음 영상"이 아니라 오히려 아무도 안 본다는 신호다.
+    if (!shouldTrustHandSignal(now)) {
+      Log.i(TAG, "WAVE 차단 ($reason) — 사람 없음(마지막 얼굴 ${now - lastFaceSeenAtMs}ms 전)")
+      lastTriggerAtMs = now
+      sizeHistory.clear(); lumaHistory.clear()
+      return
+    }
     Log.i(TAG, "WAVE detected ($reason)")
     lastTriggerAtMs = now
     sizeHistory.clear()
@@ -792,6 +912,15 @@ object PaceHandWaveDetector {
         swept -> "sweep"
         grew -> "growth"
         else -> "growth+speed"
+      }
+      // 2026-08-15 — 사람이 앞에 없으면 이건 손이 아니다(커튼/그림자/이불). shouldTrustHandSignal
+      // 주석의 안전장치 참고. 차단해도 상태는 그대로 리셋한다 — 안 그러면 같은 프레임 이력으로
+      // 다음 프레임에서 또 걸려 로그만 도배된다.
+      if (!shouldTrustHandSignal(now)) {
+        Log.i(TAG, "WAVE 차단 by=$by handSize=$handSize — 사람 없음(마지막 얼굴 ${now - lastFaceSeenAtMs}ms 전)")
+        lastTriggerAtMs = now
+        sizeHistory.clear(); xHistory.clear(); sweepStreak = 0
+        return
       }
       Log.i(TAG, "WAVE detected by=$by growth=$growthRatio sweep=$sweepRatio speed=$peakSpeed handSize=$handSize")
       lastTriggerAtMs = now

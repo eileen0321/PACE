@@ -579,11 +579,20 @@ class PaceOverlayService : Service() {
       // 직접 넘겨도 무입력 시계가 리셋되지 않아, 멀쩡히 보고 있어도 100% 오판한다(2026-08-12 실측).
       val nightPath = isWithinSleepDetectionWindow() && supporting
       val anytimePath = noInputMs >= SLEEP_NO_INPUT_ANYTIME_MS
-      if (!observable || (!nightPath && !anytimePath)) {
-        Log.d("PaceOverlay", "SLEEP confirm held — observable=$observable night=$nightPath(window=${isWithinSleepDetectionWindow()} dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone) anytime=$anytimePath(noInputMs=$noInputMs)")
+      // 🔴 2026-08-15 사장님 지적의 핵심 — "자동넘김이 켜져 있으면 깨어 있어도 10분 동안 아무것도
+      //   안 하는데, 무입력으로 자는 걸 어떻게 아냐." 맞는 말이고, 무입력은 이 앱에서 **원리적으로**
+      //   나쁜 지표다(손 안 대고 보게 만드는 게 이 앱이 파는 기능이다).
+      //   → 손짓이 켜져 있으면 카메라가 이미 돌고 있다. 추측하지 말고 **얼굴이 있는지 직접 본다.**
+      //   personAbsentForMs()는 "사람이 없다"와 "카메라가 사람을 못 본다"를 구분하지 못할 때
+      //   -1을 돌려주므로(어두운 방 등), 그 경우 이 경로는 자동으로 비활성이 된다.
+      val personAbsentMs = PaceHandWaveDetector.personAbsentForMs()
+      val facePath = personAbsentMs >= 0 && personAbsentMs >= SLEEP_FACE_ABSENT_MS
+      if (!observable || (!nightPath && !anytimePath && !facePath)) {
+        Log.d("PaceOverlay", "SLEEP confirm held — observable=$observable night=$nightPath(window=${isWithinSleepDetectionWindow()} dark=$dark(lux=$lastLuxAvg) flat=$laidFlat(gz=$lastGravityZ) charging=$charging btGone=$btGone) anytime=$anytimePath(noInputMs=$noInputMs) face=$facePath(absentMs=$personAbsentMs)")
         return false
       }
-      Log.i("PaceOverlay", "SLEEP confirm passed via ${if (nightPath) "night" else "anytime"} path (noInputMs=$noInputMs)")
+      val via = if (facePath) "face(absent=${personAbsentMs}ms)" else if (nightPath) "night" else "anytime"
+      Log.i("PaceOverlay", "SLEEP confirm passed via $via path (noInputMs=$noInputMs)")
       sleepStage = SLEEP_STAGE_PROMPTED
       sleepPromptedAtMs = now
       Log.d("PaceOverlay", "SLEEP stage=PROMPTED — asking '아직 보고 계세요?'")
@@ -1223,6 +1232,11 @@ class PaceOverlayService : Service() {
     // → 시간대 무관 경로는 임계만 훨씬 길게 잡는다. 이 정도 무입력이면 시간대와 상관없이 한 번
     //   물어볼 만하고, 애초에 "총 시청시간을 줄인다"는 제품 목적에도 부합한다.
     private const val SLEEP_NO_INPUT_ANYTIME_MS = 45 * 60 * 1000L
+    // 🔴 2026-08-15 — 카메라가 사람을 이만큼 못 보면 "자리에 없다"로 본다. 위 45분보다 훨씬 짧게
+    // 잡아도 되는 이유: 이건 추측이 아니라 **직접 관측**이라 오탐 여지가 근본적으로 작다.
+    // 그래도 확정이 곧장 종료는 아니고 팝업을 띄워 물어보므로(2단계), 화장실에 다녀오는 정도의
+    // 자리 비움은 돌아와서 한 번 누르면 그만이다.
+    private const val SLEEP_FACE_ABSENT_MS = 10 * 60 * 1000L
     // Flip Mode의 LINEAR_ACCEL_EPSILON(1.2)보다 살짝 낮게 — 여긴 "완전히 멈췄다"를 원하므로
     // Flip Mode(오탐 완화용 보조 게이트)보다 더 엄격하게 잡아도 무방.
     private const val STILLNESS_WAKE_EPSILON = 1.0f

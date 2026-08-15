@@ -299,6 +299,76 @@ const INJECTED_JS_BEFORE_LOAD = `
     } catch(eMainWidth) {}
   }
   enforceMainWidth();
+  // 🔴 2026-08-16(11차) — 세로 레터박싱을 레이아웃 크기 변경(7~9차, 전부 실패: 검은화면/찌그러짐/
+  // 인접영상 겹침 — 스크롤 스냅 계산과 충돌)이 아니라 **레이아웃에 안 끼는 시각 효과만으로** 푼다.
+  // 실측(data-e2e="like-icon" 조상 체인)으로 페이지 자체 좋아요/댓글/북마크/공유 아이콘 열의 진짜
+  // 컨테이너를 확정: SECTION.e12arnib0(video의 SECTION.ezfgn9c0과 형제, 둘 다 DIV.ehcbpkw2의
+  // flex row 자식). 이걸 숨기면(RN 오버레이로 재구현 예정) video만 남아 폭 경쟁이 없어지고,
+  // 10차(transform:scale, 레이아웃 안전 확인됨)를 다시 켜도 더 이상 아이콘을 밀어낼 걱정이 없다.
+  // overflow:visible을 같이 줘서 확대된 영상이 원래 박스 밖으로 클리핑 안 되게 한다(overflow는
+  // 그 자체로 레이아웃 크기에 영향 없음 — width/height와 달리 스크롤 스냅 계산과 무관해 안전).
+  function hideIconRailAndScaleVideo(){
+    try {
+      if (String(location.pathname||'').indexOf('foryou') === -1) return;
+      var vh = window.innerHeight || 0;
+      if (!vh) return;
+      // 🔴 11차(3차) — document.querySelector('video')와 기존 getActiveVideo()(.swiper-slide-active
+      // 기준) 둘 다 틀렸다: /foryou는 swiper를 안 써서 getActiveVideo()도 결국 querySelector('video')로
+      // 폴백돼 같은 문제(실측: r.top=909, 뷰포트 밖 — 프리로드된 다음 영상을 잡고 있었다)가 재현됐다.
+      // 진짜 화면에 보이는 video를 뷰포트와의 실제 겹침(rect)으로 직접 찾는다.
+      var vids = document.querySelectorAll('video');
+      var v = null, bestOverlap = -1;
+      for (var vi = 0; vi < vids.length; vi++) {
+        var vr = vids[vi].getBoundingClientRect();
+        var overlap = Math.min(vr.bottom, vh) - Math.max(vr.top, 0);
+        if (overlap > bestOverlap) { bestOverlap = overlap; v = vids[vi]; }
+      }
+      if (!v || bestOverlap <= 0) return;
+      var container = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+      var likeEl = container ? container.querySelector('[data-e2e="like-icon"]') : document.querySelector('[data-e2e="like-icon"]');
+      if (likeEl) {
+        var el = likeEl, guard = 0, railSection = null;
+        while (el && guard < 10) {
+          if (el.tagName === 'SECTION') { railSection = el; break; }
+          el = el.parentElement;
+          guard++;
+        }
+        if (railSection && railSection.style.display !== 'none') {
+          railSection.style.setProperty('display', 'none', 'important');
+        }
+      }
+      // 8단계까지 조상에 overflow:visible을 걸었더니 사이드바가 다시 노출되는 회귀가 났다(그 위쪽
+      // 조상은 사이드바 숨김 로직과 공유되는 상위 구조라 건드리면 안 됨) — video의 직계 SECTION과
+      // 그 바로 위 flex 부모(ehcbpkw2) 딱 2단계까지만 좁힌다.
+      var el2 = v, guard2 = 0;
+      while (el2 && guard2 < 2) {
+        if (el2.tagName === 'SECTION' || el2.tagName === 'DIV') {
+          el2.style.setProperty('overflow', 'visible', 'important');
+        }
+        el2 = el2.parentElement;
+        guard2++;
+      }
+      // 🔴 11차(4차) — video 태그 자체에 transform을 걸면 getBoundingClientRect/로그는 정상(적용된
+      // 크기/위치)인데 실제 스크린샷엔 전혀 반영 안 됐다(3회 재확인, 매번 동일) — <video>가 하드웨어
+      // 디코더 전용 컴포지팅 레이어를 쓰는 WKWebView의 알려진 특성으로 추정(레이아웃 rect는 CSS
+      // 값을 그대로 보고하지만 실제 디코딩된 프레임 레이어는 별도 트랙이라 transform이 안 먹힘).
+      // video 자체가 아니라 그걸 감싸는 SECTION(비디오 전용 래퍼, 일반 DOM 레이어라 컴포지팅 정상
+      // 적용)에 transform을 건다.
+      var videoSection = v, sguard = 0;
+      while (videoSection && videoSection.tagName !== 'SECTION' && sguard < 8) {
+        videoSection = videoSection.parentElement;
+        sguard++;
+      }
+      var target = videoSection || v;
+      var r = target.getBoundingClientRect();
+      if (!r.height || r.height >= vh - 1) return;
+      var scale = vh / r.height;
+      if (scale <= 1.01 || scale > 2.2) return;
+      target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform-origin', 'center center', 'important');
+    } catch(eIconScale) {}
+  }
+  hideIconRailAndScaleVideo();
   // 🔴 2026-08-15(7차, 미해결) — 폭은 고쳤는데 사장님이 실기기 스크린샷으로 재확인("이게 전체창으로
   // 뜬거냐") — 위아래로도 여전히 카드처럼 떠 있다. 실측(getComputedStyle)으로 원인 확정: video를
   // 감싸는 SECTION.ezfgn9c0에 aspect-ratio:9/16(0.5625)이 고정돼 있다(h=619는 min-height가 아니라
@@ -739,6 +809,7 @@ const INJECTED_JS_BEFORE_LOAD = `
     dismissAppBanner();
     hideLeftRailByGeometry();
     enforceMainWidth();
+    hideIconRailAndScaleVideo();
     dumpDomOnce();
     dumpErrorStateOnce();
     var href = '' + location.href;

@@ -148,7 +148,14 @@ export type FocusAllowance = {
 };
 
 export const focusAllowanceApi = {
-  get: (date: string) => request<FocusAllowance>(`/focus-allowance?date=${encodeURIComponent(date)}`),
+  // 🔴 2026-08-15 — tzOffsetMinutes를 함께 보낸다. 서버가 응답의 serverToday를 **이 시간대로**
+  // 계산해야 출석 판정이 맞는다(예전엔 UTC 고정이라 한국에서 KST 09:00에 날짜가 넘어가며 같은
+  // 하루에 출석 보상이 두 번 나갔다 — FocusAllowanceResponse.todayIn 주석).
+  // getTimezoneOffset()은 "UTC - 로컬"이라 부호가 반대다(한국은 -540) — 뒤집어서 보낸다.
+  get: (date: string) =>
+    request<FocusAllowance>(
+      `/focus-allowance?date=${encodeURIComponent(date)}&tzOffsetMinutes=${-new Date().getTimezoneOffset()}`
+    ),
   // 서버는 덮어쓰지 않고 병합한다(카운트 max, timedOut OR) — 재설치 후 올라온 0이 기록을 못 지운다.
   sync: (body: { date: string; adExtendCount: number; timedOut: boolean; sessionEndsAt: string | null }) =>
     request<FocusAllowance>('/focus-allowance/sync', { method: 'POST', body }),

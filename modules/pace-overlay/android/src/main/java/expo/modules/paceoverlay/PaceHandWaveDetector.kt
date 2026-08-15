@@ -189,9 +189,6 @@ object PaceHandWaveDetector {
   // ⚠️ 다음에 이 값을 만지려면 반드시 diagEnabled 로그로 "가만히" 구간을 함께 재서 위와 같은 표를
   // 만든 뒤에 정할 것. 손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다.
   private const val SWEEP_RATIO_THRESHOLD = 0.22
-  // sweep 축 전용 최소 속도(배/초). growth+speed가 쓰는 0.25와 같은 값으로 맞춘다 — 이미 실측으로
-  // "평소 오탐 0%"가 확인된 기준선이고, 새 숫자를 근거 없이 만들지 않는다(아래 sweptNow 주석 참고).
-  private const val SWEEP_MIN_SPEED_PER_SEC = 0.25
 
   // 🔴 2026-08-09 사장님 지적 — "안 움직이거나 조금만 움직여도 카메라 위치에서 손짓으로 인식해서
   //   영상이 넘어간다", "카메라 높이에 손이 있으면 살짝만 움직여도 영상이 넘어가네".
@@ -908,18 +905,7 @@ object PaceHandWaveDetector {
     //   ⚠️ growth/growth+speed에는 안 건다 — 그쪽은 이미 두 축(크기·속도)의 AND라 단발 노이즈로
     //     동시에 만족되기 어렵고, 오탐 로그도 전부 sweep이었다. 필요 이상으로 조이면 2026-08-02처럼
     //     "안 잡힌다"로 되돌아간다.
-    // 🔴 2026-08-15 실측 — 사장님 "검색해서 고른 양다일 영상이 조금 보이다 넘어간다". 범인은 sweep
-    //   축 오탐 2건이었다:
-    //     23:58:23 sweep=0.319 speed=0.897 handSize=0.131
-    //     23:58:45 sweep=0.835 speed=0.049 handSize=0.096   ← 사실상 **멈춰 있는 손**
-    //   두 번째가 이 축의 약점을 그대로 보여준다. 이 파일이 스스로 측정해 적어둔 대로
-    //   "sweep은 평소 중앙 0.321 vs 손짓 0.353으로 거의 안 갈라져 원리적으로 구분이 불가능"한데,
-    //   **세 축 중 sweep만 속도 조건이 없었다.** growth+speed는 이미 크기·속도의 AND다.
-    //   → sweep에도 최소 속도를 건다. 실측 분포(평소 정지 중앙 -0.06 / p95 0.56, 성공 손짓 중앙 1.07)에
-    //     비춰 정지 상태의 좌우 흔들림은 걸러지고 실제로 손을 젓는 동작은 남는다.
-    //   ⚠️ 손 크기(MIN_HAND_SIZE)는 다시 올리지 않는다 — 오늘 저녁에 이미 틀린 손잡이로 판명났다
-    //     (오탐 handSize 0.209는 못 막으면서 진짜 손짓 0.10~0.15만 잘라냈다).
-    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD && peakSpeed > SWEEP_MIN_SPEED_PER_SEC
+    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD
     sweepStreak = if (sweptNow) sweepStreak + 1 else 0
     val swept = sweepStreak >= SWEEP_CONFIRM_FRAMES
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로

@@ -1434,12 +1434,6 @@ class PaceOverlayService : Service() {
         Log.w("PaceOverlayService", "triggerNext() aborted — isSupportedAppWindowVisible()=false")
         return
       }
-      // 🔴 2026-08-15 — 사용자가 검색으로 직접 고른 영상은 손짓으로도 넘기지 않는다.
-      //   (근거는 PaceAccessibilityService.isAutoNextSuspended() 주석 — 실측 23:58:23)
-      if (PaceAccessibilityService.isAutoNextSuspended()) {
-        Log.i("PaceOverlayService", "triggerNext() 보류 — 사용자가 직접 고른 영상 재생 중(손짓 오탐으로 날리지 않는다)")
-        return
-      }
       Log.i("PaceOverlayService", "triggerNext() -> swipeOnce(up=true)")
       PaceAccessibilityService.swipeOnce(up = true)
       bumpBluetoothCounter(context, "bt_next_count")
@@ -3653,15 +3647,8 @@ class PaceOverlayService : Service() {
             PaceShareCaptureActivity.EXTRA_RETURN_TO_PACKAGE,
             currentTrackedPackage() ?: "com.google.android.youtube"
           )
-          // 🔴 2026-08-16 사장님 "favorite으로 add하니 또 홈 갔다 다시 온다".
-          //   이 파일이 보상형 광고에 대해 이미 내린 결론과 같은 문제였다 — "NEW_TASK만 주면
-          //   안드로이드가 이 액티비티를 Pace의 기존 태스크(홈이 들어있는)에 붙여버리고, 그 태스크가
-          //   통째로 앞으로 나오면서 투명 액티비티 뒤로 Pace 홈이 그대로 비친다."
-          //   광고는 MULTIPLE_TASK로 고쳤는데 캡처 경로 두 곳은 안 고쳐져 있었다.
-          //   CLEAR_TOP은 뺀다 — 자기만의 새 태스크로 뜨는데 "기존 스택 위를 지운다"는 의미가 없고,
-          //   오히려 기존 태스크를 건드리는 해석 여지만 남긴다(그게 홈이 보이는 증상과 맞물린다).
           .addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
               Intent.FLAG_ACTIVITY_NO_ANIMATION
           )
       )

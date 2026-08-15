@@ -49,6 +49,17 @@ type Props = {
   onError?: (code: number) => void;
   /** 재생 진행률(0~1) — 피드의 고개짓 카메라 배터리 게이팅용(유튜브 플레이어와 동일 용도). */
   onProgress?: (fraction: number) => void;
+  /**
+   * 2026-08-15 — 유튜브 쪽(YouTubeShortsPlayer.ios.tsx)에 넣은 것과 같은 목적: 이 WebView가
+   * 콜드 스타트할 때 물리 무음 스위치 상태를 미리 알려줘서, RN의 첫 checkSilentSwitch() 응답
+   * (200~300ms 비동기)이 오기 전에 새 video가 TikTok 기본 상태(대개 muted=false)로 잠깐 소리
+   * 내며 재생되는 걸 막는다. window.__paceMuted를 이 값으로 미리 세팅한 뒤 나머지 스크립트를
+   * 붙인다 — onLoadStart/onLoad 재주입(아래, 실기기에서 동작 확인됨)과
+   * injectedJavaScriptBeforeContentLoaded prop(이 환경에서 실행 안 될 수 있다고 기록돼 있었으나
+   * 2026-08-15 유튜브 쪽에서 domlog(__PACE_DIAG__ 게이트)가 실제로 찍히는 걸 확인해 그 기록이
+   * RNW 16.0.0 업그레이드 이전 것일 가능성이 높음 — 안전하게 양쪽 다 세팅) 양쪽에 다 쓴다.
+   */
+  initialMuted?: boolean;
 };
 
 const INJECTED_JS_BEFORE_LOAD = `
@@ -205,13 +216,31 @@ const INJECTED_JS_BEFORE_LOAD = `
       }
       // 2026-08-13(19차) 실기기 로그로 확정 — 이 셀렉터도 isVisible 체크가 없어서 화면에 안 보이는
       // 뭔가를 3초마다 계속 클릭만 하고 있었다(진짜 로그인 모달은 안 닫힘). 전부에 가시성 체크.
+      // 🔴 2026-08-15 사장님 실기기 재현("검색하고 영상 고르면 잠깐 보였다 꺼짐") — 실기기 로그로
+      // 확정: 검색결과에서 영상을 열면(URL은 /video/...로 바뀌지만 검색 패널 DOM은 안 없어짐) 그
+      // 검색 패널 소속 "닫기" 버튼이 이 aria-label 셀렉터에 걸려서 하우스키핑이 **우리가 방금 연
+      // 영상을 스스로 닫아버렸다**(클릭→그 직후 검색화면으로 돌아간 게 "잠깐 보였다 꺼짐").
+      // 1차 시도(현재 URL에 /search 포함 여부로 판단)는 실패 확정 — URL이 이미 /video/...로 바뀐
+      // 뒤였다. 대신 후보 자신의 조상 DOM 클래스명에 "search"가 있는지로 직접 걸러낸다(실측 로그로
+      // 확정된 진짜 신호 — ancestors=...DivSearch...). 검색 패널 소속이 아닌 진짜 앱설치 배너의
+      // 닫기 버튼은 이 필터에 안 걸린다.
       var closeCandidates = document.querySelectorAll('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"], [aria-label*="skip" i], [aria-label*="건너뛰기"]');
       for (var ci = 0; ci < closeCandidates.length; ci++) {
-        if (isVisible(closeCandidates[ci])) {
-          closeCandidates[ci].click();
-          send({ type: 'domlog', text: '배너닫음(aria-label): ' + (closeCandidates[ci].getAttribute('aria-label') || '') });
-          return true;
+        var cand = closeCandidates[ci];
+        if (!isVisible(cand)) continue;
+        var isSearchUiChrome = false;
+        var ancFilter = cand;
+        for (var af = 0; af < 8 && ancFilter; af++) {
+          if (/search/i.test(String(ancFilter.className || ''))) { isSearchUiChrome = true; break; }
+          ancFilter = ancFilter.parentElement;
         }
+        if (isSearchUiChrome) {
+          send({ type: 'domlog', text: '배너닫음(aria-label) 건너뜀(검색패널 소속): ' + (cand.getAttribute('aria-label') || '') });
+          continue;
+        }
+        cand.click();
+        send({ type: 'domlog', text: '배너닫음(aria-label): ' + (cand.getAttribute('aria-label') || '') });
+        return true;
       }
       var bodyText = document.body.innerText || '';
       if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
@@ -747,7 +776,7 @@ true;
 `;
 
 export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function TikTokShortsPlayer(
-  { playing, onEnded, onReady, onError, onProgress }: Props,
+  { playing, onEnded, onReady, onError, onProgress, initialMuted }: Props,
   ref
 ) {
   const webRef = useRef<WebView>(null);
@@ -783,6 +812,28 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         : 'https://www.tiktok.com/foryou';
       webRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
     },
+    // __DEV__ 전용 — sharedShortsPlayer.ts의 타입 주석 참고. 실제 손가락 탭과 똑같이 진짜 <a> 요소의
+    // .click()을 호출한다(합성 이벤트가 아니라 그 엘리먼트의 실제 클릭 핸들러 체인을 그대로 태움).
+    debugClickFirstSearchResult: () => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var links = document.querySelectorAll('a');
+          var found = null;
+          for (var i = 0; i < links.length; i++) {
+            var href = links[i].getAttribute('href') || '';
+            if (href.indexOf('/video/') !== -1) { found = links[i]; break; }
+          }
+          if (found) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭: ' + found.getAttribute('href') }));
+            found.click();
+          } else {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭: /video/ 링크 못 찾음, a태그 ' + links.length + '개' }));
+          }
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
+    },
     // "현재 영상 즐겨찾기 추가"의 틱톡 버전 — WebView 안에서 지금 활성 video의 공유 permalink를
     // 찾아 돌려준다(shared/ShortsPlayerHandle에 선택 프로퍼티로 추가, YouTube는 큐의 current로
     // 이미 알고 있어 구현 안 함). 1.5초 안에 응답이 없으면(페이지 전환 중 등) null로 포기.
@@ -811,6 +862,9 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
     );
   }, [ready, playing]);
 
+  // 위 Props 주석 참고 — window.__paceMuted를 스크립트 본문보다 먼저 세팅해 콜드 스타트 무음샘 확보.
+  const injectedScriptWithMuteSeed = `window.__paceMuted=${initialMuted ? 'true' : 'false'};` + INJECTED_JS_BEFORE_LOAD;
+
   return (
     <View style={styles.container}>
       <WebView
@@ -819,7 +873,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         style={styles.web}
         // 2026-08-14(28차) — injectedJavaScript(페이지 "완전 로드" 후 주입) prop을 더 이상 안 쓴다
         // — 핵심 로직 전부가 BeforeContentLoaded 안의 mainInit()(DOMContentLoaded 기준)로 옮겨감.
-        injectedJavaScriptBeforeContentLoaded={INJECTED_JS_BEFORE_LOAD}
+        injectedJavaScriptBeforeContentLoaded={injectedScriptWithMuteSeed}
         javaScriptEnabled
         domStorageEnabled
         allowsInlineMediaPlayback
@@ -852,8 +906,8 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         // 이유는 — react-native-webview 13.x의 injectedJavaScriptBeforeContentLoaded prop이
         // (raw 시각 테스트로는) 안 먹혔던 것도 사실이라, prop보다 이 imperative 경로가 더 신뢰도가
         // 높다고 판단해서다.
-        onLoadStart={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
-        onLoad={() => { webRef.current?.injectJavaScript(INJECTED_JS_BEFORE_LOAD); }}
+        onLoadStart={() => { webRef.current?.injectJavaScript(injectedScriptWithMuteSeed); }}
+        onLoad={() => { webRef.current?.injectJavaScript(injectedScriptWithMuteSeed); }}
         onError={(e) => { if (__DEV__) console.log('[TikTok WV] onError', e.nativeEvent?.code); }}
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}

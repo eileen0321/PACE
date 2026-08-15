@@ -650,6 +650,18 @@ export default function PaceFeedScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction]);
 
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testSearch. 2026-08-15 사장님 실기기
+  // 재현("검색하고 영상 고르면 잠깐 보였다 꺼짐") — 실기기 손가락 탭 없이는 재현 못 해서(터치 주입
+  // 도구 없음), search()로 검색결과를 띄운 뒤 debugClickFirstSearchResult()로 실제 <a> 요소를
+  // 프로그램적으로 클릭해 손가락 탭과 동일한 이벤트 체인을 발생시킨다.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'testSearch') return;
+    const t1 = setTimeout(() => { playerRef.current?.search?.('cat'); }, 8000);
+    const t2 = setTimeout(() => { playerRef.current?.debugClickFirstSearchResult?.(); }, 14000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testPrev. 2026-08-15 사장님 지시("니가
   // 테스트를 전체 다 해야 할거 아냐") — 실기기 리모컨 물리 입력 없이 goPrev()를 직접 호출해 TikTok
   // no-op 토스트 수정(feed.tiktokNoPrevious)이 실제로 발동하는지 로그로 자체 검증한다.
@@ -974,6 +986,7 @@ export default function PaceFeedScreen() {
             key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
+            initialMuted={lastKnownSilentRef.current}
             onProgress={handleProgress}
             onReady={clearForcedTransitionCover}
             onEnded={onEnded}

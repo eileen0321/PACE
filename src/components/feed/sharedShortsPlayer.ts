@@ -18,6 +18,10 @@ export type ShortsPlayerHandle = {
    *  이미 알고 있어(videoId/title/channel) 이 메서드가 필요 없다 — 틱톡은 큐가 없어 "지금 보이는
    *  영상"을 WebView 안에서 직접 찾아 알려줘야 "현재 영상 즐겨찾기 추가"가 동작한다. 못 찾으면 null. */
   getCurrentVideoUrl?: () => Promise<string | null>;
+  /** 2026-08-15 — __DEV__ 전용, 틱톡 전용. "검색 → 결과 탭" 버그 재현이 실기기 손가락 탭 없이는
+   *  안 돼서(터치 주입 도구 없음), 검색결과 그리드에서 실제 영상 링크(href에 /video/ 포함)를 찾아
+   *  프로그램적으로 .click()한다 — 실제 탭과 동일한 DOM 이벤트를 발생시켜 재현용으로 충분하다. */
+  debugClickFirstSearchResult?: () => void;
 };
 
 // http(s)만 허용 → 앱 딥링크(youtube://, tiktok://)/앱스토어(itms-apps://) 등 "앱에서 열기"

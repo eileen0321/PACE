@@ -28,6 +28,10 @@ export type ShortsPlayerHandle = {
   debugClickByDataE2E?: (name: string) => void;
   /** 2026-08-15 — "/foryou 작게 보인다" 미해결 조사용, 다음 세션에서 이어서 쓸 진단 훅. */
   debugVerifyVideoSize?: () => void;
+  /** 2026-08-16 — 틱톡 전용. 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/공유 아이콘 열을
+   *  숨긴 대가로, RN이 그리는 오버레이 버튼이 탭되면 숨겨진 실제 페이지 버튼을 대신 눌러준다.
+   *  name은 data-e2e 값(like-icon/comment-icon/favorite-icon/share-icon). */
+  tapIcon?: (name: string) => void;
 };
 
 // http(s)만 허용 → 앱 딥링크(youtube://, tiktok://)/앱스토어(itms-apps://) 등 "앱에서 열기"

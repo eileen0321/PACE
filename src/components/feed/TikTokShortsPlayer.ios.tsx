@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import {
@@ -190,6 +191,12 @@ const INJECTED_JS_BEFORE_LOAD = `
 
   function mainInit() {
   send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
+  // /foryou가 아닌 페이지로 넘어가면(사이드바 메뉴 등, 전체 페이지 리로드라 mainInit이 다시 돔)
+  // RN이 그리던 아이콘 오버레이(좋아요/댓글/북마크/공유)가 이전 페이지의 카운트를 든 채 그대로
+  // 남아있으면 안 된다 — 매 mainInit마다 일단 비우고, /foryou면 hideIconRailAndScaleVideo가
+  // 곧 새 값으로 다시 채운다.
+  window.__paceLastIconState = null;
+  send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
   // 🔴 2026-08-15 사장님 지적("사람아이콘 눌르면 팔로우 화면이 왜 짤려", "세로줄로 메뉴 뜨는거
   // 맞아?") — 2026-08-12 QA_MATRIX에 이미 "알려진 부작용, 후속 작업"으로 기록돼 있던 항목이다:
   // 자동넘김을 살리려고 의도적으로 데스크톱 UA를 쓰는데(위 userAgent prop 주석 참고 — 모바일 UA는
@@ -309,7 +316,17 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 그 자체로 레이아웃 크기에 영향 없음 — width/height와 달리 스크롤 스냅 계산과 무관해 안전).
   function hideIconRailAndScaleVideo(){
     try {
-      if (String(location.pathname||'').indexOf('foryou') === -1) return;
+      if (String(location.pathname||'').indexOf('foryou') === -1) {
+        // 🔴 사장님 실기기 지적("/following에 지난 영상 카운트가 그대로 떠있다") — /following 등은
+        // 전체 페이지 리로드가 아니라 SPA 라우팅이라 mainInit이 다시 안 돌아서, mainInit 안의
+        // "페이지 바뀌면 일단 비운다" 클리어가 이 경로에선 한 번도 안 불린다. houseKeeping(3초
+        // 마다)에서도 경로를 봐서 /foryou가 아니면 비운다 — 한 번만 보내면 되니 캐시로 스팸 방지.
+        if (window.__paceLastIconState !== null) {
+          window.__paceLastIconState = null;
+          send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+        }
+        return;
+      }
       var vh = window.innerHeight || 0;
       if (!vh) return;
       // 🔴 11차(3차) — document.querySelector('video')와 기존 getActiveVideo()(.swiper-slide-active
@@ -335,6 +352,25 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
         if (railSection && railSection.style.display !== 'none') {
           railSection.style.setProperty('display', 'none', 'important');
+        }
+      }
+      // 숨긴 페이지 아이콘 대신 RN이 그릴 오버레이 버튼용 카운트를 활성 영상 컨테이너에서 읽어
+      // 전달한다 — 값이 바뀔 때만 보내 불필요한 postMessage 스팸을 줄인다.
+      if (container) {
+        var cLike = container.querySelector('[data-e2e="like-count"]');
+        var cComment = container.querySelector('[data-e2e="comment-count"]');
+        var cFav = container.querySelector('[data-e2e="favorite-count"]');
+        var cShare = container.querySelector('[data-e2e="share-count"]');
+        var iconState = {
+          like: cLike ? cLike.textContent.trim() : '',
+          comment: cComment ? cComment.textContent.trim() : '',
+          favorite: cFav ? cFav.textContent.trim() : '',
+          share: cShare ? cShare.textContent.trim() : '',
+        };
+        var iconStateStr = JSON.stringify(iconState);
+        if (window.__paceLastIconState !== iconStateStr) {
+          window.__paceLastIconState = iconStateStr;
+          send({ type: 'iconState', like: iconState.like, comment: iconState.comment, favorite: iconState.favorite, share: iconState.share });
         }
       }
       // 8단계까지 조상에 overflow:visible을 걸었더니 사이드바가 다시 노출되는 회귀가 났다(그 위쪽
@@ -996,11 +1032,35 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
+  // 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/
+  // 공유 아이콘 열을 숨긴 대가로, RN이 그 자리에 오버레이 버튼을 그리기 위한 카운트 상태.
+  const [iconCounts, setIconCounts] = useState<{ like: string; comment: string; favorite: string; share: string } | null>(null);
   // 2026-08-15 — getCurrentVideoUrl()의 요청/응답 다리. injectJavaScript는 결과를 동기로 못
   // 돌려주므로(fire-and-forget), 요청 시점에 여기 resolver를 심어두고 onMessage의
   // 'currentVideoUrl'이 도착하면 그걸로 resolve한다. 동시에 하나만 진행 가능(현재 영상 하나에
   // 대한 요청이라 실제로 겹칠 일이 없음) — 새 요청이 오면 이전 걸 null로 흘려보낸다.
   const currentVideoUrlResolverRef = useRef<((url: string | null) => void) | null>(null);
+
+  // 2026-08-16 — hideIconRailAndScaleVideo가 페이지 자체 좋아요/댓글/북마크/공유 아이콘 열을
+  // 숨긴 대가로, RN 오버레이 버튼(아래 렌더)이 탭될 때 숨겨진 실제 페이지 버튼을 대신 눌러준다
+  // (활성 영상 컨테이너 안에서만 찾아 다른 프리로드된 영상의 버튼을 잘못 누르는 사고 방지).
+  // useImperativeHandle의 tapIcon(부모 ref용)과 아래 오버레이 버튼 onPress 둘 다 이걸 쓴다.
+  function tapIcon(name: string) {
+    webRef.current?.injectJavaScript(`(function(){
+      try {
+        var vids = document.querySelectorAll('video');
+        var v = null, best = -1, vh = window.innerHeight;
+        for (var i=0;i<vids.length;i++){
+          var r = vids[i].getBoundingClientRect();
+          var ov = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+          if (ov > best) { best = ov; v = vids[i]; }
+        }
+        var container = v && v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+        var el = container ? container.querySelector('[data-e2e="${name}"]') : document.querySelector('[data-e2e="${name}"]');
+        if (el) { el.click(); }
+      } catch(e) {}
+    })(); true;`);
+  }
 
   // 유튜브 플레이어와 같은 handle 시그니처를 맞추되, 틱톡은 큐레이션이 없어 advance/previous가
   // 스와이프 큐 이동이 아니라 "지금 재생 중인 video에 대해 다음 영상 시도"를 직접 트리거한다
@@ -1015,6 +1075,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
       // 즉시 적용해야, RN의 다음 무음스위치 폴링(최대 2초)까지 잠깐 소리가 새는 걸 막는다.
       webRef.current?.injectJavaScript(`(function(){window.__paceMuted=${muted};var v=document.querySelector('video'); if(v){v.muted=${muted};}})();true;`);
     },
+    tapIcon: (name) => tapIcon(name),
     // QA_MATRIX.md 1-4b(맥 세션 요청) — 안드로이드가 이미 구현한 "검색은 우리 UI, 결과는 틱톡
     // 화면" 패턴의 iOS 버전. 딥링크로 외부 앱/브라우저를 여는 대신, 이미 떠 있는 같은 WebView를
     // 틱톡 검색 URL로 이동시킨다(안드에서 https://www.tiktok.com/search가 크롬을 띄운 원인은
@@ -1178,7 +1239,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
-          let msg: { type?: string; value?: number; url?: string | null } = {};
+          let msg: { type?: string; value?: number; url?: string | null; like?: string; comment?: string; favorite?: string; share?: string } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
@@ -1186,6 +1247,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
           if (msg.type === 'domlog') {
             try { if (__DEV__) getPaceGestureLog()?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
+            return;
+          }
+          if (msg.type === 'iconState') {
+            if ((msg as any).clear) { setIconCounts(null); return; }
+            setIconCounts({ like: msg.like ?? '', comment: msg.comment ?? '', favorite: msg.favorite ?? '', share: msg.share ?? '' });
             return;
           }
           if (msg.type === 'ready') {
@@ -1213,6 +1279,55 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           {showSpinner && <ActivityIndicator size="large" color="#FFFFFF" />}
         </View>
       )}
+      {/* 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/
+          북마크/공유 아이콘 열을 숨긴 대가로, 그 자리를 RN 오버레이 버튼으로 대신한다. 탭하면
+          tapIcon()이 숨겨진 실제 페이지 버튼을 대신 눌러 기능은 그대로 유지된다. iconCounts가
+          아직 없으면(첫 로드 전) 안 그린다 — 빈 0으로 깜빡이는 것보다 낫다. */}
+      {ready && iconCounts && (
+        <View style={localStyles.iconRail} pointerEvents="box-none">
+          <IconRailButton icon="heart" count={iconCounts.like} onPress={() => tapIcon('like-icon')} />
+          <IconRailButton icon="chatbubble-ellipses" count={iconCounts.comment} onPress={() => tapIcon('comment-icon')} />
+          <IconRailButton icon="bookmark" count={iconCounts.favorite} onPress={() => tapIcon('favorite-icon')} />
+          <IconRailButton icon="arrow-redo" count={iconCounts.share} onPress={() => tapIcon('share-icon')} />
+        </View>
+      )}
     </View>
   );
+});
+
+function IconRailButton({ icon, count, onPress }: { icon: keyof typeof Ionicons.glyphMap; count: string; onPress: () => void }) {
+  return (
+    <Pressable style={localStyles.iconButton} onPress={onPress} hitSlop={10}>
+      <View style={localStyles.iconCircle}>
+        <Ionicons name={icon} size={26} color="#FFFFFF" />
+      </View>
+      {!!count && <Text style={localStyles.iconCount}>{count}</Text>}
+    </Pressable>
+  );
+}
+
+const localStyles = StyleSheet.create({
+  iconRail: {
+    position: 'absolute',
+    right: 10,
+    bottom: 90,
+    alignItems: 'center',
+    gap: 18,
+  },
+  iconButton: { alignItems: 'center', gap: 4 },
+  iconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCount: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
 });

@@ -1614,6 +1614,22 @@ class PaceAccessibilityService : AccessibilityService() {
    *   즉 사용자 활동으로 남는 건 "우리가 안 쐈는데 영상이 바뀐 경우" = 진짜 손가락 스와이프뿐이다.
    */
   private fun dispatchSwipe(path: Path, durationMs: Long = SWIPE_FLING_MS) {
+    // 🔴 2026-08-15 — 광고가 떠 있는 동안에는 **어떤 제스처도 쏘지 않는다.**
+    //   우리가 쏘는 스와이프는 화면 좌표에 그대로 꽂히므로, 전면 광고 위에 쏘면 그게 곧
+    //   **광고 오클릭**이다. AdMob은 이걸 무효 트래픽으로 보고 계정을 정지시킬 수 있다 —
+    //   기능 버그가 아니라 수익 계정이 날아가는 사고다.
+    //   자동넘김 경로(checkPlaybackAndMaybeSwipe)에는 2026-08-10에 adShowing 가드가 들어갔지만,
+    //   **손짓·블루투스 리모컨·볼륨키가 타는 triggerNext() 경로에는 없었다.** 그쪽은 지금까지
+    //   isSupportedAppWindowVisible()이 false가 되는 것에 **우연히** 기대고 있었을 뿐이다
+    //   (전면 광고가 뜨면 유튜브 창이 목록에서 사라지므로). 우연에 기대는 방어는 조건이 하나만
+    //   달라져도 무너진다 — 감시 대상 창이 남아 있는 조합(PIP 등)이면 그대로 광고 위에 쏜다.
+    //   → 제스처가 전부 지나는 이 한 곳에서 막는다. 자동넘김/손짓/리모컨/볼륨키/이어서재생 전부 커버.
+    //   무장(selfAdvanceArmedUntilMs)보다 **먼저** 반환한다 — 안 쏜 스와이프를 우리 것으로
+    //   표시해두면, 그 사이 사용자가 진짜로 넘긴 것을 self로 오인한다.
+    if (PaceRewardedAdActivity.adShowing) {
+      Log.w("PaceAccessibility", "제스처 취소 — 광고 표시 중(오클릭 방지)")
+      return
+    }
     selfAdvanceArmedUntilMs = SystemClock.elapsedRealtime() + SELF_ADVANCE_ATTRIBUTION_MS
     val gesture = GestureDescription.Builder()
       .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))

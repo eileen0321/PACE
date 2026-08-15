@@ -774,6 +774,16 @@ export default function PaceFeedScreen() {
       setStatus('PLAYING');
       return true;
     }
+    // 🔴 2026-08-15 사장님 실기기 지적("틱톡은 리모컨 -눌러도 이전 영상 안 감", "왜 자꾸 영상이
+    // 멈춰있는거야") — 로그로 확인: 리모컨 아래쪽을 12번 연속 눌러도 매번 여기가 조용히 true를
+    // 반환해 아무 반응이 없었다. TikTokShortsPlayer.previous()는 애초에 no-op이다(틱톡 알고리즘
+    // 피드는 "이전"에 대응하는 방법이 없어 구현 자체가 불가능 — 컴포넌트 주석 참고). 그동안은
+    // 실패를 조용히 삼켜서 "눌러도 반응 없음=멈춘 것처럼 보임"이었다 — 최소한 눌렀다는 걸 알게
+    // 토스트로 알려준다(유튜브는 기존 그대로 무반응/토스트 없음, 실제로 동작하니까).
+    if (platform === 'tiktok') {
+      useToastStore.getState().show(t('feed.tiktokNoPrevious'));
+      return false;
+    }
     if (SWIPE_NAV) { playerRef.current?.previous(); setStatus('PLAYING'); return true; }
     const moved = goToPrevious();
     if (moved) setStatus('PLAYING');

@@ -436,6 +436,13 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 적용)에 transform을 건다.
       target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
+      // 🔴 사장님 지적("하단 자막 잘려보이는데") — 확인해보니 잘린 게 아니라 **인접(다음) 피드
+      // 아이템의 내용이 비쳐 보이는 것**이었다. transform은 레이아웃 공간(그 다음 형제가 차지하는
+      // 자리)을 안 바꾸고 시각적으로만 그 밖까지 그리는데, 스택 순서(z-index)가 없어 문서 순서상
+      // 나중에 오는(아래에 있는) 다음 피드 아이템이 그 위에 그려져 겹치는 부분에서 다음 아이템
+      // 내용이 비쳐 보였다. 확대된 영상을 항상 위로 그리도록 강제.
+      target.style.setProperty('position', 'relative', 'important');
+      target.style.setProperty('z-index', '999', 'important');
     } catch(eIconScale) {}
   }
   hideIconRailAndScaleVideo();

@@ -484,6 +484,7 @@ export const translations = {
     feed: {
       scrapeFallbackBanner: 'Scraping mode · set EXPO_PUBLIC_YOUTUBE_API_KEY for Data API',
       focusSessionAutoEndedToast: '⏱ Focus Session ended ({{n}} min elapsed)',
+      tiktokNoPrevious: "TikTok doesn't support going back to the previous video",
       focusSessionStartedToast: '▶️ Focus Session started · advancing for {{n}} min',
       focusSessionStartedNoGestureToast: '▶️ Focus Session started · advancing for {{n}} min — turn on hand gesture in the Focus tab',
       focusSessionEndedToast: '⏹ Focus Session ended',
@@ -979,6 +980,7 @@ export const translations = {
     feed: {
       scrapeFallbackBanner: '스크래핑 모드 · EXPO_PUBLIC_YOUTUBE_API_KEY 설정 시 Data API',
       focusSessionAutoEndedToast: '⏱ Focus Session 종료 ({{n}}분 경과)',
+      tiktokNoPrevious: 'TikTok은 이전 영상으로 돌아갈 수 없어요',
       focusSessionStartedToast: '▶️ Focus Session 시작 · {{n}}분간 진행',
       focusSessionStartedNoGestureToast: '▶️ Focus Session 시작 · {{n}}분간 진행 — 손짓은 Focus 탭에서 켤 수 있어요',
       focusSessionEndedToast: '⏹ Focus Session 종료',

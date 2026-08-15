@@ -104,6 +104,11 @@ export default function HomeScreen() {
   // 소멸)로만 알렸는데, 사용자가 놓치면 다시 확인할 방법이 없었다("바로 사라져서 클릭도 확인도 못
   // 함") — 출석 보상(DailyCheckInModal)과 동일하게 사용자가 직접 닫아야 사라지는 모달로 바꾼다.
   const [insightGiftEarned, setInsightGiftEarned] = useState<number | null>(null);
+  // 🔴 2026-08-15 — 오늘 배너에 선물이 걸려 있는가. true면 배너에 🎁가 붙고 자동으로 안 사라진다.
+  const [giftAvailable, setGiftAvailable] = useState(false);
+  // 하루 단위 당첨 확률. 예전 "탭할 때마다 30%"를 날짜 단위로 옮긴 값 — 기대 빈도는 비슷하되
+  // 상자가 보이는 날은 반드시 당첨이라 "열었는데 꽝"이 없다.
+  const GIFT_DAY_CHANCE = 0.3;
   const [pendingPlatform, setPendingPlatform] = useState<AppShieldTarget | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<AppShieldTarget | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
@@ -233,13 +238,37 @@ export default function HomeScreen() {
   // 2026-08-07 사용자 지적("닫아도 다른 메뉴 갔다 오면 계속 떠") — 오늘 이미 X(또는 선물상자 탭)로
   // 닫았으면, 같은 날 안에는 아래 두 트리거(포그라운드 복귀/탭 재포커스) 어느 쪽이 다시 불러도 배너를
   // 채우지 않는다. STORAGE_KEYS.insightDismissedDate 참고.
+  /**
+   * 오늘 선물이 있는가. 이미 받았으면 false, 오늘 뽑은 결과가 있으면 그걸 그대로 쓴다.
+   * 확률은 예전 "탭할 때마다 30%"를 **날짜 단위 30%**로 옮긴 것이다 — 기대 빈도는 비슷하되,
+   * 상자가 보이는 날은 반드시 당첨이라 "열었는데 비어 있음"이 없어진다.
+   */
+  const resolveTodaysGift = useCallback(async (todayStr: string): Promise<boolean> => {
+    try {
+      const claimed = await AsyncStorage.getItem(STORAGE_KEYS.insightGiftClaimedDate);
+      if (claimed === todayStr) return false;
+      const offered = await AsyncStorage.getItem(STORAGE_KEYS.insightGiftOfferedDate);
+      const [offeredDate, verdict] = (offered ?? '').split(':');
+      if (offeredDate === todayStr) return verdict === 'yes';
+      const won = Math.random() < GIFT_DAY_CHANCE;
+      await AsyncStorage.setItem(STORAGE_KEYS.insightGiftOfferedDate, `${todayStr}:${won ? 'yes' : 'no'}`);
+      return won;
+    } catch {
+      return false; // 부가 기능 — 실패하면 조용히 없는 날로 둔다
+    }
+  }, []);
+
   const maybeSetTodaysInsight = useCallback(async (uid: string) => {
     const todayStr = toLocalDateStr(new Date());
     const dismissedDate = await AsyncStorage.getItem(STORAGE_KEYS.insightDismissedDate).catch(() => null);
     if (dismissedDate === todayStr) return;
     const message = await getTodaysInsightMessage(uid).catch(() => null);
-    if (message) setTodaysInsight(message);
-  }, []);
+    if (!message) return;
+    // 🔴 2026-08-15 — 오늘이 "선물 있는 날"인지 하루에 딱 한 번 뽑아 고정한다. 화면을 다시 열
+    // 때마다 다시 뽑으면 결국 무한 재시도가 되어 파밍 방지 취지가 사라진다.
+    setGiftAvailable(await resolveTodaysGift(todayStr));
+    setTodaysInsight(message);
+  }, [resolveTodaysGift]);
 
   const backgroundedAtRef = useRef<number | null>(null);
   useEffect(() => {
@@ -319,11 +348,14 @@ export default function HomeScreen() {
   const onTapInsightGift = useCallback(async () => {
     const todayStr = toLocalDateStr(new Date());
     try {
-      const claimed = await AsyncStorage.getItem(STORAGE_KEYS.insightGiftClaimedDate);
-      if (claimed !== todayStr && Math.random() < 0.3) {
+      // 🔴 2026-08-15 — 당첨 판정은 여기서 하지 않는다. "오늘이 선물 있는 날인가"는 배너를 띄울 때
+      // 이미 정해졌고(resolveTodaysGift), 🎁가 보였다면 **반드시 준다.** 보이는 상자를 열었는데
+      // 비어 있는 경우를 없애는 것이 이번 수정의 핵심이다.
+      if (giftAvailable) {
         const bonus = Math.random() < 0.5 ? 5 : 10;
         await addBonusMinutes(bonus);
         await AsyncStorage.setItem(STORAGE_KEYS.insightGiftClaimedDate, todayStr);
+        setGiftAvailable(false);
         // 2026-08-07 사용자 지적("박스가 나왔다 바로 사라져서 클릭도 확인도 못 함") — 토스트는 몇 초면
         // 스스로 사라져서 놓치면 끝이었다. 출석 보상(DailyCheckInModal)과 동일하게, 사용자가 직접
         // 닫기 전까지 사라지지 않는 모달로 보여준다(아래 렌더 블록 참고).
@@ -337,7 +369,7 @@ export default function HomeScreen() {
     // 있었다(파밍 방지 취지 자체가 무력화됨) — 위 STORAGE_KEYS.insightDismissedDate 주석 참고.
     await AsyncStorage.setItem(STORAGE_KEYS.insightDismissedDate, todayStr).catch(() => {});
     setTodaysInsight(null);
-  }, [addBonusMinutes]);
+  }, [addBonusMinutes, giftAvailable]);
 
   // 🔴 2026-08-08 사장님 지시 — 홈 배너를 알림처럼 "떴다가 스스로 사라지게".
   //   예전엔 사용자가 ✕나 배너를 누를 때까지 **화면을 계속 차지**했다.
@@ -347,16 +379,19 @@ export default function HomeScreen() {
   //     돌아올 때마다 배너가 다시 떠서 선물 확률을 무제한 재시도할 수 있다(2026-08-07에 그 파밍
   //     구멍을 막으려고 넣은 기록이다 — 자동 해제만 예외로 두면 그 구멍이 그대로 다시 열린다).
   //     대신 보상 판정(onTapInsightGift)은 타지 않는다 — 사용자가 안 눌렀으니 당첨도 없다.
+  //   🔴 2026-08-15 — **선물이 걸린 날은 자동으로 안 사라진다.** 여기가 사장님이 선물상자를 한 번도
+  //     못 본 진짜 원인이었다: 7초 뒤 자동 해제되면서 insightDismissedDate까지 기록해버려, 그날은
+  //     다시 뜨지도 않고 당첨 판정도 못 탄 채 끝났다. 선물이 없는 날은 예전대로 7초 뒤 사라진다.
   const AUTO_DISMISS_MS = 7000;
   useEffect(() => {
-    if (!todaysInsight) return;
+    if (!todaysInsight || giftAvailable) return;
     const timer = setTimeout(() => {
       const todayStr = toLocalDateStr(new Date());
       AsyncStorage.setItem(STORAGE_KEYS.insightDismissedDate, todayStr).catch(() => {});
       setTodaysInsight(null); // Animated.View의 exiting(FadeOut 800ms)이 부드럽게 지운다
     }, AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [todaysInsight]);
+  }, [todaysInsight, giftAvailable]);
 
   // 2026-07-19: Bluetooth Hands-Free 최초 1회 안내 — 첫 플랫폼 카드 탭에서 세션 시작 전에 가로챈다.
   // 이미 본 적 있으면(STORAGE_KEYS.bluetoothOnboardingSeen) 그냥 바로 세션 시작.
@@ -711,11 +746,18 @@ export default function HomeScreen() {
               {/* 2026-07-28 사장님 지시("아이콘 촌스럽잖아, 원에 PACE 아이콘 넣던가") — 작은 크기로
                   회전된 폰 사진은 지저분해 보여서, 브랜드 색 원형 배지 + P 모노그램으로 교체.
                   2026-07-29 — 이 박스 자체가 "선물상자"라 탭하면 가끔 보너스 크레딧이 나온다. */}
-              <View style={styles.sleepInsightBadge}>
-                <Text style={styles.sleepInsightBadgeText}>P</Text>
+              {/* 🔴 2026-08-15 — 선물이 걸린 날은 P 모노그램 대신 🎁를 띄운다. 예전엔 "이 배너가
+                  사실 선물상자"라는 걸 알려주는 표시가 화면에 **하나도 없었다** — 사장님이 한 번도
+                  못 본 게 당연하다. 선물이 없는 날은 기존 배지 그대로라 평소 화면은 안 바뀐다. */}
+              <View style={[styles.sleepInsightBadge, giftAvailable && styles.sleepInsightBadgeGift]}>
+                <Text style={styles.sleepInsightBadgeText}>{giftAvailable ? '🎁' : 'P'}</Text>
               </View>
               <Text style={styles.sleepInsightText}>{todaysInsight}</Text>
-              <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
+              {/* 선물이 걸린 날엔 ✕를 숨긴다 — 닫기 버튼을 잘못 눌러 그날 선물을 날리는 일이 없게.
+                  배너 아무 데나 누르면 선물을 받고 함께 닫힌다. */}
+              {!giftAvailable && (
+                <Text style={styles.sleepInsightDismiss} onPress={onTapInsightGift}>✕</Text>
+              )}
             </Pressable>
           </Animated.View>
         </View>
@@ -821,6 +863,9 @@ const styles = StyleSheet.create({
   // 톤과 구분되게 경고색(amber)으로 눈에 띄게 한다.
   accessibilityBanner: { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: 'rgba(245,158,11,0.3)' },
   accessibilityBadge: { backgroundColor: colors.warning },
+  // 🔴 2026-08-15 — 선물이 걸린 날의 배지. 이모지는 그 자체로 색이 있어 보라색 원 위에 얹으면
+  // 탁해 보이므로, 배경을 투명하게 비우고 이모지만 보이게 한다.
+  sleepInsightBadgeGift: { backgroundColor: 'transparent' },
   sleepInsightBadgeText: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF' },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
   sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },

@@ -328,6 +328,7 @@ const INJECTED_JS_BEFORE_LOAD = `
         return;
       }
       var vh = window.innerHeight || 0;
+      var vw = window.innerWidth || 0;
       if (!vh) return;
       // 🔴 11차(3차) — document.querySelector('video')와 기존 getActiveVideo()(.swiper-slide-active
       // 기준) 둘 다 틀렸다: /foryou는 swiper를 안 써서 getActiveVideo()도 결국 querySelector('video')로
@@ -400,6 +401,14 @@ const INJECTED_JS_BEFORE_LOAD = `
       if (!r.height || r.height >= vh - 1) return;
       var scale = vh / r.height;
       if (scale <= 1.01 || scale > 2.2) return;
+      // 🔴 사장님 실기기 지적("위아래 화면이 짤리고") — 실측으로 원인 확정: 모든 영상이 9:16이라고
+      // 가정하고 높이 기준으로만 균일(scale())하게 키웠는데, 이 영상은 SECTION의 aspect-ratio가
+      // 3:4(0.75)였다 — 높이를 793(뷰포트)까지 키우니 균일 스케일 때문에 폭이 595까지 같이
+      // 늘어나(뷰포트 393보다 훨씬 넓음) 화면 밖으로 크게 밀려나며 보이는 부분이 이상하게
+      // 잘렸다. 폭 기준으로 계산한 배율(vw/r.width)과 비교해 너무 차이나면(원본 비율이 9:16과
+      // 크게 다른 영상) 안전하게 스킵 — 레터박싱된 원래 모습이 찌그러진 크롭보다 낫다.
+      var scaleForWidth = r.width ? vw / r.width : scale;
+      if (scale / scaleForWidth > 1.25) return;
       target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
     } catch(eIconScale) {}

@@ -205,13 +205,31 @@ const INJECTED_JS_BEFORE_LOAD = `
       }
       // 2026-08-13(19차) 실기기 로그로 확정 — 이 셀렉터도 isVisible 체크가 없어서 화면에 안 보이는
       // 뭔가를 3초마다 계속 클릭만 하고 있었다(진짜 로그인 모달은 안 닫힘). 전부에 가시성 체크.
+      // 🔴 2026-08-15 사장님 실기기 재현("검색하고 영상 고르면 잠깐 보였다 꺼짐") — 실기기 로그로
+      // 확정: 검색결과에서 영상을 열면(URL은 /video/...로 바뀌지만 검색 패널 DOM은 안 없어짐) 그
+      // 검색 패널 소속 "닫기" 버튼이 이 aria-label 셀렉터에 걸려서 하우스키핑이 **우리가 방금 연
+      // 영상을 스스로 닫아버렸다**(클릭→그 직후 검색화면으로 돌아간 게 "잠깐 보였다 꺼짐").
+      // 1차 시도(현재 URL에 /search 포함 여부로 판단)는 실패 확정 — URL이 이미 /video/...로 바뀐
+      // 뒤였다. 대신 후보 자신의 조상 DOM 클래스명에 "search"가 있는지로 직접 걸러낸다(실측 로그로
+      // 확정된 진짜 신호 — ancestors=...DivSearch...). 검색 패널 소속이 아닌 진짜 앱설치 배너의
+      // 닫기 버튼은 이 필터에 안 걸린다.
       var closeCandidates = document.querySelectorAll('[aria-label="Close"], [aria-label="닫기"], [aria-label="close"], [aria-label*="skip" i], [aria-label*="건너뛰기"]');
       for (var ci = 0; ci < closeCandidates.length; ci++) {
-        if (isVisible(closeCandidates[ci])) {
-          closeCandidates[ci].click();
-          send({ type: 'domlog', text: '배너닫음(aria-label): ' + (closeCandidates[ci].getAttribute('aria-label') || '') });
-          return true;
+        var cand = closeCandidates[ci];
+        if (!isVisible(cand)) continue;
+        var isSearchUiChrome = false;
+        var ancFilter = cand;
+        for (var af = 0; af < 8 && ancFilter; af++) {
+          if (/search/i.test(String(ancFilter.className || ''))) { isSearchUiChrome = true; break; }
+          ancFilter = ancFilter.parentElement;
         }
+        if (isSearchUiChrome) {
+          send({ type: 'domlog', text: '배너닫음(aria-label) 건너뜀(검색패널 소속): ' + (cand.getAttribute('aria-label') || '') });
+          continue;
+        }
+        cand.click();
+        send({ type: 'domlog', text: '배너닫음(aria-label): ' + (cand.getAttribute('aria-label') || '') });
+        return true;
       }
       var bodyText = document.body.innerText || '';
       if (bodyText.indexOf('무엇을 시청하고') !== -1 || bodyText.indexOf('what you') !== -1 || bodyText.indexOf('관심사') !== -1) {
@@ -782,6 +800,28 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         ? `https://www.tiktok.com/search?q=${encodeURIComponent(query.trim())}`
         : 'https://www.tiktok.com/foryou';
       webRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
+    },
+    // __DEV__ 전용 — sharedShortsPlayer.ts의 타입 주석 참고. 실제 손가락 탭과 똑같이 진짜 <a> 요소의
+    // .click()을 호출한다(합성 이벤트가 아니라 그 엘리먼트의 실제 클릭 핸들러 체인을 그대로 태움).
+    debugClickFirstSearchResult: () => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var links = document.querySelectorAll('a');
+          var found = null;
+          for (var i = 0; i < links.length; i++) {
+            var href = links[i].getAttribute('href') || '';
+            if (href.indexOf('/video/') !== -1) { found = links[i]; break; }
+          }
+          if (found) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭: ' + found.getAttribute('href') }));
+            found.click();
+          } else {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭: /video/ 링크 못 찾음, a태그 ' + links.length + '개' }));
+          }
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
     },
     // "현재 영상 즐겨찾기 추가"의 틱톡 버전 — WebView 안에서 지금 활성 video의 공유 permalink를
     // 찾아 돌려준다(shared/ShortsPlayerHandle에 선택 프로퍼티로 추가, YouTube는 큐의 current로

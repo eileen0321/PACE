@@ -261,8 +261,8 @@ const INJECTED_JS_BEFORE_LOAD = `
   // ARTICLE 자체는 420px 고정폭(뷰포트 393보다 넓음, 데스크톱 카드 고정값 추정)+16px 패딩, 그
   // 유일한 자식(DIV.ehcbpkw2, 영상+아이콘 레일)은 626px 높이로 부모의 가용 높이(761)보다 135px
   // 작다. ehcbpkw2에 인라인 style이 전혀 없어(getAttribute('style')==='') JS가 매 프레임
-  // 되돌리는 게 아니라 정적 CSS 규칙인데도, `[class*="ehcbpkw2"]{height:100%!important}` +
-  // `[class*="ehcbpkw0"]{width:100%!important}` 오버라이드가 실기기 재검증(수치 그대로, 420/626
+  // 되돌리는 게 아니라 정적 CSS 규칙인데도, [class*=ehcbpkw2]{height:100%!important} +
+  // [class*=ehcbpkw0]{width:100%!important} 오버라이드가 실기기 재검증(수치 그대로, 420/626
   // 불변)에서 전혀 안 먹힘 — 원인 미확정(다른 상위 stylesheet가 더 늦게 삽입되며 이기는 중이거나,
   // 실측한 클래스명이 실제 매칭 대상이 아니었을 가능성). 사이드바/그리드와 달리 여기는 반복
   // 실기기 재시작 자체가 매번 냉시작 무음 블립을 유발해 추가 진단을 이번 세션에서 보류 —

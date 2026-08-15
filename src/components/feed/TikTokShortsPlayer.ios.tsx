@@ -206,8 +206,7 @@ const INJECTED_JS_BEFORE_LOAD = `
   // ⚠️ /following 등 하위 화면(팔로우 추천 카드 그리드)이 좁은 화면 왼쪽 절반만 쓰고 나머지가
   // 까맣게 남는 별도 증상도 있다(실측 확인) — DivMainContainer/DivUserListWrapper에 width:100%를
   // 강제해봤지만 실기기/시뮬레이터 재검증 결과 효과 없었다(그리드 트랙이 고정 px로 박혀있을
-  // 가능성 — 더 깊은 조사 필요, 사이드바처럼 컨테이너 하나 숨기는 걸로 안 끝남). 사이드바 숨김
-  // (아래, 효과 확인됨)만 우선 반영하고 이건 다음 세션 과제로 남긴다.
+  // 가능성이 맞았다 — 진짜 원인·수정은 아래 fixNarrowCardGrid() 참고).
   // 🔴 2026-08-15(2차) — 위 클래스명 셀렉터(DivSideNavContainer)는 /foryou·/explore(같은 SPA
   // 라우트)에서만 통했다. /live로 들어가면 완전히 다른 클래스 체계(실측: tiktok-1w5o2is,
   // tiktok-13e8rmi, eyxny660 등 — 뒤에 안정적인 컴포넌트명이 안 붙는 순수 해시라 *= 매칭 자체가
@@ -236,6 +235,27 @@ const INJECTED_JS_BEFORE_LOAD = `
     } catch(eGeo) {}
   }
   hideLeftRailByGeometry();
+  // 🔴 2026-08-15(3차) — /following 카드 그리드가 왼쪽 절반만 쓰고 나머지가 까맣게 남는 문제,
+  // 실측(팔로우 버튼 조상 체인의 getComputedStyle 덤프)으로 원인 확정: 카드 리스트 컨테이너
+  // (MAIN 바로 아래 DIV.ey5qmgg0, 실측 w=420 — 뷰포트 402와 거의 같음, 즉 컨테이너 자체는 이미
+  // 전체 폭)의 직계 자식 카드(DIV.ey5qmgg1)가 데스크톱 그리드용 고정 픽셀 폭(실측 w=226)을 그대로
+  // 갖고 있다. 420px 컨테이너에 226px 카드는 1개만 들어가고 나머지 194px가 빈 채(까맣게) 남는다 —
+  // "그리드"가 아니라 flex-wrap이 1개씩만 줄바꿈한 것. 이전 시도(DivMainContainer/
+  // DivUserListWrapper에 width:100%)가 안 먹혔던 이유는 컨테이너가 아니라 **카드 자체의 고정폭**이
+  // 원인이었기 때문 — 컨테이너를 아무리 늘려도 카드가 226px를 고집하면 그대로다.
+  // 1차 시도: 클래스명 대신 기하학(형제 폭 동일 + 부모의 60%↑)으로 찾아 47% 강제 — 실기기/
+  // 시뮬레이터 재검증 결과 안 먹힘(스크린샷 동일) — 카드가 직계 자식이 아니라 한 단계 더 감싸는
+  // wrapper 뒤에 있어 조건에 안 걸린 것으로 추정, 되돌림. 2차(현재): 지금 실측으로 확인된 실제
+  // 클래스명(ey5qmgg0=행 컨테이너, ey5qmgg1=카드)을 직접 지정 — /live처럼 접미사 없는 순수 해시라
+  // 다음 틱톡 배포에서 바뀌면 깨질 수 있음(이미 DivSideNavContainer 등에서 감수 중인 것과 같은
+  // 트레이드오프). 행 컨테이너를 grid로 바꾸고 카드 폭을 auto로 풀어 그리드 트랙이 폭을 정하게 한다.
+  try {
+    var gridFixStyle = document.createElement('style');
+    gridFixStyle.textContent =
+      '[class*="ey5qmgg0"]{display:grid!important;grid-template-columns:repeat(2,1fr)!important;gap:8px!important}' +
+      '[class*="ey5qmgg1"]{width:auto!important;max-width:none!important}';
+    (document.head || document.documentElement).appendChild(gridFixStyle);
+  } catch(eGridFix) {}
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로

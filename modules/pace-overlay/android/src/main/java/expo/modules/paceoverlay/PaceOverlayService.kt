@@ -2586,7 +2586,11 @@ class PaceOverlayService : Service() {
           showAccessibilityRequiredOverlay()
           return@OnClickListener // 리스너를 필드로 뺐으므로 라벨이 setOnClickListener가 아니다
         }
+        // 🔴 2026-08-15 — 알약 배지 탭이 광고까지 가는 유일한 입구다. 여기 로그가 없으면 "왜 광고가
+        //   떴냐"에 영원히 답할 수 없다. 배지가 화면 최상단이라 의도치 않은 탭도 이 경로를 탄다.
+        Log.i("PaceOverlayService", "AD_TRIGGER 배지 탭 — autoNext=$autoNextEnabled pendingTimeout=${hasPendingFocusSessionTimeout(applicationContext)} premium=${isPremium(applicationContext)}")
         if (!autoNextEnabled && hasPendingFocusSessionTimeout(applicationContext) && !isPremium(applicationContext)) {
+          Log.i("PaceOverlayService", "AD_TRIGGER 연장 선택 카드 표시 — 여기서 사용자가 한 번 더 눌러야 광고가 뜬다")
           showExtendChoiceOverlay()
         } else {
           // autoNextEnabled 필드 갱신 + 배지 리프레시는 setAutoMode()가 모든 호출 경로에 대해
@@ -2944,6 +2948,12 @@ class PaceOverlayService : Service() {
         "#6C5CE7", Color.WHITE
       ) {
         hideExtendChoice()
+        // 🔴 2026-08-15 사장님 "왜 자꾸 광고로 가는데" — 그때 이 질문에 **로그로 답할 수가 없었다.**
+        //   광고가 뜬 경로를 남기는 곳이 한 군데도 없어서, 사용자가 눌렀는지 앱이 스스로 띄웠는지
+        //   구분이 안 됐다(코드를 읽어 "남은 경로가 이것뿐"이라고 추론할 수밖에 없었다).
+        //   출시 후 같은 신고가 오면 같은 상황이 반복된다 — 광고는 수익/정책이 걸린 영역이라
+        //   "왜 떴는지 모른다"는 상태로 내보내면 안 된다.
+        Log.i("PaceOverlayService", "AD_TRIGGER 광고 연장 버튼 탭 — 사용자가 직접 눌렀다(used=$adUsed/$MAX_AD_EXTENDS_PER_DAY)")
         // 🔴 2026-08-09 — 여기서 consumeFocusSessionTimedOut()을 부르면 **하루 3회 제한이 통째로
         //   무력화된다.** 배지 탭 게이트가 `hasPendingFocusSessionTimeout()`에 걸려 있는데, 광고를
         //   "시작"하는 것만으로 그 플래그를 소비하면 광고가 실패하거나 사용자가 중간에 닫아도

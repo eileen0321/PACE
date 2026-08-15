@@ -876,10 +876,22 @@ export default function PaceFeedScreen() {
     // 2026-08-01 — 손짓이 opt-in(기본 OFF)으로 바뀌면서, 세션을 켰는데 손짓이 꺼져있는 유저에게
     // Focus 탭에서 켤 수 있다고 짧게 안내(별도 푸시 알림 대신 기존 세션-시작 토스트에 얹는다).
     if (next) {
+      // 🔴 2026-08-15 사장님 실기기 지적("포커스 온 누르면 5분 주는데 왜 10분준다는 알림이 떠") —
+      // 이 토스트가 항상 설정값(focusSessionDurationMinutes)을 보여줬는데, 백그라운드로 나갔다가
+      // (endsAt은 안 지워짐, 위 AppState effect 참고) 돌아와서 다시 토글하면 아래 효과(519줄)가
+      // 남은 시간만큼만 "이어받는다" — 실제로는 5분 남았는데 토스트는 항상 설정값(10분)을 보여준
+      // 것. 2026-08-10에 종료 토스트(focusSessionAutoEndedToast)는 이미 같은 이유로 실제 남은
+      // 시간 기준으로 고쳤는데(durationMinutes), 시작 토스트는 그때 같이 안 고쳐져 있었다 — 같은
+      // 계산을 여기도 적용.
+      const existingEndsAt = useFocusSessionStore.getState().endsAt;
+      const displayMinutes =
+        existingEndsAt != null && existingEndsAt > Date.now()
+          ? Math.max(1, Math.ceil((existingEndsAt - Date.now()) / 60000))
+          : focusSessionDurationMinutes;
       useToastStore.getState().show(
         handsFreeGesture
-          ? t('feed.focusSessionStartedToast', { n: focusSessionDurationMinutes })
-          : t('feed.focusSessionStartedNoGestureToast', { n: focusSessionDurationMinutes })
+          ? t('feed.focusSessionStartedToast', { n: displayMinutes })
+          : t('feed.focusSessionStartedNoGestureToast', { n: displayMinutes })
       );
     } else {
       useToastStore.getState().show(t('feed.focusSessionEndedToast'));

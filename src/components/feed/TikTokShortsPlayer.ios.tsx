@@ -502,6 +502,16 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (!v) return;
     if (v !== pollLastVideo) { pollLastVideo = v; pollLastT = -1; }
     try { if (v.loop) v.loop = false; } catch(e) {}
+    // 2026-08-15 사장님 실기기 지적("틱톡 소리 안나다 한번씩 소리나던데 간헐적으로") — tryAdvance의
+    // "전환 확인 후 window.__paceMuted 적용"(위 452줄)만으론 안 됐다. 그 확인은 goToNext() 뒤
+    // 첫 폴링 틱(700ms)에야 도는데, 그 전에 새 video가 TikTok 자체 기본 상태(대개 muted=false)로
+    // 이미 재생을 시작해버리면 그 700ms(최악 재시도 누적 시 최대 4.2초) 동안 소리가 샌다 — 유튜브
+    // 스와이프 모드에 있던 "500ms 안전망"이 틱톡엔 없었다(이 폴링은 진행률/종료 감지만 했음). 이미
+    // 500ms마다 도는 이 함수에 강제도 얹어 새는 창을 최대 500ms로 좁힌다.
+    if (typeof window.__paceMuted === 'boolean' && v.muted !== window.__paceMuted) {
+      send({ type: 'domlog', text: '무음안전망(500ms): muted ' + v.muted + '→' + window.__paceMuted + '로 보정' });
+      v.muted = window.__paceMuted;
+    }
     if (v.readyState >= 2 && !v.__paceReadySent) { v.__paceReadySent = true; send({ type: 'ready' }); }
     if (!v.duration || isNaN(v.duration)) return;
     var t = v.currentTime;

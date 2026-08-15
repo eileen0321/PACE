@@ -163,13 +163,56 @@ const INJECTED_JS_BEFORE_LOAD = `
   try {
     var mo0 = new MutationObserver(function(){
       var list = document.querySelectorAll('video');
-      for (var i = 0; i < list.length; i++) ensureInline(list[i]);
+      for (var i = 0; i < list.length; i++) {
+        ensureInline(list[i]);
+        // 2026-08-15 사장님 실기기 재보고("전환될 때 소리 잠깐 남, 니가 고친 500ms 안전망도 아직
+        // 들림") — 폴링(500ms든 tryAdvance든)은 새 video가 이미 재생을 시작한 "뒤"에야 따라잡아
+        // 그 틈만큼 소리가 샌다. 이 MutationObserver는 새 <video> 요소가 DOM에 **삽입되는 그 순간**
+        // (재생 시작 전, playsinline 강제와 같은 타이밍)에 발화하므로, 여기서 무음을 걸면 TikTok
+        // 자신의 첫 play() 호출보다 항상 먼저 적용된다 — 폴링 지연 자체가 없어진다.
+        if (typeof window.__paceMuted === 'boolean') { try { list[i].muted = window.__paceMuted; } catch(e2) {} }
+      }
     });
     mo0.observe(document.documentElement || document, { childList: true, subtree: true });
+  } catch(e) {}
+  // 2026-08-15 — 위 MutationObserver는 "새로" 삽입되는 video만 잡는다. TikTok이 기존 <video>
+  // 요소를 재사용(같은 엘리먼트를 다음 슬라이드에 재활용)하면 삽입 이벤트가 없어 못 잡는다 — play
+  // 이벤트를 캡처 단계(capture: true, 버블링을 안 기다려 가장 먼저 실행)로 문서 전체에 걸어 두 번째
+  // 안전망을 둔다. 이것도 500ms 폴링보다 훨씬 빠르다(이벤트 자체가 발화 즉시 동기 실행).
+  try {
+    document.addEventListener('play', function(ev){
+      var t = ev.target;
+      if (t && t.tagName === 'VIDEO' && typeof window.__paceMuted === 'boolean' && t.muted !== window.__paceMuted) {
+        t.muted = window.__paceMuted;
+      }
+    }, true);
   } catch(e) {}
 
   function mainInit() {
   send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
+  // 🔴 2026-08-15 사장님 지적("사람아이콘 눌르면 팔로우 화면이 왜 짤려", "세로줄로 메뉴 뜨는거
+  // 맞아?") — 2026-08-12 QA_MATRIX에 이미 "알려진 부작용, 후속 작업"으로 기록돼 있던 항목이다:
+  // 자동넘김을 살리려고 의도적으로 데스크톱 UA를 쓰는데(위 userAgent prop 주석 참고 — 모바일 UA는
+  // 자동넘김이 1회 이동 후 영구 고착됐었다), 그 대가로 틱톡 데스크톱 UI(왼쪽 세로 사이드바 —
+  // 추천/탐색/팔로잉/라이브 등)가 그대로 딸려나와 좁은 화면에서 팔로우 같은 하위 페이지가 눌려
+  // 잘렸다. 실측(data-e2e 덤프)으로 확정한 컨테이너를 CSS로 숨긴다 — 유튜브 플레이어가 이미 하는
+  // 것과 같은 패턴(불필요 UI를 injected CSS로 제거). class 앞부분(css-xxxxxx)은 빌드마다 바뀌는
+  // 해시라 *= 부분일치로 뒤쪽 안정적인 컴포넌트명(DivHeaderContainer)만 잡는다.
+  // 실측(data-e2e="nav-following" 조상 체인, 2회 시도 끝에 확정)으로 찾은 진짜 사이드바 컨테이너들.
+  // DivSideNavContainer=보이는 아이콘 목록, DivSideNavPlaceholderContainer=레이아웃에서 그만큼
+  // 폭을 미리 비워두는 자리표시자 — 아이콘만 숨기고 이걸 안 숨기면 빈 공간만 남아 영상이 여전히
+  // 안 차므로 둘 다 숨긴다. 1차 시도(DivHeaderContainer, 로고 조상 기준)는 실기기 스크린샷으로
+  // 실패 확정됨(로고와 세로 아이콘 목록이 다른 하위트리였다) — 지금 건 실제로 확인된 값.
+  // ⚠️ /following 등 하위 화면(팔로우 추천 카드 그리드)이 좁은 화면 왼쪽 절반만 쓰고 나머지가
+  // 까맣게 남는 별도 증상도 있다(실측 확인) — DivMainContainer/DivUserListWrapper에 width:100%를
+  // 강제해봤지만 실기기/시뮬레이터 재검증 결과 효과 없었다(그리드 트랙이 고정 px로 박혀있을
+  // 가능성 — 더 깊은 조사 필요, 사이드바처럼 컨테이너 하나 숨기는 걸로 안 끝남). 사이드바 숨김
+  // (아래, 효과 확인됨)만 우선 반영하고 이건 다음 세션 과제로 남긴다.
+  try {
+    var hideStyle = document.createElement('style');
+    hideStyle.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
+    (document.head || document.documentElement).appendChild(hideStyle);
+  } catch(eHide) {}
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -831,6 +874,21 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         } catch(e) {
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
+    },
+    debugClickByDataE2E: (name) => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var el = document.querySelector('[data-e2e="${name}"]');
+          if (el) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}): 찾음, href=' + (el.getAttribute('href')||'') }));
+            el.click();
+          } else {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}): 못 찾음' }));
+          }
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}) 실패: ' + e.message }));
         }
       })(); true;`);
     },

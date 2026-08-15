@@ -22,6 +22,10 @@ export type ShortsPlayerHandle = {
    *  안 돼서(터치 주입 도구 없음), 검색결과 그리드에서 실제 영상 링크(href에 /video/ 포함)를 찾아
    *  프로그램적으로 .click()한다 — 실제 탭과 동일한 DOM 이벤트를 발생시켜 재현용으로 충분하다. */
   debugClickFirstSearchResult?: () => void;
+  /** 2026-08-15 — __DEV__ 전용, 틱톡 전용. 사이드바 CSS 숨김 이후 다른 메뉴(검색/프로필 등)도
+   *  제대로 나오는지 실기기 탭 없이 확인하기 위한 범용 진단 클릭 — data-e2e 값으로 요소를 찾아
+   *  .click()한다(찾은 요소가 없으면 domlog로 실패를 보고, 그냥 조용히 넘어가지 않는다). */
+  debugClickByDataE2E?: (name: string) => void;
 };
 
 // http(s)만 허용 → 앱 딥링크(youtube://, tiktok://)/앱스토어(itms-apps://) 등 "앱에서 열기"

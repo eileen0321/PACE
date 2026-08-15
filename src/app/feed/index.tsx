@@ -123,7 +123,7 @@ export default function PaceFeedScreen() {
   // (딥링크 등)는 전부 지금까지의 동작(YouTube)을 그대로 유지해야 하므로 기본값은 'youtube'.
   // 틱톡은 큐레이션(비디오 큐/HOT/검색/즐겨찾기)이 없어 이 화면의 YouTube 전용 로직 대부분이
   // 적용 안 되고, 재생만 TikTokShortsPlayer로 바뀐다 — 아래 각 지점에서 platform으로 분기.
-  const { platform: platformParam, debugAction } = useLocalSearchParams<{ platform?: string; debugAction?: string }>();
+  const { platform: platformParam, debugAction, debugE2E } = useLocalSearchParams<{ platform?: string; debugAction?: string; debugE2E?: string }>();
   const platform: 'youtube' | 'tiktok' = platformParam === 'tiktok' ? 'tiktok' : 'youtube';
   // fullScreenModal 프레젠테이션에선 SafeAreaView의 top edge가 0으로 잡혀 상단바가 시스템 상태바와
   // 겹친다(overlay/index.tsx와 동일 이슈) → useSafeAreaInsets로 명시 보정, 0이면 47로 폴백.
@@ -655,6 +655,16 @@ export default function PaceFeedScreen() {
     return () => { clearTimeout(t1); clearTimeout(t2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=clickE2E&debugE2E=nav-search. 2026-08-15
+  // 사장님 지시("각 메뉴들 눌러봤어? 제대로 나오는거 맞아?") — 사이드바 CSS 숨김 이후 다른 메뉴도
+  // 정상 렌더되는지 실기기 탭 없이 하나씩 확인한다.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'clickE2E' || !debugE2E) return;
+    const timer = setTimeout(() => { playerRef.current?.debugClickByDataE2E?.(debugE2E); }, 8000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction, debugE2E]);
 
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testPrev. 2026-08-15 사장님 지시("니가
   // 테스트를 전체 다 해야 할거 아냐") — 실기기 리모컨 물리 입력 없이 goPrev()를 직접 호출해 TikTok

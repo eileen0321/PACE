@@ -203,6 +203,11 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 폭을 미리 비워두는 자리표시자 — 아이콘만 숨기고 이걸 안 숨기면 빈 공간만 남아 영상이 여전히
   // 안 차므로 둘 다 숨긴다. 1차 시도(DivHeaderContainer, 로고 조상 기준)는 실기기 스크린샷으로
   // 실패 확정됨(로고와 세로 아이콘 목록이 다른 하위트리였다) — 지금 건 실제로 확인된 값.
+  // ⚠️ /following 등 하위 화면(팔로우 추천 카드 그리드)이 좁은 화면 왼쪽 절반만 쓰고 나머지가
+  // 까맣게 남는 별도 증상도 있다(실측 확인) — DivMainContainer/DivUserListWrapper에 width:100%를
+  // 강제해봤지만 실기기/시뮬레이터 재검증 결과 효과 없었다(그리드 트랙이 고정 px로 박혀있을
+  // 가능성 — 더 깊은 조사 필요, 사이드바처럼 컨테이너 하나 숨기는 걸로 안 끝남). 사이드바 숨김
+  // (아래, 효과 확인됨)만 우선 반영하고 이건 다음 세션 과제로 남긴다.
   try {
     var hideStyle = document.createElement('style');
     hideStyle.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
@@ -869,6 +874,21 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         } catch(e) {
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
+    },
+    debugClickByDataE2E: (name) => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var el = document.querySelector('[data-e2e="${name}"]');
+          if (el) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}): 찾음, href=' + (el.getAttribute('href')||'') }));
+            el.click();
+          } else {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}): 못 찾음' }));
+          }
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭(e2e=${name}) 실패: ' + e.message }));
         }
       })(); true;`);
     },

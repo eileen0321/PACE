@@ -90,18 +90,34 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 같은 동기 실행 안에서 끝남) 셀렉터가 안 맞게 돼 자동으로 보인다 — "작다가 커짐" 대신 "잠깐
   // 안 보이다가(배경은 이미 검은색) 바로 완성된 크기로 나타남"으로 바뀐다. 이 규칙은 DOMContentLoaded
   // 이전(BeforeContentLoaded, 가장 이른 시점)에 심어야 어떤 영상이 처음 나타나든 놓치는 창이 없다.
-  try {
-    var earlyHideStyle = document.createElement('style');
-    // target(video의 SECTION 조상)이 아니라 video 자체의 속성을 기준으로 삼는다 — 8단계 walk-up이
-    // 혹시라도 진짜 SECTION을 못 찾고 target=v로 폴백되는 경우에도(드묾) 안전하게 항상 맞물리도록.
-    // ⚠️ [data-e2e="recommend-list-item-container"]로 반드시 범위를 좁힌다 — hideIconRailAndScaleVideo
-    // 자체가 /foryou에서만 판단(decided 속성)을 찍는다. 범위를 안 좁히면 /explore·/live 등 다른
-    // 라우트의 video-in-section(썸네일, 라이브 등)까지 이 규칙에 걸려 "판단이 영영 안 와서 영원히
-    // 안 보이는" 별개의 심각한 회귀를 낸다 — recommend-list-item-container는 /foryou 피드 아이템에만
-    // 쓰이는(이 파일의 다른 곳에서도 이미 같은 값으로 활용 중인) 실측된 안정적 셀렉터.
-    earlyHideStyle.textContent = '[data-e2e="recommend-list-item-container"] section:has(video:not([data-pace-fs-decided])){visibility:hidden!important}';
-    (document.head || document.documentElement).appendChild(earlyHideStyle);
-  } catch(eEarlyHide) {}
+  // 🔴 2026-08-16(재확인, 실기기 진단 로그로 원인 확정) — CSS(:has(video:not(...))) 방식도,
+  // MutationObserver(addedNodes 감지) 방식도 실기기에서 똑같이 안 먹혔다. 진단 로그(👁️공개
+  // priorVis=)로 실측 확정: willFullscreen=true로 풀스크린 전환되는 케이스는 매번 priorVis가
+  // 빈 문자열(= 한 번도 숨겨진 적 없음)이었다 — 반면 스킵 케이스는 priorVis=hidden으로 정상
+  // 작동했다. 결론: **틱톡이 다음 영상 SECTION을 스와이프 전에 미리(preload) DOM에 만들어
+  // 둔다** — 그래서 "새로 삽입되는 순간"을 잡는 MutationObserver의 addedNodes에는 아예 안
+  // 걸린다(이미 그 전에 삽입돼 있었으므로). CSS :has()도 재검토 결과 같은 근본 문제였을 가능성.
+  // **해결: 삽입 이벤트를 기다리지 않고, 주기적으로(pollActiveVideo, 500ms) DOM 전체를 훑어
+  // "아직 판단 안 된" video를 능동적으로 찾아 숨긴다** — preload 시점이 스와이프보다 항상
+  // 충분히 이르므로(최소 몇 초 전) 500ms 스윕이면 실제 스와이프가 오기 전에 이미 숨겨져 있다.
+  function sweepHideUndecided(){
+    try {
+      var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+      for (var ci3 = 0; ci3 < containers3.length; ci3++) {
+        var vids3 = containers3[ci3].querySelectorAll('video');
+        for (var vi3 = 0; vi3 < vids3.length; vi3++) {
+          var vid3 = vids3[vi3];
+          if (vid3.getAttribute('data-pace-fs-decided')) continue;
+          var sec3 = vid3, sg3 = 0;
+          while (sec3 && sec3.tagName !== 'SECTION' && sg3 < 8) { sec3 = sec3.parentElement; sg3++; }
+          if (sec3 && sec3.style.getPropertyValue('visibility') !== 'hidden') {
+            sec3.style.setProperty('visibility', 'hidden', 'important');
+          }
+        }
+      }
+    } catch(eSweep) {}
+  }
+  sweepHideUndecided();
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -433,10 +449,16 @@ const INJECTED_JS_BEFORE_LOAD = `
         requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
       }
       target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
-      // video 자체에도 같은 값을 찍는다 — 위 BeforeContentLoaded에서 심은 CSS
-      // (section:has(video:not([data-pace-fs-decided]))이 visibility:hidden)가 이 순간(스케일까지
-      // 같은 동기 실행 안에서 끝난 뒤) 풀려 처음으로 화면에 그려지게 하는 진짜 트리거.
+      // video 자체에도 같은 값을 찍는다 — 위 BeforeContentLoaded의 MutationObserver가 이 속성이
+      // 없는 동안만 SECTION에 인라인 visibility:hidden을 걸어둔다. 이 순간(스케일까지 같은 동기
+      // 실행 안에서 끝난 뒤) 그 인라인 값을 직접 지워야 실제로 화면에 처음 그려진다 — 속성만 찍는
+      // 걸로는 안 풀림(CSS 셀렉터가 아니라 인라인 스타일이라 자동으로 안 없어짐).
       v.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      // 🔴 임시 진단 — removeProperty 직전 실제 값이 'hidden'이었는지를 남긴다. 옵저버가 로그를
+      // 찍었는데도 여기서 'hidden'이 아니면, 그 사이 뭔가(틱톡 자체 스크립트 등)가 우리보다 늦게
+      // visibility를 다시 건드렸다는 뜻 — 다음 조치를 가르는 핵심 단서.
+      send({ type: 'domlog', text: '👁️공개 will=' + willFullscreen + ' priorVis=' + target.style.getPropertyValue('visibility') });
+      target.style.removeProperty('visibility');
       if (!willFullscreen) {
         if (window.__paceLastIconState !== null) {
           window.__paceLastIconState = null;
@@ -876,6 +898,9 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 직접 종료를 감지한다(YouTubeShortsPlayer.ios.tsx와 동일 패턴).
   var pollLastT = -1, pollLastVideo = null;
   function pollActiveVideo(){
+    // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
+    // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.
+    sweepHideUndecided();
     var v = getActiveVideo();
     if (!v) return;
     if (v !== pollLastVideo) {

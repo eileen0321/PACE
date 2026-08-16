@@ -876,12 +876,14 @@ const styles = StyleSheet.create({
   sleepInsightBadgeText: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF' },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
   sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, marginTop: spacing.lg, marginBottom: 12 },
+  // 🔴 2026-08-16 사장님 지적("상용앱과 비교해봐") — 웹서치로 확인: Apple 공식 iOS 가이드라인 기준
+  // iPhone 표준 좌우 여백은 16px(24px는 iPad 표준). AppHeader와 함께 24→16으로 맞춤.
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginTop: spacing.lg, marginBottom: 12 },
   // 2026-07-27 사용자 지적 — Settings의 섹션 라벨(sectionLabel)은 12px인데 이건 10px로 남아있어서
   // 화면마다 라벨 크기가 달랐다(공용 스타일이 아니라 화면별 로컬 StyleSheet라 이렇게 드리프트됨).
   sectionTitle: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1.5, textTransform: 'uppercase' },
-  quickControlsTitle: { paddingHorizontal: 24, marginTop: spacing.lg, marginBottom: 10 },
+  quickControlsTitle: { paddingHorizontal: 16, marginTop: spacing.lg, marginBottom: 10 },
   tapBadge: { backgroundColor: `${colors.primary}1A`, borderWidth: 1, borderColor: `${colors.primary}33`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   tapBadgeText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5, textTransform: 'uppercase' },
-  platformStack: { paddingHorizontal: 24, gap: 12 },
+  platformStack: { paddingHorizontal: 16, gap: 12 },
 });

@@ -80,6 +80,28 @@ const INJECTED_JS_BEFORE_LOAD = `
   // DOMContentLoaded(HTML 파싱 완료 시점 — 훨씬 이르고, 네트워크가 유휴 상태가 되길 기다리지
   // 않음) 시점에 실행한다. injectedJavaScript prop 자체는 이제 안 쓴다(중복 초기화 방지).
   send({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() });
+  // 🔴 사장님 실기기 지적("스와이프 하면 화면이 작게 보였다 커져") — pollActiveVideo(500ms 폴링)로
+  // "영상 바뀜"을 감지해 즉시 판단을 돌리게 고쳤지만(3000ms→최대 500ms), 그 사이 창은 여전히 남는다:
+  // 틱톡 자체 스크롤 스냅이 새 영상을 원래(레터박싱) 크기로 이미 화면에 그려버린 뒤에야 우리 폴링이
+  // 따라잡아 스케일을 건다 — 그 gap 동안 "작았다가 커지는" 게 실제로 보인다. 폴링 주기를 아무리
+  // 줄여도(끝까지 0으로 못 줄임) 이 경쟁 자체는 없어지지 않는다. **판단 전엔 아예 안 보이게** 근본
+  // 해결: data-pace-fs-decided가 아직 없는(우리가 아직 못 본) video-SECTION은 CSS로 기본
+  // visibility:hidden 처리해두고, hideIconRailAndScaleVideo가 그 속성을 찍는 순간(스케일 적용까지
+  // 같은 동기 실행 안에서 끝남) 셀렉터가 안 맞게 돼 자동으로 보인다 — "작다가 커짐" 대신 "잠깐
+  // 안 보이다가(배경은 이미 검은색) 바로 완성된 크기로 나타남"으로 바뀐다. 이 규칙은 DOMContentLoaded
+  // 이전(BeforeContentLoaded, 가장 이른 시점)에 심어야 어떤 영상이 처음 나타나든 놓치는 창이 없다.
+  try {
+    var earlyHideStyle = document.createElement('style');
+    // target(video의 SECTION 조상)이 아니라 video 자체의 속성을 기준으로 삼는다 — 8단계 walk-up이
+    // 혹시라도 진짜 SECTION을 못 찾고 target=v로 폴백되는 경우에도(드묾) 안전하게 항상 맞물리도록.
+    // ⚠️ [data-e2e="recommend-list-item-container"]로 반드시 범위를 좁힌다 — hideIconRailAndScaleVideo
+    // 자체가 /foryou에서만 판단(decided 속성)을 찍는다. 범위를 안 좁히면 /explore·/live 등 다른
+    // 라우트의 video-in-section(썸네일, 라이브 등)까지 이 규칙에 걸려 "판단이 영영 안 와서 영원히
+    // 안 보이는" 별개의 심각한 회귀를 낸다 — recommend-list-item-container는 /foryou 피드 아이템에만
+    // 쓰이는(이 파일의 다른 곳에서도 이미 같은 값으로 활용 중인) 실측된 안정적 셀렉터.
+    earlyHideStyle.textContent = '[data-e2e="recommend-list-item-container"] section:has(video:not([data-pace-fs-decided])){visibility:hidden!important}';
+    (document.head || document.documentElement).appendChild(earlyHideStyle);
+  } catch(eEarlyHide) {}
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -316,6 +338,17 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 그 자체로 레이아웃 크기에 영향 없음 — width/height와 달리 스크롤 스냅 계산과 무관해 안전).
   function hideIconRailAndScaleVideo(){
     try {
+      // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가 있고") — 이 함수의 fsDecided 신호는
+      // "영상 풀스크린 판단"만 가렸지, 화면에 실제로 보이는 또 다른 문제(틱톡 자체 왼쪽 세로
+      // 사이드바 — 로고/검색/홈 아이콘 목록)를 가리는 hideLeftRailByGeometry는 원래 houseKeeping
+      // 3초 틱에만 맡겨져 있어 별개로 최대 3초간 노출됐다. 같은 타이밍(mainInit 1회 + 이 함수가
+      // 불리는 모든 시점 — houseKeeping 틱 + pollActiveVideo의 즉시 트리거)에 같이 돌려서 fsDecided
+      // 신호가 나갈 때 사이드바도 이미 숨겨져 있도록 묶는다. dismissAppBanner는 여기 안 넣는다 —
+      // 그건 실제 클릭을 하는 함수라 원래 설계대로(1500/3000ms 지연 + houseKeeping 3초 틱)만 돌게
+      // 남겨둔다(더 자주/이르게 클릭을 시도하게 만들면 "검색 후 방금 연 영상이 잠깐 보였다 꺼짐"류
+      // 회귀를 다시 낼 위험이 있음 — 과거 기록).
+      hideLeftRailByGeometry();
+      enforceMainWidth();
       if (String(location.pathname||'').indexOf('foryou') === -1) {
         // 🔴 사장님 실기기 지적("/following에 지난 영상 카운트가 그대로 떠있다") — /following 등은
         // 전체 페이지 리로드가 아니라 SPA 라우팅이라 mainInit이 다시 안 돌아서, mainInit 안의
@@ -389,16 +422,27 @@ const INJECTED_JS_BEFORE_LOAD = `
           willFullscreen = true;
         }
       }
-      if (!window.__paceFsDecidedSent) {
+      // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가...") — fsDecided를 여기(스타일 적용 전)서
+      // 바로 보내면, RN이 메시지를 받고 로딩 커버를 걷는 시점이 실제 transform이 화면에 페인트되는
+      // 시점보다 빠를 수 있다(시뮬레이터보다 실기기에서 브릿지/페인트 지연이 더 큼 — 시뮬레이터
+      // 검증에선 안 잡히고 실기기에서만 재현된 이유). 스타일 변경을 다 끝낸 뒤, rAF 두 번으로 최소
+      // 한 프레임 이상 실제로 페인트된 걸 기다렸다가 신호를 보내도록 아래로 옮김(signalFsDecidedOnce).
+      function signalFsDecidedOnce(){
+        if (window.__paceFsDecidedSent) return;
         window.__paceFsDecidedSent = true;
-        send({ type: 'fsDecided' });
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
       }
       target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      // video 자체에도 같은 값을 찍는다 — 위 BeforeContentLoaded에서 심은 CSS
+      // (section:has(video:not([data-pace-fs-decided]))이 visibility:hidden)가 이 순간(스케일까지
+      // 같은 동기 실행 안에서 끝난 뒤) 풀려 처음으로 화면에 그려지게 하는 진짜 트리거.
+      v.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       if (!willFullscreen) {
         if (window.__paceLastIconState !== null) {
           window.__paceLastIconState = null;
           send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
         }
+        signalFsDecidedOnce();
         return;
       }
       var likeEl = container ? container.querySelector('[data-e2e="like-icon"]') : document.querySelector('[data-e2e="like-icon"]');
@@ -459,6 +503,7 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 내용이 비쳐 보였다. 확대된 영상을 항상 위로 그리도록 강제.
       target.style.setProperty('position', 'relative', 'important');
       target.style.setProperty('z-index', '999', 'important');
+      signalFsDecidedOnce();
     } catch(eIconScale) {}
   }
   hideIconRailAndScaleVideo();
@@ -833,7 +878,15 @@ const INJECTED_JS_BEFORE_LOAD = `
   function pollActiveVideo(){
     var v = getActiveVideo();
     if (!v) return;
-    if (v !== pollLastVideo) { pollLastVideo = v; pollLastT = -1; }
+    if (v !== pollLastVideo) {
+      pollLastVideo = v; pollLastT = -1;
+      // 🔴 사장님 지적("아직도 세로 바가 잠깐보이는현상있어") — fsDecided 커버는 앱을 처음 켤 때
+      // 딱 한 번만 통과하는 관문이라 스와이프로 다음 영상 넘어갈 때는 안 걸린다. 그 판단(풀스크린
+      // 여부+스케일)이 houseKeeping의 3초 틱에만 맡겨져 있어서, 새 영상이 원래(레터박싱) 크기로
+      // 최대 3초간 보이다 갑자기 커지는 게 매 스와이프마다 "바가 나타났다 사라지는" 걸로 보였다.
+      // 여기(500ms 폴링, 영상 전환 감지 시점)서 즉시 판단을 돌려 그 창을 3000ms→최대 500ms로 줄인다.
+      try { hideIconRailAndScaleVideo(); } catch(eSwap) {}
+    }
     try { if (v.loop) v.loop = false; } catch(e) {}
     // 2026-08-15 사장님 실기기 지적("틱톡 소리 안나다 한번씩 소리나던데 간헐적으로") — tryAdvance의
     // "전환 확인 후 window.__paceMuted 적용"(위 452줄)만으론 안 됐다. 그 확인은 goToNext() 뒤

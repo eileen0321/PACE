@@ -80,6 +80,25 @@ const INJECTED_JS_BEFORE_LOAD = `
   // DOMContentLoaded(HTML 파싱 완료 시점 — 훨씬 이르고, 네트워크가 유휴 상태가 되길 기다리지
   // 않음) 시점에 실행한다. injectedJavaScript prop 자체는 이제 안 쓴다(중복 초기화 방지).
   send({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() });
+  // 🔴 2026-08-16(12차, 구조적 마감) — 왼쪽 사이드바 "나왔다 사라짐"이 11번의 수정에도 재발한
+  // 구조적 이유: 지금까지 전부 "틱톡이 먼저 그림 → 우리 JS 폴링이 찾아서 인라인 display:none"
+  // 순서라, 리액트가 노드를 새로 만들/재활용할 때마다 다음 틱까지의 노출 창이 원리상 반드시
+  // 남았다(50ms로 줄여도 0이 안 됨). CSS 스타일시트 규칙은 엘리먼트가 언제 마운트되든 첫 페인트
+  // 전 스타일 해석 단계에서 적용되므로 이 경쟁 자체가 없다 — 문서 최초 시점(여기)에 규칙을
+  // 심으면 사이드바는 단 한 프레임도 그려질 수 없다. 클래스명이 순수 해시라 셀렉터가 불가능한
+  // /live 등은 기존 hideLeftRailByGeometry(폴링)가 백업으로 계속 커버한다. head가 아직 없을 수
+  // 있어 documentElement 폴백 + 이후 틱(sweepHideUndecided)에서 재확인.
+  function ensureStaticHideCss(){
+    try {
+      if (document.getElementById('pace-static-hide')) return;
+      var st = document.createElement('style');
+      st.id = 'pace-static-hide';
+      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
+      var host = document.head || document.documentElement;
+      if (host) host.appendChild(st);
+    } catch(eCss) {}
+  }
+  ensureStaticHideCss();
   // 🔴 사장님 실기기 지적("스와이프 하면 화면이 작게 보였다 커져") — pollActiveVideo(500ms 폴링)로
   // "영상 바뀜"을 감지해 즉시 판단을 돌리게 고쳤지만(3000ms→최대 500ms), 그 사이 창은 여전히 남는다:
   // 틱톡 자체 스크롤 스냅이 새 영상을 원래(레터박싱) 크기로 이미 화면에 그려버린 뒤에야 우리 폴링이
@@ -120,6 +139,14 @@ const INJECTED_JS_BEFORE_LOAD = `
       while (sec && sec.tagName !== 'SECTION' && sg < 8) { sec = sec.parentElement; sg++; }
       var target = sec || vid;
       var vsrc = vid.currentSrc || vid.src || '';
+      // 🔴 12차 — 재활용 노드가 이전 영상 때 우리가 건 transform(scale)을 그대로 갖고 있으면 이미
+      // 커진 크기를 재서 willFullscreen=false로 오판한다(활성 경로 hideIconRailAndScaleVideo는
+      // 재기 전에 지우는데 이 사전판단 경로만 빠져 있었다 — 스와이프 직후 "작게 보였다 커짐"의
+      // 남은 원인). 동일하게 transition 끄고 지운 뒤 잰다.
+      if (target.style.getPropertyValue('transform')) {
+        target.style.setProperty('transition', 'none', 'important');
+        target.style.removeProperty('transform');
+      }
       var r = target.getBoundingClientRect();
       var willFullscreen = false;
       var scale = 1;
@@ -134,6 +161,22 @@ const INJECTED_JS_BEFORE_LOAD = `
       target.setAttribute('data-pace-fs-src', vsrc);
       vid.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       vid.setAttribute('data-pace-fs-src', vsrc);
+      // 🔴 12차 — 페이지 자체 아이콘 열(SECTION)은 지금까지 활성화 시점에만 숨겨서, 미리 스케일해둔
+      // 새 영상이 화면에 들어오는 순간엔 아이콘이 아직 보였다(스와이프마다 "오른쪽 아이콘 떴다
+      // 사라짐"). 판단을 여기서 이미 끝내므로 숨김(yes)/복원(no)도 같은 동기 실행에서 끝내둔다 —
+      // 활성 경로의 숨김/스킵복원 로직과 같은 규칙.
+      var likeOff = container ? container.querySelector('[data-e2e="like-icon"]') : null;
+      if (likeOff) {
+        var railOff = likeOff, rg = 0;
+        while (railOff && railOff.tagName !== 'SECTION' && rg < 10) { railOff = railOff.parentElement; rg++; }
+        if (railOff && railOff.tagName === 'SECTION') {
+          if (willFullscreen) {
+            if (railOff.style.display !== 'none') railOff.style.setProperty('display', 'none', 'important');
+          } else if (railOff.style.display === 'none') {
+            railOff.style.removeProperty('display');
+          }
+        }
+      }
       if (!willFullscreen) return;
       target.style.setProperty('transition', 'none', 'important');
       target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
@@ -155,6 +198,7 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 사이드바(hideLeftRailByGeometry)도 예전엔 houseKeeping 3초 틱에만 맡겨져 있어 앱 첫 진입 시
       // "왼쪽에 세로 바가 보였다 사라짐"이 재발했다 — 이 매 프레임(rAF) 스윕에도 같이 태워 최대
       // 3000ms였던 노출 창을 ~16ms로 좁힌다.
+      ensureStaticHideCss();
       hideLeftRailByGeometry();
       enforceMainWidth();
       // 🔴 hideIconRailAndScaleVideo와 동일 이유(9차 주석 참고) — 관심사 게이트가 떠 있는 동안은
@@ -301,6 +345,11 @@ const INJECTED_JS_BEFORE_LOAD = `
   } catch(e) {}
 
   function mainInit() {
+  // 🔴 원래 이 함수 아래쪽(구 setInterval 등록부 근처)에 있던 걸 맨 위로 옮김 — hideIconRailAndScaleVideo가
+  // mainInit 안에서 직접 한 번 즉시 호출되는데(같은 함수 뒤쪽), signalFsDecidedOnce가 이 값을 그
+  // 첫 호출에서부터 정확히 써야 한다(startedAt이 아직 undefined면 Date.now()-startedAt이 NaN이 돼
+  // "6.5초 미만" 검사가 항상 통과해버리는 조용한 버그가 생김).
+  var startedAt = Date.now();
   send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
   // /foryou가 아닌 페이지로 넘어가면(사이드바 메뉴 등, 전체 페이지 리로드라 mainInit이 다시 돔)
   // RN이 그리던 아이콘 오버레이(좋아요/댓글/북마크/공유)가 이전 페이지의 카운트를 든 채 그대로
@@ -584,9 +633,32 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 진짜 피드 아이템에서만 존재하는 확실한 표식이다 — 이게 없는 동안은 "아직 진짜 영상이 아님"
       // 으로 보고 최초 신호를 미룬다(로딩 커버를 계속 덮어둠). 이후 다른 데서 container가 없어도
       // 동작하던 폴백 로직(아이콘 검색 등)은 안 건드림 — 오직 "처음 한 번" 신호를 보낼지만 가른다.
+      // 🔴 2026-08-16(11차) — container 존재 여부는 "진짜 영상인가"의 간접 신호일 뿐, "왼쪽 사이드바가
+      // 실제로 숨겨졌는가"와는 별개다(둘이 항상 같은 타이밍에 해결되지 않는다는 게 반복 재현으로
+      // 확인됨). 간접 신호에 기대는 대신, 공개하기 직전 사이드바가 정말 안 보이는 상태인지 직접
+      // 확인한다 — 아직 보이면(엘리먼트가 있고 display:none이 아니면) 신호를 미루고 다음 틱에서
+      // 다시 시도한다(이 함수 자체가 매 틱 호출되므로 자동 재시도됨).
+      function leftRailStillVisible(){
+        try {
+          var nav = document.querySelector('[class*="DivSideNavContainer"]');
+          if (!nav) return false;
+          // 인라인이 아니라 computed로 본다 — 12차부터 숨김의 주 경로가 문서 시작 시점의
+          // 스타일시트(ensureStaticHideCss)라 인라인 style.display는 비어 있는 게 정상이다.
+          return getComputedStyle(nav).display !== 'none';
+        } catch(eNavCheck) { return false; }
+      }
       function signalFsDecidedOnce(){
         if (window.__paceFsDecidedSent) return;
         if (!container) return;
+        if (leftRailStillVisible()) return;
+        // 🔴 2026-08-16(12차) — 위 세 조건(container, 게이트 문구, 사이드바 안 보임)을 다 걸어도
+        // 콜드 스타트 반복 재현(3연속 녹화)에서 매번 정확히 t≈5.8~6초에 시작해 2~2.5초 지속되는
+        // 같은 창이 그대로 남았다 — dismissAppBanner에 이미 기록된 "관심사 게이트, 토큰 생성 때문에
+        // 최소 6초 대기"와 타이밍이 정확히 일치한다. 즉 게이트 문구 매칭(무엇을 시청하고/관심사/
+        // what you)이 이 특정 변형(다른 문구를 쓰는 버전 등)을 못 잡고 있는 것으로 보인다 — 간접
+        // 감지에 더 의존하지 않고, 이미 코드베이스에 기록된 그 6초 자체를 직접 하한선으로 건다.
+        // 이보다 이르면 무조건 미루고 다음 틱에서 재시도(이 함수는 매 틱 호출되므로 자동 재시도).
+        if (Date.now() - startedAt < 6500) return;
         window.__paceFsDecidedSent = true;
         requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
       }
@@ -1333,7 +1405,6 @@ const INJECTED_JS_BEFORE_LOAD = `
     }
   };
 
-  var startedAt = Date.now();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
   // 🔴 2026-08-16(7차, 화면 녹화 프레임 분석으로 확정) — decideVideoOffscreen(50ms 스윕)은 영상

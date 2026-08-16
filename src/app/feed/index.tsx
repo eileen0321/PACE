@@ -38,7 +38,7 @@ import { FocusSessionExtendModal } from '../../components/home/FocusSessionExten
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useFocusSessionStore } from '../../store/useFocusSessionStore';
-import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+import { addSavedVideo, isVideoSaved, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -583,6 +583,13 @@ export default function PaceFeedScreen() {
       }
       const idMatch = videoUrl.match(/\/video\/(\d+)/);
       const userMatch = videoUrl.match(/\/@([\w.-]+)\//);
+      // 밤 자율 루프 DB 검증에서 발견 — isVideoSaved(중복 방지 헬퍼)가 선언만 되고 아무 데서도
+      // 안 불려서 같은 영상이 누를 때마다 계속 쌓였다. videoId를 못 뽑은 경우는 헬퍼 주석의
+      // 방침대로("일단 저장되게"가 우선) 그대로 통과시킨다.
+      if (idMatch && (await isVideoSaved(userId, 'favorite', idMatch[1]))) {
+        useToastStore.getState().show(t('overlay.addCurrentAlready'));
+        return;
+      }
       const meta = await fetchTikTokOEmbed(videoUrl);
       if (__DEV__) console.log('[addFavorite] oEmbed ->', JSON.stringify(meta));
       await addSavedVideo({
@@ -601,6 +608,10 @@ export default function PaceFeedScreen() {
     }
     const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
     if (!vid) return;
+    if (await isVideoSaved(userId, 'favorite', vid)) {
+      useToastStore.getState().show(t('overlay.addCurrentAlready'));
+      return;
+    }
     const matchesQueue = current?.videoId === vid;
     await addSavedVideo({
       userId,

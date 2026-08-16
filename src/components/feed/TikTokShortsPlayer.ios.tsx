@@ -99,12 +99,64 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 걸린다(이미 그 전에 삽입돼 있었으므로). CSS :has()도 재검토 결과 같은 근본 문제였을 가능성.
   // **해결: 삽입 이벤트를 기다리지 않고, 주기적으로 DOM 전체를 훑어 "아직 판단 안 된" video를
   // 능동적으로 찾아 숨긴다.**
-  // 🔴 2026-08-16(재재확인, 실기기 재현) — 처음엔 pollActiveVideo(500ms)에만 얹었는데, 사장님이
-  // 실기기에서 빠르게 연속 스와이프하니 여전히 재현("priorVis=" 빈 문자열로 로그 확인) — 사람이
-  // 빠르게 연달아 스와이프하면 틱톡의 preload 여유가 500ms보다 짧아지는 경우가 있는 것으로 보임.
-  // pollActiveVideo와 별개로 훨씬 촘촘한 전용 타이머(150ms)를 따로 둔다.
+  // 🔴 2026-08-16(재재확인, 실기기 재현) — 처음엔 pollActiveVideo(500ms)에만 얹었는데, 사람이
+  // 빠르게 연속 스와이프하니 여전히 재현("priorVis=" 빈 문자열로 로그 확인) — 틱톡의 preload
+  // 여유가 500ms/150ms보다 짧아지는 경우가 있었다.
+  // 🔴 2026-08-16(5차, "그게 최선이야?" — 사장님 지시로 검정 화면 자체를 없애는 작업) — "숨겼다가
+  // 판단되면 보여주기"는 활성(화면에 보이는) 영상에만 의미가 있다. 틱톡은 스와이프하기 훨씬 전에
+  // (몇 초 전, 이미 확인됨) 다음 영상 SECTION을 미리 DOM에 만들어둔다 — 그렇다면 "활성화될 때
+  // 판단"이 아니라 "화면 밖에 있을 때 이미 미리 판단+스케일까지 끝내두면" 활성화되는 순간엔 이미
+  // 완성된 크기라 숨길 필요 자체가 없어진다. sweepHideUndecided를 "숨기기"가 아니라 "화면 밖 영상
+  // 전부 미리 판단·스케일"로 바꾼다 — decideVideoOffscreen이 실제 판단/적용을 맡고, 아직 활성이
+  // 아니므로 z-index는 낮은 값(1)만 준다(활성이 되면 hideIconRailAndScaleVideo가 999로 승격 —
+  // 예전에 고쳤던 "다음 피드 아이템이 확대된 영상 위로 겹쳐 보이는" 버그가 여러 영상을 동시에
+  // 미리 스케일해두면서 재발하지 않도록, "지금 실제로 보이는 영상만 최상단"을 유지하기 위함).
+  function decideVideoOffscreen(vid, container){
+    try {
+      var vh = window.innerHeight || 0;
+      var vw = window.innerWidth || 0;
+      if (!vh || !vw) return;
+      var sec = vid, sg = 0;
+      while (sec && sec.tagName !== 'SECTION' && sg < 8) { sec = sec.parentElement; sg++; }
+      var target = sec || vid;
+      var vsrc = vid.currentSrc || vid.src || '';
+      var r = target.getBoundingClientRect();
+      var willFullscreen = false;
+      var scale = 1;
+      if (r.height && r.height < vh - 1) {
+        scale = vh / r.height;
+        var scaleForWidth = r.width ? vw / r.width : scale;
+        if (scale > 1.01 && scale <= 2.2 && scale / scaleForWidth <= 1.25) {
+          willFullscreen = true;
+        }
+      }
+      target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      target.setAttribute('data-pace-fs-src', vsrc);
+      vid.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      vid.setAttribute('data-pace-fs-src', vsrc);
+      if (!willFullscreen) return;
+      target.style.setProperty('transition', 'none', 'important');
+      target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform-origin', 'center center', 'important');
+      target.style.setProperty('position', 'relative', 'important');
+      target.style.setProperty('z-index', '1', 'important');
+      var el2 = vid, guard2 = 0;
+      while (el2 && guard2 < 2) {
+        if (el2.tagName === 'SECTION' || el2.tagName === 'DIV') {
+          el2.style.setProperty('overflow', 'visible', 'important');
+        }
+        el2 = el2.parentElement;
+        guard2++;
+      }
+    } catch(eOff) {}
+  }
   function sweepHideUndecided(){
     try {
+      // 사이드바(hideLeftRailByGeometry)도 예전엔 houseKeeping 3초 틱에만 맡겨져 있어 앱 첫 진입 시
+      // "왼쪽에 세로 바가 보였다 사라짐"이 재발했다 — 이 매 프레임(rAF) 스윕에도 같이 태워 최대
+      // 3000ms였던 노출 창을 ~16ms로 좁힌다.
+      hideLeftRailByGeometry();
+      enforceMainWidth();
       var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
       for (var ci3 = 0; ci3 < containers3.length; ci3++) {
         var vids3 = containers3[ci3].querySelectorAll('video');
@@ -115,40 +167,21 @@ const INJECTED_JS_BEFORE_LOAD = `
           // decided 속성을 그대로 갖고 있어 여기서 계속 스킵되고, 새 내용이 숨겨지지 않는다.
           var vsrc3 = vid3.currentSrc || vid3.src || '';
           if (vid3.getAttribute('data-pace-fs-decided') && vid3.getAttribute('data-pace-fs-src') === vsrc3) continue;
-          var sec3 = vid3, sg3 = 0;
-          while (sec3 && sec3.tagName !== 'SECTION' && sg3 < 8) { sec3 = sec3.parentElement; sg3++; }
-          if (sec3 && sec3.style.getPropertyValue('visibility') !== 'hidden') {
-            sec3.style.setProperty('visibility', 'hidden', 'important');
-          }
-          // 🔴 사장님 실기기 재현("그래도 나온다고") — 영상 SECTION만 숨겨서는 부족했다. 틱톡
-          // 자체의 좋아요/댓글/북마크/공유 아이콘 열(like-icon 조상 SECTION)은 video와는 별개의
-          // 형제 서브트리라 안 가려진 채로 남아있었다 — 그래서 "판단 전" 구간에 (a) 아직 안
-          // 지워진 틱톡 자체 아이콘 열(이 영상의 진짜 카운트, 원래 페이지 위치)과 (b) RN이 그리는
-          // 오버레이(이전 영상의 낡은 카운트, 화면 고정 위치)가 동시에 보여 "숫자 두 벌"로 겹쳐
-          // 보였다. 같은 컨테이너 안의 아이콘 열도 video와 함께 숨긴다 — hideIconRailAndScaleVideo가
-          // 판단을 끝내면(willFullscreen=true인 경우에만) 그쪽에서 다시 정식으로 숨김 처리한다.
-          var likeEl3 = containers3[ci3].querySelector('[data-e2e="like-icon"]');
-          if (likeEl3) {
-            var elr3 = likeEl3, gr3 = 0, rail3 = null;
-            while (elr3 && gr3 < 10) {
-              if (elr3.tagName === 'SECTION') { rail3 = elr3; break; }
-              elr3 = elr3.parentElement;
-              gr3++;
-            }
-            if (rail3 && rail3.style.display !== 'none') {
-              rail3.style.setProperty('display', 'none', 'important');
-            }
-          }
+          decideVideoOffscreen(vid3, containers3[ci3]);
         }
       }
     } catch(eSweep) {}
   }
   sweepHideUndecided();
   // 🔴 2026-08-16(3차) — 150ms 인터벌도 실기기 로그로 여전히 놓치는 게 확인됨(스와이프 직전
-  // priorVis가 빈 문자열인 미스가 4번 중 2번). 고정 인터벌 대신 requestAnimationFrame로 매
-  // 프레임(~16ms, 150ms의 약 10배 촘촘함)마다 훑는다 — 이 정도면 사람의 스와이프 제스처
-  // 어떤 프레임에도 이미 숨김이 걸려있을 만큼 촘촘하다.
-  (function sweepLoop(){ sweepHideUndecided(); requestAnimationFrame(sweepLoop); })();
+  // priorVis가 빈 문자열인 미스가 4번 중 2번) → requestAnimationFrame(매 프레임)로 바꿨었다.
+  // 🔴 2026-08-16(6차, 진단으로 원인 확정) — rAF 루프 자체가 문제였다: 진단 로그(💓sweepLoop
+  // frame=)를 심어보니 frame=1은 찍히는데 8초 넘게 frame=300(약 5초 분량)이 안 찍힘 — WKWebView
+  // 안에서 컴포지터/디스플레이 갱신 우선순위에 안 걸리면 requestAnimationFrame이 사실상 멈추는
+  // (또는 극단적으로 스로틀되는) 것으로 보인다(알려진 WKWebView 특성 — 실제 화면 애니메이션이
+  // 없으면 rAF가 우선순위 밀림). setInterval은 pollActiveVideo(500ms)/houseKeeping(3000ms) 둘 다
+  // 로그로 계속 살아있는 게 확인돼 신뢰할 수 있다 — rAF 대신 촘촘한 setInterval(50ms)로 되돌린다.
+  setInterval(sweepHideUndecided, 50);
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -499,10 +532,8 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 셀렉터가 아니라 인라인 스타일이라 자동으로 안 없어짐).
       v.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       v.setAttribute('data-pace-fs-src', vsrc);
-      // 🔴 임시 진단 — removeProperty 직전 실제 값이 'hidden'이었는지를 남긴다. 옵저버가 로그를
-      // 찍었는데도 여기서 'hidden'이 아니면, 그 사이 뭔가(틱톡 자체 스크립트 등)가 우리보다 늦게
-      // visibility를 다시 건드렸다는 뜻 — 다음 조치를 가르는 핵심 단서.
-      send({ type: 'domlog', text: '👁️공개 will=' + willFullscreen + ' priorVis=' + target.style.getPropertyValue('visibility') });
+      // decideVideoOffscreen(화면 밖 프리로드 영상 사전 판단)이 자리잡은 뒤로는 아무 데서도
+      // visibility:hidden을 걸지 않는다 — 만약을 위한 방어적 제거만 남겨둔다(보통 no-op).
       target.style.removeProperty('visibility');
       if (!willFullscreen) {
         // 🔴 sweepHideUndecided가 "판단 전" 상태에서 이 영상의 아이콘 열까지 미리 display:none으로
@@ -586,6 +617,13 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 나중에 오는(아래에 있는) 다음 피드 아이템이 그 위에 그려져 겹치는 부분에서 다음 아이템
       // 내용이 비쳐 보였다. 확대된 영상을 항상 위로 그리도록 강제.
       target.style.setProperty('position', 'relative', 'important');
+      // decideVideoOffscreen이 화면 밖 영상들도 미리 스케일해두면서(z-index:1) 동시에 여러 SECTION이
+      // 확대돼 있을 수 있다 — "지금 실제로 보이는" 이 target만 최상단이어야 하므로, 직전에 999였던
+      // target(있다면, 지금은 더 이상 활성이 아닌 이전 영상)을 낮은 값으로 되돌린 뒤 이걸 999로 올린다.
+      if (lastActiveZTarget && lastActiveZTarget !== target) {
+        lastActiveZTarget.style.setProperty('z-index', '1', 'important');
+      }
+      lastActiveZTarget = target;
       target.style.setProperty('z-index', '999', 'important');
       signalFsDecidedOnce();
     } catch(eIconScale) {}
@@ -959,6 +997,11 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 폴링 백업 — 'ended'가 안 뜨는 경우(틱톡이 video.loop을 되돌리는 등)를 대비해 재생 위치로
   // 직접 종료를 감지한다(YouTubeShortsPlayer.ios.tsx와 동일 패턴).
   var pollLastT = -1, pollLastVideo = null, pollLastSrc = null;
+  // decideVideoOffscreen이 화면 밖 영상들도 미리 스케일해두면서 여러 SECTION이 동시에 z-index를
+  // 가질 수 있게 됐다 — "지금 실제로 화면에 보이는 영상"만 항상 최상단(999)이어야 다음 피드
+  // 아이템이 비쳐 보이던 예전 버그가 재발하지 않는다. hideIconRailAndScaleVideo가 활성 영상에
+  // 999를 줄 때마다 직전에 999였던 target을 여기 기록해뒀다가 낮은 값으로 되돌린다.
+  var lastActiveZTarget = null;
   function pollActiveVideo(){
     // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
     // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.

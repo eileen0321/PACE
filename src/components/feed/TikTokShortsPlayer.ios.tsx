@@ -922,15 +922,22 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
   // 폴링 백업 — 'ended'가 안 뜨는 경우(틱톡이 video.loop을 되돌리는 등)를 대비해 재생 위치로
   // 직접 종료를 감지한다(YouTubeShortsPlayer.ios.tsx와 동일 패턴).
-  var pollLastT = -1, pollLastVideo = null;
+  var pollLastT = -1, pollLastVideo = null, pollLastSrc = null;
   function pollActiveVideo(){
     // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
     // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.
     sweepHideUndecided();
     var v = getActiveVideo();
     if (!v) return;
-    if (v !== pollLastVideo) {
-      pollLastVideo = v; pollLastT = -1;
+    // 🔴 2026-08-16(5차, 실기기 스크린샷으로 원인 확정) — "영상 바뀜"을 v(DOM 엘리먼트 객체)의
+    // 참조 비교(v !== pollLastVideo)로만 판단했는데, 스와이프 전후로 아이콘 카운트가 그대로인
+    // 스크린샷을 보고 확정: 틱톡이 <video> 엘리먼트 자체를 재활용한다(SECTION만이 아니라). 같은
+    // 객체에 새 영상만 갈아끼우면 참조는 안 바뀌어서 이 블록(즉시 판단 트리거 + 아이콘 클리어)이
+    // 아예 안 돈다 — 3초 houseKeeping 틱에만 의존하게 되며 그 사이 이전 아이콘이 그대로 남는다.
+    // src(영상별 고유)로 바뀜을 판단해야 재활용 노드에서도 정확히 잡힌다.
+    var vsrc0 = v.currentSrc || v.src || '';
+    if (v !== pollLastVideo || vsrc0 !== pollLastSrc) {
+      pollLastVideo = v; pollLastSrc = vsrc0; pollLastT = -1;
       // 🔴 사장님 지적("스와이프 하면 까만화면에 오른쪽 아이콘 나왔다가 전체화면") — 영상은 숨겼는데
       // (sweepHideUndecided) RN이 그리는 좋아요/댓글/북마크/공유 오버레이는 *이전* 영상 값을 그대로
       // 들고 있어서, "검정 화면 + 이전 영상 아이콘"이 잠깐 보이다 새 iconState가 도착하면 아이콘도

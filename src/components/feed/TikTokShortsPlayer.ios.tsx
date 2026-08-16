@@ -367,20 +367,31 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 화면 깜빡임 없음), 재는 값이 "이미 우리가 키운 값"으로 오염되는 이전 버그를 원천 차단한다.
       var decided = target.getAttribute('data-pace-fs-decided');
       if (decided === 'no') return;
+      // 🔴 실기기 로그로 원인 확정 — transform을 지워도 CSS transition이 걸려있어(추정) 바로 반영이
+      // 안 되고, 애니메이션 도중의(예: 813px, 자연크기도 목표크기도 아닌 중간값) rect를 읽고
+      // 있었다(로그: 1틱째 정상 판단→2틱째부턴 계속 will=false). transition을 함께 꺼서 스타일
+      // 변경이 그 자리에서 즉시(애니메이션 없이) 반영되게 한다.
       if (target.style.getPropertyValue('transform')) {
+        target.style.setProperty('transition', 'none', 'important');
         target.style.removeProperty('transform');
       }
       var r = target.getBoundingClientRect();
       var willFullscreen = false;
       var scale = 1;
+      var dbgScaleForWidth = -1;
       if (r.height && r.height < vh - 1) {
         scale = vh / r.height;
         var scaleForWidth = r.width ? vw / r.width : scale;
+        dbgScaleForWidth = scaleForWidth;
         // 3:4(0.75) 등 9:16과 크게 다른 비율의 영상은 균일 스케일 시 폭이 뷰포트 밖으로 크게
         // 밀려나 잘려 보인다(실측 확인) — 폭 기준 배율과 25% 넘게 차이나면 스킵.
         if (scale > 1.01 && scale <= 2.2 && scale / scaleForWidth <= 1.25) {
           willFullscreen = true;
         }
+      }
+      if (!window.__paceFsDecidedSent) {
+        window.__paceFsDecidedSent = true;
+        send({ type: 'fsDecided' });
       }
       target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       if (!willFullscreen) {
@@ -438,6 +449,7 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 값을 그대로 보고하지만 실제 디코딩된 프레임 레이어는 별도 트랙이라 transform이 안 먹힘).
       // video 자체가 아니라 그걸 감싸는 SECTION(비디오 전용 래퍼, 일반 DOM 레이어라 컴포지팅 정상
       // 적용)에 transform을 건다.
+      target.style.setProperty('transition', 'none', 'important');
       target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
       // 🔴 사장님 지적("하단 자막 잘려보이는데") — 확인해보니 잘린 게 아니라 **인접(다음) 피드
@@ -1080,6 +1092,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   // 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/
   // 공유 아이콘 열을 숨긴 대가로, RN이 그 자리에 오버레이 버튼을 그리기 위한 카운트 상태.
   const [iconCounts, setIconCounts] = useState<{ like: string; comment: string; favorite: string; share: string } | null>(null);
+  // 2026-08-16 — 사장님 지적("처음 틀면 왼쪽에 기다란 바가 나왔다가 없어지면서 전체 창으로") —
+  // hideIconRailAndScaleVideo의 풀스크린 판단이 첫 houseKeeping 틱(최대 3초 뒤)에야 끝나서, 그
+  // 전까지는 원래(레터박싱) 모습이 잠깐 보이다 스케일이 걸리며 눈에 띄게 커지는 전환이 보였다.
+  // 로딩 커버를 이 판단이 최소 한 번 끝날 때까지(fsDecided) 계속 유지해 전환 자체를 안 보이게 한다.
+  const [fsDecided, setFsDecided] = useState(false);
   // 2026-08-15 — getCurrentVideoUrl()의 요청/응답 다리. injectJavaScript는 결과를 동기로 못
   // 돌려주므로(fire-and-forget), 요청 시점에 여기 resolver를 심어두고 onMessage의
   // 'currentVideoUrl'이 도착하면 그걸로 resolve한다. 동시에 하나만 진행 가능(현재 영상 하나에
@@ -1161,7 +1178,13 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
       webRef.current?.injectJavaScript(`(function(){
         try {
           var vw = window.innerWidth, vh = window.innerHeight;
-          var v = document.querySelector('video');
+          var vids0 = document.querySelectorAll('video');
+          var v = null, best0 = -1;
+          for (var vi0 = 0; vi0 < vids0.length; vi0++) {
+            var vr0 = vids0[vi0].getBoundingClientRect();
+            var ov0 = Math.min(vr0.bottom, vh) - Math.max(vr0.top, 0);
+            if (ov0 > best0) { best0 = ov0; v = vids0[vi0]; }
+          }
           if (!v) {
             window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증: video 없음, path=' + location.pathname }));
             return;
@@ -1220,6 +1243,15 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
     const t = setTimeout(() => setShowSpinner(true), 450);
     return () => clearTimeout(t);
   }, [ready, showSpinner]);
+
+  // fsDecided(hideIconRailAndScaleVideo의 풀스크린 판단 완료 신호)가 어떤 이유로든(에러난 페이지,
+  // /foryou가 아닌 경로로 로드 등) 안 오면 로딩 커버가 영원히 안 걷힐 수 있다 — ready 이후 5초
+  // 지나도 안 오면 그냥 진행(안전장치, 없어도 되는 페이지에서 무한 대기 방지).
+  useEffect(() => {
+    if (!ready || fsDecided) return;
+    const t = setTimeout(() => setFsDecided(true), 5000);
+    return () => clearTimeout(t);
+  }, [ready, fsDecided]);
 
   useEffect(() => {
     if (!ready) return;
@@ -1299,6 +1331,10 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             setIconCounts({ like: msg.like ?? '', comment: msg.comment ?? '', favorite: msg.favorite ?? '', share: msg.share ?? '' });
             return;
           }
+          if (msg.type === 'fsDecided') {
+            setFsDecided(true);
+            return;
+          }
           if (msg.type === 'ready') {
             setReady(true);
             onReady?.();
@@ -1319,7 +1355,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         }}
       />
-      {!ready && (
+      {!(ready && fsDecided) && (
         <View style={styles.loadingCover} pointerEvents="none">
           {showSpinner && <ActivityIndicator size="large" color="#FFFFFF" />}
         </View>

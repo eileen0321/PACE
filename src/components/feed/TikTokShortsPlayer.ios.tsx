@@ -340,6 +340,31 @@ const INJECTED_JS_BEFORE_LOAD = `
     try {
       var vh = window.innerHeight || 0;
       if (!vh) return;
+      // 🔴 2026-08-16(10차, 실측으로 확정) — 진단 로그로 DivSideNavContainer(실제 보이는 아이콘
+      // 목록)가 width=72/left=0/height=812로 기하학적 조건을 전부 만족하는데도, 아래 제네릭
+      // querySelectorAll('div') 순회 방식이 왜인지 이 특정 엘리먼트를 지나쳐 형제인
+      // DivSideNavPlaceholderContainer(빈 자리표시자)만 숨기고 있었다(정확한 이유 미확정 —
+      // querySelectorAll 순회 중 리스트 순서/컴포지션 관련 특이 케이스로 추정). 기하학적 방식에
+      // 더 이상 의존하지 않고, 클래스명으로 직접 확실하게 잡는다 — 실측으로 이미 확인된 안정적
+      // 선택자라 지난 세션들에서도 이 클래스명 자체는 계속 유지돼왔다(*=로 해시 프리픽스 변화엔
+      // 안전).
+      var realNavList = document.querySelectorAll('[class*="DivSideNavContainer"]');
+      for (var rn2 = 0; rn2 < realNavList.length; rn2++) {
+        var realNav = realNavList[rn2];
+        if (realNav.querySelector('video')) continue;
+        var wasHidden = realNav.style.display === 'none';
+        if (!wasHidden) {
+          realNav.style.setProperty('display', 'none', 'important');
+        }
+        // 🔴 임시 진단 — 숨겼는데도 계속 보인다는 재현이 있어, 실제로 적용/유지되는지 매 틱 확인.
+        // 스팸 방지로 "상태가 바뀔 때"만(숨김→안숨김 감지 = 리액트가 되돌렸다는 증거) 로그.
+        var nowDisplay = getComputedStyle(realNav).display;
+        var stateKey = wasHidden ? 'was-hidden' : 'was-visible';
+        if (window.__paceNavLastState !== stateKey + ':' + nowDisplay) {
+          window.__paceNavLastState = stateKey + ':' + nowDisplay;
+          send({ type: 'domlog', text: '🔍SideNav상태 idx=' + rn2 + ' ' + stateKey + ' computedNow=' + nowDisplay + ' inlineNow=' + realNav.style.display });
+        }
+      }
       var all = document.querySelectorAll('div');
       for (var i = 0; i < all.length; i++) {
         var el = all[i];

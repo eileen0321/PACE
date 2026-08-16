@@ -1298,6 +1298,32 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
 
   function houseKeeping(){
+    // 🔴 2026-08-17(밤 자율 루프 6회차, 콜드 스타트 3연속 샘플링으로 재현) — 틱톡이 간헐적으로
+    // **빈 페이지**(video 0개, 버튼 0개 — DOM(0), 자체 스피너만 도는 상태, 연속 재시작 레이트리밋
+    // 정황)를 주면 fsDecided가 영영 안 나가고 우리 쪽엔 아무 복구 경로가 없었다 — 사장님의 "로딩만
+    // 계속 돎"의 한 갈래. video가 한 번도 안 나타난 채 7틱(~21초)이 지나면 빈 피드로 보고 리로드
+    // 한다(최대 2회 — 리로드하면 window가 리셋되므로 횟수는 sessionStorage로 유지, 성공적으로
+    // video를 보면 해제).
+    try {
+      if (String(location.pathname || '').indexOf('foryou') !== -1) {
+        if (document.querySelector('video')) {
+          window.__paceVideoEverSeen = true;
+          try { sessionStorage.removeItem('paceEmptyReloads'); } catch(eWdS) {}
+        } else if (!window.__paceVideoEverSeen) {
+          window.__paceEmptyTicks = (window.__paceEmptyTicks || 0) + 1;
+          if (window.__paceEmptyTicks >= 7) {
+            var wdN = 0;
+            try { wdN = parseInt(sessionStorage.getItem('paceEmptyReloads') || '0', 10) || 0; } catch(eWdG) {}
+            if (wdN < 2) {
+              try { sessionStorage.setItem('paceEmptyReloads', String(wdN + 1)); } catch(eWdP) {}
+              send({ type: 'domlog', text: '🔄 빈 피드 워치독: video 0개 ' + (window.__paceEmptyTicks * 3) + 's — 리로드 ' + (wdN + 1) + '/2' });
+              location.reload();
+              return;
+            }
+          }
+        }
+      }
+    } catch(eWd) {}
     dismissAppBanner();
     hideLeftRailByGeometry();
     enforceMainWidth();

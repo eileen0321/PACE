@@ -392,7 +392,18 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 첫 호출에서부터 정확히 써야 한다(startedAt이 아직 undefined면 Date.now()-startedAt이 NaN이 돼
   // "6.5초 미만" 검사가 항상 통과해버리는 조용한 버그가 생김).
   var startedAt = Date.now();
-  send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
+  send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() + ' path=' + location.pathname });
+  // 🔴 2026-08-17(밤 자율 루프, 커버 스피너 영구 재현으로 발견) — 초기 URL은 /foryou지만 틱톡이
+  // **루트('/')로 리다이렉트**하는 세션이 있다(데스크톱 For You는 루트에서도 서빙됨). 그때
+  // "indexOf('foryou')" 체크 3곳(enforceMainWidth/hideIconRailAndScaleVideo/빈피드 워치독)이 전부
+  // 스킵돼 스케일 판단·fsDecided·워치독이 죽고, video의 ready조차 안 가면 RN 10초 안전장치도
+  // 무장 안 돼 커버 스피너가 영원히 돈다. 루트도 피드 경로로 인정한다.
+  function isFeedPath(){
+    try {
+      var fp = String(location.pathname || '');
+      return fp === '/' || fp === '' || fp.indexOf('foryou') !== -1;
+    } catch(eFp) { return false; }
+  }
   // /foryou가 아닌 페이지로 넘어가면(사이드바 메뉴 등, 전체 페이지 리로드라 mainInit이 다시 돔)
   // RN이 그리던 아이콘 오버레이(좋아요/댓글/북마크/공유)가 이전 페이지의 카운트를 든 채 그대로
   // 남아있으면 안 된다 — 매 mainInit마다 일단 비우고, /foryou면 hideIconRailAndScaleVideo가
@@ -510,7 +521,7 @@ const INJECTED_JS_BEFORE_LOAD = `
   // width만으로는 flex-basis:auto 상태에서 재계산될 수 있어서다.
   function enforceMainWidth(){
     try {
-      if (String(location.pathname||'').indexOf('foryou') === -1) return;
+      if (!isFeedPath()) return;
       var vw = window.innerWidth || 0;
       if (!vw) return;
       var v = document.querySelector('video');
@@ -562,7 +573,7 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 회귀를 다시 낼 위험이 있음 — 과거 기록).
       hideLeftRailByGeometry();
       enforceMainWidth();
-      if (String(location.pathname||'').indexOf('foryou') === -1) {
+      if (!isFeedPath()) {
         // 🔴 사장님 실기기 지적("/following에 지난 영상 카운트가 그대로 떠있다") — /following 등은
         // 전체 페이지 리로드가 아니라 SPA 라우팅이라 mainInit이 다시 안 돌아서, mainInit 안의
         // "페이지 바뀌면 일단 비운다" 클리어가 이 경로에선 한 번도 안 불린다. houseKeeping(3초
@@ -695,6 +706,14 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (window.__paceFsDecidedSent) return;
         if (!container) return;
         if (leftRailStillVisible()) return;
+        // 🔴 2026-08-17(사장님 재보고 "전창인 경우 왜 화면이 처음 멈칫하는거 같지") — 지금까지는
+        // 스케일 판단만 끝나면 커버를 걷어서, 영상이 아직 버퍼링 중(readyState<3)이면 첫 프레임에
+        // 멈춰 있다가 재생이 시작되는 게 "처음 멈칫"으로 보였다. 실제로 프레임이 나오고 있을 때
+        // (재생시간이 진행됐거나 최소 HAVE_FUTURE_DATA)만 공개한다 — 이 함수는 매 틱 재시도되므로
+        // 준비되는 즉시(보통 1초 미만) 걷힌다.
+        try {
+          if (v && v.readyState < 3 && !(v.currentTime > 0.05)) return;
+        } catch(eRs) {}
         // 🔴 2026-08-16(12차) — 한때 여기 6.5초 하한선이 있었다(세 조건을 다 걸어도 t≈5.8~6초에
         // 2~2.5초짜리 노출 창이 남아서). 13차 실기기 콘솔로 그 창의 실체가 **스켈레톤 사이드바**
         // (DivSkeletonSide — 세 조건 어디에도 안 걸리고 지오메트리 폴링에만 걸려 리액트가 다시
@@ -1305,7 +1324,7 @@ const INJECTED_JS_BEFORE_LOAD = `
     // 한다(최대 2회 — 리로드하면 window가 리셋되므로 횟수는 sessionStorage로 유지, 성공적으로
     // video를 보면 해제).
     try {
-      if (String(location.pathname || '').indexOf('foryou') !== -1) {
+      if (isFeedPath()) {
         if (document.querySelector('video')) {
           window.__paceVideoEverSeen = true;
           try { sessionStorage.removeItem('paceEmptyReloads'); } catch(eWdS) {}

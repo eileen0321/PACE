@@ -931,6 +931,18 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (!v) return;
     if (v !== pollLastVideo) {
       pollLastVideo = v; pollLastT = -1;
+      // 🔴 사장님 지적("스와이프 하면 까만화면에 오른쪽 아이콘 나왔다가 전체화면") — 영상은 숨겼는데
+      // (sweepHideUndecided) RN이 그리는 좋아요/댓글/북마크/공유 오버레이는 *이전* 영상 값을 그대로
+      // 들고 있어서, "검정 화면 + 이전 영상 아이콘"이 잠깐 보이다 새 iconState가 도착하면 아이콘도
+      // 같이 갱신되는 게 "아이콘 먼저 나왔다 화면 나옴"으로 보였다. 활성 영상이 바뀐 걸 감지한
+      // 바로 이 시점에 아이콘도 같이 비워서, 검정 화면일 땐 아이콘도 같이 없게 만든다(둘 다 새
+      // 판단이 끝나야 같이 나타남). sweepHideUndecided는 프리로드된(아직 활성 아닌) 영상까지
+      // 훑으므로 거기서 clear를 보내면 지금 보고 있는 활성 영상의 아이콘을 잘못 지울 위험이 있어
+      // 반드시 "활성 영상이 바뀐" 이 지점에서만 보낸다.
+      if (window.__paceLastIconState !== null) {
+        window.__paceLastIconState = null;
+        send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+      }
       // 🔴 사장님 지적("아직도 세로 바가 잠깐보이는현상있어") — fsDecided 커버는 앱을 처음 켤 때
       // 딱 한 번만 통과하는 관문이라 스와이프로 다음 영상 넘어갈 때는 안 걸린다. 그 판단(풀스크린
       // 여부+스케일)이 houseKeeping의 3초 틱에만 맡겨져 있어서, 새 영상이 원래(레터박싱) 크기로

@@ -61,7 +61,7 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
               colors={[gradientFrom, 'transparent']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
               pointerEvents="none"
             />
             {/* 🔴 2026-08-12 사장님 지적("틱톡 홈 그래픽 이전 그래픽으로 바꾸랬더니 머했냐") —

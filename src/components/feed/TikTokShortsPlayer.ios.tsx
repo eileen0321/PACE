@@ -120,6 +120,25 @@ const INJECTED_JS_BEFORE_LOAD = `
           if (sec3 && sec3.style.getPropertyValue('visibility') !== 'hidden') {
             sec3.style.setProperty('visibility', 'hidden', 'important');
           }
+          // 🔴 사장님 실기기 재현("그래도 나온다고") — 영상 SECTION만 숨겨서는 부족했다. 틱톡
+          // 자체의 좋아요/댓글/북마크/공유 아이콘 열(like-icon 조상 SECTION)은 video와는 별개의
+          // 형제 서브트리라 안 가려진 채로 남아있었다 — 그래서 "판단 전" 구간에 (a) 아직 안
+          // 지워진 틱톡 자체 아이콘 열(이 영상의 진짜 카운트, 원래 페이지 위치)과 (b) RN이 그리는
+          // 오버레이(이전 영상의 낡은 카운트, 화면 고정 위치)가 동시에 보여 "숫자 두 벌"로 겹쳐
+          // 보였다. 같은 컨테이너 안의 아이콘 열도 video와 함께 숨긴다 — hideIconRailAndScaleVideo가
+          // 판단을 끝내면(willFullscreen=true인 경우에만) 그쪽에서 다시 정식으로 숨김 처리한다.
+          var likeEl3 = containers3[ci3].querySelector('[data-e2e="like-icon"]');
+          if (likeEl3) {
+            var elr3 = likeEl3, gr3 = 0, rail3 = null;
+            while (elr3 && gr3 < 10) {
+              if (elr3.tagName === 'SECTION') { rail3 = elr3; break; }
+              elr3 = elr3.parentElement;
+              gr3++;
+            }
+            if (rail3 && rail3.style.display !== 'none') {
+              rail3.style.setProperty('display', 'none', 'important');
+            }
+          }
         }
       }
     } catch(eSweep) {}
@@ -486,6 +505,23 @@ const INJECTED_JS_BEFORE_LOAD = `
       send({ type: 'domlog', text: '👁️공개 will=' + willFullscreen + ' priorVis=' + target.style.getPropertyValue('visibility') });
       target.style.removeProperty('visibility');
       if (!willFullscreen) {
+        // 🔴 sweepHideUndecided가 "판단 전" 상태에서 이 영상의 아이콘 열까지 미리 display:none으로
+        // 숨겨뒀다(위 진단 참고) — 스킵 케이스(willFullscreen=false)로 확정되면 원래 페이지 UI를
+        // 그대로 둬야 하므로(사장님이 처음부터 요구한 "스킵 영상은 원본 그대로") 그 숨김을 되돌린다.
+        if (container) {
+          var likeElSkip = container.querySelector('[data-e2e="like-icon"]');
+          if (likeElSkip) {
+            var elSkip = likeElSkip, gSkip = 0;
+            while (elSkip && gSkip < 10) {
+              if (elSkip.tagName === 'SECTION') {
+                if (elSkip.style.display === 'none') { elSkip.style.removeProperty('display'); }
+                break;
+              }
+              elSkip = elSkip.parentElement;
+              gSkip++;
+            }
+          }
+        }
         if (window.__paceLastIconState !== null) {
           window.__paceLastIconState = null;
           send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });

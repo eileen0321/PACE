@@ -151,10 +151,19 @@ const INJECTED_JS_BEFORE_LOAD = `
       var willFullscreen = false;
       var scale = 1;
       if (r.height && r.height < vh - 1) {
-        scale = vh / r.height;
-        var scaleForWidth = r.width ? vw / r.width : scale;
-        if (scale > 1.01 && scale <= 2.2 && scale / scaleForWidth <= 1.25) {
-          willFullscreen = true;
+        var scaleH = vh / r.height;
+        var scaleW = r.width ? vw / r.width : scaleH;
+        if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
+          scale = scaleH; willFullscreen = true;
+        } else if (scaleW > 1.01 && scaleW <= 2.6) {
+          // 🔴 2026-08-16(13차, 진짜 스와이프 녹화 프레임 분석으로 확정) — 사장님이 보던 "스와이프하면
+          // 화면 작아지고 오른쪽에 아이콘" 재현 프레임 2건이 전부 4:5/가로형 등 비표준 비율 영상이었다.
+          // 예전에 "비표준 비율은 스킵하고 페이지 원본 그대로"로 설계한 케이스가 바로 그 증상이었던 것
+          // (스킵되면 데스크톱 레이아웃 크기 그대로 작게 + 페이지 아이콘 열 노출). 스킵 대신 네이티브
+          // 틱톡이 가로 영상을 다루는 방식대로 **가로 폭 기준으로 채운다** — 위아래는 검은 여백으로
+          // 남고(원래 배경이 검정) 아이콘은 RN 오버레이로 통일된다. 폭 기준이라 좌우 크롭·잘림이 없어
+          // 예전 스킵 사유(균일 스케일 시 폭이 밖으로 밀려 잘림)가 발생하지 않는다.
+          scale = scaleW; willFullscreen = true;
         }
       }
       target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
@@ -235,6 +244,21 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 없으면 rAF가 우선순위 밀림). setInterval은 pollActiveVideo(500ms)/houseKeeping(3000ms) 둘 다
   // 로그로 계속 살아있는 게 확인돼 신뢰할 수 있다 — rAF 대신 촘촘한 setInterval(50ms)로 되돌린다.
   setInterval(sweepHideUndecided, 50);
+  // 🔴 2026-08-16(13차) — 50ms 스윕도 "활성화되는 바로 그 순간 노드가 재활용되는" 경우엔 한 틱
+  // 늦는다(그 사이 원본 크기+페이지 아이콘이 잠깐 보였다가 커짐 — 실기기에서 잔존 재현). 폴링을
+  // 더 줄이는 대신 이벤트로 잡는다: 재활용이든 신규든 새 영상이 붙으면 반드시 loadstart가 발화
+  // 하므로(미디어 이벤트는 버블링은 안 하지만 캡처 단계 문서 리스너에는 걸린다), 그 즉시 재판단
+  // 해서 스케일/아이콘 숨김을 같은 순간에 끝낸다.
+  try {
+    document.addEventListener('loadstart', function(evLs){
+      try {
+        var tLs = evLs.target;
+        if (!tLs || tLs.tagName !== 'VIDEO') return;
+        var cLs = tLs.closest ? tLs.closest('[data-e2e="recommend-list-item-container"]') : null;
+        if (cLs) decideVideoOffscreen(tLs, cLs);
+      } catch(eLs2) {}
+    }, true);
+  } catch(eLs) {}
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -608,15 +632,17 @@ const INJECTED_JS_BEFORE_LOAD = `
       var r = target.getBoundingClientRect();
       var willFullscreen = false;
       var scale = 1;
-      var dbgScaleForWidth = -1;
       if (r.height && r.height < vh - 1) {
-        scale = vh / r.height;
-        var scaleForWidth = r.width ? vw / r.width : scale;
-        dbgScaleForWidth = scaleForWidth;
-        // 3:4(0.75) 등 9:16과 크게 다른 비율의 영상은 균일 스케일 시 폭이 뷰포트 밖으로 크게
-        // 밀려나 잘려 보인다(실측 확인) — 폭 기준 배율과 25% 넘게 차이나면 스킵.
-        if (scale > 1.01 && scale <= 2.2 && scale / scaleForWidth <= 1.25) {
-          willFullscreen = true;
+        var scaleH = vh / r.height;
+        var scaleW = r.width ? vw / r.width : scaleH;
+        // 3:4(0.75) 등 9:16과 크게 다른 비율의 영상은 균일(세로 기준) 스케일 시 폭이 뷰포트 밖으로
+        // 크게 밀려나 잘려 보인다(실측 확인) — 그 경우 예전엔 스킵했는데, 스킵 상태(작은 화면 +
+        // 페이지 아이콘 열 노출)가 바로 사장님이 보던 그 증상이었다(13차, 진짜 스와이프 녹화 프레임
+        // 분석으로 확정 — decideVideoOffscreen 쪽 주석 참고). 스킵 대신 가로 폭 기준으로 채운다.
+        if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
+          scale = scaleH; willFullscreen = true;
+        } else if (scaleW > 1.01 && scaleW <= 2.6) {
+          scale = scaleW; willFullscreen = true;
         }
       }
       // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가...") — fsDecided를 여기(스타일 적용 전)서

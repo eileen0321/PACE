@@ -192,8 +192,20 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
       }
       if (!willFullscreen) return;
+      // 🔴 13차(밤 자율 루프, 녹화 프레임으로 발견) — 가로형(폭 채움) 영상이 화면 중앙보다 ~6%
+      // 아래에 붙는다: SECTION이 피드 아이템 안에서 세로 오프셋을 갖고 있는데 scale만 걸고 위치
+      // 보정을 안 해서다. 아이템 컨테이너(스크롤 스냅 단위, 뷰포트 크기) 중심으로 translateY 보정 —
+      // transform은 레이아웃에 안 끼므로 스냅 계산과 무관하게 안전하고, 두 rect가 같은 스크롤
+      // 오프셋을 공유해 화면 밖 프리로드 영상에도 정확하다.
+      var dyOff = 0;
+      try {
+        if (container) {
+          var crOff = container.getBoundingClientRect();
+          dyOff = (crOff.top + crOff.height / 2) - (r.top + r.height / 2);
+        }
+      } catch(eDyOff) {}
       target.style.setProperty('transition', 'none', 'important');
-      target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform', 'translateY(' + dyOff.toFixed(1) + 'px) scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
       target.style.setProperty('position', 'relative', 'important');
       target.style.setProperty('z-index', '1', 'important');
@@ -779,8 +791,17 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 값을 그대로 보고하지만 실제 디코딩된 프레임 레이어는 별도 트랙이라 transform이 안 먹힘).
       // video 자체가 아니라 그걸 감싸는 SECTION(비디오 전용 래퍼, 일반 DOM 레이어라 컴포지팅 정상
       // 적용)에 transform을 건다.
+      // 세로 중앙 보정(dy) — decideVideoOffscreen 쪽 13차 주석 참고(아이템 컨테이너 중심 기준,
+      // 시각 효과만이라 스냅 계산과 무관).
+      var dyAct = 0;
+      try {
+        if (container) {
+          var crAct = container.getBoundingClientRect();
+          dyAct = (crAct.top + crAct.height / 2) - (r.top + r.height / 2);
+        }
+      } catch(eDyAct) {}
       target.style.setProperty('transition', 'none', 'important');
-      target.style.setProperty('transform', 'scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform', 'translateY(' + dyAct.toFixed(1) + 'px) scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
       // 🔴 사장님 지적("하단 자막 잘려보이는데") — 확인해보니 잘린 게 아니라 **인접(다음) 피드
       // 아이템의 내용이 비쳐 보이는 것**이었다. transform은 레이아웃 공간(그 다음 형제가 차지하는

@@ -1269,7 +1269,13 @@ const INJECTED_JS_BEFORE_LOAD = `
   var startedAt = Date.now();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
-  setInterval(pollActiveVideo, 500);
+  // 🔴 2026-08-16(7차, 화면 녹화 프레임 분석으로 확정) — decideVideoOffscreen(50ms 스윕)은 영상
+  // 크기를 화면 밖에서 미리 끝내두지만, 아이콘(RN 오버레이) 갱신은 pollActiveVideo의 "활성 영상
+  // 바뀜" 감지에만 의존했다 — 그게 500ms 주기라, 영상은 이미 새 걸로 바뀌었는데 아이콘은 최대
+  // 500ms 동안 *이전* 영상 숫자를 그대로 들고 있는 걸 실제 화면 녹화(프레임별 캡처)로 확인했다.
+  // 영상 스케일과 같은 촘촘함으로 맞춘다 — pollActiveVideo 자체의 다른 일(무음 안전망, 진행률)도
+  // 이 주기로 도는 게 오히려 더 정확하다(더 늦게가 아니라).
+  setInterval(pollActiveVideo, 50);
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);
   } // mainInit 끝

@@ -355,17 +355,21 @@ const INJECTED_JS_BEFORE_LOAD = `
         sguard++;
       }
       var target = videoSection || v;
-      // 🔴 사장님 실기기 지적("화면이 계속 사이즈가 변경되는데") — 심각한 버그였다: 스케일을 적용하고
-      // 나면 target의 실제 렌더 높이가 vh 근처로 바뀌는데, 3초마다 도는 이 함수가 매번
-      // getBoundingClientRect()로 다시 재서 "이미 커진 상태"를 "r.height >= vh-1이니 커질 필요
-      // 없음(willFullscreen=false)"으로 오판하고 방금 건 transform을 지워버렸다 — 그럼 다음 틱엔
-      // 다시 작아진 걸 감지해 재적용 → 3초 주기로 커졌다 작아졌다 무한 반복하고 있었다. 이 video
-      // SECTION(target)에 대해 "풀스크린 처리할지 여부"는 **한 번만 결정**하고 데이터 속성에
-      // 박아둔다 — 이후 틱에서는 그 결정을 다시 재보지 않고 그대로 둔다(같은 target=같은 video인
-      // 동안은 유효, 다음 영상으로 넘어가면 target 자체가 바뀌어 속성이 없는 새 엘리먼트라 자연히
-      // 다시 결정됨).
+      // 🔴 사장님 실기기 지적("화면이 계속 사이즈가 변경되는데") — 스케일을 적용하고 나면 target의
+      // 실제 렌더 높이가 vh 근처로 바뀌는데, 3초마다 도는 이 함수가 그 이미 커진 값을 "커질 필요
+      // 없음"으로 오판해 지웠다 다시 적용하는 걸 반복했다 — "결정은 한 번만"으로 고쳤었다.
+      // 🔴 2026-08-16(재확인) — 그런데 "yes"로 결정한 뒤 배율을 그때 값 그대로 고정해뒀더니, 사장님이
+      // 실기기에서 위아래로 진짜 몇 px씩(-7~+819, 뷰포트는 812) 잘려 보인다고 재현. 실측으로 원인
+      // 확정: 틱톡 페이지가 로드되며 원본 박스 크기가 살짝(618.67→629px) 계속 흔들리는데, 배율을
+      // 딱 한 번 계산해서 안 바꾸니 그 사이 어긋난 채로 고정됐었다. **"풀스크린 여부" 결정(yes/no)은
+      // 한 번만 하되, "yes"인 경우 배율 자체는 매 틱 새로 측정해 갱신한다** — 재는 순간만 우리
+      // transform을 잠깐 지워 진짜 원본 크기를 보고(같은 동기 실행 안에서 바로 다시 적용하므로
+      // 화면 깜빡임 없음), 재는 값이 "이미 우리가 키운 값"으로 오염되는 이전 버그를 원천 차단한다.
       var decided = target.getAttribute('data-pace-fs-decided');
-      if (decided) return;
+      if (decided === 'no') return;
+      if (target.style.getPropertyValue('transform')) {
+        target.style.removeProperty('transform');
+      }
       var r = target.getBoundingClientRect();
       var willFullscreen = false;
       var scale = 1;
@@ -1170,7 +1174,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             var r = el.getBoundingClientRect();
             var cs = window.getComputedStyle(el);
             var cn = String(el.className||'').split(' ').pop();
-            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' ar=' + cs.aspectRatio + ' of=' + cs.objectFit + ' disp=' + cs.display;
+            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' t=' + Math.round(r.top) + ' b=' + Math.round(r.bottom) + ' tf=' + el.style.getPropertyValue('transform');
             window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐' + line }));
             if (el.tagName === 'ARTICLE') article = el;
             el = el.parentElement;

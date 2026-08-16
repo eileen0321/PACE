@@ -93,7 +93,12 @@ const INJECTED_JS_BEFORE_LOAD = `
       if (document.getElementById('pace-static-hide')) return;
       var st = document.createElement('style');
       st.id = 'pace-static-hide';
-      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
+      // 🔴 13차(실기기 콘솔 로그로 확정) — 기기에선 페이지 로딩 중 **스켈레톤 사이드바**(클래스
+      // DivSkeletonSide..., w=72 세로 긴 자리표시자)가 진짜 사이드바보다 먼저 뜬다. 진짜 쪽
+      // (DivSideNavContainer)은 이 스타일시트로 computed=none이 확인됐는데 스켈레톤은 클래스가
+      // 달라 50ms 지오메트리 폴링에만 걸렸고, 로딩이 느린 기기에서 커버 안전장치(10초)가 풀린
+      // 뒤 그대로 노출됐다 — "처음 켤 때 왼쪽 아이콘 바"의 실기기 잔존 원인. 같이 정적으로 숨긴다.
+      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"],[class*="DivSkeletonSide"]{display:none!important}';
       var host = document.head || document.documentElement;
       if (host) host.appendChild(st);
     } catch(eCss) {}
@@ -204,12 +209,13 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
   function sweepHideUndecided(){
     try {
-      // 사이드바(hideLeftRailByGeometry)도 예전엔 houseKeeping 3초 틱에만 맡겨져 있어 앱 첫 진입 시
-      // "왼쪽에 세로 바가 보였다 사라짐"이 재발했다 — 이 매 프레임(rAF) 스윕에도 같이 태워 최대
-      // 3000ms였던 노출 창을 ~16ms로 좁힌다.
+      // 🔴 13차(사장님 실기기 재보고 "스와이프하면 화면이 멈췄다가 버벅") — 예전엔 여기(50ms 틱)서
+      // hideLeftRailByGeometry를 같이 돌렸는데, 그 함수는 문서의 **모든 div에 getBoundingClientRect**
+      // 를 강제한다(초당 20회 전체 레이아웃 계산 = 스크롤 중 프레임 낙하의 직접 원인). 사이드바/
+      // 스켈레톤은 이제 문서 시작 시점 정적 CSS가 원천 차단하므로 비싼 지오메트리 스캔은 원래대로
+      // houseKeeping(3초, /live 등 클래스가 순수 해시인 페이지 백업용)에만 남기고 여기선 뺀다.
+      // ensureStaticHideCss는 getElementById 1회라 공짜 — 유지.
       ensureStaticHideCss();
-      hideLeftRailByGeometry();
-      enforceMainWidth();
       // 🔴 hideIconRailAndScaleVideo와 동일 이유(9차 주석 참고) — 관심사 게이트가 떠 있는 동안은
       // 화면 밖 프리로드 영상 판단도 통째로 미룬다. 이 스윕은 컨테이너마다 반복 도는 루프라 게이트
       // 문구 체크를 루프 밖(한 번만)에서 해서 낭비를 줄인다.
@@ -677,15 +683,15 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (window.__paceFsDecidedSent) return;
         if (!container) return;
         if (leftRailStillVisible()) return;
-        // 🔴 2026-08-16(12차) — 위 세 조건(container, 게이트 문구, 사이드바 안 보임)을 다 걸어도
-        // 콜드 스타트 반복 재현(3연속 녹화)에서 매번 정확히 t≈5.8~6초에 시작해 2~2.5초 지속되는
-        // 같은 창이 그대로 남았다 — dismissAppBanner에 이미 기록된 "관심사 게이트, 토큰 생성 때문에
-        // 최소 6초 대기"와 타이밍이 정확히 일치한다. 즉 게이트 문구 매칭(무엇을 시청하고/관심사/
-        // what you)이 이 특정 변형(다른 문구를 쓰는 버전 등)을 못 잡고 있는 것으로 보인다 — 간접
-        // 감지에 더 의존하지 않고, 이미 코드베이스에 기록된 그 6초 자체를 직접 하한선으로 건다.
-        // 이보다 이르면 무조건 미루고 다음 틱에서 재시도(이 함수는 매 틱 호출되므로 자동 재시도).
-        if (Date.now() - startedAt < 6500) return;
+        // 🔴 2026-08-16(12차) — 한때 여기 6.5초 하한선이 있었다(세 조건을 다 걸어도 t≈5.8~6초에
+        // 2~2.5초짜리 노출 창이 남아서). 13차 실기기 콘솔로 그 창의 실체가 **스켈레톤 사이드바**
+        // (DivSkeletonSide — 세 조건 어디에도 안 걸리고 지오메트리 폴링에만 걸려 리액트가 다시
+        // 그릴 때마다 재노출)였음이 확정됐고, 지금은 문서 시작 시점 정적 CSS(ensureStaticHideCss)가
+        // 스켈레톤까지 원천 차단하므로 하한선은 순수한 인위적 지연이라 제거했다 — 실기기 로딩
+        // "겁내 느려"의 우리 쪽 지분이 이 6.5초였다.
         window.__paceFsDecidedSent = true;
+        // 실기기 "로딩 겁내 느려" 원인 분해용 상시 진단 — 커버가 실제로 언제 걷히는지 콘솔로 측정.
+        send({ type: 'domlog', text: '🏁 fsDecided 발사 t=' + Date.now() + ' (+' + Math.round((Date.now() - startedAt) / 100) / 10 + 's)' });
         requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
       }
       target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
@@ -815,7 +821,12 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 문구만 안전하게 특정해서 매칭한다.
   var SKIP_PHRASES = ['나중에', 'not now', 'maybe later', 'later', '건너뛰기', 'skip', '완료', 'done',
     '닫기', 'close', '괜찮아요', '괜찮습니다', '아니요', '아니오', '선택 안', 'no thanks', "i'll do this later",
-    '게스트', 'guest', '둘러보기', '비회원', '로그인 없이', 'without logging'];
+    '게스트', 'guest', '둘러보기', '비회원', '로그인 없이', 'without logging',
+    // 🔴 13차(실기기 콘솔로 확정) — 기기에서 틱톡이 진짜 피드 대신 "전체 화면에서 시청" 버튼만 있는
+    // 프리뷰 상태로 13초를 버텨서(영상은 +2.5s에 이미 재생 중인데 recommend-list-item-container가
+    // +13s에야 생김) 로딩이 "겁내 느려" 보였다. 이 버튼을 눌러 프리뷰를 즉시 벗어나게 한다 —
+    // 네이티브 전체화면 승격은 이미 3중 차단돼 있어 눌러도 인라인 유지된다.
+    '전체 화면에서 시청', 'watch in full screen'];
   function textMatches(txt){
     var lower = txt.toLowerCase();
     for (var i = 0; i < SKIP_PHRASES.length; i++) {

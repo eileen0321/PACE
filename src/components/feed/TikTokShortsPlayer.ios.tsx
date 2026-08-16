@@ -157,6 +157,15 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 3000ms였던 노출 창을 ~16ms로 좁힌다.
       hideLeftRailByGeometry();
       enforceMainWidth();
+      // 🔴 hideIconRailAndScaleVideo와 동일 이유(9차 주석 참고) — 관심사 게이트가 떠 있는 동안은
+      // 화면 밖 프리로드 영상 판단도 통째로 미룬다. 이 스윕은 컨테이너마다 반복 도는 루프라 게이트
+      // 문구 체크를 루프 밖(한 번만)에서 해서 낭비를 줄인다.
+      try {
+        var bodyText3 = document.body.innerText || '';
+        if (bodyText3.indexOf('무엇을 시청하고') !== -1 || bodyText3.indexOf('관심사') !== -1 || bodyText3.indexOf('what you') !== -1) {
+          return;
+        }
+      } catch(eGateCheck3) {}
       var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
       for (var ci3 = 0; ci3 < containers3.length; ci3++) {
         var vids3 = containers3[ci3].querySelectorAll('video');
@@ -340,6 +349,14 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (r.height < vh * 0.5) continue;
         if (el.querySelector('video')) continue;
         el.style.setProperty('display', 'none', 'important');
+        // 🔴 임시 진단 — 콜드 스타트 직후 왼쪽 바가 몇 초간 그대로 남는 재현 확인용. 스켈레톤과
+        // 실제 사이드바가 별개 엘리먼트라 매번(클래스별 최대 1회) 남겨서 언제 무엇이 잡히는지 본다.
+        var clsKey = (el.className || 'noclass').slice(0, 40);
+        window.__paceRailHideLoggedClasses = window.__paceRailHideLoggedClasses || {};
+        if (!window.__paceRailHideLoggedClasses[clsKey]) {
+          window.__paceRailHideLoggedClasses[clsKey] = true;
+          send({ type: 'domlog', text: '🙈사이드바숨김 t=' + Date.now() + ' w=' + r.width.toFixed(0) + ' h=' + r.height.toFixed(0) + ' cls=' + clsKey });
+        }
       }
     } catch(eGeo) {}
   }
@@ -440,6 +457,21 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
         return;
       }
+      // 🔴 2026-08-16(9차, 화면 녹화 프레임+로그 대조로 진짜 원인 확정) — 콜드 스타트 직후 왼쪽
+      // 사이드바+레터박싱이 4~8초씩(테스트마다 들쭉날쭉) 그대로 보이던 진짜 원인: dismissAppBanner가
+      // 이미 알고 있던 그 "관심사 게이트"(비로그인 게스트에게 뜨는 카테고리 선택 로그인 유도
+      // 모달 — 토큰 생성 때문에 최소 6초는 일부러 안 건드리고 기다림, 위 dismissAppBanner 주석
+      // 참고)였다. 이 함수는 그 게이트의 존재를 전혀 모른 채 "지금 뷰포트에 겹치는 video"를 찾아
+      // 판단해버렸는데, 게이트가 떠 있는 동안은 그 video가 진짜 /foryou 피드 위치에 자리잡기 전
+      // 상태라 사이드바도 아직 없고 크기도 안 맞았다. 게이트 문구가 보이는 동안은 판단 자체를
+      // 통째로 미룬다(hideLeftRailByGeometry/enforceMainWidth는 위에서 이미 돌았으니 그대로 둠) —
+      // 게이트가 dismissAppBanner에 의해 실제로 닫히고 나면 다음 틱에 정상적으로 재시도된다.
+      try {
+        var bodyText2 = document.body.innerText || '';
+        if (bodyText2.indexOf('무엇을 시청하고') !== -1 || bodyText2.indexOf('관심사') !== -1 || bodyText2.indexOf('what you') !== -1) {
+          return;
+        }
+      } catch(eGateCheck) {}
       var vh = window.innerHeight || 0;
       var vw = window.innerWidth || 0;
       if (!vh) return;
@@ -518,8 +550,18 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 시점보다 빠를 수 있다(시뮬레이터보다 실기기에서 브릿지/페인트 지연이 더 큼 — 시뮬레이터
       // 검증에선 안 잡히고 실기기에서만 재현된 이유). 스타일 변경을 다 끝낸 뒤, rAF 두 번으로 최소
       // 한 프레임 이상 실제로 페인트된 걸 기다렸다가 신호를 보내도록 아래로 옮김(signalFsDecidedOnce).
+      // 🔴 2026-08-16(8차, 화면 녹화로 확정) — 콜드 스타트 직후 화면 녹화를 프레임 단위로 보니, 로딩
+      // 커버가 걷힌 뒤에도 왼쪽 사이드바 노출+레터박싱된 영상이 최대 7초까지 그대로 보이는 걸 실측.
+      // 5초 안전장치(→10초로 늘림, 별개 조치) 때문이 아니라 fsDecided 자체가 "진짜로" 이 시점에
+      // 왔다 — 즉 hideIconRailAndScaleVideo가 **진짜 /foryou 피드 영상이 아직 마운트되기 전**(틱톡
+      // 자체 관심사 게이트/온보딩성 화면에 뜨는 임시 video 등)에 뭔가를 "영상"으로 찾아 판단해버리고
+      // 그걸로 최초 신호를 보낸 것으로 보인다. container(data-e2e="recommend-list-item-container")는
+      // 진짜 피드 아이템에서만 존재하는 확실한 표식이다 — 이게 없는 동안은 "아직 진짜 영상이 아님"
+      // 으로 보고 최초 신호를 미룬다(로딩 커버를 계속 덮어둠). 이후 다른 데서 container가 없어도
+      // 동작하던 폴백 로직(아이콘 검색 등)은 안 건드림 — 오직 "처음 한 번" 신호를 보낼지만 가른다.
       function signalFsDecidedOnce(){
         if (window.__paceFsDecidedSent) return;
+        if (!container) return;
         window.__paceFsDecidedSent = true;
         requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
       }
@@ -1453,11 +1495,18 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   }, [ready, showSpinner]);
 
   // fsDecided(hideIconRailAndScaleVideo의 풀스크린 판단 완료 신호)가 어떤 이유로든(에러난 페이지,
-  // /foryou가 아닌 경로로 로드 등) 안 오면 로딩 커버가 영원히 안 걷힐 수 있다 — ready 이후 5초
-  // 지나도 안 오면 그냥 진행(안전장치, 없어도 되는 페이지에서 무한 대기 방지).
+  // /foryou가 아닌 경로로 로드 등) 안 오면 로딩 커버가 영원히 안 걷힐 수 있다 — ready 이후 일정
+  // 시간 지나도 안 오면 그냥 진행(안전장치, 없어도 되는 페이지에서 무한 대기 방지).
+  // 🔴 2026-08-16 사장님 실기기+시뮬레이터 녹화 프레임 분석으로 확정 — 5초는 너무 짧았다: 틱톡
+  // 자체 "관심사 게이트"(콜드 스타트 시 뜨는 초기 로딩/온보딩성 화면, 예전 주석에 6초 대기로
+  // 이미 기록돼 있었음) 때문에 ready(video readyState>=2)는 일찍 뜨는데 실제 /foryou 피드 영상이
+  // 자리잡고 hideIconRailAndScaleVideo가 진짜 판단을 끝내는 덴 그보다 더 걸릴 수 있다 — 5초
+  // 안전장치가 먼저 발동해 로딩 커버를 강제로 걷어버리면, 그 아래 아직 마무리 안 된 상태(왼쪽
+  // 사이드바 노출 + 레터박싱된 영상)가 몇 초간 그대로 노출됐다(녹화로 실측: 최대 7초까지 걸림).
+  // 실측된 최악 케이스보다 넉넉하게 10초로 늘린다.
   useEffect(() => {
     if (!ready || fsDecided) return;
-    const t = setTimeout(() => setFsDecided(true), 5000);
+    const t = setTimeout(() => setFsDecided(true), 10000);
     return () => clearTimeout(t);
   }, [ready, fsDecided]);
 

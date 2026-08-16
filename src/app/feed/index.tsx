@@ -644,6 +644,25 @@ export default function PaceFeedScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction]);
 
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=advanceLoop. 2026-08-16 사장님 실기기
+  // 재현("스와이프 하면 화면 작고 오른쪽에 아이콘 나오고") — 손가락 스와이프를 프로그램적으로 못
+  // 흉내내서(터치 주입 도구 없음) 매번 사장님께 부탁해야 했는데, 사장님이 직접 빠르게 연속으로
+  // 스와이프했을 때만 재현되는 문제였다(150ms 스윕도 4번 중 2번 놓침 — 로그로 확정). 사람 손 없이도
+  // "빠른 연속 스와이프"를 스스로 재현할 수 있게 advance()를 짧은 간격(600ms)으로 여러 번 강제 호출.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'advanceLoop') return;
+    setIsAutoMode(true);
+    const startDelay = platform === 'tiktok' ? 9000 : 5000;
+    const rounds = 10;
+    const interval = 600;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 0; i < rounds; i++) {
+      timers.push(setTimeout(() => { playerRef.current?.advance(); }, startDelay + i * interval));
+    }
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testSearch. 2026-08-15 사장님 실기기
   // 재현("검색하고 영상 고르면 잠깐 보였다 꺼짐") — 실기기 손가락 탭 없이는 재현 못 해서(터치 주입
   // 도구 없음), search()로 검색결과를 띄운 뒤 debugClickFirstSearchResult()로 실제 <a> 요소를

@@ -52,6 +52,18 @@ export function PlatformPickerCard({ title, badge, statusText, cover, gradientFr
       {({ pressed }) => (
         <Animated.View style={[styles.card, { transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
           <ImageBackground source={cover} style={styles.cover} imageStyle={styles.coverImage}>
+            {/* 🔴 2026-08-15 사장님 지적("유튜브 카드가 붉은게 탁해진것 같다, 좀더 붉은계열로") —
+                gradientFrom prop(유튜브=붉은 계열, 틱톡=청록 계열)이 컴포넌트에 전달만 되고 실제
+                렌더에서 전혀 안 쓰이고 있었다(검정 오버레이만 항상 적용) — 그래서 커버 이미지의
+                원색이 검정에 눌려 탁해 보였다. 브랜드색 틴트 레이어를 커버와 텍스트용 검정
+                그라데이션 사이에 추가해 색이 살아나게 한다. */}
+            <LinearGradient
+              colors={[gradientFrom, 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
             {/* 🔴 2026-08-12 사장님 지적("틱톡 홈 그래픽 이전 그래픽으로 바꾸랬더니 머했냐") —
                 커버 이미지(assets/covers/tiktok.jpg)는 원본 프로토타입과 **바이트 단위로 동일**한데
                 (git hash df0bbf2… 일치) 화면에선 안 보였다. 범인은 이 오버레이였다.

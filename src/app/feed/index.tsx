@@ -38,7 +38,7 @@ import { FocusSessionExtendModal } from '../../components/home/FocusSessionExten
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
 import { useSubscriptionStore } from '../../store/useSubscriptionStore';
 import { useFocusSessionStore } from '../../store/useFocusSessionStore';
-import { addSavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+import { addSavedVideo, isVideoSaved, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생"(2026-07-18 사용자 지시).
@@ -583,6 +583,13 @@ export default function PaceFeedScreen() {
       }
       const idMatch = videoUrl.match(/\/video\/(\d+)/);
       const userMatch = videoUrl.match(/\/@([\w.-]+)\//);
+      // 밤 자율 루프 DB 검증에서 발견 — isVideoSaved(중복 방지 헬퍼)가 선언만 되고 아무 데서도
+      // 안 불려서 같은 영상이 누를 때마다 계속 쌓였다. videoId를 못 뽑은 경우는 헬퍼 주석의
+      // 방침대로("일단 저장되게"가 우선) 그대로 통과시킨다.
+      if (idMatch && (await isVideoSaved(userId, 'favorite', idMatch[1]))) {
+        useToastStore.getState().show(t('overlay.addCurrentAlready'));
+        return;
+      }
       const meta = await fetchTikTokOEmbed(videoUrl);
       if (__DEV__) console.log('[addFavorite] oEmbed ->', JSON.stringify(meta));
       await addSavedVideo({
@@ -601,6 +608,10 @@ export default function PaceFeedScreen() {
     }
     const vid = currentVideoIdRef.current ?? current?.videoId ?? null;
     if (!vid) return;
+    if (await isVideoSaved(userId, 'favorite', vid)) {
+      useToastStore.getState().show(t('overlay.addCurrentAlready'));
+      return;
+    }
     const matchesQueue = current?.videoId === vid;
     await addSavedVideo({
       userId,
@@ -644,6 +655,25 @@ export default function PaceFeedScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction]);
 
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=advanceLoop. 2026-08-16 사장님 실기기
+  // 재현("스와이프 하면 화면 작고 오른쪽에 아이콘 나오고") — 손가락 스와이프를 프로그램적으로 못
+  // 흉내내서(터치 주입 도구 없음) 매번 사장님께 부탁해야 했는데, 사장님이 직접 빠르게 연속으로
+  // 스와이프했을 때만 재현되는 문제였다(150ms 스윕도 4번 중 2번 놓침 — 로그로 확정). 사람 손 없이도
+  // "빠른 연속 스와이프"를 스스로 재현할 수 있게 advance()를 짧은 간격(600ms)으로 여러 번 강제 호출.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'advanceLoop') return;
+    setIsAutoMode(true);
+    const startDelay = platform === 'tiktok' ? 9000 : 5000;
+    const rounds = 10;
+    const interval = 600;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 0; i < rounds; i++) {
+      timers.push(setTimeout(() => { playerRef.current?.advance(); }, startDelay + i * interval));
+    }
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testSearch. 2026-08-15 사장님 실기기
   // 재현("검색하고 영상 고르면 잠깐 보였다 꺼짐") — 실기기 손가락 탭 없이는 재현 못 해서(터치 주입
   // 도구 없음), search()로 검색결과를 띄운 뒤 debugClickFirstSearchResult()로 실제 <a> 요소를
@@ -665,6 +695,15 @@ export default function PaceFeedScreen() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debugAction, debugE2E]);
+
+  // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=verifyVideoSize. "/foryou 화면이
+  // 작게 보인다"(2026-08-15) 미해결 조사용, 다음 세션에서 이어서 쓸 것.
+  useEffect(() => {
+    if (!__DEV__ || debugAction !== 'verifyVideoSize') return;
+    const t = setTimeout(() => { playerRef.current?.debugVerifyVideoSize?.(); }, 10000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
 
   // __DEV__ 전용 — pace://feed?platform=tiktok&debugAction=testPrev. 2026-08-15 사장님 지시("니가
   // 테스트를 전체 다 해야 할거 아냐") — 실기기 리모컨 물리 입력 없이 goPrev()를 직접 호출해 TikTok
@@ -723,9 +762,23 @@ export default function PaceFeedScreen() {
     try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
     if (!mod) return;
     let cancelled = false;
+    // 2026-08-15(3차) 사장님 실기기 재현("무음인데 소리남", 폰 무음스위치 실측 확인) —
+    // checkSilentSwitch()는 0.2초 시스템사운드 타이밍으로 스위치 상태를 "추정"하는 우회라(iOS에
+    // 직접 읽는 API가 없음, 위 코멘트 참고) 타이밍이 흔들리면(연속 실기기 재시작·콘솔 스트리밍 등
+    // 시스템 부하 시) 실제로는 무음인데 "무음 아님"으로 잘못 읽는 순간이 드물게 생긴다. 무음(true)
+    // 오독은 무해(그냥 조용해질 뿐)하니 즉시 반영하지만, "무음 아님"(false) 쪽은 오독이면 바로
+    // 소리가 새므로 연속 2회 같은 값이 나올 때만 반영한다(최악 지연 +2초, 실제로 스위치를 막 끈
+    // 경우도 다음 폴링에서 바로 확정되니 체감상 무시할 수준).
+    let notSilentStreak = 0;
     const check = () => {
       mod!.checkSilentSwitch().then((isSilent) => {
         if (cancelled) return;
+        if (isSilent) {
+          notSilentStreak = 0;
+        } else {
+          notSilentStreak++;
+          if (notSilentStreak < 2) return;
+        }
         setLastKnownSilent(isSilent);
         // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
         if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);

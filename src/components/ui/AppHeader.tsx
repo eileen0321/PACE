@@ -69,7 +69,9 @@ export function AppHeader({ userEmail }: { userEmail: string }) {
 const styles = StyleSheet.create({
   // 2026-07-27 사용자 지시 — "PACE" 타이틀이 너무 작고 헤더 영역 자체도 왜소해 보인다는 지적으로
   // 전반적으로 키움(wordmark 24→32, subtitle/motto도 비례해 살짝 키움, 상하 padding도 확대).
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 18 },
+  // 🔴 2026-08-16 사장님 지적("상용앱과 비교해봐") — 웹서치로 확인: Apple 공식 iOS 가이드라인 기준
+  // iPhone 표준 좌우 여백은 16px(24px는 iPad 표준)다. home.tsx의 카드/섹션과 같이 24→16으로 맞춤.
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 24, paddingBottom: 18 },
   // 2026-07-22 사용자 지시 — "PACE" 타이틀 위치/정렬 수정. wordmarkRow가 기존엔 magin-top 마이너스
   // 값으로 점(•)을 억지로 끌어올리는 방식이었는데, 폰트마다 baseline이 미묘하게 달라 실기기에서
   // PACE 대문자와 모토 텍스트가 어긋나 보였다 — flex 정렬(alignItems:'flex-end')로 두 텍스트의

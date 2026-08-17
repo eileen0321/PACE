@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import {
@@ -79,6 +80,231 @@ const INJECTED_JS_BEFORE_LOAD = `
   // DOMContentLoaded(HTML 파싱 완료 시점 — 훨씬 이르고, 네트워크가 유휴 상태가 되길 기다리지
   // 않음) 시점에 실행한다. injectedJavaScript prop 자체는 이제 안 쓴다(중복 초기화 방지).
   send({ type: 'domlog', text: '🟡 BeforeContentLoaded 실행됨 t=' + Date.now() });
+  // 🔴 2026-08-16(12차, 구조적 마감) — 왼쪽 사이드바 "나왔다 사라짐"이 11번의 수정에도 재발한
+  // 구조적 이유: 지금까지 전부 "틱톡이 먼저 그림 → 우리 JS 폴링이 찾아서 인라인 display:none"
+  // 순서라, 리액트가 노드를 새로 만들/재활용할 때마다 다음 틱까지의 노출 창이 원리상 반드시
+  // 남았다(50ms로 줄여도 0이 안 됨). CSS 스타일시트 규칙은 엘리먼트가 언제 마운트되든 첫 페인트
+  // 전 스타일 해석 단계에서 적용되므로 이 경쟁 자체가 없다 — 문서 최초 시점(여기)에 규칙을
+  // 심으면 사이드바는 단 한 프레임도 그려질 수 없다. 클래스명이 순수 해시라 셀렉터가 불가능한
+  // /live 등은 기존 hideLeftRailByGeometry(폴링)가 백업으로 계속 커버한다. head가 아직 없을 수
+  // 있어 documentElement 폴백 + 이후 틱(sweepHideUndecided)에서 재확인.
+  function ensureStaticHideCss(){
+    try {
+      if (document.getElementById('pace-static-hide')) return;
+      var st = document.createElement('style');
+      st.id = 'pace-static-hide';
+      // 🔴 13차(실기기 콘솔 로그로 확정) — 기기에선 페이지 로딩 중 **스켈레톤 사이드바**(클래스
+      // DivSkeletonSide..., w=72 세로 긴 자리표시자)가 진짜 사이드바보다 먼저 뜬다. 진짜 쪽
+      // (DivSideNavContainer)은 이 스타일시트로 computed=none이 확인됐는데 스켈레톤은 클래스가
+      // 달라 50ms 지오메트리 폴링에만 걸렸고, 로딩이 느린 기기에서 커버 안전장치(10초)가 풀린
+      // 뒤 그대로 노출됐다 — "처음 켤 때 왼쪽 아이콘 바"의 실기기 잔존 원인. 같이 정적으로 숨긴다.
+      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"],[class*="DivSkeletonSide"]{display:none!important}';
+      var host = document.head || document.documentElement;
+      if (host) host.appendChild(st);
+    } catch(eCss) {}
+  }
+  ensureStaticHideCss();
+  // 🔴 사장님 실기기 지적("스와이프 하면 화면이 작게 보였다 커져") — pollActiveVideo(500ms 폴링)로
+  // "영상 바뀜"을 감지해 즉시 판단을 돌리게 고쳤지만(3000ms→최대 500ms), 그 사이 창은 여전히 남는다:
+  // 틱톡 자체 스크롤 스냅이 새 영상을 원래(레터박싱) 크기로 이미 화면에 그려버린 뒤에야 우리 폴링이
+  // 따라잡아 스케일을 건다 — 그 gap 동안 "작았다가 커지는" 게 실제로 보인다. 폴링 주기를 아무리
+  // 줄여도(끝까지 0으로 못 줄임) 이 경쟁 자체는 없어지지 않는다. **판단 전엔 아예 안 보이게** 근본
+  // 해결: data-pace-fs-decided가 아직 없는(우리가 아직 못 본) video-SECTION은 CSS로 기본
+  // visibility:hidden 처리해두고, hideIconRailAndScaleVideo가 그 속성을 찍는 순간(스케일 적용까지
+  // 같은 동기 실행 안에서 끝남) 셀렉터가 안 맞게 돼 자동으로 보인다 — "작다가 커짐" 대신 "잠깐
+  // 안 보이다가(배경은 이미 검은색) 바로 완성된 크기로 나타남"으로 바뀐다. 이 규칙은 DOMContentLoaded
+  // 이전(BeforeContentLoaded, 가장 이른 시점)에 심어야 어떤 영상이 처음 나타나든 놓치는 창이 없다.
+  // 🔴 2026-08-16(재확인, 실기기 진단 로그로 원인 확정) — CSS(:has(video:not(...))) 방식도,
+  // MutationObserver(addedNodes 감지) 방식도 실기기에서 똑같이 안 먹혔다. 진단 로그(👁️공개
+  // priorVis=)로 실측 확정: willFullscreen=true로 풀스크린 전환되는 케이스는 매번 priorVis가
+  // 빈 문자열(= 한 번도 숨겨진 적 없음)이었다 — 반면 스킵 케이스는 priorVis=hidden으로 정상
+  // 작동했다. 결론: **틱톡이 다음 영상 SECTION을 스와이프 전에 미리(preload) DOM에 만들어
+  // 둔다** — 그래서 "새로 삽입되는 순간"을 잡는 MutationObserver의 addedNodes에는 아예 안
+  // 걸린다(이미 그 전에 삽입돼 있었으므로). CSS :has()도 재검토 결과 같은 근본 문제였을 가능성.
+  // **해결: 삽입 이벤트를 기다리지 않고, 주기적으로 DOM 전체를 훑어 "아직 판단 안 된" video를
+  // 능동적으로 찾아 숨긴다.**
+  // 🔴 2026-08-16(재재확인, 실기기 재현) — 처음엔 pollActiveVideo(500ms)에만 얹었는데, 사람이
+  // 빠르게 연속 스와이프하니 여전히 재현("priorVis=" 빈 문자열로 로그 확인) — 틱톡의 preload
+  // 여유가 500ms/150ms보다 짧아지는 경우가 있었다.
+  // 🔴 2026-08-16(5차, "그게 최선이야?" — 사장님 지시로 검정 화면 자체를 없애는 작업) — "숨겼다가
+  // 판단되면 보여주기"는 활성(화면에 보이는) 영상에만 의미가 있다. 틱톡은 스와이프하기 훨씬 전에
+  // (몇 초 전, 이미 확인됨) 다음 영상 SECTION을 미리 DOM에 만들어둔다 — 그렇다면 "활성화될 때
+  // 판단"이 아니라 "화면 밖에 있을 때 이미 미리 판단+스케일까지 끝내두면" 활성화되는 순간엔 이미
+  // 완성된 크기라 숨길 필요 자체가 없어진다. sweepHideUndecided를 "숨기기"가 아니라 "화면 밖 영상
+  // 전부 미리 판단·스케일"로 바꾼다 — decideVideoOffscreen이 실제 판단/적용을 맡고, 아직 활성이
+  // 아니므로 z-index는 낮은 값(1)만 준다(활성이 되면 hideIconRailAndScaleVideo가 999로 승격 —
+  // 예전에 고쳤던 "다음 피드 아이템이 확대된 영상 위로 겹쳐 보이는" 버그가 여러 영상을 동시에
+  // 미리 스케일해두면서 재발하지 않도록, "지금 실제로 보이는 영상만 최상단"을 유지하기 위함).
+  // 🔴 2026-08-17(사장님 재보고 "스위프트 넘길때 다음 영상 멈칫하고 버벅") — 지금까지 게이트 문구
+  // 체크가 document.body.innerText(페이지 전체 텍스트 직렬화 = 강제 레이아웃)를 **50ms마다** 돌리고
+  // 있었다(초당 20회). 실측: 스와이프 직후 창에서 300ms+ 정지가 25회 중 7회, 최악 966ms. 게이트는
+  // 초 단위로만 나타났다 사라지는 상태라 1초 캐시로 충분하다 — 강제 레이아웃을 20분의 1로 줄인다.
+  function gateTextVisible(){
+    try {
+      var nowG = Date.now();
+      if (window.__paceGateCheckAt && (nowG - window.__paceGateCheckAt) < 1000) return !!window.__paceGateCached;
+      window.__paceGateCheckAt = nowG;
+      var btG = document.body.innerText || '';
+      window.__paceGateCached = btG.indexOf('무엇을 시청하고') !== -1 || btG.indexOf('관심사') !== -1 || btG.indexOf('what you') !== -1;
+      return !!window.__paceGateCached;
+    } catch(eGt) { return false; }
+  }
+  function decideVideoOffscreen(vid, container){
+    try {
+      var vh = window.innerHeight || 0;
+      var vw = window.innerWidth || 0;
+      if (!vh || !vw) return;
+      var sec = vid, sg = 0;
+      while (sec && sec.tagName !== 'SECTION' && sg < 8) { sec = sec.parentElement; sg++; }
+      var target = sec || vid;
+      var vsrc = vid.currentSrc || vid.src || '';
+      // 🔴 12차 — 재활용 노드가 이전 영상 때 우리가 건 transform(scale)을 그대로 갖고 있으면 이미
+      // 커진 크기를 재서 willFullscreen=false로 오판한다(활성 경로 hideIconRailAndScaleVideo는
+      // 재기 전에 지우는데 이 사전판단 경로만 빠져 있었다 — 스와이프 직후 "작게 보였다 커짐"의
+      // 남은 원인). 동일하게 transition 끄고 지운 뒤 잰다.
+      if (target.style.getPropertyValue('transform')) {
+        target.style.setProperty('transition', 'none', 'important');
+        target.style.removeProperty('transform');
+      }
+      var r = target.getBoundingClientRect();
+      var willFullscreen = false;
+      var scale = 1;
+      if (r.height && r.height < vh - 1) {
+        var scaleH = vh / r.height;
+        var scaleW = r.width ? vw / r.width : scaleH;
+        if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
+          scale = scaleH; willFullscreen = true;
+        } else if (scaleW > 1.01 && scaleW <= 2.6) {
+          // 🔴 2026-08-16(13차, 진짜 스와이프 녹화 프레임 분석으로 확정) — 사장님이 보던 "스와이프하면
+          // 화면 작아지고 오른쪽에 아이콘" 재현 프레임 2건이 전부 4:5/가로형 등 비표준 비율 영상이었다.
+          // 예전에 "비표준 비율은 스킵하고 페이지 원본 그대로"로 설계한 케이스가 바로 그 증상이었던 것
+          // (스킵되면 데스크톱 레이아웃 크기 그대로 작게 + 페이지 아이콘 열 노출). 스킵 대신 네이티브
+          // 틱톡이 가로 영상을 다루는 방식대로 **가로 폭 기준으로 채운다** — 위아래는 검은 여백으로
+          // 남고(원래 배경이 검정) 아이콘은 RN 오버레이로 통일된다. 폭 기준이라 좌우 크롭·잘림이 없어
+          // 예전 스킵 사유(균일 스케일 시 폭이 밖으로 밀려 잘림)가 발생하지 않는다.
+          scale = scaleW; willFullscreen = true;
+        }
+      }
+      target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      target.setAttribute('data-pace-fs-src', vsrc);
+      vid.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      vid.setAttribute('data-pace-fs-src', vsrc);
+      // 🔴 2026-08-17(사장님 재보고 "다음 영상 멈칫") — 스와이프 진입 직후 정지의 큰 지분은 새 영상
+      // 버퍼링(첫 프레임까지 네트워크 대기)이다. 틱톡이 DOM 노드는 미리 만들어도 미디어 데이터까지
+      // 미리 받는다는 보장이 없어, 화면 밖에서 판단하는 이 시점에 preload=auto를 강제해 데이터를
+      // 미리 받게 한다 — 활성화되는 순간 이미 버퍼가 차 있어 바로 재생된다.
+      try { if (vid.preload !== 'auto') vid.preload = 'auto'; } catch(ePre) {}
+      // 🔴 12차 — 페이지 자체 아이콘 열(SECTION)은 지금까지 활성화 시점에만 숨겨서, 미리 스케일해둔
+      // 새 영상이 화면에 들어오는 순간엔 아이콘이 아직 보였다(스와이프마다 "오른쪽 아이콘 떴다
+      // 사라짐"). 판단을 여기서 이미 끝내므로 숨김(yes)/복원(no)도 같은 동기 실행에서 끝내둔다 —
+      // 활성 경로의 숨김/스킵복원 로직과 같은 규칙.
+      var likeOff = container ? container.querySelector('[data-e2e="like-icon"]') : null;
+      if (likeOff) {
+        var railOff = likeOff, rg = 0;
+        while (railOff && railOff.tagName !== 'SECTION' && rg < 10) { railOff = railOff.parentElement; rg++; }
+        if (railOff && railOff.tagName === 'SECTION') {
+          if (willFullscreen) {
+            if (railOff.style.display !== 'none') railOff.style.setProperty('display', 'none', 'important');
+          } else if (railOff.style.display === 'none') {
+            railOff.style.removeProperty('display');
+          }
+        }
+      }
+      if (!willFullscreen) return;
+      // 🔴 13차(밤 자율 루프, 녹화 프레임으로 발견) — 가로형(폭 채움) 영상이 화면 중앙보다 ~6%
+      // 아래에 붙는다: SECTION이 피드 아이템 안에서 세로 오프셋을 갖고 있는데 scale만 걸고 위치
+      // 보정을 안 해서다. 아이템 컨테이너(스크롤 스냅 단위, 뷰포트 크기) 중심으로 translateY 보정 —
+      // transform은 레이아웃에 안 끼므로 스냅 계산과 무관하게 안전하고, 두 rect가 같은 스크롤
+      // 오프셋을 공유해 화면 밖 프리로드 영상에도 정확하다.
+      var dyOff = 0;
+      try {
+        if (container) {
+          var crOff = container.getBoundingClientRect();
+          dyOff = (crOff.top + crOff.height / 2) - (r.top + r.height / 2);
+        }
+      } catch(eDyOff) {}
+      target.style.setProperty('transition', 'none', 'important');
+      target.style.setProperty('transform', 'translateY(' + dyOff.toFixed(1) + 'px) scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform-origin', 'center center', 'important');
+      target.style.setProperty('position', 'relative', 'important');
+      target.style.setProperty('z-index', '1', 'important');
+      var el2 = vid, guard2 = 0;
+      while (el2 && guard2 < 2) {
+        if (el2.tagName === 'SECTION' || el2.tagName === 'DIV') {
+          el2.style.setProperty('overflow', 'visible', 'important');
+        }
+        el2 = el2.parentElement;
+        guard2++;
+      }
+    } catch(eOff) {}
+  }
+  function sweepHideUndecided(){
+    try {
+      // 🔴 13차(사장님 실기기 재보고 "스와이프하면 화면이 멈췄다가 버벅") — 예전엔 여기(50ms 틱)서
+      // hideLeftRailByGeometry를 같이 돌렸는데, 그 함수는 문서의 **모든 div에 getBoundingClientRect**
+      // 를 강제한다(초당 20회 전체 레이아웃 계산 = 스크롤 중 프레임 낙하의 직접 원인). 사이드바/
+      // 스켈레톤은 이제 문서 시작 시점 정적 CSS가 원천 차단하므로 비싼 지오메트리 스캔은 원래대로
+      // houseKeeping(3초, /live 등 클래스가 순수 해시인 페이지 백업용)에만 남기고 여기선 뺀다.
+      // ensureStaticHideCss는 getElementById 1회라 공짜 — 유지.
+      ensureStaticHideCss();
+      // 🔴 hideIconRailAndScaleVideo와 동일 이유(9차 주석 참고) — 관심사 게이트가 떠 있는 동안은
+      // 화면 밖 프리로드 영상 판단도 통째로 미룬다. 이 스윕은 컨테이너마다 반복 도는 루프라 게이트
+      // 문구 체크를 루프 밖(한 번만)에서 해서 낭비를 줄인다.
+      if (gateTextVisible()) return;
+      // 🔴 같은 멈칫 수정 2탄 — 스냅 애니메이션이 진행 중일 때(컨테이너 top이 틱 사이 2px 넘게
+      // 이동) 화면 밖 사전판단(rect 측정+스타일 쓰기 = 강제 레이아웃)을 미룬다. 사전판단의 목적은
+      // "스와이프 전(유휴 시간)에 미리 끝내두기"라 애니메이션 중 한두 틱 미뤄도 목적을 해치지
+      // 않고, 애니메이션과 경합하던 레이아웃 작업이 사라진다. 활성 영상 처리(pollActiveVideo →
+      // hideIconRailAndScaleVideo)는 이 게이트와 무관하게 그대로 돈다.
+      try {
+        var probeC0 = document.querySelector('[data-e2e="recommend-list-item-container"]');
+        if (probeC0) {
+          var probeTop = probeC0.getBoundingClientRect().top;
+          var movingNow = (typeof window.__paceProbeTop === 'number') && Math.abs(probeTop - window.__paceProbeTop) > 2;
+          window.__paceProbeTop = probeTop;
+          if (movingNow) return;
+        }
+      } catch(eMv) {}
+      var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+      for (var ci3 = 0; ci3 < containers3.length; ci3++) {
+        var vids3 = containers3[ci3].querySelectorAll('video');
+        for (var vi3 = 0; vi3 < vids3.length; vi3++) {
+          var vid3 = vids3[vi3];
+          // 🔴 재활용 노드 대응 — hideIconRailAndScaleVideo와 동일 로직(src 불일치=재활용된 새
+          // 내용이므로 "판단 안 됨"으로 취급). 이게 없으면 재활용된 노드가 이전 영상 때 찍힌
+          // decided 속성을 그대로 갖고 있어 여기서 계속 스킵되고, 새 내용이 숨겨지지 않는다.
+          var vsrc3 = vid3.currentSrc || vid3.src || '';
+          if (vid3.getAttribute('data-pace-fs-decided') && vid3.getAttribute('data-pace-fs-src') === vsrc3) continue;
+          decideVideoOffscreen(vid3, containers3[ci3]);
+        }
+      }
+    } catch(eSweep) {}
+  }
+  sweepHideUndecided();
+  // 🔴 2026-08-16(3차) — 150ms 인터벌도 실기기 로그로 여전히 놓치는 게 확인됨(스와이프 직전
+  // priorVis가 빈 문자열인 미스가 4번 중 2번) → requestAnimationFrame(매 프레임)로 바꿨었다.
+  // 🔴 2026-08-16(6차, 진단으로 원인 확정) — rAF 루프 자체가 문제였다: 진단 로그(💓sweepLoop
+  // frame=)를 심어보니 frame=1은 찍히는데 8초 넘게 frame=300(약 5초 분량)이 안 찍힘 — WKWebView
+  // 안에서 컴포지터/디스플레이 갱신 우선순위에 안 걸리면 requestAnimationFrame이 사실상 멈추는
+  // (또는 극단적으로 스로틀되는) 것으로 보인다(알려진 WKWebView 특성 — 실제 화면 애니메이션이
+  // 없으면 rAF가 우선순위 밀림). setInterval은 pollActiveVideo(500ms)/houseKeeping(3000ms) 둘 다
+  // 로그로 계속 살아있는 게 확인돼 신뢰할 수 있다 — rAF 대신 촘촘한 setInterval(50ms)로 되돌린다.
+  setInterval(sweepHideUndecided, 50);
+  // 🔴 2026-08-16(13차) — 50ms 스윕도 "활성화되는 바로 그 순간 노드가 재활용되는" 경우엔 한 틱
+  // 늦는다(그 사이 원본 크기+페이지 아이콘이 잠깐 보였다가 커짐 — 실기기에서 잔존 재현). 폴링을
+  // 더 줄이는 대신 이벤트로 잡는다: 재활용이든 신규든 새 영상이 붙으면 반드시 loadstart가 발화
+  // 하므로(미디어 이벤트는 버블링은 안 하지만 캡처 단계 문서 리스너에는 걸린다), 그 즉시 재판단
+  // 해서 스케일/아이콘 숨김을 같은 순간에 끝낸다.
+  try {
+    document.addEventListener('loadstart', function(evLs){
+      try {
+        var tLs = evLs.target;
+        if (!tLs || tLs.tagName !== 'VIDEO') return;
+        var cLs = tLs.closest ? tLs.closest('[data-e2e="recommend-list-item-container"]') : null;
+        if (cLs) decideVideoOffscreen(tLs, cLs);
+      } catch(eLs2) {}
+    }, true);
+  } catch(eLs) {}
   try {
     if (typeof Element !== 'undefined' && Element.prototype.requestFullscreen) {
       Element.prototype.requestFullscreen = function(){ return Promise.reject(new Error('blocked')); };
@@ -189,7 +415,29 @@ const INJECTED_JS_BEFORE_LOAD = `
   } catch(e) {}
 
   function mainInit() {
-  send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() });
+  // 🔴 원래 이 함수 아래쪽(구 setInterval 등록부 근처)에 있던 걸 맨 위로 옮김 — hideIconRailAndScaleVideo가
+  // mainInit 안에서 직접 한 번 즉시 호출되는데(같은 함수 뒤쪽), signalFsDecidedOnce가 이 값을 그
+  // 첫 호출에서부터 정확히 써야 한다(startedAt이 아직 undefined면 Date.now()-startedAt이 NaN이 돼
+  // "6.5초 미만" 검사가 항상 통과해버리는 조용한 버그가 생김).
+  var startedAt = Date.now();
+  send({ type: 'domlog', text: '🟢 mainInit 시작(DOMContentLoaded 기준) t=' + Date.now() + ' path=' + location.pathname });
+  // 🔴 2026-08-17(밤 자율 루프, 커버 스피너 영구 재현으로 발견) — 초기 URL은 /foryou지만 틱톡이
+  // **루트('/')로 리다이렉트**하는 세션이 있다(데스크톱 For You는 루트에서도 서빙됨). 그때
+  // "indexOf('foryou')" 체크 3곳(enforceMainWidth/hideIconRailAndScaleVideo/빈피드 워치독)이 전부
+  // 스킵돼 스케일 판단·fsDecided·워치독이 죽고, video의 ready조차 안 가면 RN 10초 안전장치도
+  // 무장 안 돼 커버 스피너가 영원히 돈다. 루트도 피드 경로로 인정한다.
+  function isFeedPath(){
+    try {
+      var fp = String(location.pathname || '');
+      return fp === '/' || fp === '' || fp.indexOf('foryou') !== -1;
+    } catch(eFp) { return false; }
+  }
+  // /foryou가 아닌 페이지로 넘어가면(사이드바 메뉴 등, 전체 페이지 리로드라 mainInit이 다시 돔)
+  // RN이 그리던 아이콘 오버레이(좋아요/댓글/북마크/공유)가 이전 페이지의 카운트를 든 채 그대로
+  // 남아있으면 안 된다 — 매 mainInit마다 일단 비우고, /foryou면 hideIconRailAndScaleVideo가
+  // 곧 새 값으로 다시 채운다.
+  window.__paceLastIconState = null;
+  send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
   // 🔴 2026-08-15 사장님 지적("사람아이콘 눌르면 팔로우 화면이 왜 짤려", "세로줄로 메뉴 뜨는거
   // 맞아?") — 2026-08-12 QA_MATRIX에 이미 "알려진 부작용, 후속 작업"으로 기록돼 있던 항목이다:
   // 자동넘김을 살리려고 의도적으로 데스크톱 UA를 쓰는데(위 userAgent prop 주석 참고 — 모바일 UA는
@@ -206,13 +454,529 @@ const INJECTED_JS_BEFORE_LOAD = `
   // ⚠️ /following 등 하위 화면(팔로우 추천 카드 그리드)이 좁은 화면 왼쪽 절반만 쓰고 나머지가
   // 까맣게 남는 별도 증상도 있다(실측 확인) — DivMainContainer/DivUserListWrapper에 width:100%를
   // 강제해봤지만 실기기/시뮬레이터 재검증 결과 효과 없었다(그리드 트랙이 고정 px로 박혀있을
-  // 가능성 — 더 깊은 조사 필요, 사이드바처럼 컨테이너 하나 숨기는 걸로 안 끝남). 사이드바 숨김
-  // (아래, 효과 확인됨)만 우선 반영하고 이건 다음 세션 과제로 남긴다.
+  // 가능성이 맞았다 — 진짜 원인·수정은 아래 fixNarrowCardGrid() 참고).
+  // 🔴 2026-08-15(2차) — 위 클래스명 셀렉터(DivSideNavContainer)는 /foryou·/explore(같은 SPA
+  // 라우트)에서만 통했다. /live로 들어가면 완전히 다른 클래스 체계(실측: tiktok-1w5o2is,
+  // tiktok-13e8rmi, eyxny660 등 — 뒤에 안정적인 컴포넌트명이 안 붙는 순수 해시라 *= 매칭 자체가
+  // 불가능)를 써서 사이드바가 그대로 노출됐다(실기기 확인). "화면 위에 검은 View를 고정폭으로
+  // 덮어씌우자"는 대안도 시도했지만 /explore처럼 이미 리플로우가 된 페이지에서 정상 콘텐츠(첫
+  // 카테고리 탭)까지 잘라먹는 새 부작용을 냄 — 되돌림. 최종: 클래스명이 아니라 **기하학적
+  // 특징**(왼쪽 끝에 붙어있고 화면 세로 대부분을 차지하는 좁은 컬럼)으로 찾아 숨긴다 — /live
+  // 실측치(width 72~200px, height 652~812px)와 /foryou의 DivSideNavContainer가 공통으로 갖는
+  // 패턴이라 클래스명이 또 바뀌어도 안 깨진다. <video>를 담고 있는 컨테이너는 절대 안 숨기게
+  // 방어(실제 영상 컬럼이 우연히 이 기준에 걸리는 사고 방지). mainInit에서 1회 + houseKeeping에서
+  // 매 틱(자가치유, SPA 라우트 전환 대응) 둘 다 호출.
+  function hideLeftRailByGeometry(){
+    try {
+      var vh = window.innerHeight || 0;
+      if (!vh) return;
+      // 🔴 2026-08-16(10차, 실측으로 확정) — 진단 로그로 DivSideNavContainer(실제 보이는 아이콘
+      // 목록)가 width=72/left=0/height=812로 기하학적 조건을 전부 만족하는데도, 아래 제네릭
+      // querySelectorAll('div') 순회 방식이 왜인지 이 특정 엘리먼트를 지나쳐 형제인
+      // DivSideNavPlaceholderContainer(빈 자리표시자)만 숨기고 있었다(정확한 이유 미확정 —
+      // querySelectorAll 순회 중 리스트 순서/컴포지션 관련 특이 케이스로 추정). 기하학적 방식에
+      // 더 이상 의존하지 않고, 클래스명으로 직접 확실하게 잡는다 — 실측으로 이미 확인된 안정적
+      // 선택자라 지난 세션들에서도 이 클래스명 자체는 계속 유지돼왔다(*=로 해시 프리픽스 변화엔
+      // 안전).
+      var realNavList = document.querySelectorAll('[class*="DivSideNavContainer"]');
+      for (var rn2 = 0; rn2 < realNavList.length; rn2++) {
+        var realNav = realNavList[rn2];
+        if (realNav.querySelector('video')) continue;
+        var wasHidden = realNav.style.display === 'none';
+        if (!wasHidden) {
+          realNav.style.setProperty('display', 'none', 'important');
+        }
+        // 🔴 임시 진단 — 숨겼는데도 계속 보인다는 재현이 있어, 실제로 적용/유지되는지 매 틱 확인.
+        // 스팸 방지로 "상태가 바뀔 때"만(숨김→안숨김 감지 = 리액트가 되돌렸다는 증거) 로그.
+        var nowDisplay = getComputedStyle(realNav).display;
+        var stateKey = wasHidden ? 'was-hidden' : 'was-visible';
+        if (window.__paceNavLastState !== stateKey + ':' + nowDisplay) {
+          window.__paceNavLastState = stateKey + ':' + nowDisplay;
+          send({ type: 'domlog', text: '🔍SideNav상태 idx=' + rn2 + ' ' + stateKey + ' computedNow=' + nowDisplay + ' inlineNow=' + realNav.style.display });
+        }
+      }
+      var all = document.querySelectorAll('div');
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.style && el.style.display === 'none') continue;
+        var r = el.getBoundingClientRect();
+        if (r.left > 4 || r.width <= 0 || r.width > 220) continue;
+        if (r.height < vh * 0.5) continue;
+        if (el.querySelector('video')) continue;
+        el.style.setProperty('display', 'none', 'important');
+        // 🔴 임시 진단 — 콜드 스타트 직후 왼쪽 바가 몇 초간 그대로 남는 재현 확인용. 스켈레톤과
+        // 실제 사이드바가 별개 엘리먼트라 매번(클래스별 최대 1회) 남겨서 언제 무엇이 잡히는지 본다.
+        var clsKey = (el.className || 'noclass').slice(0, 40);
+        window.__paceRailHideLoggedClasses = window.__paceRailHideLoggedClasses || {};
+        if (!window.__paceRailHideLoggedClasses[clsKey]) {
+          window.__paceRailHideLoggedClasses[clsKey] = true;
+          send({ type: 'domlog', text: '🙈사이드바숨김 t=' + Date.now() + ' w=' + r.width.toFixed(0) + ' h=' + r.height.toFixed(0) + ' cls=' + clsKey });
+        }
+      }
+    } catch(eGeo) {}
+  }
+  hideLeftRailByGeometry();
+  // 🔴 2026-08-15(3차) — /following 카드 그리드가 왼쪽 절반만 쓰고 나머지가 까맣게 남는 문제,
+  // 실측(팔로우 버튼 조상 체인의 getComputedStyle 덤프)으로 원인 확정: 카드 리스트 컨테이너
+  // (MAIN 바로 아래 DIV.ey5qmgg0, 실측 w=420 — 뷰포트 402와 거의 같음, 즉 컨테이너 자체는 이미
+  // 전체 폭)의 직계 자식 카드(DIV.ey5qmgg1)가 데스크톱 그리드용 고정 픽셀 폭(실측 w=226)을 그대로
+  // 갖고 있다. 420px 컨테이너에 226px 카드는 1개만 들어가고 나머지 194px가 빈 채(까맣게) 남는다 —
+  // "그리드"가 아니라 flex-wrap이 1개씩만 줄바꿈한 것. 이전 시도(DivMainContainer/
+  // DivUserListWrapper에 width:100%)가 안 먹혔던 이유는 컨테이너가 아니라 **카드 자체의 고정폭**이
+  // 원인이었기 때문 — 컨테이너를 아무리 늘려도 카드가 226px를 고집하면 그대로다.
+  // 1차 시도: 클래스명 대신 기하학(형제 폭 동일 + 부모의 60%↑)으로 찾아 47% 강제 — 실기기/
+  // 시뮬레이터 재검증 결과 안 먹힘(스크린샷 동일) — 카드가 직계 자식이 아니라 한 단계 더 감싸는
+  // wrapper 뒤에 있어 조건에 안 걸린 것으로 추정, 되돌림. 2차(현재): 지금 실측으로 확인된 실제
+  // 클래스명(ey5qmgg0=행 컨테이너, ey5qmgg1=카드)을 직접 지정 — /live처럼 접미사 없는 순수 해시라
+  // 다음 틱톡 배포에서 바뀌면 깨질 수 있음(이미 DivSideNavContainer 등에서 감수 중인 것과 같은
+  // 트레이드오프). 행 컨테이너를 grid로 바꾸고 카드 폭을 auto로 풀어 그리드 트랙이 폭을 정하게 한다.
   try {
-    var hideStyle = document.createElement('style');
-    hideStyle.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"]{display:none!important}';
-    (document.head || document.documentElement).appendChild(hideStyle);
-  } catch(eHide) {}
+    var gridFixStyle = document.createElement('style');
+    gridFixStyle.textContent =
+      '[class*="ey5qmgg0"]{display:grid!important;grid-template-columns:repeat(2,1fr)!important;gap:8px!important}' +
+      '[class*="ey5qmgg1"]{width:auto!important;max-width:none!important}';
+    (document.head || document.documentElement).appendChild(gridFixStyle);
+  } catch(eGridFix) {}
+  // 🔴 2026-08-15(6차, 해결) — /foryou 영상이 뷰포트보다 작게 렌더링되며 우측 좋아요/댓글/공유
+  // 아이콘 열이 화면 밖으로 잘려 보이던 문제(사장님 지적 "사이드에 메뉴들이 짤려서"). 4~5차
+  // (외부 스타일시트, 인라인 style로 width/max-width 강제)는 전부 실패 — 원인을 몰라 엉뚱한
+  // 속성을 붙잡고 있었다. 실측(getComputedStyle)으로 진짜 원인 확정: 영상을 감싸는
+  // MAIN.er8k1k70에 **min-width:420px**가 걸려있다. CSS 스펙상 min-width는 충돌 시 width/
+  // max-width를 항상 이긴다 — 그래서 width만 아무리 !important로 눌러도 min-width가 더 큰 값을
+  // 갖고 있으면 렌더링 폭은 절대 안 줄어든다(4~5차가 매번 "인라인엔 값이 들어갔는데 실제 렌더
+  // 폭은 그대로"였던 이유). min-width를 0으로 같이 강제하니 즉시 뷰포트에 맞게 줄어듦을
+  // 시뮬레이터 스크린샷으로 확인. flex-basis도 함께 지정하는 이유는 MAIN이 flex item이라
+  // width만으로는 flex-basis:auto 상태에서 재계산될 수 있어서다.
+  function enforceMainWidth(){
+    try {
+      if (!isFeedPath()) return;
+      var vw = window.innerWidth || 0;
+      if (!vw) return;
+      var v = document.querySelector('video');
+      if (!v) return;
+      var mainEl = null;
+      var walk = v;
+      var guard = 0;
+      while (walk && guard < 20) {
+        if (walk.tagName === 'MAIN') { mainEl = walk; break; }
+        walk = walk.parentElement;
+        guard++;
+      }
+      if (!mainEl) return;
+      function apply(){
+        if (mainEl.style.getPropertyValue('min-width') === '0px') return;
+        mainEl.style.setProperty('min-width', '0', 'important');
+        mainEl.style.setProperty('flex', '0 1 ' + vw + 'px', 'important');
+        mainEl.style.setProperty('flex-basis', vw + 'px', 'important');
+        mainEl.style.setProperty('width', vw + 'px', 'important');
+        mainEl.style.setProperty('max-width', vw + 'px', 'important');
+      }
+      apply();
+      if (!mainEl.getAttribute('data-pace-width-observed')) {
+        mainEl.setAttribute('data-pace-width-observed', '1');
+        var mo2 = new MutationObserver(apply);
+        mo2.observe(mainEl, { attributes: true, attributeFilter: ['style'] });
+      }
+    } catch(eMainWidth) {}
+  }
+  enforceMainWidth();
+  // 🔴 2026-08-16(11차) — 세로 레터박싱을 레이아웃 크기 변경(7~9차, 전부 실패: 검은화면/찌그러짐/
+  // 인접영상 겹침 — 스크롤 스냅 계산과 충돌)이 아니라 **레이아웃에 안 끼는 시각 효과만으로** 푼다.
+  // 실측(data-e2e="like-icon" 조상 체인)으로 페이지 자체 좋아요/댓글/북마크/공유 아이콘 열의 진짜
+  // 컨테이너를 확정: SECTION.e12arnib0(video의 SECTION.ezfgn9c0과 형제, 둘 다 DIV.ehcbpkw2의
+  // flex row 자식). 이걸 숨기면(RN 오버레이로 재구현 예정) video만 남아 폭 경쟁이 없어지고,
+  // 10차(transform:scale, 레이아웃 안전 확인됨)를 다시 켜도 더 이상 아이콘을 밀어낼 걱정이 없다.
+  // overflow:visible을 같이 줘서 확대된 영상이 원래 박스 밖으로 클리핑 안 되게 한다(overflow는
+  // 그 자체로 레이아웃 크기에 영향 없음 — width/height와 달리 스크롤 스냅 계산과 무관해 안전).
+  // 사진 캐러셀(video 없는 피드 아이템) 전용 처리 — 위 hideIconRailAndScaleVideo의 캐러셀 분기에서
+  // 호출. 영상 경로와 같은 규칙: 콘텐츠 SECTION을 폭 기준으로 채우고, 페이지 아이콘 열을 숨기고,
+  // 이 아이템의 카운트로 RN 오버레이를 갱신하고, 최초 커버 신호(fsDecided)를 보낸다(video가 없으니
+  // 재생 준비 게이트는 해당 없음). 재활용 노드 대응 키는 video src 대신 첫 이미지 src.
+  function handleActiveCarousel(activeC, vh, vw){
+    try {
+      var sections = activeC.querySelectorAll('section');
+      var contentSec = null, railSec = null;
+      for (var si = 0; si < sections.length; si++) {
+        if (sections[si].querySelector('[data-e2e="like-icon"]')) { if (!railSec) railSec = sections[si]; }
+        else if (!contentSec) contentSec = sections[si];
+      }
+      if (!contentSec) return;
+      var imgEl = contentSec.querySelector('img');
+      var ckey = (imgEl && (imgEl.currentSrc || imgEl.src)) || 'carousel';
+      var decidedC = contentSec.getAttribute('data-pace-fs-decided');
+      if (decidedC && contentSec.getAttribute('data-pace-fs-src') !== ckey) { decidedC = null; }
+      if (contentSec.style.getPropertyValue('transform')) {
+        contentSec.style.setProperty('transition', 'none', 'important');
+        contentSec.style.removeProperty('transform');
+      }
+      var rc = contentSec.getBoundingClientRect();
+      var willC = false, scaleC = 1;
+      if (rc.width && rc.width < vw - 1) {
+        scaleC = vw / rc.width;
+        if (scaleC > 1.01 && scaleC <= 2.6) { willC = true; }
+      }
+      if (decidedC === 'no') { willC = false; }
+      contentSec.setAttribute('data-pace-fs-decided', willC ? 'yes' : 'no');
+      contentSec.setAttribute('data-pace-fs-src', ckey);
+      if (willC) {
+        var dyC = 0;
+        try {
+          var crC = activeC.getBoundingClientRect();
+          dyC = (crC.top + crC.height / 2) - (rc.top + rc.height / 2);
+        } catch(eDyC) {}
+        contentSec.style.setProperty('transition', 'none', 'important');
+        contentSec.style.setProperty('transform', 'translateY(' + dyC.toFixed(1) + 'px) scale(' + scaleC.toFixed(4) + ')', 'important');
+        contentSec.style.setProperty('transform-origin', 'center center', 'important');
+        contentSec.style.setProperty('position', 'relative', 'important');
+        if (lastActiveZTarget && lastActiveZTarget !== contentSec) {
+          lastActiveZTarget.style.setProperty('z-index', '1', 'important');
+        }
+        lastActiveZTarget = contentSec;
+        contentSec.style.setProperty('z-index', '999', 'important');
+        if (railSec && railSec.style.display !== 'none') {
+          railSec.style.setProperty('display', 'none', 'important');
+        }
+      } else if (railSec && railSec.style.display === 'none') {
+        railSec.style.removeProperty('display');
+      }
+      // RN 오버레이 카운트를 이 캐러셀 아이템의 값으로 갱신 — 이게 없으면 이전 영상 카운트가
+      // 그대로 남아 페이지 아이콘과 두 벌로 겹쳐 보인다(이번 버그의 절반).
+      var cLikeC = activeC.querySelector('[data-e2e="like-count"]');
+      var cCommentC = activeC.querySelector('[data-e2e="comment-count"]');
+      var cFavC = activeC.querySelector('[data-e2e="favorite-count"]');
+      var cShareC = activeC.querySelector('[data-e2e="share-count"]');
+      var iconStateC = {
+        like: cLikeC ? cLikeC.textContent.trim() : '',
+        comment: cCommentC ? cCommentC.textContent.trim() : '',
+        favorite: cFavC ? cFavC.textContent.trim() : '',
+        share: cShareC ? cShareC.textContent.trim() : '',
+      };
+      var iconStateStrC = JSON.stringify(iconStateC);
+      if (window.__paceLastIconState !== iconStateStrC) {
+        window.__paceLastIconState = iconStateStrC;
+        send({ type: 'iconState', like: iconStateC.like, comment: iconStateC.comment, favorite: iconStateC.favorite, share: iconStateC.share });
+      }
+      if (!window.__paceFsDecidedSent) {
+        var navC = document.querySelector('[class*="DivSideNavContainer"]');
+        var railVisibleC = false;
+        try { railVisibleC = !!(navC && getComputedStyle(navC).display !== 'none'); } catch(eNvC) {}
+        if (!railVisibleC) {
+          window.__paceFsDecidedSent = true;
+          send({ type: 'domlog', text: '🏁 fsDecided 발사(캐러셀) t=' + Date.now() + ' (+' + Math.round((Date.now() - startedAt) / 100) / 10 + 's)' });
+          requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
+        }
+      }
+    } catch(eCar) {}
+  }
+  function hideIconRailAndScaleVideo(){
+    try {
+      // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가 있고") — 이 함수의 fsDecided 신호는
+      // "영상 풀스크린 판단"만 가렸지, 화면에 실제로 보이는 또 다른 문제(틱톡 자체 왼쪽 세로
+      // 사이드바 — 로고/검색/홈 아이콘 목록)를 가리는 hideLeftRailByGeometry는 원래 houseKeeping
+      // 3초 틱에만 맡겨져 있어 별개로 최대 3초간 노출됐다. 같은 타이밍(mainInit 1회 + 이 함수가
+      // 불리는 모든 시점 — houseKeeping 틱 + pollActiveVideo의 즉시 트리거)에 같이 돌려서 fsDecided
+      // 신호가 나갈 때 사이드바도 이미 숨겨져 있도록 묶는다. dismissAppBanner는 여기 안 넣는다 —
+      // 그건 실제 클릭을 하는 함수라 원래 설계대로(1500/3000ms 지연 + houseKeeping 3초 틱)만 돌게
+      // 남겨둔다(더 자주/이르게 클릭을 시도하게 만들면 "검색 후 방금 연 영상이 잠깐 보였다 꺼짐"류
+      // 회귀를 다시 낼 위험이 있음 — 과거 기록).
+      hideLeftRailByGeometry();
+      enforceMainWidth();
+      if (!isFeedPath()) {
+        // 🔴 사장님 실기기 지적("/following에 지난 영상 카운트가 그대로 떠있다") — /following 등은
+        // 전체 페이지 리로드가 아니라 SPA 라우팅이라 mainInit이 다시 안 돌아서, mainInit 안의
+        // "페이지 바뀌면 일단 비운다" 클리어가 이 경로에선 한 번도 안 불린다. houseKeeping(3초
+        // 마다)에서도 경로를 봐서 /foryou가 아니면 비운다 — 한 번만 보내면 되니 캐시로 스팸 방지.
+        if (window.__paceLastIconState !== null) {
+          window.__paceLastIconState = null;
+          send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+        }
+        return;
+      }
+      // 🔴 2026-08-16(9차, 화면 녹화 프레임+로그 대조로 진짜 원인 확정) — 콜드 스타트 직후 왼쪽
+      // 사이드바+레터박싱이 4~8초씩(테스트마다 들쭉날쭉) 그대로 보이던 진짜 원인: dismissAppBanner가
+      // 이미 알고 있던 그 "관심사 게이트"(비로그인 게스트에게 뜨는 카테고리 선택 로그인 유도
+      // 모달 — 토큰 생성 때문에 최소 6초는 일부러 안 건드리고 기다림, 위 dismissAppBanner 주석
+      // 참고)였다. 이 함수는 그 게이트의 존재를 전혀 모른 채 "지금 뷰포트에 겹치는 video"를 찾아
+      // 판단해버렸는데, 게이트가 떠 있는 동안은 그 video가 진짜 /foryou 피드 위치에 자리잡기 전
+      // 상태라 사이드바도 아직 없고 크기도 안 맞았다. 게이트 문구가 보이는 동안은 판단 자체를
+      // 통째로 미룬다(hideLeftRailByGeometry/enforceMainWidth는 위에서 이미 돌았으니 그대로 둠) —
+      // 게이트가 dismissAppBanner에 의해 실제로 닫히고 나면 다음 틱에 정상적으로 재시도된다.
+      if (gateTextVisible()) return;
+      var vh = window.innerHeight || 0;
+      var vw = window.innerWidth || 0;
+      if (!vh) return;
+      // 🔴 11차(3차) — document.querySelector('video')와 기존 getActiveVideo()(.swiper-slide-active
+      // 기준) 둘 다 틀렸다: /foryou는 swiper를 안 써서 getActiveVideo()도 결국 querySelector('video')로
+      // 폴백돼 같은 문제(실측: r.top=909, 뷰포트 밖 — 프리로드된 다음 영상을 잡고 있었다)가 재현됐다.
+      // 진짜 화면에 보이는 video를 뷰포트와의 실제 겹침(rect)으로 직접 찾는다.
+      // 🔴 2026-08-17(사장님 스크린샷 "작은화면일때 오버레이 겹치는거") — 틱톡 피드엔 <video>가
+      // 아예 없는 **사진 캐러셀 게시물**이 섞여 나온다(좌우 화살표+점 인디케이터). 파이프라인
+      // 전체가 video 기준이라 캐러셀 아이템에선 스케일 판단이 안 돌고(작게 유지) 페이지 아이콘도
+      // 안 숨겨지며, RN 오버레이는 이전 영상 카운트를 든 채 남아 두 벌이 겹쳐 보였다. 활성
+      // 아이템을 video가 아니라 **컨테이너 겹침**으로 먼저 찾고, 그 안에 video가 없으면 캐러셀
+      // 전용 경로(폭 채움 스케일 + 아이콘 열 숨김 + 이 아이템의 카운트로 RN 오버레이 갱신)로 처리.
+      var allC0 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+      var activeC0 = null, bestCOv0 = -1;
+      for (var ci0 = 0; ci0 < allC0.length; ci0++) {
+        var cr0 = allC0[ci0].getBoundingClientRect();
+        var ov0 = Math.min(cr0.bottom, vh) - Math.max(cr0.top, 0);
+        if (ov0 > bestCOv0) { bestCOv0 = ov0; activeC0 = allC0[ci0]; }
+      }
+      if (activeC0 && bestCOv0 > vh * 0.3 && !activeC0.querySelector('video')) {
+        // 🔴 처음엔 "영상 아이템도 활성화 직후 잠깐 video가 없더라"는 이유로 600ms 유예를 뒀는데,
+        // 30fps 프레임 분석으로 역효과 확정 — 유예 동안 아무 처리도 안 해서 스케일 안 된 원본
+        // 레이아웃(좁은 카드+옆 카드 삐져나옴)이 최대 1.3초 그대로 보였다(사장님 "아직도 버벅").
+        // video 유무와 무관하게 즉시 폭 채움을 적용한다 — 나중에 video가 붙으면 영상 경로가 같은
+        // 수학(scaleW)으로 재판단하므로 시각적 충돌이 없다.
+        handleActiveCarousel(activeC0, vh, vw);
+        return;
+      }
+      var vids = document.querySelectorAll('video');
+      var v = null, bestOverlap = -1;
+      for (var vi = 0; vi < vids.length; vi++) {
+        var vr = vids[vi].getBoundingClientRect();
+        var overlap = Math.min(vr.bottom, vh) - Math.max(vr.top, 0);
+        if (overlap > bestOverlap) { bestOverlap = overlap; v = vids[vi]; }
+      }
+      if (!v || bestOverlap <= 0) return;
+      var container = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+      // 🔴 사장님 실기기 지적("하단 글자도 짤리고, 화면 사이즈도 못맞춰?") — 원인: 16:9 가로 영상처럼
+      // 스케일을 스킵하는(비표준 비율) 영상에서도 아이콘을 먼저 숨기고 RN 오버레이를 풀스크린 기준
+      // 위치에 띄워버려서, 실제로는 작게(letterbox) 남은 원래 영상 위로 오버레이가 엉뚱하게 겹치고
+      // 자막과도 부딪혔다. **순서를 바꾼다** — 먼저 이 영상을 풀스크린 처리할지 결정하고, "한다"고
+      // 확정된 경우에만 페이지 아이콘을 숨기고 RN 오버레이를 띄운다. 스킵하는 영상은 페이지 자체
+      // UI(아이콘·자막 위치 전부 서로 맞게 설계된 원본)를 하나도 안 건드리고 그대로 둔다.
+      var videoSection = v, sguard = 0;
+      while (videoSection && videoSection.tagName !== 'SECTION' && sguard < 8) {
+        videoSection = videoSection.parentElement;
+        sguard++;
+      }
+      var target = videoSection || v;
+      // 🔴 사장님 실기기 지적("화면이 계속 사이즈가 변경되는데") — 스케일을 적용하고 나면 target의
+      // 실제 렌더 높이가 vh 근처로 바뀌는데, 3초마다 도는 이 함수가 그 이미 커진 값을 "커질 필요
+      // 없음"으로 오판해 지웠다 다시 적용하는 걸 반복했다 — "결정은 한 번만"으로 고쳤었다.
+      // 🔴 2026-08-16(재확인) — 그런데 "yes"로 결정한 뒤 배율을 그때 값 그대로 고정해뒀더니, 사장님이
+      // 실기기에서 위아래로 진짜 몇 px씩(-7~+819, 뷰포트는 812) 잘려 보인다고 재현. 실측으로 원인
+      // 확정: 틱톡 페이지가 로드되며 원본 박스 크기가 살짝(618.67→629px) 계속 흔들리는데, 배율을
+      // 딱 한 번 계산해서 안 바꾸니 그 사이 어긋난 채로 고정됐었다. **"풀스크린 여부" 결정(yes/no)은
+      // 한 번만 하되, "yes"인 경우 배율 자체는 매 틱 새로 측정해 갱신한다** — 재는 순간만 우리
+      // transform을 잠깐 지워 진짜 원본 크기를 보고(같은 동기 실행 안에서 바로 다시 적용하므로
+      // 화면 깜빡임 없음), 재는 값이 "이미 우리가 키운 값"으로 오염되는 이전 버그를 원천 차단한다.
+      // 🔴 2026-08-16(4차, 실기기 로그로 원인 확정) — rAF(매 프레임) 스윕으로도 빠른 연속 스와이프
+      // 4번 중 3~4번씩 여전히 놓침(priorVis= 빈 문자열). 속도 문제가 아니었다 — 틱톡이 스크롤 성능을
+      // 위해 SECTION/video DOM 노드를 **재활용**한다(가상 리스트 흔한 패턴): 스와이프해도 새 노드가
+      // 안 생기고 같은 노드에 새 영상 내용만 갈아끼운다. 그래서 그 노드에 이전 영상 때 찍힌
+      // data-pace-fs-decided가 그대로 남아있어 "이미 판단함"으로 오판, 숨기지도 재판단하지도 않고
+      // 넘어갔다(오래된 스케일이 적용된 채로 새 영상이 즉시 노출 → "작다가 커짐"으로 보임). video의
+      // currentSrc(영상별로 고유)를 같이 저장해뒀다가, 지금 src가 그때 찍어둔 값과 다르면 재활용된
+      // 걸로 보고 무조건 미판단 취급한다.
+      var vsrc = v.currentSrc || v.src || '';
+      var decided = target.getAttribute('data-pace-fs-decided');
+      var decidedSrc = target.getAttribute('data-pace-fs-src');
+      if (decided && decidedSrc !== vsrc) { decided = null; }
+      if (decided === 'no') return;
+      // 🔴 실기기 로그로 원인 확정 — transform을 지워도 CSS transition이 걸려있어(추정) 바로 반영이
+      // 안 되고, 애니메이션 도중의(예: 813px, 자연크기도 목표크기도 아닌 중간값) rect를 읽고
+      // 있었다(로그: 1틱째 정상 판단→2틱째부턴 계속 will=false). transition을 함께 꺼서 스타일
+      // 변경이 그 자리에서 즉시(애니메이션 없이) 반영되게 한다.
+      if (target.style.getPropertyValue('transform')) {
+        target.style.setProperty('transition', 'none', 'important');
+        target.style.removeProperty('transform');
+      }
+      var r = target.getBoundingClientRect();
+      var willFullscreen = false;
+      var scale = 1;
+      if (r.height && r.height < vh - 1) {
+        var scaleH = vh / r.height;
+        var scaleW = r.width ? vw / r.width : scaleH;
+        // 3:4(0.75) 등 9:16과 크게 다른 비율의 영상은 균일(세로 기준) 스케일 시 폭이 뷰포트 밖으로
+        // 크게 밀려나 잘려 보인다(실측 확인) — 그 경우 예전엔 스킵했는데, 스킵 상태(작은 화면 +
+        // 페이지 아이콘 열 노출)가 바로 사장님이 보던 그 증상이었다(13차, 진짜 스와이프 녹화 프레임
+        // 분석으로 확정 — decideVideoOffscreen 쪽 주석 참고). 스킵 대신 가로 폭 기준으로 채운다.
+        if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
+          scale = scaleH; willFullscreen = true;
+        } else if (scaleW > 1.01 && scaleW <= 2.6) {
+          scale = scaleW; willFullscreen = true;
+        }
+      }
+      // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가...") — fsDecided를 여기(스타일 적용 전)서
+      // 바로 보내면, RN이 메시지를 받고 로딩 커버를 걷는 시점이 실제 transform이 화면에 페인트되는
+      // 시점보다 빠를 수 있다(시뮬레이터보다 실기기에서 브릿지/페인트 지연이 더 큼 — 시뮬레이터
+      // 검증에선 안 잡히고 실기기에서만 재현된 이유). 스타일 변경을 다 끝낸 뒤, rAF 두 번으로 최소
+      // 한 프레임 이상 실제로 페인트된 걸 기다렸다가 신호를 보내도록 아래로 옮김(signalFsDecidedOnce).
+      // 🔴 2026-08-16(8차, 화면 녹화로 확정) — 콜드 스타트 직후 화면 녹화를 프레임 단위로 보니, 로딩
+      // 커버가 걷힌 뒤에도 왼쪽 사이드바 노출+레터박싱된 영상이 최대 7초까지 그대로 보이는 걸 실측.
+      // 5초 안전장치(→10초로 늘림, 별개 조치) 때문이 아니라 fsDecided 자체가 "진짜로" 이 시점에
+      // 왔다 — 즉 hideIconRailAndScaleVideo가 **진짜 /foryou 피드 영상이 아직 마운트되기 전**(틱톡
+      // 자체 관심사 게이트/온보딩성 화면에 뜨는 임시 video 등)에 뭔가를 "영상"으로 찾아 판단해버리고
+      // 그걸로 최초 신호를 보낸 것으로 보인다. container(data-e2e="recommend-list-item-container")는
+      // 진짜 피드 아이템에서만 존재하는 확실한 표식이다 — 이게 없는 동안은 "아직 진짜 영상이 아님"
+      // 으로 보고 최초 신호를 미룬다(로딩 커버를 계속 덮어둠). 이후 다른 데서 container가 없어도
+      // 동작하던 폴백 로직(아이콘 검색 등)은 안 건드림 — 오직 "처음 한 번" 신호를 보낼지만 가른다.
+      // 🔴 2026-08-16(11차) — container 존재 여부는 "진짜 영상인가"의 간접 신호일 뿐, "왼쪽 사이드바가
+      // 실제로 숨겨졌는가"와는 별개다(둘이 항상 같은 타이밍에 해결되지 않는다는 게 반복 재현으로
+      // 확인됨). 간접 신호에 기대는 대신, 공개하기 직전 사이드바가 정말 안 보이는 상태인지 직접
+      // 확인한다 — 아직 보이면(엘리먼트가 있고 display:none이 아니면) 신호를 미루고 다음 틱에서
+      // 다시 시도한다(이 함수 자체가 매 틱 호출되므로 자동 재시도됨).
+      function leftRailStillVisible(){
+        try {
+          var nav = document.querySelector('[class*="DivSideNavContainer"]');
+          if (!nav) return false;
+          // 인라인이 아니라 computed로 본다 — 12차부터 숨김의 주 경로가 문서 시작 시점의
+          // 스타일시트(ensureStaticHideCss)라 인라인 style.display는 비어 있는 게 정상이다.
+          return getComputedStyle(nav).display !== 'none';
+        } catch(eNavCheck) { return false; }
+      }
+      function signalFsDecidedOnce(){
+        if (window.__paceFsDecidedSent) return;
+        if (!container) return;
+        if (leftRailStillVisible()) return;
+        // 🔴 2026-08-17(사장님 재보고 "전창인 경우 왜 화면이 처음 멈칫하는거 같지") — 지금까지는
+        // 스케일 판단만 끝나면 커버를 걷어서, 영상이 아직 버퍼링 중(readyState<3)이면 첫 프레임에
+        // 멈춰 있다가 재생이 시작되는 게 "처음 멈칫"으로 보였다. 실제로 프레임이 나오고 있을 때
+        // (재생시간이 진행됐거나 최소 HAVE_FUTURE_DATA)만 공개한다 — 이 함수는 매 틱 재시도되므로
+        // 준비되는 즉시(보통 1초 미만) 걷힌다.
+        try {
+          if (v && v.readyState < 3 && !(v.currentTime > 0.05)) return;
+        } catch(eRs) {}
+        // 🔴 2026-08-16(12차) — 한때 여기 6.5초 하한선이 있었다(세 조건을 다 걸어도 t≈5.8~6초에
+        // 2~2.5초짜리 노출 창이 남아서). 13차 실기기 콘솔로 그 창의 실체가 **스켈레톤 사이드바**
+        // (DivSkeletonSide — 세 조건 어디에도 안 걸리고 지오메트리 폴링에만 걸려 리액트가 다시
+        // 그릴 때마다 재노출)였음이 확정됐고, 지금은 문서 시작 시점 정적 CSS(ensureStaticHideCss)가
+        // 스켈레톤까지 원천 차단하므로 하한선은 순수한 인위적 지연이라 제거했다 — 실기기 로딩
+        // "겁내 느려"의 우리 쪽 지분이 이 6.5초였다.
+        window.__paceFsDecidedSent = true;
+        // 실기기 "로딩 겁내 느려" 원인 분해용 상시 진단 — 커버가 실제로 언제 걷히는지 콘솔로 측정.
+        send({ type: 'domlog', text: '🏁 fsDecided 발사 t=' + Date.now() + ' (+' + Math.round((Date.now() - startedAt) / 100) / 10 + 's)' });
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
+      }
+      target.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      target.setAttribute('data-pace-fs-src', vsrc);
+      // video 자체에도 같은 값을 찍는다 — sweepHideUndecided(위 BeforeContentLoaded에서 시작하는
+      // rAF 루프)가 이 속성이 없거나(또는 src가 달라 재활용으로 판정되거나) 하는 동안만 SECTION에
+      // 인라인 visibility:hidden을 걸어둔다. 이 순간(스케일까지 같은 동기 실행 안에서 끝난 뒤) 그
+      // 인라인 값을 직접 지워야 실제로 화면에 처음 그려진다 — 속성만 찍는 걸로는 안 풀림(CSS
+      // 셀렉터가 아니라 인라인 스타일이라 자동으로 안 없어짐).
+      v.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
+      v.setAttribute('data-pace-fs-src', vsrc);
+      // decideVideoOffscreen(화면 밖 프리로드 영상 사전 판단)이 자리잡은 뒤로는 아무 데서도
+      // visibility:hidden을 걸지 않는다 — 만약을 위한 방어적 제거만 남겨둔다(보통 no-op).
+      target.style.removeProperty('visibility');
+      if (!willFullscreen) {
+        // 🔴 sweepHideUndecided가 "판단 전" 상태에서 이 영상의 아이콘 열까지 미리 display:none으로
+        // 숨겨뒀다(위 진단 참고) — 스킵 케이스(willFullscreen=false)로 확정되면 원래 페이지 UI를
+        // 그대로 둬야 하므로(사장님이 처음부터 요구한 "스킵 영상은 원본 그대로") 그 숨김을 되돌린다.
+        if (container) {
+          var likeElSkip = container.querySelector('[data-e2e="like-icon"]');
+          if (likeElSkip) {
+            var elSkip = likeElSkip, gSkip = 0;
+            while (elSkip && gSkip < 10) {
+              if (elSkip.tagName === 'SECTION') {
+                if (elSkip.style.display === 'none') { elSkip.style.removeProperty('display'); }
+                break;
+              }
+              elSkip = elSkip.parentElement;
+              gSkip++;
+            }
+          }
+        }
+        if (window.__paceLastIconState !== null) {
+          window.__paceLastIconState = null;
+          send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+        }
+        signalFsDecidedOnce();
+        return;
+      }
+      var likeEl = container ? container.querySelector('[data-e2e="like-icon"]') : document.querySelector('[data-e2e="like-icon"]');
+      if (likeEl) {
+        var el = likeEl, guard = 0, railSection = null;
+        while (el && guard < 10) {
+          if (el.tagName === 'SECTION') { railSection = el; break; }
+          el = el.parentElement;
+          guard++;
+        }
+        if (railSection && railSection.style.display !== 'none') {
+          railSection.style.setProperty('display', 'none', 'important');
+        }
+      }
+      // 숨긴 페이지 아이콘 대신 RN이 그릴 오버레이 버튼용 카운트를 활성 영상 컨테이너에서 읽어
+      // 전달한다 — 값이 바뀔 때만 보내 불필요한 postMessage 스팸을 줄인다.
+      if (container) {
+        var cLike = container.querySelector('[data-e2e="like-count"]');
+        var cComment = container.querySelector('[data-e2e="comment-count"]');
+        var cFav = container.querySelector('[data-e2e="favorite-count"]');
+        var cShare = container.querySelector('[data-e2e="share-count"]');
+        var iconState = {
+          like: cLike ? cLike.textContent.trim() : '',
+          comment: cComment ? cComment.textContent.trim() : '',
+          favorite: cFav ? cFav.textContent.trim() : '',
+          share: cShare ? cShare.textContent.trim() : '',
+        };
+        var iconStateStr = JSON.stringify(iconState);
+        if (window.__paceLastIconState !== iconStateStr) {
+          window.__paceLastIconState = iconStateStr;
+          send({ type: 'iconState', like: iconState.like, comment: iconState.comment, favorite: iconState.favorite, share: iconState.share });
+        }
+      }
+      // 8단계까지 조상에 overflow:visible을 걸었더니 사이드바가 다시 노출되는 회귀가 났다(그 위쪽
+      // 조상은 사이드바 숨김 로직과 공유되는 상위 구조라 건드리면 안 됨) — video의 직계 SECTION과
+      // 그 바로 위 flex 부모(ehcbpkw2) 딱 2단계까지만 좁힌다.
+      var el2 = v, guard2 = 0;
+      while (el2 && guard2 < 2) {
+        if (el2.tagName === 'SECTION' || el2.tagName === 'DIV') {
+          el2.style.setProperty('overflow', 'visible', 'important');
+        }
+        el2 = el2.parentElement;
+        guard2++;
+      }
+      // 🔴 11차(4차) — video 태그 자체에 transform을 걸면 getBoundingClientRect/로그는 정상(적용된
+      // 크기/위치)인데 실제 스크린샷엔 전혀 반영 안 됐다(3회 재확인, 매번 동일) — <video>가 하드웨어
+      // 디코더 전용 컴포지팅 레이어를 쓰는 WKWebView의 알려진 특성으로 추정(레이아웃 rect는 CSS
+      // 값을 그대로 보고하지만 실제 디코딩된 프레임 레이어는 별도 트랙이라 transform이 안 먹힘).
+      // video 자체가 아니라 그걸 감싸는 SECTION(비디오 전용 래퍼, 일반 DOM 레이어라 컴포지팅 정상
+      // 적용)에 transform을 건다.
+      // 세로 중앙 보정(dy) — decideVideoOffscreen 쪽 13차 주석 참고(아이템 컨테이너 중심 기준,
+      // 시각 효과만이라 스냅 계산과 무관).
+      var dyAct = 0;
+      try {
+        if (container) {
+          var crAct = container.getBoundingClientRect();
+          dyAct = (crAct.top + crAct.height / 2) - (r.top + r.height / 2);
+        }
+      } catch(eDyAct) {}
+      target.style.setProperty('transition', 'none', 'important');
+      target.style.setProperty('transform', 'translateY(' + dyAct.toFixed(1) + 'px) scale(' + scale.toFixed(4) + ')', 'important');
+      target.style.setProperty('transform-origin', 'center center', 'important');
+      // 🔴 사장님 지적("하단 자막 잘려보이는데") — 확인해보니 잘린 게 아니라 **인접(다음) 피드
+      // 아이템의 내용이 비쳐 보이는 것**이었다. transform은 레이아웃 공간(그 다음 형제가 차지하는
+      // 자리)을 안 바꾸고 시각적으로만 그 밖까지 그리는데, 스택 순서(z-index)가 없어 문서 순서상
+      // 나중에 오는(아래에 있는) 다음 피드 아이템이 그 위에 그려져 겹치는 부분에서 다음 아이템
+      // 내용이 비쳐 보였다. 확대된 영상을 항상 위로 그리도록 강제.
+      target.style.setProperty('position', 'relative', 'important');
+      // decideVideoOffscreen이 화면 밖 영상들도 미리 스케일해두면서(z-index:1) 동시에 여러 SECTION이
+      // 확대돼 있을 수 있다 — "지금 실제로 보이는" 이 target만 최상단이어야 하므로, 직전에 999였던
+      // target(있다면, 지금은 더 이상 활성이 아닌 이전 영상)을 낮은 값으로 되돌린 뒤 이걸 999로 올린다.
+      if (lastActiveZTarget && lastActiveZTarget !== target) {
+        lastActiveZTarget.style.setProperty('z-index', '1', 'important');
+      }
+      lastActiveZTarget = target;
+      target.style.setProperty('z-index', '999', 'important');
+      signalFsDecidedOnce();
+    } catch(eIconScale) {}
+  }
+  hideIconRailAndScaleVideo();
+  // 🔴 2026-08-15(7차, 미해결) — 폭은 고쳤는데 사장님이 실기기 스크린샷으로 재확인("이게 전체창으로
+  // 뜬거냐") — 위아래로도 여전히 카드처럼 떠 있다. 실측(getComputedStyle)으로 원인 확정: video를
+  // 감싸는 SECTION.ezfgn9c0에 aspect-ratio:9/16(0.5625)이 고정돼 있다(h=619는 min-height가 아니라
+  // 이 비율 때문 — 348*16/9=618.67, 정확히 일치). 뷰포트(예: 402x812)가 9:16보다 세로로 더 긴
+  // 비율이라 폭 기준 9:16 박스는 절대 뷰포트 전체 높이를 못 채운다. video 자체는 이미
+  // object-fit:cover라 박스 비율만 풀면 네이티브 틱톡처럼 크롭해서 꽉 찰 것으로 예상했다.
+  // 실제 시도(SECTION에 aspect-ratio:auto+height:100%!important, 부모 flex:1 1 auto 강제)는
+  // 시뮬레이터 스크린샷에서 영상이 통째로 안 보이는(검은 화면, 진행바만 움직임) 심각한 회귀를
+  // 내서 즉시 되돌림 — 이 체인 어딘가(아마 절대위치 자손들의 컨테이닝 블록 계산)가 height:100%
+  // 전파에 더 예민하게 반응하는 것으로 보임. 폭 수정(min-width, 검증됨)만 남기고 높이는 다음
+  // 세션 과제로 남긴다 — 다음엔 aspect-ratio만 먼저 단독으로 풀어보고(height:100% 없이) 단계적으로
+  // 반응을 확인할 것.
   // 2026-08-13(17차) 실기기 보고 — 사장님이 실제로 확인: "무엇을 시청하고 싶으신가요, 동물/코미디
   // 등 카테고리가 있는 **로그인 유도** 팝업"이다. 관심사 선택이 아니라 비로그인 사용자에게 흔한
   // "Browse as Guest" 류 게이트로 보인다(웹서치로 확인 — TikTok 데스크톱 웹은 이 팝업을 "게스트로
@@ -222,7 +986,12 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 문구만 안전하게 특정해서 매칭한다.
   var SKIP_PHRASES = ['나중에', 'not now', 'maybe later', 'later', '건너뛰기', 'skip', '완료', 'done',
     '닫기', 'close', '괜찮아요', '괜찮습니다', '아니요', '아니오', '선택 안', 'no thanks', "i'll do this later",
-    '게스트', 'guest', '둘러보기', '비회원', '로그인 없이', 'without logging'];
+    '게스트', 'guest', '둘러보기', '비회원', '로그인 없이', 'without logging',
+    // 🔴 13차(실기기 콘솔로 확정) — 기기에서 틱톡이 진짜 피드 대신 "전체 화면에서 시청" 버튼만 있는
+    // 프리뷰 상태로 13초를 버텨서(영상은 +2.5s에 이미 재생 중인데 recommend-list-item-container가
+    // +13s에야 생김) 로딩이 "겁내 느려" 보였다. 이 버튼을 눌러 프리뷰를 즉시 벗어나게 한다 —
+    // 네이티브 전체화면 승격은 이미 3중 차단돼 있어 눌러도 인라인 유지된다.
+    '전체 화면에서 시청', 'watch in full screen'];
   function textMatches(txt){
     var lower = txt.toLowerCase();
     for (var i = 0; i < SKIP_PHRASES.length; i++) {
@@ -568,11 +1337,86 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
   // 폴링 백업 — 'ended'가 안 뜨는 경우(틱톡이 video.loop을 되돌리는 등)를 대비해 재생 위치로
   // 직접 종료를 감지한다(YouTubeShortsPlayer.ios.tsx와 동일 패턴).
-  var pollLastT = -1, pollLastVideo = null;
+  var pollLastT = -1, pollLastVideo = null, pollLastSrc = null;
+  // decideVideoOffscreen이 화면 밖 영상들도 미리 스케일해두면서 여러 SECTION이 동시에 z-index를
+  // 가질 수 있게 됐다 — "지금 실제로 화면에 보이는 영상"만 항상 최상단(999)이어야 다음 피드
+  // 아이템이 비쳐 보이던 예전 버그가 재발하지 않는다. hideIconRailAndScaleVideo가 활성 영상에
+  // 999를 줄 때마다 직전에 999였던 target을 여기 기록해뒀다가 낮은 값으로 되돌린다.
+  var lastActiveZTarget = null;
   function pollActiveVideo(){
+    // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
+    // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.
+    sweepHideUndecided();
+    // 🔴 캐러셀 대응 — 기존 "영상 바뀜" 감지는 video src 기준이라, video가 없는 사진 캐러셀
+    // 아이템으로 스와이프해 들어가는 순간을 못 잡았다(이전 영상의 RN 아이콘이 그대로 남아 페이지
+    // 아이콘과 겹치는 원인의 나머지 절반). 활성 컨테이너 자체의 교체를 겹침으로 감지해 즉시
+    // 클리어+재판단한다.
+    try {
+      var vhP = window.innerHeight || 0;
+      if (vhP) {
+        var allCP = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+        var actCP = null, bestP = -1;
+        for (var cp = 0; cp < allCP.length; cp++) {
+          var crP = allCP[cp].getBoundingClientRect();
+          var ovP = Math.min(crP.bottom, vhP) - Math.max(crP.top, 0);
+          if (ovP > bestP) { bestP = ovP; actCP = allCP[cp]; }
+        }
+        if (actCP && bestP > vhP * 0.3 && actCP !== window.__paceLastActiveC) {
+          window.__paceLastActiveC = actCP;
+          // 🔴 잔여 멈칫(왕복 20회 중 4회, 300~466ms) 원인 분해용 상시 진단 — 활성화 순간 이 영상이
+          // 어떤 상태였는지(버퍼 찼는지/재생 중인지/프리로드 설정)를 찍어 정지 프레임과 대조한다.
+          try {
+            var vAct = actCP.querySelector('video');
+            if (vAct) {
+              var bufEnd = 0;
+              try { if (vAct.buffered && vAct.buffered.length) bufEnd = vAct.buffered.end(vAct.buffered.length - 1); } catch(eBuf) {}
+              send({ type: 'domlog', text: '🎬활성화 rs=' + vAct.readyState + ' ns=' + vAct.networkState + ' buf=' + bufEnd.toFixed(2) + ' ct=' + vAct.currentTime.toFixed(2) + ' paused=' + vAct.paused + ' pre=' + vAct.preload + ' t=' + Date.now() });
+            } else {
+              send({ type: 'domlog', text: '🎬활성화 video없음(캐러셀?) t=' + Date.now() });
+            }
+          } catch(eDg) {}
+          if (window.__paceLastIconState !== null) {
+            window.__paceLastIconState = null;
+            send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+          }
+          try { hideIconRailAndScaleVideo(); } catch(eCch) {}
+        } else if (actCP && !actCP.querySelector('video')) {
+          // video 없는 활성 아이템(캐러셀/늦은 장착)은 내용이 바뀌어도 컨테이너 교체 감지에 안
+          // 걸리므로 500ms 틱마다 재평가 — video가 늦게 붙는 경우 붙는 즉시 영상 경로로 넘어간다.
+          try { hideIconRailAndScaleVideo(); } catch(eCr2) {}
+        }
+      }
+    } catch(eCP) {}
     var v = getActiveVideo();
     if (!v) return;
-    if (v !== pollLastVideo) { pollLastVideo = v; pollLastT = -1; }
+    // 🔴 2026-08-16(5차, 실기기 스크린샷으로 원인 확정) — "영상 바뀜"을 v(DOM 엘리먼트 객체)의
+    // 참조 비교(v !== pollLastVideo)로만 판단했는데, 스와이프 전후로 아이콘 카운트가 그대로인
+    // 스크린샷을 보고 확정: 틱톡이 <video> 엘리먼트 자체를 재활용한다(SECTION만이 아니라). 같은
+    // 객체에 새 영상만 갈아끼우면 참조는 안 바뀌어서 이 블록(즉시 판단 트리거 + 아이콘 클리어)이
+    // 아예 안 돈다 — 3초 houseKeeping 틱에만 의존하게 되며 그 사이 이전 아이콘이 그대로 남는다.
+    // src(영상별 고유)로 바뀜을 판단해야 재활용 노드에서도 정확히 잡힌다.
+    var vsrc0 = v.currentSrc || v.src || '';
+    if (v !== pollLastVideo || vsrc0 !== pollLastSrc) {
+      pollLastVideo = v; pollLastSrc = vsrc0; pollLastT = -1;
+      // 🔴 사장님 지적("스와이프 하면 까만화면에 오른쪽 아이콘 나왔다가 전체화면") — 영상은 숨겼는데
+      // (sweepHideUndecided) RN이 그리는 좋아요/댓글/북마크/공유 오버레이는 *이전* 영상 값을 그대로
+      // 들고 있어서, "검정 화면 + 이전 영상 아이콘"이 잠깐 보이다 새 iconState가 도착하면 아이콘도
+      // 같이 갱신되는 게 "아이콘 먼저 나왔다 화면 나옴"으로 보였다. 활성 영상이 바뀐 걸 감지한
+      // 바로 이 시점에 아이콘도 같이 비워서, 검정 화면일 땐 아이콘도 같이 없게 만든다(둘 다 새
+      // 판단이 끝나야 같이 나타남). sweepHideUndecided는 프리로드된(아직 활성 아닌) 영상까지
+      // 훑으므로 거기서 clear를 보내면 지금 보고 있는 활성 영상의 아이콘을 잘못 지울 위험이 있어
+      // 반드시 "활성 영상이 바뀐" 이 지점에서만 보낸다.
+      if (window.__paceLastIconState !== null) {
+        window.__paceLastIconState = null;
+        send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+      }
+      // 🔴 사장님 지적("아직도 세로 바가 잠깐보이는현상있어") — fsDecided 커버는 앱을 처음 켤 때
+      // 딱 한 번만 통과하는 관문이라 스와이프로 다음 영상 넘어갈 때는 안 걸린다. 그 판단(풀스크린
+      // 여부+스케일)이 houseKeeping의 3초 틱에만 맡겨져 있어서, 새 영상이 원래(레터박싱) 크기로
+      // 최대 3초간 보이다 갑자기 커지는 게 매 스와이프마다 "바가 나타났다 사라지는" 걸로 보였다.
+      // 여기(500ms 폴링, 영상 전환 감지 시점)서 즉시 판단을 돌려 그 창을 3000ms→최대 500ms로 줄인다.
+      try { hideIconRailAndScaleVideo(); } catch(eSwap) {}
+    }
     try { if (v.loop) v.loop = false; } catch(e) {}
     // 2026-08-15 사장님 실기기 지적("틱톡 소리 안나다 한번씩 소리나던데 간헐적으로") — tryAdvance의
     // "전환 확인 후 window.__paceMuted 적용"(위 452줄)만으론 안 됐다. 그 확인은 goToNext() 뒤
@@ -638,7 +1482,36 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
 
   function houseKeeping(){
+    // 🔴 2026-08-17(밤 자율 루프 6회차, 콜드 스타트 3연속 샘플링으로 재현) — 틱톡이 간헐적으로
+    // **빈 페이지**(video 0개, 버튼 0개 — DOM(0), 자체 스피너만 도는 상태, 연속 재시작 레이트리밋
+    // 정황)를 주면 fsDecided가 영영 안 나가고 우리 쪽엔 아무 복구 경로가 없었다 — 사장님의 "로딩만
+    // 계속 돎"의 한 갈래. video가 한 번도 안 나타난 채 7틱(~21초)이 지나면 빈 피드로 보고 리로드
+    // 한다(최대 2회 — 리로드하면 window가 리셋되므로 횟수는 sessionStorage로 유지, 성공적으로
+    // video를 보면 해제).
+    try {
+      if (isFeedPath()) {
+        if (document.querySelector('video')) {
+          window.__paceVideoEverSeen = true;
+          try { sessionStorage.removeItem('paceEmptyReloads'); } catch(eWdS) {}
+        } else if (!window.__paceVideoEverSeen) {
+          window.__paceEmptyTicks = (window.__paceEmptyTicks || 0) + 1;
+          if (window.__paceEmptyTicks >= 7) {
+            var wdN = 0;
+            try { wdN = parseInt(sessionStorage.getItem('paceEmptyReloads') || '0', 10) || 0; } catch(eWdG) {}
+            if (wdN < 2) {
+              try { sessionStorage.setItem('paceEmptyReloads', String(wdN + 1)); } catch(eWdP) {}
+              send({ type: 'domlog', text: '🔄 빈 피드 워치독: video 0개 ' + (window.__paceEmptyTicks * 3) + 's — 리로드 ' + (wdN + 1) + '/2' });
+              location.reload();
+              return;
+            }
+          }
+        }
+      }
+    } catch(eWd) {}
     dismissAppBanner();
+    hideLeftRailByGeometry();
+    enforceMainWidth();
+    hideIconRailAndScaleVideo();
     dumpDomOnce();
     dumpErrorStateOnce();
     var href = '' + location.href;
@@ -800,10 +1673,15 @@ const INJECTED_JS_BEFORE_LOAD = `
     }
   };
 
-  var startedAt = Date.now();
   startEndedObserver();
   setInterval(houseKeeping, 3000);
-  setInterval(pollActiveVideo, 500);
+  // 🔴 2026-08-16(7차, 화면 녹화 프레임 분석으로 확정) — decideVideoOffscreen(50ms 스윕)은 영상
+  // 크기를 화면 밖에서 미리 끝내두지만, 아이콘(RN 오버레이) 갱신은 pollActiveVideo의 "활성 영상
+  // 바뀜" 감지에만 의존했다 — 그게 500ms 주기라, 영상은 이미 새 걸로 바뀌었는데 아이콘은 최대
+  // 500ms 동안 *이전* 영상 숫자를 그대로 들고 있는 걸 실제 화면 녹화(프레임별 캡처)로 확인했다.
+  // 영상 스케일과 같은 촘촘함으로 맞춘다 — pollActiveVideo 자체의 다른 일(무음 안전망, 진행률)도
+  // 이 주기로 도는 게 오히려 더 정확하다(더 늦게가 아니라).
+  setInterval(pollActiveVideo, 50);
   setTimeout(dismissAppBanner, 1500);
   setTimeout(dismissAppBanner, 3000);
   } // mainInit 끝
@@ -825,11 +1703,40 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
+  // 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/
+  // 공유 아이콘 열을 숨긴 대가로, RN이 그 자리에 오버레이 버튼을 그리기 위한 카운트 상태.
+  const [iconCounts, setIconCounts] = useState<{ like: string; comment: string; favorite: string; share: string } | null>(null);
+  // 2026-08-16 — 사장님 지적("처음 틀면 왼쪽에 기다란 바가 나왔다가 없어지면서 전체 창으로") —
+  // hideIconRailAndScaleVideo의 풀스크린 판단이 첫 houseKeeping 틱(최대 3초 뒤)에야 끝나서, 그
+  // 전까지는 원래(레터박싱) 모습이 잠깐 보이다 스케일이 걸리며 눈에 띄게 커지는 전환이 보였다.
+  // 로딩 커버를 이 판단이 최소 한 번 끝날 때까지(fsDecided) 계속 유지해 전환 자체를 안 보이게 한다.
+  const [fsDecided, setFsDecided] = useState(false);
   // 2026-08-15 — getCurrentVideoUrl()의 요청/응답 다리. injectJavaScript는 결과를 동기로 못
   // 돌려주므로(fire-and-forget), 요청 시점에 여기 resolver를 심어두고 onMessage의
   // 'currentVideoUrl'이 도착하면 그걸로 resolve한다. 동시에 하나만 진행 가능(현재 영상 하나에
   // 대한 요청이라 실제로 겹칠 일이 없음) — 새 요청이 오면 이전 걸 null로 흘려보낸다.
   const currentVideoUrlResolverRef = useRef<((url: string | null) => void) | null>(null);
+
+  // 2026-08-16 — hideIconRailAndScaleVideo가 페이지 자체 좋아요/댓글/북마크/공유 아이콘 열을
+  // 숨긴 대가로, RN 오버레이 버튼(아래 렌더)이 탭될 때 숨겨진 실제 페이지 버튼을 대신 눌러준다
+  // (활성 영상 컨테이너 안에서만 찾아 다른 프리로드된 영상의 버튼을 잘못 누르는 사고 방지).
+  // useImperativeHandle의 tapIcon(부모 ref용)과 아래 오버레이 버튼 onPress 둘 다 이걸 쓴다.
+  function tapIcon(name: string) {
+    webRef.current?.injectJavaScript(`(function(){
+      try {
+        var vids = document.querySelectorAll('video');
+        var v = null, best = -1, vh = window.innerHeight;
+        for (var i=0;i<vids.length;i++){
+          var r = vids[i].getBoundingClientRect();
+          var ov = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+          if (ov > best) { best = ov; v = vids[i]; }
+        }
+        var container = v && v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+        var el = container ? container.querySelector('[data-e2e="${name}"]') : document.querySelector('[data-e2e="${name}"]');
+        if (el) { el.click(); }
+      } catch(e) {}
+    })(); true;`);
+  }
 
   // 유튜브 플레이어와 같은 handle 시그니처를 맞추되, 틱톡은 큐레이션이 없어 advance/previous가
   // 스와이프 큐 이동이 아니라 "지금 재생 중인 video에 대해 다음 영상 시도"를 직접 트리거한다
@@ -844,6 +1751,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
       // 즉시 적용해야, RN의 다음 무음스위치 폴링(최대 2초)까지 잠깐 소리가 새는 걸 막는다.
       webRef.current?.injectJavaScript(`(function(){window.__paceMuted=${muted};var v=document.querySelector('video'); if(v){v.muted=${muted};}})();true;`);
     },
+    tapIcon: (name) => tapIcon(name),
     // QA_MATRIX.md 1-4b(맥 세션 요청) — 안드로이드가 이미 구현한 "검색은 우리 UI, 결과는 틱톡
     // 화면" 패턴의 iOS 버전. 딥링크로 외부 앱/브라우저를 여는 대신, 이미 떠 있는 같은 WebView를
     // 틱톡 검색 URL로 이동시킨다(안드에서 https://www.tiktok.com/search가 크롬을 띄운 원인은
@@ -874,6 +1782,43 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         } catch(e) {
           window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '디버그클릭 실패: ' + e.message }));
+        }
+      })(); true;`);
+    },
+    // __DEV__ 전용 — "/foryou 화면이 작게 보인다"(2026-08-15) 미해결 조사용, 다음 세션에서 이어서
+    // 쓸 것(위 mainInit의 4차 코멘트 참고). 실제 <video> 요소와 그 조상들의 렌더링 크기·인라인
+    // style을 뷰포트와 비교해 숫자로 확인.
+    debugVerifyVideoSize: () => {
+      webRef.current?.injectJavaScript(`(function(){
+        try {
+          var vw = window.innerWidth, vh = window.innerHeight;
+          var vids0 = document.querySelectorAll('video');
+          var v = null, best0 = -1;
+          for (var vi0 = 0; vi0 < vids0.length; vi0++) {
+            var vr0 = vids0[vi0].getBoundingClientRect();
+            var ov0 = Math.min(vr0.bottom, vh) - Math.max(vr0.top, 0);
+            if (ov0 > best0) { best0 = ov0; v = vids0[vi0]; }
+          }
+          if (!v) {
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐영상크기검증: video 없음, path=' + location.pathname }));
+            return;
+          }
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐헤더 path=' + location.pathname + ' vw=' + vw + ' vh=' + vh }));
+          var el = v;
+          var depth = 0;
+          var article = null;
+          while (el && depth < 16) {
+            var r = el.getBoundingClientRect();
+            var cs = window.getComputedStyle(el);
+            var cn = String(el.className||'').split(' ').pop();
+            var line = depth + ':' + el.tagName + '.' + cn + ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' t=' + Math.round(r.top) + ' b=' + Math.round(r.bottom) + ' tf=' + el.style.getPropertyValue('transform');
+            window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '📐' + line }));
+            if (el.tagName === 'ARTICLE') article = el;
+            el = el.parentElement;
+            depth++;
+          }
+        } catch(e) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'domlog', text: '영상크기검증실패: ' + e.message }));
         }
       })(); true;`);
     },
@@ -913,6 +1858,22 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
     return () => clearTimeout(t);
   }, [ready, showSpinner]);
 
+  // fsDecided(hideIconRailAndScaleVideo의 풀스크린 판단 완료 신호)가 어떤 이유로든(에러난 페이지,
+  // /foryou가 아닌 경로로 로드 등) 안 오면 로딩 커버가 영원히 안 걷힐 수 있다 — ready 이후 일정
+  // 시간 지나도 안 오면 그냥 진행(안전장치, 없어도 되는 페이지에서 무한 대기 방지).
+  // 🔴 2026-08-16 사장님 실기기+시뮬레이터 녹화 프레임 분석으로 확정 — 5초는 너무 짧았다: 틱톡
+  // 자체 "관심사 게이트"(콜드 스타트 시 뜨는 초기 로딩/온보딩성 화면, 예전 주석에 6초 대기로
+  // 이미 기록돼 있었음) 때문에 ready(video readyState>=2)는 일찍 뜨는데 실제 /foryou 피드 영상이
+  // 자리잡고 hideIconRailAndScaleVideo가 진짜 판단을 끝내는 덴 그보다 더 걸릴 수 있다 — 5초
+  // 안전장치가 먼저 발동해 로딩 커버를 강제로 걷어버리면, 그 아래 아직 마무리 안 된 상태(왼쪽
+  // 사이드바 노출 + 레터박싱된 영상)가 몇 초간 그대로 노출됐다(녹화로 실측: 최대 7초까지 걸림).
+  // 실측된 최악 케이스보다 넉넉하게 10초로 늘린다.
+  useEffect(() => {
+    if (!ready || fsDecided) return;
+    const t = setTimeout(() => setFsDecided(true), 10000);
+    return () => clearTimeout(t);
+  }, [ready, fsDecided]);
+
   useEffect(() => {
     if (!ready) return;
     webRef.current?.injectJavaScript(
@@ -945,6 +1906,12 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onShouldStartLoadWithRequest={(req) => isAllowedNavigation(req.url)}
         // 깨끗한 데스크톱 Chrome(맥) UA — 모바일 UA는 실기기에서 자동 다음영상 넘김이 8개 기법+
         // 진짜 손가락 스와이프까지 전부 1회 이동 후 영구 고착됐다(QA_MATRIX.md 2026-08-12 참고).
+        // 🔴 2026-08-15(9차) 재검증 — "유튜브는 모바일 UA로 전체화면인데 왜 틱톡은 안 되냐" 질문에
+        // 답하려고 시뮬레이터에서 모바일 UA(유튜브와 동일값)로 다시 테스트: 레이아웃은 기대대로
+        // 완벽(네이티브 앱과 동일하게 꽉 참+아이콘 오버레이+하단 탭바까지) BUT 자동 넘김 고착 버그가
+        // 그대로 재현됨(1차 넘김 후 2차 시도가 같은 영상에 멈춤, "TikTok 열기" 유도 모달까지 계속
+        // 뜸) — 2026-08-12 판단이 여전히 유효함을 재확인. 화면보다 시청 기능이 우선이라 데스크톱
+        // UA 유지, 세로 레터박싱은 이 UA를 유지한 채 다른 방법(RN 오버레이 재구현 등)으로 풀 것.
         userAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         // 🔴 2026-08-14(31~34차) — injectedJavaScriptBeforeContentLoaded/imperative injectJavaScript
         // 둘 다 시각적으로 확인이 안 돼(라임 outline/DOM 마커 테스트) react-native-webview+Fabric
@@ -970,7 +1937,7 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
-          let msg: { type?: string; value?: number; url?: string | null } = {};
+          let msg: { type?: string; value?: number; url?: string | null; like?: string; comment?: string; favorite?: string; share?: string } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
@@ -978,6 +1945,15 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
           if (msg.type === 'domlog') {
             try { if (__DEV__) getPaceGestureLog()?.nativeLog?.(String((msg as any).text ?? '')); } catch {}
+            return;
+          }
+          if (msg.type === 'iconState') {
+            if ((msg as any).clear) { setIconCounts(null); return; }
+            setIconCounts({ like: msg.like ?? '', comment: msg.comment ?? '', favorite: msg.favorite ?? '', share: msg.share ?? '' });
+            return;
+          }
+          if (msg.type === 'fsDecided') {
+            setFsDecided(true);
             return;
           }
           if (msg.type === 'ready') {
@@ -1000,11 +1976,60 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           }
         }}
       />
-      {!ready && (
+      {!(ready && fsDecided) && (
         <View style={styles.loadingCover} pointerEvents="none">
           {showSpinner && <ActivityIndicator size="large" color="#FFFFFF" />}
         </View>
       )}
+      {/* 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/
+          북마크/공유 아이콘 열을 숨긴 대가로, 그 자리를 RN 오버레이 버튼으로 대신한다. 탭하면
+          tapIcon()이 숨겨진 실제 페이지 버튼을 대신 눌러 기능은 그대로 유지된다. iconCounts가
+          아직 없으면(첫 로드 전) 안 그린다 — 빈 0으로 깜빡이는 것보다 낫다. */}
+      {ready && iconCounts && (
+        <View style={localStyles.iconRail} pointerEvents="box-none">
+          <IconRailButton icon="heart" count={iconCounts.like} onPress={() => tapIcon('like-icon')} />
+          <IconRailButton icon="chatbubble-ellipses" count={iconCounts.comment} onPress={() => tapIcon('comment-icon')} />
+          <IconRailButton icon="bookmark" count={iconCounts.favorite} onPress={() => tapIcon('favorite-icon')} />
+          <IconRailButton icon="arrow-redo" count={iconCounts.share} onPress={() => tapIcon('share-icon')} />
+        </View>
+      )}
     </View>
   );
+});
+
+function IconRailButton({ icon, count, onPress }: { icon: keyof typeof Ionicons.glyphMap; count: string; onPress: () => void }) {
+  return (
+    <Pressable style={localStyles.iconButton} onPress={onPress} hitSlop={10}>
+      <View style={localStyles.iconCircle}>
+        <Ionicons name={icon} size={26} color="#FFFFFF" />
+      </View>
+      {!!count && <Text style={localStyles.iconCount}>{count}</Text>}
+    </Pressable>
+  );
+}
+
+const localStyles = StyleSheet.create({
+  iconRail: {
+    position: 'absolute',
+    right: 10,
+    bottom: 90,
+    alignItems: 'center',
+    gap: 18,
+  },
+  iconButton: { alignItems: 'center', gap: 4 },
+  iconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCount: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
 });

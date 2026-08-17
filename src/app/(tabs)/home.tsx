@@ -714,13 +714,20 @@ export default function HomeScreen() {
             statusText={
               activeSessionPlatform === 'tiktok'
                 ? 'Active'
-                : 'Track viewing time and build healthier habits.'
+                : capabilities.supportsHandsFreeControl && isBluetoothConnected
+                  ? '🎧 Hands-Free Ready'
+                  : 'Track viewing time and build healthier habits.'
             }
             cover={TIKTOK_COVER}
             gradientFrom="rgba(13,148,136,0.35)"
             onPress={() => onSelectPlatform('tiktok')}
             isActive={activeSessionPlatform === 'tiktok'}
-            features={['⏱ Focus Session']}
+            // 🔴 2026-08-16 사장님 지적("유튜브에만 왜 핸즈프리가 있고 틱톡엔 없어") — BT 리모컨은
+            // useVolumeNext가 playerRef.current?.advance()를 부르는 방식이라 플랫폼 무관하게
+            // 동작한다(TikTokShortsPlayer도 같은 advance() 인터페이스 구현, 오늘 밤 실제로 검증됨).
+            // 틱톡 카드에만 이 배지가 빠져있던 건 카드 추가(2026-08-11~13) 당시 유튜브 카드의
+            // capabilities.supportsHandsFreeControl 조건을 안 옮겨온 누락이었다.
+            features={[...(capabilities.supportsHandsFreeControl ? ['🎧 Hands-Free'] : []), '⏱ Focus Session']}
             largeButton
           />
         </View>
@@ -869,12 +876,14 @@ const styles = StyleSheet.create({
   sleepInsightBadgeText: { fontSize: 14, fontFamily: typography.bodyFontFamilyExtrabold, color: '#FFFFFF' },
   sleepInsightText: { flex: 1, fontSize: 13, color: colors.textPrimary, fontFamily: typography.bodyFontFamilyBold },
   sleepInsightDismiss: { fontSize: 14, color: colors.textTertiary, paddingHorizontal: 6, paddingVertical: 2 },
-  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, marginTop: spacing.lg, marginBottom: 12 },
+  // 🔴 2026-08-16 사장님 지적("상용앱과 비교해봐") — 웹서치로 확인: Apple 공식 iOS 가이드라인 기준
+  // iPhone 표준 좌우 여백은 16px(24px는 iPad 표준). AppHeader와 함께 24→16으로 맞춤.
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginTop: spacing.lg, marginBottom: 12 },
   // 2026-07-27 사용자 지적 — Settings의 섹션 라벨(sectionLabel)은 12px인데 이건 10px로 남아있어서
   // 화면마다 라벨 크기가 달랐다(공용 스타일이 아니라 화면별 로컬 StyleSheet라 이렇게 드리프트됨).
   sectionTitle: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1.5, textTransform: 'uppercase' },
-  quickControlsTitle: { paddingHorizontal: 24, marginTop: spacing.lg, marginBottom: 10 },
+  quickControlsTitle: { paddingHorizontal: 16, marginTop: spacing.lg, marginBottom: 10 },
   tapBadge: { backgroundColor: `${colors.primary}1A`, borderWidth: 1, borderColor: `${colors.primary}33`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   tapBadgeText: { fontSize: 8, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.primary, letterSpacing: 0.5, textTransform: 'uppercase' },
-  platformStack: { paddingHorizontal: 24, gap: 12 },
+  platformStack: { paddingHorizontal: 16, gap: 12 },
 });

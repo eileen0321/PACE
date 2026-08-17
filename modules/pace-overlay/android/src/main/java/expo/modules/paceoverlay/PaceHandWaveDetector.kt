@@ -188,7 +188,19 @@ object PaceHandWaveDetector {
   //
   // ⚠️ 다음에 이 값을 만지려면 반드시 diagEnabled 로그로 "가만히" 구간을 함께 재서 위와 같은 표를
   // 만든 뒤에 정할 것. 손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다.
-  private const val SWEEP_RATIO_THRESHOLD = 0.22
+  // 🔴 2026-08-16 실측 재조정 — 사장님 "손짓 너무 안 된다". 카메라 권한을 되살린 뒤 실제로 손짓하신
+  //   구간의 로그를 모아 분포를 냈다(모두 **사장님이 실제로 손짓한** 표본이다):
+  //     놓친 시도(near-miss) n=105 : min 0.126 / 25% 0.168 / 중앙 0.203 / 75% 0.269 / max 0.486
+  //     성공한 손짓          : 0.096 0.120 0.133 0.136 0.180 0.249 0.262 0.319 0.391 0.403 0.469 0.487
+  //   두 분포가 거의 완전히 겹친다. 즉 이건 **노이즈 대 신호가 아니라 같은 동작**인데, 임계값 0.22가
+  //   그 분포 한가운데(중앙 0.203) 바로 위에 놓여 **절반 이상을 버리고 있었다.**
+  //   게다가 같은 로그에서 growth는 대부분 1.0, speed는 0.0이라 **판정이 사실상 sweep 하나에 걸려
+  //   있다** — 그 하나의 문턱이 분포 중앙에 있으면 체감은 "열 번에 서너 번"이 된다.
+  //   → 놓친 시도의 25퍼센타일(0.168) 바로 아래로 내린다. 지금 버려지던 시도의 약 3/4을 회수한다.
+  //   ⚠️ 오탐 방어는 임계값이 아니라 다른 축이 맡는다 — SWEEP_CONFIRM_FRAMES(연속 2프레임)가
+  //     단발 노이즈를 막고, 얼굴 게이트가 "사람이 없을 때"를 통째로 막는다. 2026-08-15에 크기
+  //     임계값(0.20)으로 오탐을 막으려다 실패한 전례가 있다 — 그 오탐의 handSize는 0.209였다.
+  private const val SWEEP_RATIO_THRESHOLD = 0.16
   // sweep 축 전용 최소 속도(배/초). growth+speed가 쓰는 0.25와 같은 값으로 맞춘다 — 이미 실측으로
   // "평소 오탐 0%"가 확인된 기준선이고, 새 숫자를 근거 없이 만들지 않는다(아래 sweptNow 주석 참고).
   private const val SWEEP_MIN_SPEED_PER_SEC = 0.25
@@ -370,7 +382,13 @@ object PaceHandWaveDetector {
   fun start(context: Context, onWave: () -> Unit) {
     if (running) return
     if (!hasPermission(context)) {
+      // 🔴 2026-08-16 사장님 "권한 노티도 없고 손짓은 안 되는데" — 정확한 지적이다.
+      //   여기서 조용히 return하는 바람에, 카메라 권한이 꺼지면 손짓이 **아무 설명 없이 죽는다.**
+      //   실제로 오늘 그 상태로 한참을 헤맸다(앱 데이터 초기화로 권한이 날아갔는데 아무도 몰랐다).
+      //   사용자 입장에선 "손짓 토글은 켜져 있는데 안 먹는다"로만 보인다 — 원인을 알 길이 없다.
+      //   접근성 권한이 꺼졌을 때 알림을 띄우는 것과 같은 취급을 해야 한다.
       Log.w(TAG, "CAMERA not granted — not starting")
+      PaceOverlayService.notifyCameraPermissionMissing(context)
       return
     }
     running = true
@@ -919,7 +937,20 @@ object PaceHandWaveDetector {
     //     비춰 정지 상태의 좌우 흔들림은 걸러지고 실제로 손을 젓는 동작은 남는다.
     //   ⚠️ 손 크기(MIN_HAND_SIZE)는 다시 올리지 않는다 — 오늘 저녁에 이미 틀린 손잡이로 판명났다
     //     (오탐 handSize 0.209는 못 막으면서 진짜 손짓 0.10~0.15만 잘라냈다).
-    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD && peakSpeed > SWEEP_MIN_SPEED_PER_SEC
+    // 🔴 2026-08-16 원복 — 어제 여기에 peakSpeed AND를 걸었다가 **손짓이 통째로 죽었다.**
+    //   사장님 "지금 기기 손짓 하나도 안 먹어". 로그가 그대로 증명한다: 카메라·얼굴은 정상인데
+    //   (HB ... face=170ms전 gate=on) WAVE도 near-miss도 "너무 작아 무시"도 **한 줄도 없었다.**
+    //   성공했던 sweep 손짓들의 실측 speed가 0.0 / 0.0 / 0.049 / 0.168로 전부 임계(0.25) 아래였다:
+    //     22:17:07 WAVE by=sweep speed=0.0
+    //     23:58:45 WAVE by=sweep speed=0.049
+    //   이유는 명확하다 — peakSpeed는 **handSize 변화율**(카메라 쪽으로 다가오는 속도)이다.
+    //   좌우로 흔드는 동작은 손이 가까워지지 않아 크기가 거의 안 변하고, 따라서 speed가 원래 0 근처다.
+    //   크기 축에서 재는 속도를 좌우 흔들기에 요구한 것 자체가 틀렸다.
+    //   게다가 오탐(23:58:45 speed=0.049)과 정탐(22:17:07 speed=0.0)이 이 축에서 겹친다 — 원리적으로
+    //   분리가 안 되는 축이라 임계값을 어디에 두어도 정탐을 같이 잘라낸다.
+    //   → 오탐은 다른 수단으로 막는다. 얼굴 게이트(사람 없으면 손 신호 무시)와 triggerNext()의
+    //     "직접 고른 영상 보호"가 그 역할이고, 둘 다 이미 들어가 있다.
+    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD
     sweepStreak = if (sweptNow) sweepStreak + 1 else 0
     val swept = sweepStreak >= SWEEP_CONFIRM_FRAMES
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로

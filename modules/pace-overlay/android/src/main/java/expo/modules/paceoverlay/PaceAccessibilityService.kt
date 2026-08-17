@@ -303,7 +303,7 @@ class PaceAccessibilityService : AccessibilityService() {
         service.isWatching = true
         service.lastKnownCurrentSec = -1
         // 🔴 2026-08-15 — "이번 세션에서 재생위치를 읽어봤는가"를 세션 경계에서 초기화한다.
-        //   아래 blindOnYouTube 게이트가 이 값을 보는데, 리셋을 안 하면 **다른 앱(틱톡)에서 읽은
+        //   아래 blindOnTrackedApp 게이트가 이 값을 보는데, 리셋을 안 하면 **다른 앱(틱톡)에서 읽은
         //   기록**이 남아 유튜브의 눈먼 구간을 그대로 통과시킨다. 게이트의 문장("이번 세션에서
         //   한 번도 못 읽었으면")과 실제 동작을 일치시킨다.
         service.lastTimingReadAtMs = 0L
@@ -1185,12 +1185,25 @@ class PaceAccessibilityService : AccessibilityService() {
       //     못 읽는 구간에 대해 기존 90초 폴백을 그대로 쓴다.
       //   ⚠️ 틱톡에는 이 게이트를 걸지 않는다 — 거긴 진행바가 아예 없는 클립이 정상이라,
       //     "한 번도 못 읽음"이 곧 고장을 뜻하지 않는다. 그쪽은 20초 폴백이 유일한 진행 수단이다.
-      val blindOnYouTube = hasTimingTextPath && lastTimingReadAtMs == 0L
-      if (blindOnYouTube && now - lastSwipeAtMs > fallbackIntervalMs) {
-        Log.w("PaceAccessibility", "no-progressbar 폴백 보류 — 유튜브인데 이번 세션에서 재생위치를 한 번도 못 읽었다(관측 불능 상태에서 추측으로 넘기지 않는다) elapsed=${now - lastSwipeAtMs}ms")
+      // 🔴 2026-08-16 실측 — 사장님 "지금 기기는 왜 이상한 개인화면으로 빠져있는 거야".
+      //   기기가 틱톡 **크리에이터 프로필**(영상 그리드 + 팔로우 버튼)에 가 있었다. 로그:
+      //     11:47:41 AUTO_NEXT reason=no-progressbar elapsed=20052ms pkg=...trill
+      //     11:48:01 AUTO_NEXT reason=no-progressbar elapsed=20434ms
+      //     11:48:21 AUTO_NEXT reason=no-progressbar elapsed=20201ms
+      //   즉 **사용자가 피드에 있지도 않은데 20초마다 스와이프를 계속 쏘고 있었다.** 그 스와이프가
+      //   그리드를 스크롤하고 프로필로 끌고 들어간 것이다.
+      //   어제 유튜브에는 이 방어를 넣으면서(blindOnTrackedApp) 틱톡은 "진행바 없는 클립이 정상"이라며
+      //   제외했는데, 그 판단이 틀렸다. 틱톡에서도 **피드에 있을 때만** 넘겨야 한다 — 프로필·검색·
+      //   댓글 화면에는 당연히 진행바가 없고, 거기서 넘기는 건 사용자를 엉뚱한 곳으로 보내는 것이다.
+      //   → 이번 세션에서 재생 신호를 **한 번이라도 읽은 적이 있는지**로 "지금 볼 수 있는 화면인가"를
+      //     가른다(앱 무관). 한 번도 못 읽었으면 우리는 눈이 먼 상태이고, 눈이 먼 채 쏘지 않는다.
+      //     피드에 있었다면 RANGE_INFO/지문 중 하나는 반드시 잡히므로 정상 사용은 그대로 통과한다.
+      val blindOnTrackedApp = lastTimingReadAtMs == 0L
+      if (blindOnTrackedApp && now - lastSwipeAtMs > fallbackIntervalMs) {
+        Log.w("PaceAccessibility", "no-progressbar 폴백 보류 — 이번 세션에서 재생 신호를 한 번도 못 읽었다(피드 밖일 가능성, 눈먼 채 안 쏜다) elapsed=${now - lastSwipeAtMs}ms")
       }
       if (frac == null && root != null && isWatching && !autoNextSuspended && lastKnownFrac < 0f &&
-          !blindOnYouTube && now - lastSwipeAtMs > fallbackIntervalMs) {
+          !blindOnTrackedApp && now - lastSwipeAtMs > fallbackIntervalMs) {
         Log.d("PaceAccessibility", "AUTO_NEXT reason=no-progressbar elapsed=${now - lastSwipeAtMs}ms pkg=${root.packageName}")
         performSwipeUp()
         lastSwipeAtMs = now

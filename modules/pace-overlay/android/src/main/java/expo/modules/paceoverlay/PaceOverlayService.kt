@@ -1916,6 +1916,30 @@ class PaceOverlayService : Service() {
       showToast(context, if (ko) "광고를 불러오지 못했어요 — 잠시 후 다시 시도해 주세요" else "Couldn't load the ad — please try again in a moment")
     }
 
+    /**
+     * 🔴 2026-08-16 — 카메라 권한이 없어 손짓 감지기가 못 뜰 때 **사용자에게 알린다.**
+     *
+     * 사장님 "권한 노티도 없고 손짓은 안 되는데". 지금까지 PaceHandWaveDetector.start()는 권한이
+     * 없으면 로그 한 줄만 남기고 조용히 돌아갔다. 그래서 손짓 토글은 켜져 있는데 아무 반응이 없는
+     * 상태가 되고, 사용자는 원인을 알 방법이 없다(오늘 실제로 그 상태로 한참을 헤맸다 — 앱 데이터
+     * 초기화로 권한이 날아갔는데 화면 어디에도 표시가 없었다).
+     * 같은 세션에서 반복해 뜨지 않게 한 번만 띄운다 — 세션마다 감지기가 여러 번 start될 수 있다.
+     */
+    @Volatile private var cameraPermissionNoticeShown = false
+    fun notifyCameraPermissionMissing(context: Context) {
+      if (cameraPermissionNoticeShown) return
+      cameraPermissionNoticeShown = true
+      val ko = context.resources.configuration.locales[0].language == "ko"
+      showToast(
+        context,
+        if (ko) "손짓을 쓰려면 카메라 권한이 필요해요 — 설정 > 앱 > Pace > 권한에서 켜주세요"
+        else "Hands-free needs camera access — enable it in Settings > Apps > Pace > Permissions"
+      )
+    }
+
+    /** 권한이 실제로 부여되면 다음 결핍 시 다시 안내할 수 있게 되돌린다. */
+    fun resetCameraPermissionNotice() { cameraPermissionNoticeShown = false }
+
     private fun showToast(context: Context, text: String) {
       Handler(Looper.getMainLooper()).post {
         Toast.makeText(context.applicationContext, text, Toast.LENGTH_SHORT).show()
@@ -3616,6 +3640,15 @@ class PaceOverlayService : Service() {
       } catch (e: Exception) {
         Log.w("PaceOverlayService", "오버레이 포커스 복원 실패", e)
       }
+      // 🔴 2026-08-16 (OV-2) — 캡처가 **끝났으면 유지 가드를 즉시 푼다.**
+      //   지금까지 captureInFlightUntilMs는 시작할 때만 세우고 끝날 때 안 껐다. 그래서 클립보드를
+      //   다 읽은 뒤에도 CAPTURE_PANEL_KEEP_MS(8초) 동안 "캡처 중"으로 남아, 그 사이 감시 대상 앱이
+      //   사라져도 즐겨찾기 패널이 화면에 그대로 붙어 있었다(실측 01:20:10 — 유튜브 창이 목록에서
+      //   없어졌는데 우리 창만 w=996/1080으로 남음. 사장님 "앱은 작아졌는데 오버레이는 전창").
+      //   알약은 shouldShow를 따라 이미 숨는데 패널만 이 가드 때문에 남던 것이라, 가드를 제때
+      //   푸는 것만으로 알약과 동작이 일치한다.
+      //   ⚠️ 폴백(액티비티) 경로에서는 풀지 않는다 — 거긴 액티비티가 뜨는 동안 계속 유지돼야 한다.
+      if (!denied) captureInFlightUntilMs = 0L
       if (denied) {
         Log.i("PaceOverlayService", "clipboard via focused overlay unavailable -> capture activity fallback")
         startClipboardCaptureActivity(kind, onChanged)

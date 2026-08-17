@@ -181,7 +181,11 @@ const INJECTED_JS_BEFORE_LOAD = `
         var scaleH = vh / r.height;
         var scaleW = r.width ? vw / r.width : scaleH;
         if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
-          scale = scaleH; willFullscreen = true;
+          // 2026-08-17(사장님 "왜 하단의 글자가 잘려") — 세로 채움은 좌우를 최대 25% 크롭하는데
+          // 캡션(작성자/설명)이 영상 박스 안에 있어 크롭에 같이 잘려 나갔다. 크롭 상한을 6%로
+          // 제한 — 캡션 좌우 여백(16px+) 안쪽은 침범하지 않고, 위아래에 생기는 얇은 여백은
+          // 검정 배경이라 티가 안 난다.
+          scale = Math.min(scaleH, scaleW * 1.06); willFullscreen = true;
         } else if (scaleW > 1.01 && scaleW <= 2.6) {
           // 🔴 2026-08-16(13차, 진짜 스와이프 녹화 프레임 분석으로 확정) — 사장님이 보던 "스와이프하면
           // 화면 작아지고 오른쪽에 아이콘" 재현 프레임 2건이 전부 4:5/가로형 등 비표준 비율 영상이었다.
@@ -815,7 +819,11 @@ const INJECTED_JS_BEFORE_LOAD = `
         // 페이지 아이콘 열 노출)가 바로 사장님이 보던 그 증상이었다(13차, 진짜 스와이프 녹화 프레임
         // 분석으로 확정 — decideVideoOffscreen 쪽 주석 참고). 스킵 대신 가로 폭 기준으로 채운다.
         if (scaleH > 1.01 && scaleH <= 2.2 && scaleH / scaleW <= 1.25) {
-          scale = scaleH; willFullscreen = true;
+          // 2026-08-17(사장님 "왜 하단의 글자가 잘려") — 세로 채움은 좌우를 최대 25% 크롭하는데
+          // 캡션(작성자/설명)이 영상 박스 안에 있어 크롭에 같이 잘려 나갔다. 크롭 상한을 6%로
+          // 제한 — 캡션 좌우 여백(16px+) 안쪽은 침범하지 않고, 위아래에 생기는 얇은 여백은
+          // 검정 배경이라 티가 안 난다.
+          scale = Math.min(scaleH, scaleW * 1.06); willFullscreen = true;
         } else if (scaleW > 1.01 && scaleW <= 2.6) {
           scale = scaleW; willFullscreen = true;
         }

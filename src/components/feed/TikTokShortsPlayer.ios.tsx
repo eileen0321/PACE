@@ -723,9 +723,22 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (ov0 > bestCOv0) { bestCOv0 = ov0; activeC0 = allC0[ci0]; }
       }
       if (activeC0 && bestCOv0 > vh * 0.3 && !activeC0.querySelector('video')) {
+        // 🔴 활성화 진단 로그로 확인 — 진짜 영상 아이템도 활성화 직후 잠깐은 video가 아직 안 붙어
+        // 있는 경우가 있다(틱톡이 활성화 후에야 video/src를 붙임). 그 순간을 캐러셀로 오판해 폭
+        // 채움+아이콘 숨김을 걸면 곧 붙을 진짜 영상 레이아웃과 충돌한다 — "video 없음" 상태가
+        // 600ms 이상 유지된 경우에만 캐러셀로 확정한다(캐러셀은 계속 video가 없으므로 다음 틱에
+        // 자연 확정, 영상 아이템은 그 사이 video가 붙어 정상 경로로 감).
+        var nowCar = Date.now();
+        if (window.__paceCarCand !== activeC0) {
+          window.__paceCarCand = activeC0;
+          window.__paceCarCandAt = nowCar;
+          return;
+        }
+        if (nowCar - (window.__paceCarCandAt || 0) < 600) return;
         handleActiveCarousel(activeC0, vh, vw);
         return;
       }
+      window.__paceCarCand = null;
       var vids = document.querySelectorAll('video');
       var v = null, bestOverlap = -1;
       for (var vi = 0; vi < vids.length; vi++) {
@@ -1358,11 +1371,27 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
         if (actCP && bestP > vhP * 0.3 && actCP !== window.__paceLastActiveC) {
           window.__paceLastActiveC = actCP;
+          // 🔴 잔여 멈칫(왕복 20회 중 4회, 300~466ms) 원인 분해용 상시 진단 — 활성화 순간 이 영상이
+          // 어떤 상태였는지(버퍼 찼는지/재생 중인지/프리로드 설정)를 찍어 정지 프레임과 대조한다.
+          try {
+            var vAct = actCP.querySelector('video');
+            if (vAct) {
+              var bufEnd = 0;
+              try { if (vAct.buffered && vAct.buffered.length) bufEnd = vAct.buffered.end(vAct.buffered.length - 1); } catch(eBuf) {}
+              send({ type: 'domlog', text: '🎬활성화 rs=' + vAct.readyState + ' ns=' + vAct.networkState + ' buf=' + bufEnd.toFixed(2) + ' ct=' + vAct.currentTime.toFixed(2) + ' paused=' + vAct.paused + ' pre=' + vAct.preload + ' t=' + Date.now() });
+            } else {
+              send({ type: 'domlog', text: '🎬활성화 video없음(캐러셀?) t=' + Date.now() });
+            }
+          } catch(eDg) {}
           if (window.__paceLastIconState !== null) {
             window.__paceLastIconState = null;
             send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
           }
           try { hideIconRailAndScaleVideo(); } catch(eCch) {}
+        } else if (window.__paceCarCand) {
+          // 캐러셀 후보가 대기 중이면(600ms 유예) 이 500ms 틱에서 재평가 — 안 하면 다음 판단이
+          // houseKeeping(3초)까지 밀려 진짜 캐러셀이 3초간 작은 화면+아이콘 겹침으로 남는다.
+          try { hideIconRailAndScaleVideo(); } catch(eCr2) {}
         }
       }
     } catch(eCP) {}

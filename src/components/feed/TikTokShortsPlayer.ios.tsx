@@ -560,6 +560,86 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 10차(transform:scale, 레이아웃 안전 확인됨)를 다시 켜도 더 이상 아이콘을 밀어낼 걱정이 없다.
   // overflow:visible을 같이 줘서 확대된 영상이 원래 박스 밖으로 클리핑 안 되게 한다(overflow는
   // 그 자체로 레이아웃 크기에 영향 없음 — width/height와 달리 스크롤 스냅 계산과 무관해 안전).
+  // 사진 캐러셀(video 없는 피드 아이템) 전용 처리 — 위 hideIconRailAndScaleVideo의 캐러셀 분기에서
+  // 호출. 영상 경로와 같은 규칙: 콘텐츠 SECTION을 폭 기준으로 채우고, 페이지 아이콘 열을 숨기고,
+  // 이 아이템의 카운트로 RN 오버레이를 갱신하고, 최초 커버 신호(fsDecided)를 보낸다(video가 없으니
+  // 재생 준비 게이트는 해당 없음). 재활용 노드 대응 키는 video src 대신 첫 이미지 src.
+  function handleActiveCarousel(activeC, vh, vw){
+    try {
+      var sections = activeC.querySelectorAll('section');
+      var contentSec = null, railSec = null;
+      for (var si = 0; si < sections.length; si++) {
+        if (sections[si].querySelector('[data-e2e="like-icon"]')) { if (!railSec) railSec = sections[si]; }
+        else if (!contentSec) contentSec = sections[si];
+      }
+      if (!contentSec) return;
+      var imgEl = contentSec.querySelector('img');
+      var ckey = (imgEl && (imgEl.currentSrc || imgEl.src)) || 'carousel';
+      var decidedC = contentSec.getAttribute('data-pace-fs-decided');
+      if (decidedC && contentSec.getAttribute('data-pace-fs-src') !== ckey) { decidedC = null; }
+      if (contentSec.style.getPropertyValue('transform')) {
+        contentSec.style.setProperty('transition', 'none', 'important');
+        contentSec.style.removeProperty('transform');
+      }
+      var rc = contentSec.getBoundingClientRect();
+      var willC = false, scaleC = 1;
+      if (rc.width && rc.width < vw - 1) {
+        scaleC = vw / rc.width;
+        if (scaleC > 1.01 && scaleC <= 2.6) { willC = true; }
+      }
+      if (decidedC === 'no') { willC = false; }
+      contentSec.setAttribute('data-pace-fs-decided', willC ? 'yes' : 'no');
+      contentSec.setAttribute('data-pace-fs-src', ckey);
+      if (willC) {
+        var dyC = 0;
+        try {
+          var crC = activeC.getBoundingClientRect();
+          dyC = (crC.top + crC.height / 2) - (rc.top + rc.height / 2);
+        } catch(eDyC) {}
+        contentSec.style.setProperty('transition', 'none', 'important');
+        contentSec.style.setProperty('transform', 'translateY(' + dyC.toFixed(1) + 'px) scale(' + scaleC.toFixed(4) + ')', 'important');
+        contentSec.style.setProperty('transform-origin', 'center center', 'important');
+        contentSec.style.setProperty('position', 'relative', 'important');
+        if (lastActiveZTarget && lastActiveZTarget !== contentSec) {
+          lastActiveZTarget.style.setProperty('z-index', '1', 'important');
+        }
+        lastActiveZTarget = contentSec;
+        contentSec.style.setProperty('z-index', '999', 'important');
+        if (railSec && railSec.style.display !== 'none') {
+          railSec.style.setProperty('display', 'none', 'important');
+        }
+      } else if (railSec && railSec.style.display === 'none') {
+        railSec.style.removeProperty('display');
+      }
+      // RN 오버레이 카운트를 이 캐러셀 아이템의 값으로 갱신 — 이게 없으면 이전 영상 카운트가
+      // 그대로 남아 페이지 아이콘과 두 벌로 겹쳐 보인다(이번 버그의 절반).
+      var cLikeC = activeC.querySelector('[data-e2e="like-count"]');
+      var cCommentC = activeC.querySelector('[data-e2e="comment-count"]');
+      var cFavC = activeC.querySelector('[data-e2e="favorite-count"]');
+      var cShareC = activeC.querySelector('[data-e2e="share-count"]');
+      var iconStateC = {
+        like: cLikeC ? cLikeC.textContent.trim() : '',
+        comment: cCommentC ? cCommentC.textContent.trim() : '',
+        favorite: cFavC ? cFavC.textContent.trim() : '',
+        share: cShareC ? cShareC.textContent.trim() : '',
+      };
+      var iconStateStrC = JSON.stringify(iconStateC);
+      if (window.__paceLastIconState !== iconStateStrC) {
+        window.__paceLastIconState = iconStateStrC;
+        send({ type: 'iconState', like: iconStateC.like, comment: iconStateC.comment, favorite: iconStateC.favorite, share: iconStateC.share });
+      }
+      if (!window.__paceFsDecidedSent) {
+        var navC = document.querySelector('[class*="DivSideNavContainer"]');
+        var railVisibleC = false;
+        try { railVisibleC = !!(navC && getComputedStyle(navC).display !== 'none'); } catch(eNvC) {}
+        if (!railVisibleC) {
+          window.__paceFsDecidedSent = true;
+          send({ type: 'domlog', text: '🏁 fsDecided 발사(캐러셀) t=' + Date.now() + ' (+' + Math.round((Date.now() - startedAt) / 100) / 10 + 's)' });
+          requestAnimationFrame(function(){ requestAnimationFrame(function(){ send({ type: 'fsDecided' }); }); });
+        }
+      }
+    } catch(eCar) {}
+  }
   function hideIconRailAndScaleVideo(){
     try {
       // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가 있고") — 이 함수의 fsDecided 신호는
@@ -606,6 +686,23 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 기준) 둘 다 틀렸다: /foryou는 swiper를 안 써서 getActiveVideo()도 결국 querySelector('video')로
       // 폴백돼 같은 문제(실측: r.top=909, 뷰포트 밖 — 프리로드된 다음 영상을 잡고 있었다)가 재현됐다.
       // 진짜 화면에 보이는 video를 뷰포트와의 실제 겹침(rect)으로 직접 찾는다.
+      // 🔴 2026-08-17(사장님 스크린샷 "작은화면일때 오버레이 겹치는거") — 틱톡 피드엔 <video>가
+      // 아예 없는 **사진 캐러셀 게시물**이 섞여 나온다(좌우 화살표+점 인디케이터). 파이프라인
+      // 전체가 video 기준이라 캐러셀 아이템에선 스케일 판단이 안 돌고(작게 유지) 페이지 아이콘도
+      // 안 숨겨지며, RN 오버레이는 이전 영상 카운트를 든 채 남아 두 벌이 겹쳐 보였다. 활성
+      // 아이템을 video가 아니라 **컨테이너 겹침**으로 먼저 찾고, 그 안에 video가 없으면 캐러셀
+      // 전용 경로(폭 채움 스케일 + 아이콘 열 숨김 + 이 아이템의 카운트로 RN 오버레이 갱신)로 처리.
+      var allC0 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+      var activeC0 = null, bestCOv0 = -1;
+      for (var ci0 = 0; ci0 < allC0.length; ci0++) {
+        var cr0 = allC0[ci0].getBoundingClientRect();
+        var ov0 = Math.min(cr0.bottom, vh) - Math.max(cr0.top, 0);
+        if (ov0 > bestCOv0) { bestCOv0 = ov0; activeC0 = allC0[ci0]; }
+      }
+      if (activeC0 && bestCOv0 > vh * 0.3 && !activeC0.querySelector('video')) {
+        handleActiveCarousel(activeC0, vh, vw);
+        return;
+      }
       var vids = document.querySelectorAll('video');
       var v = null, bestOverlap = -1;
       for (var vi = 0; vi < vids.length; vi++) {
@@ -1222,6 +1319,30 @@ const INJECTED_JS_BEFORE_LOAD = `
     // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
     // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.
     sweepHideUndecided();
+    // 🔴 캐러셀 대응 — 기존 "영상 바뀜" 감지는 video src 기준이라, video가 없는 사진 캐러셀
+    // 아이템으로 스와이프해 들어가는 순간을 못 잡았다(이전 영상의 RN 아이콘이 그대로 남아 페이지
+    // 아이콘과 겹치는 원인의 나머지 절반). 활성 컨테이너 자체의 교체를 겹침으로 감지해 즉시
+    // 클리어+재판단한다.
+    try {
+      var vhP = window.innerHeight || 0;
+      if (vhP) {
+        var allCP = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
+        var actCP = null, bestP = -1;
+        for (var cp = 0; cp < allCP.length; cp++) {
+          var crP = allCP[cp].getBoundingClientRect();
+          var ovP = Math.min(crP.bottom, vhP) - Math.max(crP.top, 0);
+          if (ovP > bestP) { bestP = ovP; actCP = allCP[cp]; }
+        }
+        if (actCP && bestP > vhP * 0.3 && actCP !== window.__paceLastActiveC) {
+          window.__paceLastActiveC = actCP;
+          if (window.__paceLastIconState !== null) {
+            window.__paceLastIconState = null;
+            send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+          }
+          try { hideIconRailAndScaleVideo(); } catch(eCch) {}
+        }
+      }
+    } catch(eCP) {}
     var v = getActiveVideo();
     if (!v) return;
     // 🔴 2026-08-16(5차, 실기기 스크린샷으로 원인 확정) — "영상 바뀜"을 v(DOM 엘리먼트 객체)의

@@ -305,9 +305,40 @@ async function ytReason(res: Response): Promise<string> {
 type VercelRequest = { query: Record<string, string | string[] | undefined>; headers?: Record<string, string | string[] | undefined> };
 type VercelResponse = { status: (code: number) => VercelResponse; json: (body: unknown) => void; setHeader: (name: string, value: string) => void };
 
+/**
+ * 🔴 2026-08-17 실측 — 한글 검색이 통째로 깨져 있었다.
+ *   "아기상어"        → BBC 영어 발음 강의
+ *   "김치찌개 레시피"  → 몰타어 알파벳 영상
+ *   "레스토랑 맛 알리오올리오 집에서 만들기" → "The O Song", "Minecraft, But I Can't Use The Letter O"
+ *   우연이 아니라 **모든 한글 쿼리**가 그랬다. 영어 쿼리는 정확히 맞는다.
+ *
+ * 결과가 하나같이 "알파벳/발음" 쪽으로 쏠린 게 단서다 — 한글이 유튜브에 도달하기 전에 깨져서,
+ * 유튜브가 의미 없는 바이트열을 받고 아무거나 돌려준 것이다. UTF-8 바이트열을 Latin-1로 잘못
+ * 해석했을 때 나오는 전형적인 모지바케다(예: "아" → "ì•„").
+ *
+ * 여기서 되돌린다. 안전장치를 둔다 — **되돌린 결과가 실제로 CJK를 담고 있을 때만** 채택한다.
+ * 정상적인 영어/숫자 쿼리는 이 조건에 절대 안 걸리므로 기존 동작이 그대로 유지된다.
+ */
+function repairMojibake(raw: string): string {
+  if (!raw) return raw;
+  // 모지바케 특유의 Latin-1 보충 구간이 없으면 손대지 않는다.
+  if (!/[-ÿ]/.test(raw)) return raw;
+  try {
+    const repaired = Buffer.from(raw, 'latin1').toString('utf8');
+    // 되돌렸더니 한글/한자/가나가 나왔다면 그게 원본이다.
+    if (/[가-힣぀-ヿ一-鿿]/.test(repaired)) {
+      console.warn(`QUERY_MOJIBAKE_REPAIRED "${raw}" -> "${repaired}"`);
+      return repaired;
+    }
+  } catch {
+    // 복구 실패 — 원본 그대로 쓴다.
+  }
+  return raw;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const q = req.query.query;
-  const reqQuery = typeof q === 'string' ? q : '';
+  const reqQuery = repairMojibake(typeof q === 'string' ? q : '');
   const pt = req.query.pageToken;
   const page = Math.max(0, parseInt((typeof pt === 'string' ? pt : '0') || '0', 10) || 0);
 

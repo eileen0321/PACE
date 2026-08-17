@@ -886,7 +886,10 @@ public class ShortsHotService {
                 log.warn("resolveByTitle YouTube API {}: {}", res.statusCode(), res.body());
                 return null;
             }
-            ShortsHotVideoResponse first = null;
+            // 2026-08-17 실측 — 첫 결과 폴백은 위험하다. "한우 갈비 마늘쫑 비빔밥"을 찾게 했더니
+            //   "How to Pronounce Danish Letters"가 나왔다. 아무거나 돌려주면 사용자 즐겨찾기에
+            //   전혀 상관없는 영상이 저장된다. 못 찾으면 null을 주고 앱이 수동 안내로 떨어지게 한다.
+            ShortsHotVideoResponse titleMatch = null;
             for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
                 String vid = item.path("id").path("videoId").asText(null);
                 if (vid == null || vid.isBlank()) continue;
@@ -895,15 +898,25 @@ public class ShortsHotService {
                 String ch = sn.path("channelTitle").asText("");
                 String thumb = sn.path("thumbnails").path("high").path("url").asText(null);
                 ShortsHotVideoResponse cand = new ShortsHotVideoResponse(vid, t, ch, thumb);
-                if (first == null) first = cand;
+                // 제목이 실제로 겹치는지 확인 — 검색이 엉뚱한 걸 줘도 걸러진다.
+                if (titleMatch == null && looksSameTitle(t, title)) titleMatch = cand;
                 if (channel != null && !channel.isBlank() && ch.equalsIgnoreCase(channel.trim())) {
                     return cand; // 채널까지 일치 — 가장 신뢰할 수 있는 결과
                 }
             }
-            return first;
+            return titleMatch;
         } catch (Exception e) {
             log.warn("resolveByTitle 실패 title={} channel={}", title, channel, e);
             return null;
         }
+    }
+
+    /** 검색 결과 제목이 화면에서 읽은 제목과 같은 영상인지 — 접두 일치 또는 포함으로 느슨하게 본다. */
+    private static boolean looksSameTitle(String found, String wanted) {
+        if (found == null || wanted == null) return false;
+        String a = found.trim().toLowerCase();
+        String b = wanted.trim().toLowerCase();
+        if (a.isBlank() || b.isBlank()) return false;
+        return a.contains(b) || b.contains(a);
     }
 }

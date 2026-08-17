@@ -227,7 +227,11 @@ const INJECTED_JS_BEFORE_LOAD = `
       target.style.setProperty('transform', 'translateY(' + dyOff.toFixed(1) + 'px) scale(' + scale.toFixed(4) + ')', 'important');
       target.style.setProperty('transform-origin', 'center center', 'important');
       target.style.setProperty('position', 'relative', 'important');
-      target.style.setProperty('z-index', '1', 'important');
+      // loadedmetadata 직행 경로가 "지금 활성인" 섹션에도 들어올 수 있다 — 활성 표식(999)을 1로
+      // 끌어내리면 인접 아이템 비침 회귀가 나므로 999는 건드리지 않는다.
+      if (target.style.getPropertyValue('z-index') !== '999') {
+        target.style.setProperty('z-index', '1', 'important');
+      }
       var el2 = vid, guard2 = 0;
       while (el2 && guard2 < 2) {
         if (el2.tagName === 'SECTION' || el2.tagName === 'DIV') {
@@ -251,20 +255,10 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 화면 밖 프리로드 영상 판단도 통째로 미룬다. 이 스윕은 컨테이너마다 반복 도는 루프라 게이트
       // 문구 체크를 루프 밖(한 번만)에서 해서 낭비를 줄인다.
       if (gateTextVisible()) return;
-      // 🔴 같은 멈칫 수정 2탄 — 스냅 애니메이션이 진행 중일 때(컨테이너 top이 틱 사이 2px 넘게
-      // 이동) 화면 밖 사전판단(rect 측정+스타일 쓰기 = 강제 레이아웃)을 미룬다. 사전판단의 목적은
-      // "스와이프 전(유휴 시간)에 미리 끝내두기"라 애니메이션 중 한두 틱 미뤄도 목적을 해치지
-      // 않고, 애니메이션과 경합하던 레이아웃 작업이 사라진다. 활성 영상 처리(pollActiveVideo →
-      // hideIconRailAndScaleVideo)는 이 게이트와 무관하게 그대로 돈다.
-      try {
-        var probeC0 = document.querySelector('[data-e2e="recommend-list-item-container"]');
-        if (probeC0) {
-          var probeTop = probeC0.getBoundingClientRect().top;
-          var movingNow = (typeof window.__paceProbeTop === 'number') && Math.abs(probeTop - window.__paceProbeTop) > 2;
-          window.__paceProbeTop = probeTop;
-          if (movingNow) return;
-        }
-      } catch(eMv) {}
+      // (철회) 한때 여기 "스크롤 중 사전판단 유예"가 있었다 — 30fps 프레임 분석으로 역효과 확정:
+      // 스와이프 중 재활용된 새 섹션이 유예 때문에 스케일 안 된 채 화면에 들어왔다가 멈춘 뒤에야
+      // 커지는 게 "화면 조정" 그 자체였다. 사전판단의 존재 이유가 "활성화 전에 미리"이므로
+      // 스크롤 중에도 그대로 돈다(작업량은 미판단 노드가 있을 때만 발생 — 스와이프당 1~2회 수준).
       var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
       for (var ci3 = 0; ci3 < containers3.length; ci3++) {
         var vids3 = containers3[ci3].querySelectorAll('video');
@@ -303,6 +297,17 @@ const INJECTED_JS_BEFORE_LOAD = `
         var cLs = tLs.closest ? tLs.closest('[data-e2e="recommend-list-item-container"]') : null;
         if (cLs) decideVideoOffscreen(tLs, cLs);
       } catch(eLs2) {}
+    }, true);
+    // 🔴 "스와이프 후 화면 조정" 즉시 보정 — 메타데이터 도착(loadedmetadata)으로 영상 비율이
+    // 확정되는 순간 박스 크기가 바뀔 수 있다. 폴링(500ms)을 기다리지 않고 그 즉시 재판단해서
+    // 크기가 어긋난 프레임이 화면에 남는 창을 이벤트 단위로 좁힌다.
+    document.addEventListener('loadedmetadata', function(evLm){
+      try {
+        var tLm = evLm.target;
+        if (!tLm || tLm.tagName !== 'VIDEO') return;
+        var cLm = tLm.closest ? tLm.closest('[data-e2e="recommend-list-item-container"]') : null;
+        if (cLm) decideVideoOffscreen(tLm, cLm);
+      } catch(eLm2) {}
     }, true);
   } catch(eLs) {}
   try {
@@ -670,6 +675,12 @@ const INJECTED_JS_BEFORE_LOAD = `
   }
   function hideIconRailAndScaleVideo(){
     try {
+      // 🔴 호출 경로가 늘면서(전환 감지·500ms 틱·3s 하우스키핑·ResizeObserver·loadedmetadata)
+      // 스크롤 중 이 함수가 프레임마다 겹쳐 돌 수 있게 됐다 — 전체를 120ms 스로틀로 묶어 어떤
+      // 조합으로 불려도 초당 최대 ~8회를 넘지 않게 한다(재계산 지연 최대 120ms는 육안 무해).
+      var nowThr = Date.now();
+      if (window.__paceHideRanAt && (nowThr - window.__paceHideRanAt) < 120) return;
+      window.__paceHideRanAt = nowThr;
       // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가 있고") — 이 함수의 fsDecided 신호는
       // "영상 풀스크린 판단"만 가렸지, 화면에 실제로 보이는 또 다른 문제(틱톡 자체 왼쪽 세로
       // 사이드바 — 로고/검색/홈 아이콘 목록)를 가리는 hideLeftRailByGeometry는 원래 houseKeeping
@@ -961,6 +972,17 @@ const INJECTED_JS_BEFORE_LOAD = `
       }
       lastActiveZTarget = target;
       target.style.setProperty('z-index', '999', 'important');
+      // 🔴 2026-08-17(사장님 재보고 "화면 조정하는 게 보이잖아", 박스 점프 추적으로 정량 확인) —
+      // 활성화 뒤 틱톡이 자체 재렌더로 박스 크기를 바꾸면, 500ms 폴링이 뒤늦게 고치는 순간이
+      // "조정 점프"로 보였다. ResizeObserver는 레이아웃 변경 후·페인트 전에 콜백이 돌므로 박스가
+      // 바뀌는 바로 그 프레임에 배율을 재적용한다 — 어긋난 크기가 화면에 그려질 틈이 없다.
+      // transform은 레이아웃 크기를 안 바꿔 자기 재적용으로는 다시 발화하지 않는다(루프 없음).
+      if (!target.__paceRO) {
+        try {
+          target.__paceRO = new ResizeObserver(function(){ try { hideIconRailAndScaleVideo(); } catch(eRoCb) {} });
+          target.__paceRO.observe(target);
+        } catch(eRo) {}
+      }
       signalFsDecidedOnce();
     } catch(eIconScale) {}
   }
@@ -1387,6 +1409,12 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
       }
     } catch(eCP) {}
+    // 🔴 2026-08-17(사장님 재보고 "스와이프 후 화면 조정하는 게 보이잖아") — 활성화 뒤 영상
+    // 메타데이터가 도착하면 틱톡이 박스 크기를 바꾸는데, 스케일 재계산이 "전환 감지 때+3초
+    // 하우스키핑"에만 돌아서 그 사이 어긋난 크기가 보이다가 뒤늦게 맞춰지는 게 "조정되는 장면"
+    // 으로 보였다. 매 500ms 틱마다 무조건 재계산한다(함수가 멱등이고 비용은 rect 몇 개 수준 —
+    // 박스가 안 바뀌었으면 같은 값 재적용이라 화면 변화 없음).
+    try { hideIconRailAndScaleVideo(); } catch(eEvery) {}
     var v = getActiveVideo();
     if (!v) return;
     // 🔴 2026-08-16(5차, 실기기 스크린샷으로 원인 확정) — "영상 바뀜"을 v(DOM 엘리먼트 객체)의

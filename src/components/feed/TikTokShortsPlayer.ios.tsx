@@ -135,6 +135,20 @@ const INJECTED_JS_BEFORE_LOAD = `
   // 아니므로 z-index는 낮은 값(1)만 준다(활성이 되면 hideIconRailAndScaleVideo가 999로 승격 —
   // 예전에 고쳤던 "다음 피드 아이템이 확대된 영상 위로 겹쳐 보이는" 버그가 여러 영상을 동시에
   // 미리 스케일해두면서 재발하지 않도록, "지금 실제로 보이는 영상만 최상단"을 유지하기 위함).
+  // 🔴 2026-08-17(사장님 재보고 "스위프트 넘길때 다음 영상 멈칫하고 버벅") — 지금까지 게이트 문구
+  // 체크가 document.body.innerText(페이지 전체 텍스트 직렬화 = 강제 레이아웃)를 **50ms마다** 돌리고
+  // 있었다(초당 20회). 실측: 스와이프 직후 창에서 300ms+ 정지가 25회 중 7회, 최악 966ms. 게이트는
+  // 초 단위로만 나타났다 사라지는 상태라 1초 캐시로 충분하다 — 강제 레이아웃을 20분의 1로 줄인다.
+  function gateTextVisible(){
+    try {
+      var nowG = Date.now();
+      if (window.__paceGateCheckAt && (nowG - window.__paceGateCheckAt) < 1000) return !!window.__paceGateCached;
+      window.__paceGateCheckAt = nowG;
+      var btG = document.body.innerText || '';
+      window.__paceGateCached = btG.indexOf('무엇을 시청하고') !== -1 || btG.indexOf('관심사') !== -1 || btG.indexOf('what you') !== -1;
+      return !!window.__paceGateCached;
+    } catch(eGt) { return false; }
+  }
   function decideVideoOffscreen(vid, container){
     try {
       var vh = window.innerHeight || 0;
@@ -175,6 +189,11 @@ const INJECTED_JS_BEFORE_LOAD = `
       target.setAttribute('data-pace-fs-src', vsrc);
       vid.setAttribute('data-pace-fs-decided', willFullscreen ? 'yes' : 'no');
       vid.setAttribute('data-pace-fs-src', vsrc);
+      // 🔴 2026-08-17(사장님 재보고 "다음 영상 멈칫") — 스와이프 진입 직후 정지의 큰 지분은 새 영상
+      // 버퍼링(첫 프레임까지 네트워크 대기)이다. 틱톡이 DOM 노드는 미리 만들어도 미디어 데이터까지
+      // 미리 받는다는 보장이 없어, 화면 밖에서 판단하는 이 시점에 preload=auto를 강제해 데이터를
+      // 미리 받게 한다 — 활성화되는 순간 이미 버퍼가 차 있어 바로 재생된다.
+      try { if (vid.preload !== 'auto') vid.preload = 'auto'; } catch(ePre) {}
       // 🔴 12차 — 페이지 자체 아이콘 열(SECTION)은 지금까지 활성화 시점에만 숨겨서, 미리 스케일해둔
       // 새 영상이 화면에 들어오는 순간엔 아이콘이 아직 보였다(스와이프마다 "오른쪽 아이콘 떴다
       // 사라짐"). 판단을 여기서 이미 끝내므로 숨김(yes)/복원(no)도 같은 동기 실행에서 끝내둔다 —
@@ -231,12 +250,21 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 🔴 hideIconRailAndScaleVideo와 동일 이유(9차 주석 참고) — 관심사 게이트가 떠 있는 동안은
       // 화면 밖 프리로드 영상 판단도 통째로 미룬다. 이 스윕은 컨테이너마다 반복 도는 루프라 게이트
       // 문구 체크를 루프 밖(한 번만)에서 해서 낭비를 줄인다.
+      if (gateTextVisible()) return;
+      // 🔴 같은 멈칫 수정 2탄 — 스냅 애니메이션이 진행 중일 때(컨테이너 top이 틱 사이 2px 넘게
+      // 이동) 화면 밖 사전판단(rect 측정+스타일 쓰기 = 강제 레이아웃)을 미룬다. 사전판단의 목적은
+      // "스와이프 전(유휴 시간)에 미리 끝내두기"라 애니메이션 중 한두 틱 미뤄도 목적을 해치지
+      // 않고, 애니메이션과 경합하던 레이아웃 작업이 사라진다. 활성 영상 처리(pollActiveVideo →
+      // hideIconRailAndScaleVideo)는 이 게이트와 무관하게 그대로 돈다.
       try {
-        var bodyText3 = document.body.innerText || '';
-        if (bodyText3.indexOf('무엇을 시청하고') !== -1 || bodyText3.indexOf('관심사') !== -1 || bodyText3.indexOf('what you') !== -1) {
-          return;
+        var probeC0 = document.querySelector('[data-e2e="recommend-list-item-container"]');
+        if (probeC0) {
+          var probeTop = probeC0.getBoundingClientRect().top;
+          var movingNow = (typeof window.__paceProbeTop === 'number') && Math.abs(probeTop - window.__paceProbeTop) > 2;
+          window.__paceProbeTop = probeTop;
+          if (movingNow) return;
         }
-      } catch(eGateCheck3) {}
+      } catch(eMv) {}
       var containers3 = document.querySelectorAll('[data-e2e="recommend-list-item-container"]');
       for (var ci3 = 0; ci3 < containers3.length; ci3++) {
         var vids3 = containers3[ci3].querySelectorAll('video');
@@ -673,12 +701,7 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 상태라 사이드바도 아직 없고 크기도 안 맞았다. 게이트 문구가 보이는 동안은 판단 자체를
       // 통째로 미룬다(hideLeftRailByGeometry/enforceMainWidth는 위에서 이미 돌았으니 그대로 둠) —
       // 게이트가 dismissAppBanner에 의해 실제로 닫히고 나면 다음 틱에 정상적으로 재시도된다.
-      try {
-        var bodyText2 = document.body.innerText || '';
-        if (bodyText2.indexOf('무엇을 시청하고') !== -1 || bodyText2.indexOf('관심사') !== -1 || bodyText2.indexOf('what you') !== -1) {
-          return;
-        }
-      } catch(eGateCheck) {}
+      if (gateTextVisible()) return;
       var vh = window.innerHeight || 0;
       var vw = window.innerWidth || 0;
       if (!vh) return;

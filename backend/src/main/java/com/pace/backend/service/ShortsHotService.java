@@ -860,4 +860,50 @@ public class ShortsHotService {
             return 0; // 파싱 실패 시 안전하게 "Shorts 아님"으로 제외
         }
     }
+
+    /**
+     * FAV-1 (2026-08-17) — 화면에서 읽은 제목/채널로 영상 하나를 특정한다.
+     *
+     * 안드로이드는 재생 중인 영상의 주소를 앱 밖으로 안 내놓는다(ShortsHotController.resolve 주석).
+     * 접근성 트리로 읽히는 건 제목과 채널뿐이라, 그 둘로 유튜브에서 되찾는다.
+     * 정확도를 위해 두 가지를 건다:
+     *   1) 검색어에 채널명을 함께 넣어 같은 제목의 다른 영상이 섞일 확률을 낮춘다.
+     *   2) 결과 중 **채널명이 일치하는 것**을 우선 고른다. 없으면 첫 결과로 폴백한다.
+     * 못 찾으면 null을 돌려준다 — 호출부(앱)가 기존 수동 안내로 떨어지게 한다.
+     */
+    public ShortsHotVideoResponse resolveByTitle(String title, String channel) {
+        if (apiKey == null || apiKey.isBlank()) return null;
+        if (title == null || title.isBlank()) return null;
+        try {
+            String q = channel == null || channel.isBlank() ? title : title + " " + channel;
+            String url = SEARCH_API
+                    + "?part=snippet&type=video&maxResults=5"
+                    + "&q=" + URLEncoder.encode(q, StandardCharsets.UTF_8)
+                    + "&key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url)).GET().build();
+            HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) {
+                log.warn("resolveByTitle YouTube API {}: {}", res.statusCode(), res.body());
+                return null;
+            }
+            ShortsHotVideoResponse first = null;
+            for (JsonNode item : objectMapper.readTree(res.body()).path("items")) {
+                String vid = item.path("id").path("videoId").asText(null);
+                if (vid == null || vid.isBlank()) continue;
+                JsonNode sn = item.path("snippet");
+                String t = sn.path("title").asText("");
+                String ch = sn.path("channelTitle").asText("");
+                String thumb = sn.path("thumbnails").path("high").path("url").asText(null);
+                ShortsHotVideoResponse cand = new ShortsHotVideoResponse(vid, t, ch, thumb);
+                if (first == null) first = cand;
+                if (channel != null && !channel.isBlank() && ch.equalsIgnoreCase(channel.trim())) {
+                    return cand; // 채널까지 일치 — 가장 신뢰할 수 있는 결과
+                }
+            }
+            return first;
+        } catch (Exception e) {
+            log.warn("resolveByTitle 실패 title={} channel={}", title, channel, e);
+            return null;
+        }
+    }
 }

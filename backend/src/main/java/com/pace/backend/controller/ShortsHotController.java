@@ -47,6 +47,26 @@ public class ShortsHotController {
         return shortsHotService.categories();
     }
 
+    /**
+     * 🔴 2026-08-17 (FAV-1) — 화면에 보이는 제목·채널로 영상 하나를 특정한다.
+     *
+     * 사장님: "즐겨찾기는 Add 누르면 리스트에 추가되고 공유할 수 있는 거잖아." 맞다. 그런데
+     * 안드로이드에서는 유튜브가 재생 중인 영상의 주소를 밖으로 안 내놓는다 — 접근성 트리로도
+     * videoId/url이 항상 null이다(PaceAccessibilityService.captureCurrentVideoInfoInternal의
+     * callback(title, channel, null, null, ...)). 그래서 지금까지는 사용자가 직접 "공유 → 링크
+     * 복사"를 해와야 했고, 그 폴백이 전면 UX가 되어 있었다.
+     *
+     * 접근성 트리로 **읽히는 것은 제목과 채널**이다. 그 둘로 유튜브에서 영상을 되찾으면
+     * 공유창도, 클립보드도, 투명 액티비티도 필요 없다(따라서 화면 번쩍임도 원천적으로 없다).
+     * API 키는 서버에만 있으므로 조회는 서버가 한다 — 앱에 키를 심지 않는다.
+     */
+    @GetMapping("/resolve")
+    public ShortsHotVideoResponse resolve(
+            @RequestParam String title,
+            @RequestParam(required = false) String channel) {
+        return shortsHotService.resolveByTitle(title, channel);
+    }
+
     // 2026-08-01 — 스케줄러를 기다리지 않고 배포 직후 바로 검증하려는 목적의 수동 트리거.
     // 표준 JWT 인증으로 충분해 별도 admin 권한을 새로 만들지 않는다.
     //

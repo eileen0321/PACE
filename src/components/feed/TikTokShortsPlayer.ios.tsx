@@ -673,13 +673,15 @@ const INJECTED_JS_BEFORE_LOAD = `
       }
     } catch(eCar) {}
   }
-  function hideIconRailAndScaleVideo(){
+  function hideIconRailAndScaleVideo(force){
     try {
       // 🔴 호출 경로가 늘면서(전환 감지·500ms 틱·3s 하우스키핑·ResizeObserver·loadedmetadata)
       // 스크롤 중 이 함수가 프레임마다 겹쳐 돌 수 있게 됐다 — 전체를 120ms 스로틀로 묶어 어떤
       // 조합으로 불려도 초당 최대 ~8회를 넘지 않게 한다(재계산 지연 최대 120ms는 육안 무해).
+      // 단 "전환 감지" 호출은 force로 우회 — 여기가 밀리면 새 아이템의 페이지 아이콘 숨김/교체가
+      // 스로틀만큼 늦어 "아이콘 보였다 사라짐"이 된다(사장님 재보고로 실측 확인).
       var nowThr = Date.now();
-      if (window.__paceHideRanAt && (nowThr - window.__paceHideRanAt) < 120) return;
+      if (!force && window.__paceHideRanAt && (nowThr - window.__paceHideRanAt) < 120) return;
       window.__paceHideRanAt = nowThr;
       // 🔴 사장님 실기기 지적("처음켤때는 왼쪽에 길게 바가 있고") — 이 함수의 fsDecided 신호는
       // "영상 풀스크린 판단"만 가렸지, 화면에 실제로 보이는 또 다른 문제(틱톡 자체 왼쪽 세로
@@ -1397,15 +1399,37 @@ const INJECTED_JS_BEFORE_LOAD = `
               send({ type: 'domlog', text: '🎬활성화 video없음(캐러셀?) t=' + Date.now() });
             }
           } catch(eDg) {}
-          if (window.__paceLastIconState !== null) {
-            window.__paceLastIconState = null;
-            send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
-          }
-          try { hideIconRailAndScaleVideo(); } catch(eCch) {}
+          // 🔴 2026-08-17(사장님 재보고 "아이콘 보였다 사라지고", 12스와이프 중 8회 소멸 실측 —
+          // 최대 1초) — "일단 비우고 나중에 채우기"가 깜빡임 그 자체였다. 새 컨테이너의 카운트는
+          // 프리로드 시점에 이미 DOM에 있으므로 지금 바로 읽어 **교체**한다. 못 읽은 경우에만
+          // 비운다(이전 영상 값이 남는 것보다 빈 게 낫다는 기존 결정 유지).
+          try {
+            var qLike = actCP.querySelector('[data-e2e="like-count"]');
+            var qComment = actCP.querySelector('[data-e2e="comment-count"]');
+            var qFav = actCP.querySelector('[data-e2e="favorite-count"]');
+            var qShare = actCP.querySelector('[data-e2e="share-count"]');
+            var qState = {
+              like: qLike ? qLike.textContent.trim() : '',
+              comment: qComment ? qComment.textContent.trim() : '',
+              favorite: qFav ? qFav.textContent.trim() : '',
+              share: qShare ? qShare.textContent.trim() : '',
+            };
+            if (qState.like || qState.comment || qState.favorite || qState.share) {
+              var qStr = JSON.stringify(qState);
+              if (window.__paceLastIconState !== qStr) {
+                window.__paceLastIconState = qStr;
+                send({ type: 'iconState', like: qState.like, comment: qState.comment, favorite: qState.favorite, share: qState.share });
+              }
+            } else if (window.__paceLastIconState !== null) {
+              window.__paceLastIconState = null;
+              send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+            }
+          } catch(eQi) {}
+          try { hideIconRailAndScaleVideo(true); } catch(eCch) {}
         } else if (actCP && !actCP.querySelector('video')) {
           // video 없는 활성 아이템(캐러셀/늦은 장착)은 내용이 바뀌어도 컨테이너 교체 감지에 안
           // 걸리므로 500ms 틱마다 재평가 — video가 늦게 붙는 경우 붙는 즉시 영상 경로로 넘어간다.
-          try { hideIconRailAndScaleVideo(); } catch(eCr2) {}
+          try { hideIconRailAndScaleVideo(true); } catch(eCr2) {}
         }
       }
     } catch(eCP) {}
@@ -1434,16 +1458,37 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 판단이 끝나야 같이 나타남). sweepHideUndecided는 프리로드된(아직 활성 아닌) 영상까지
       // 훑으므로 거기서 clear를 보내면 지금 보고 있는 활성 영상의 아이콘을 잘못 지울 위험이 있어
       // 반드시 "활성 영상이 바뀐" 이 지점에서만 보낸다.
-      if (window.__paceLastIconState !== null) {
-        window.__paceLastIconState = null;
-        send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
-      }
+      // 🔴 "아이콘 보였다 사라짐" 수정(컨테이너 교체 감지 쪽과 동일) — 비우기 전에 새 값을 즉시
+      // 읽어 교체 시도, 못 읽으면 비움.
+      try {
+        var cSw = v.closest ? v.closest('[data-e2e="recommend-list-item-container"]') : null;
+        var swLike = cSw ? cSw.querySelector('[data-e2e="like-count"]') : null;
+        var swComment = cSw ? cSw.querySelector('[data-e2e="comment-count"]') : null;
+        var swFav = cSw ? cSw.querySelector('[data-e2e="favorite-count"]') : null;
+        var swShare = cSw ? cSw.querySelector('[data-e2e="share-count"]') : null;
+        var swState = {
+          like: swLike ? swLike.textContent.trim() : '',
+          comment: swComment ? swComment.textContent.trim() : '',
+          favorite: swFav ? swFav.textContent.trim() : '',
+          share: swShare ? swShare.textContent.trim() : '',
+        };
+        if (swState.like || swState.comment || swState.favorite || swState.share) {
+          var swStr = JSON.stringify(swState);
+          if (window.__paceLastIconState !== swStr) {
+            window.__paceLastIconState = swStr;
+            send({ type: 'iconState', like: swState.like, comment: swState.comment, favorite: swState.favorite, share: swState.share });
+          }
+        } else if (window.__paceLastIconState !== null) {
+          window.__paceLastIconState = null;
+          send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
+        }
+      } catch(eSwIc) {}
       // 🔴 사장님 지적("아직도 세로 바가 잠깐보이는현상있어") — fsDecided 커버는 앱을 처음 켤 때
       // 딱 한 번만 통과하는 관문이라 스와이프로 다음 영상 넘어갈 때는 안 걸린다. 그 판단(풀스크린
       // 여부+스케일)이 houseKeeping의 3초 틱에만 맡겨져 있어서, 새 영상이 원래(레터박싱) 크기로
       // 최대 3초간 보이다 갑자기 커지는 게 매 스와이프마다 "바가 나타났다 사라지는" 걸로 보였다.
       // 여기(500ms 폴링, 영상 전환 감지 시점)서 즉시 판단을 돌려 그 창을 3000ms→최대 500ms로 줄인다.
-      try { hideIconRailAndScaleVideo(); } catch(eSwap) {}
+      try { hideIconRailAndScaleVideo(true); } catch(eSwap) {}
     }
     try { if (v.loop) v.loop = false; } catch(e) {}
     // 2026-08-15 사장님 실기기 지적("틱톡 소리 안나다 한번씩 소리나던데 간헐적으로") — tryAdvance의

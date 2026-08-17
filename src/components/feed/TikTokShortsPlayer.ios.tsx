@@ -723,22 +723,14 @@ const INJECTED_JS_BEFORE_LOAD = `
         if (ov0 > bestCOv0) { bestCOv0 = ov0; activeC0 = allC0[ci0]; }
       }
       if (activeC0 && bestCOv0 > vh * 0.3 && !activeC0.querySelector('video')) {
-        // 🔴 활성화 진단 로그로 확인 — 진짜 영상 아이템도 활성화 직후 잠깐은 video가 아직 안 붙어
-        // 있는 경우가 있다(틱톡이 활성화 후에야 video/src를 붙임). 그 순간을 캐러셀로 오판해 폭
-        // 채움+아이콘 숨김을 걸면 곧 붙을 진짜 영상 레이아웃과 충돌한다 — "video 없음" 상태가
-        // 600ms 이상 유지된 경우에만 캐러셀로 확정한다(캐러셀은 계속 video가 없으므로 다음 틱에
-        // 자연 확정, 영상 아이템은 그 사이 video가 붙어 정상 경로로 감).
-        var nowCar = Date.now();
-        if (window.__paceCarCand !== activeC0) {
-          window.__paceCarCand = activeC0;
-          window.__paceCarCandAt = nowCar;
-          return;
-        }
-        if (nowCar - (window.__paceCarCandAt || 0) < 600) return;
+        // 🔴 처음엔 "영상 아이템도 활성화 직후 잠깐 video가 없더라"는 이유로 600ms 유예를 뒀는데,
+        // 30fps 프레임 분석으로 역효과 확정 — 유예 동안 아무 처리도 안 해서 스케일 안 된 원본
+        // 레이아웃(좁은 카드+옆 카드 삐져나옴)이 최대 1.3초 그대로 보였다(사장님 "아직도 버벅").
+        // video 유무와 무관하게 즉시 폭 채움을 적용한다 — 나중에 video가 붙으면 영상 경로가 같은
+        // 수학(scaleW)으로 재판단하므로 시각적 충돌이 없다.
         handleActiveCarousel(activeC0, vh, vw);
         return;
       }
-      window.__paceCarCand = null;
       var vids = document.querySelectorAll('video');
       var v = null, bestOverlap = -1;
       for (var vi = 0; vi < vids.length; vi++) {
@@ -1388,9 +1380,9 @@ const INJECTED_JS_BEFORE_LOAD = `
             send({ type: 'iconState', like: '', comment: '', favorite: '', share: '', clear: true });
           }
           try { hideIconRailAndScaleVideo(); } catch(eCch) {}
-        } else if (window.__paceCarCand) {
-          // 캐러셀 후보가 대기 중이면(600ms 유예) 이 500ms 틱에서 재평가 — 안 하면 다음 판단이
-          // houseKeeping(3초)까지 밀려 진짜 캐러셀이 3초간 작은 화면+아이콘 겹침으로 남는다.
+        } else if (actCP && !actCP.querySelector('video')) {
+          // video 없는 활성 아이템(캐러셀/늦은 장착)은 내용이 바뀌어도 컨테이너 교체 감지에 안
+          // 걸리므로 500ms 틱마다 재평가 — video가 늦게 붙는 경우 붙는 즉시 영상 경로로 넘어간다.
           try { hideIconRailAndScaleVideo(); } catch(eCr2) {}
         }
       }

@@ -150,7 +150,10 @@ const INJECTED_JS_BEFORE_LOAD = `
   function gateTextVisible(){
     try {
       var nowG = Date.now();
-      if (window.__paceGateCheckAt && (nowG - window.__paceGateCheckAt) < 1000) return !!window.__paceGateCached;
+      // 게이트는 세션 초기에만 유의미 — fsDecided 이후엔 재검사 주기를 3초로 늘려 innerText
+      // 직렬화(수십 ms급 강제 레이아웃) 빈도를 더 줄인다("그래도 멈칫" 재보고 후속).
+      var gTtl = window.__paceFsDecidedSent ? 3000 : 1000;
+      if (window.__paceGateCheckAt && (nowG - window.__paceGateCheckAt) < gTtl) return !!window.__paceGateCached;
       window.__paceGateCheckAt = nowG;
       var btG = document.body.innerText || '';
       window.__paceGateCached = btG.indexOf('무엇을 시청하고') !== -1 || btG.indexOf('관심사') !== -1 || btG.indexOf('what you') !== -1;
@@ -1597,12 +1600,19 @@ const INJECTED_JS_BEFORE_LOAD = `
         }
       }
     } catch(eWd) {}
-    dismissAppBanner();
-    hideLeftRailByGeometry();
+    // 🔴 2026-08-17(사장님 "그래도 자연스럽지 않은데 멈칫하면서") — 이 3초 틱이 매번 무거운 DOM
+    // 스캔 3개를 돌렸다: dismissAppBanner(전체 버튼+rect), hideLeftRailByGeometry(전체 div+rect),
+    // dumpErrorStateOnce(전체 innerText 직렬화 — 에러가 안 걸리는 한 매 틱 반복). 스와이프가 이
+    // 3초 스파이크와 겹치면 불규칙 멈칫이 된다. 피드가 안정된 뒤(fsDecided 후 60초 경과)에는
+    // 배너 스캔 9초/지오메트리·에러 스캔 15초로 감속 — 초기 게이트/배너 대응 속도는 유지.
+    window.__paceHkTick = (window.__paceHkTick || 0) + 1;
+    var hkSteady = window.__paceFsDecidedSent && (Date.now() - startedAt) > 60000;
+    if (!hkSteady || window.__paceHkTick % 3 === 0) { dismissAppBanner(); }
+    if (!hkSteady || window.__paceHkTick % 5 === 0) { hideLeftRailByGeometry(); }
     enforceMainWidth();
     hideIconRailAndScaleVideo();
     dumpDomOnce();
-    dumpErrorStateOnce();
+    if (!hkSteady || window.__paceHkTick % 5 === 0) { dumpErrorStateOnce(); }
     var href = '' + location.href;
     // ⚠️ 2026-08-13(20차) 코드 재검토로 발견 — search()가 /search?q=…로 이동시키면 그 결과 페이지는
     // 보통 썸네일 그리드라 자동재생 <video>가 없는 게 정상이다. 이 novideo 체크가 그걸 "재생 실패"로

@@ -98,7 +98,15 @@ const INJECTED_JS_BEFORE_LOAD = `
       // (DivSideNavContainer)은 이 스타일시트로 computed=none이 확인됐는데 스켈레톤은 클래스가
       // 달라 50ms 지오메트리 폴링에만 걸렸고, 로딩이 느린 기기에서 커버 안전장치(10초)가 풀린
       // 뒤 그대로 노출됐다 — "처음 켤 때 왼쪽 아이콘 바"의 실기기 잔존 원인. 같이 정적으로 숨긴다.
-      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"],[class*="DivSkeletonSide"]{display:none!important}';
+      // 🔴 2026-08-17(사장님 "왜 다음 영상 가져올 때부터 사이즈를 제대로 못 재냐") — 못 재는 게
+      // 아니라 재는 대상(영상 SECTION 박스)이 태어난 뒤 변한다: 페이지 아이콘 열(형제 SECTION)을
+      // JS로 늦게 숨기면 flex 재계산으로 영상 박스가 그때 넓어지고(실측 348→402), 재활용 노드는
+      // 틱톡 리액트가 아이콘 열을 되살려 이 과정이 활성화 후 반복 — "작게 왔다 커짐"의 구조적
+      // 원인. 아이콘 열을 문서 시작 시점 CSS(:has, iOS 15.4+ WebKit 지원)로 태어나기 전에 죽여
+      // 영상 박스가 처음부터 최종 폭으로 태어나게 한다. 페이지 아이콘은 RN 오버레이가 대체하므로
+      // 보일 일이 없고, 이제 모든 아이템이 폭 채움이라 '원본 그대로 두기' 케이스도 없다.
+      st.textContent = '[class*="DivSideNavContainer"],[class*="DivSideNavPlaceholderContainer"],[class*="DivSkeletonSide"]{display:none!important}'
+        + '[data-e2e="recommend-list-item-container"] section:has([data-e2e="like-icon"]){display:none!important}';
       var host = document.head || document.documentElement;
       if (host) host.appendChild(st);
     } catch(eCss) {}

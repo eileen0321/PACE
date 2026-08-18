@@ -1624,7 +1624,9 @@ const INJECTED_JS_BEFORE_LOAD = `
           try { sessionStorage.removeItem('paceEmptyReloads'); } catch(eWdS) {}
         } else if (!window.__paceVideoEverSeen) {
           window.__paceEmptyTicks = (window.__paceEmptyTicks || 0) + 1;
-          if (window.__paceEmptyTicks >= 7) {
+          // 2026-08-19 사장님("틱톡 첫 로딩 겁내 느린 거 안 잡아") — 빈 피드 대기 7틱(21s)→3틱(9s).
+          // 정상 로드는 3~5초 안에 video가 붙으므로 9초면 실패 확정으로 충분, 회복이 12초 빨라진다.
+          if (window.__paceEmptyTicks >= 3) {
             var wdN = 0;
             try { wdN = parseInt(sessionStorage.getItem('paceEmptyReloads') || '0', 10) || 0; } catch(eWdG) {}
             if (wdN < 2) {

@@ -362,8 +362,12 @@ public class PaceVolumeKeyModule: Module {
           if !self.motionHeld {
             let (_, ap) = self.spikeZ(&self.accSamples, nowK)
             let (_, gp) = self.spikeZ(&self.gyroSamples, nowK)
-            if (ap >= 0.08 && ap < 0.35) || (gp >= 0.12 && gp < 0.45) {
+            // 회전 하한 0.12→0.06rad(01:04 실측: 살살 누른 폰버튼 gp 0.09~0.15가 0.12 문턱에 걸려 샘.
+            // 거치대가 회전을 억제해 책상 진동으로는 회전이 거의 안 생기므로 0.06으로도 안전).
+            if (ap >= 0.08 && ap < 0.35) || (gp >= 0.06 && gp < 0.45) {
               verdict = "폰버튼"; why = String(format: "거치·직접충격 %.3fg/%.2frad", ap, gp)
+            } else {
+              why = String(format: "거치 ap=%.3f gp=%.2f", ap, gp) // 미달 수치 채증(튜닝용)
             }
           }
           if self.motionHeld {

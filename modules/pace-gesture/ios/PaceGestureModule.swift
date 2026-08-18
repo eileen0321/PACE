@@ -619,6 +619,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       self.logTick += 1
       if self.logTick % 4 == 0 { self.onDiag(String(format: "T%d hand=%.3f growth=%.2f sweep=%.2f", ti, handSize, growth, sweep)) }
+      // 🔬 2026-08-19 01:00 진단("10번 중 2번만 발화") — 비발화 순간의 수치를 네이티브 로그로 노출.
+      // sweep이 임계 근처(0.10+)일 때만 1줄 — 손짓 시도는 찍히고 정지 손은 안 찍히는 수준으로 스팸 억제.
+      if sweep > 0.10 {
+        paceGLog("[pace-wave] 근접 T%d sweep=%.2f rev=%d streak=%d growth=%.2f speed=%.2f size=%.2f y=%.2f refract=%.0f",
+                 ti, sweep, reversals, self.tracks[ti].sweepStreak, growth, speedPeak, handSize, c.y,
+                 nowMs - self.lastTriggerMs)
+      }
       if self.tracks[ti].sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)

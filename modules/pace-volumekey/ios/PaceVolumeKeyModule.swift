@@ -151,9 +151,16 @@ public class PaceVolumeKeyModule: Module {
       while let f = self.accSamples.first, tMs - f.t > 3000 { self.accSamples.removeFirst() }
       self.samplesLock.unlock()
       let rms = self.accRmsSq.squareRoot()
-      // 히스테리시스 — 경계값 근처에서 파닥거리지 않게 진입/이탈 임계를 분리(검토 권고 0.008~0.012g).
-      if self.motionHeld { if rms < 0.007 { self.motionHeld = false } }
-      else { if rms > 0.012 { self.motionHeld = true } }
+      // 히스테리시스 — 경계값 근처에서 파닥거리지 않게 진입/이탈 임계를 분리.
+      // 🔴 2026-08-19 00:51 실측("거치되어 있는데" 판정은 쥠) — 거치 후에도 이탈 임계(0.007)에 못 내려가
+      // 쥠이 고착, 4초 상속이 살아남아 리모컨을 볼륨으로 삼켰다(충전 진동 등 주변 노이즈로 추정).
+      // 이탈 0.007→0.012, 진입 0.012→0.018로 상향(실측 쥠 떨림 0.024~0.058이라 진입 여유 충분).
+      if self.motionHeld { if rms < 0.012 { self.motionHeld = false } }
+      else { if rms > 0.018 { self.motionHeld = true } }
+      // 내려놓기/집어들기 수준의 대형 충격(0.35g+, 실측 내려놓기 0.728g)은 볼륨 조절 세션을 즉시
+      // 종료시킨다 — "손으로 볼륨한 뒤 두고 리모컨" 시퀀스에서 상속이 리모컨을 삼키는 것을 행위
+      // 수준에서 차단(정상 폰버튼 누름이 0.35g를 넘는 경우엔 그 눌림의 판정이 다시 앵커를 세운다).
+      if mag > 0.35 { self.lastPhonePressAtMs = 0 }
       if mag > 0.03 { // 진단용 소충격 추적(판정엔 미사용 — 아래 bigSpike만 판정에 쓴다)
         self.lastSpikeAtMs = CACurrentMediaTime() * 1000
         self.lastSpikeMag = mag
@@ -336,22 +343,17 @@ public class PaceVolumeKeyModule: Module {
           let nowK = CACurrentMediaTime() * 1000
           var verdict = "리모컨"
           var why = "거치"
-          if !self.motionHeld {
-            // 🔴 2026-08-19 00:35 사장님("간헐적으로 손 볼륨으로 영상이 넘어가긴 하는데") — 거치 상태에서
-            // 손가락으로 폰 버튼을 누르는 케이스가 스파이크 미검사로 리모컨 판정되던 한계 보완.
-            // 거치는 배경 σ가 바닥(0.002)이라 z-점수는 책상 전달 진동에도 폭발하므로 **절대 임계**만 쓴다:
-            // 직접 누름 실측 0.12~0.18g vs 책상 전달 최대 0.044g → 0.08g. 회전 0.12rad/s(거치 폰의
-            // 회전은 직접 접촉 없이는 불가능).
-            let (_, ap) = self.spikeZ(&self.accSamples, nowK)
-            let (_, gp) = self.spikeZ(&self.gyroSamples, nowK)
-            if ap >= 0.08 || gp >= 0.12 {
-              verdict = "폰버튼"; why = String(format: "거치·직접충격 %.3fg/%.2frad", ap, gp)
-            }
-          }
+          // ⛔ 2026-08-19 00:46 사장님 지시("일단 손 안 잡으면 리모컨으로 영상만 넘기던지") — 거치
+          // 직접충격 예외 경로(00:35 추가) 폐기. 거치 = 무조건 리모컨(넘김만). 근거: 폰을 내려놓는
+          // 충격(실측 0.728g)이 "폰버튼"으로 오인돼 상속 창을 열고 직후 리모컨 눌림까지 볼륨으로
+          // 삼켰다. 거치+손가락 폰버튼은 넘어가는 한계를 감수(사장님 우선순위 확정).
           if self.motionHeld {
             let (az, ap) = self.spikeZ(&self.accSamples, nowK)
             let (gz, gp) = self.spikeZ(&self.gyroSamples, nowK)
             let zTh = self.keyboardPresent ? 6.0 : 4.0
+            // ⛔ 00:49 상한(0.35g) 철회 — 세게 누르는 실사용 충격이 0.35g를 넘어 볼륨이 통째로 죽었다
+            // ("손으로 볼륨하는데 하나도 안 되네"). 내려놓기 오인의 실제 해결은 "상속은 쥔 상태에서만"
+            // 규칙(아래)이며, 내려놓으면 motionHeld가 풀려 어차피 리모컨 판정이라 상한이 불필요했다.
             let accHit = az >= zTh
             let gyroHit = gz >= zTh && gp >= 0.06
             // 🔴 2026-08-19 00:19 실측 — "둘 다 z≥4"(AND)는 살살 누른 폰버튼(az4.2/gz2.9, az1.2/gz4.7,
@@ -369,7 +371,7 @@ public class PaceVolumeKeyModule: Module {
           // 흡수돼 센서 무신호(az0.2~3.3)인 경우가 존재 → 센서 한계. 행동 맥락으로 보완: 폰버튼 확정
           // 후 4초는 "볼륨 조절 행위 계속"으로 상속(볼륨 조절은 수 초간 연타하는 행위, 그 틈에 리모컨
           // 전환은 드묾. 샌 3건도 직전 폰버튼 3.2초 뒤라 이 창이면 커버). 900ms→4000ms.
-          if verdict == "리모컨" && nowK - self.lastPhonePressAtMs < 4000 {
+          if verdict == "리모컨" && self.motionHeld && nowK - self.lastPhonePressAtMs < 4000 { // 상속은 쥔 상태에서만(내려놓으면 즉시 단절 — 00:46 지시)
             verdict = "폰버튼"; why = "연속누름 상속 \(Int(nowK - self.lastPhonePressAtMs))ms"
           }
           if verdict == "폰버튼" { self.lastPhonePressAtMs = nowK }

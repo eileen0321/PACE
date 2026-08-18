@@ -255,7 +255,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 이식: 발화 후 손이 프레임에서 1초 이상 사라져야 재무장. 왕복 중엔 절대 재무장 안 되고,
   // 손을 내렸다 다시 드는 진짜 다음 손짓만 무장된다.
   private var armed = true
-  private let rearmAbsenceMs: Double = 1000
+  // (2차 조정) 1000ms 완전 부재 요구는 과했다 — 손짓 사이에 손을 화면 근처에 두는 자연스러운
+  // 습관에서 첫 발화 후 영구 잠김("한 번도 안 되잖아"). 부재 400ms(스트로크 간 간격보다는 길고
+  // 손을 잠깐 내리는 것보다는 짧음) + 발화 후 2500ms 경과 시 무조건 재무장(교착 방지 상한).
+  private let rearmAbsenceMs: Double = 400
+  private let rearmTimeoutMs: Double = 2500
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
   // = 폰 쪽으로 접근한 것으로 보고 발화한다.
@@ -493,7 +497,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       self.lastHandSeenMs = nowMs
       // 재무장 게이트(위 armed 주석) — 발화 후 손이 rearmAbsenceMs 이상 비웠다 돌아온 경우에만 무장.
       if !self.armed {
-        if prevSeen > 0 && gap > self.rearmAbsenceMs {
+        if (prevSeen > 0 && gap > self.rearmAbsenceMs) || (nowMs - self.lastTriggerMs > self.rearmTimeoutMs) {
           self.armed = true
         } else {
           self.sweepStreak = 0

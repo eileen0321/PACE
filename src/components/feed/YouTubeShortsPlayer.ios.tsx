@@ -395,6 +395,14 @@ const INJECTED_JS_SWIPE = `
       }
       send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
     }
+    // 🔴 2026-08-18 사장님 지적("넘어간 뒤 멈칫했다가 재생되는 딜레이") — 안드는 네이티브 유튜브
+    // 앱이라 다음 영상을 미리 디코딩해 두지만, 웹 유튜브는 넘어간 뒤에야 데이터를 받는다. 페이지의
+    // 모든 video에 preload=auto를 강제해(틱톡 플레이어와 같은 처방) 프리로드된 다음 영상 요소가
+    // 미리 버퍼를 채우게 한다 — 전환 직후 첫 프레임 대기를 줄인다.
+    try {
+      var vidsAll = document.querySelectorAll('video');
+      for (var pv = 0; pv < vidsAll.length; pv++) { if (vidsAll[pv].preload !== 'auto') vidsAll[pv].preload = 'auto'; }
+    } catch (ePre) {}
     var v = curV; if (!v) return;
     if (v.__ok && v.muted && !window.__paceForceSilent) { v.muted = false; }
     // 안전망: 무음스위치가 켜진 채로 어떤 경로로든 muted가 풀려 있으면 매 500ms마다 네이티브 setter로 되돌린다.

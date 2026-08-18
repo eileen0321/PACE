@@ -10,7 +10,7 @@ import { useShortsQueueStore } from '../../store/useShortsQueueStore';
 // 이 화면은 iOS 전용(home.tsx의 Platform.OS==='ios' 분기로만 진입)이라 플랫폼 배럴을 거치지 않고
 // 구체 .ios 모듈을 직접 쓴다(moduleSuffixes(tsconfig.json)가 .ios를 우선하므로 타입도 정확) —
 // 무음샘 값을 화면(useRef) 대신 프로세스 생명주기로 옮긴 이유는 아래 checkSilentSwitch 폴링 자리 참고.
-import { getLastKnownSilent, setLastKnownSilent } from '../../services/platform/bluetoothService';
+import { getLastKnownSilent, setLastKnownSilent, getUserSoundOn, setUserSoundOn } from '../../services/platform/bluetoothService';
 import { useToastStore } from '../../store/useToastStore';
 import { useFeedRemoteControl } from '../../hooks/useFeedRemoteControl';
 import { useVolumeNext } from '../../hooks/useVolumeNext';
@@ -730,7 +730,9 @@ export default function PaceFeedScreen() {
   // null이 되는 정상 전환에도 false→true로 토글돼 그때마다 리셋됐다 — "스와이프하면 다시 무음된다"는
   // 사장님 실기기 재현이 바로 이것. ref 초기값(false)은 컴포넌트가 새로 마운트될 때만 자연히 리셋되므로,
   // 폴링 effect 안에서는 더 이상 건드리지 않는다(아래).
-  const userSilentOverrideRef = useRef(false);
+  // 2026-08-18 — "볼륨키로 소리 켬"을 프로세스 전역(getUserSoundOn)과 동기화: 피드 재진입 시
+  // 이전에 켠 소리가 유지되게(사장님 "앱 내에서 한 번 켜면 계속 소리 나야지").
+  const userSilentOverrideRef = useRef(getUserSoundOn());
   // 2026-08-18 사장님 사양("사용자가 0까지 줄이면 최저 1이지만 0인 것처럼 소리 안 나게") — 볼륨 0인
   // 채 리모컨 세션을 시작하면 네이티브가 감지용으로 시스템 볼륨을 1칸으로 클램프한다. 그 동안 영상을
   // 강제 muted로 잠가 실제 소리는 0을 유지한다(세션 종료 시 네이티브가 볼륨 0 복원 + 여기서 잠금 해제).
@@ -813,6 +815,7 @@ export default function PaceFeedScreen() {
       // 볼륨키는 순수 볼륨으로 돌아가므로 무음해제도 즉시 정상 동작해야 한다(2026-08-18 재현 수정).
       if (volumeKeyRemote && isAutoModeRef.current && recentlyUsedRemote) return;
       userSilentOverrideRef.current = true;
+      setUserSoundOn(true); // 재진입에도 유지(프로세스 전역)
       playerRef.current?.setMuted(false);
     });
     return () => {
@@ -1064,7 +1067,7 @@ export default function PaceFeedScreen() {
             key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
-            initialMuted={getLastKnownSilent() ?? false}
+            initialMuted={getUserSoundOn() ? false : (getLastKnownSilent() ?? false)}
             onProgress={handleProgress}
             onReady={clearForcedTransitionCover}
             onEnded={onEnded}
@@ -1078,7 +1081,7 @@ export default function PaceFeedScreen() {
             ref={playerRef}
             videoId={forcedVideoId ?? current!.videoId}
             playing={playing}
-            initialMuted={getLastKnownSilent() ?? false}
+            initialMuted={getUserSoundOn() ? false : (getLastKnownSilent() ?? false)}
             onProgress={handleProgress}
             onVideoChange={(id) => { currentVideoIdRef.current = id; }}
             onUserSwipe={(dir, moved) => {

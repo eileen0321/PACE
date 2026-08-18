@@ -260,3 +260,10 @@ export const bluetoothService: BluetoothService = {
   // isConnected가 진실원천) iOS처럼 사후적 활동 신호가 필요 없다.
   reportRemoteActivity() {},
 };
+
+// iOS 전용 무음 관련 프로세스 전역 헬퍼의 안드로이드 스텁 — 공용 feed 코드가 임포트만 하고
+// 실제 호출은 iOS 경로에서만 하지만, 만약 호출돼도 안전하게 no-op/기본값을 준다.
+export function getLastKnownSilent(): boolean | null { return null; }
+export function setLastKnownSilent(_silent: boolean): void {}
+export function getUserSoundOn(): boolean { return false; }
+export function setUserSoundOn(_on: boolean): void {}

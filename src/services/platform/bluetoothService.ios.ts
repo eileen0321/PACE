@@ -50,6 +50,18 @@ export function setLastKnownSilent(silent: boolean): void {
   lastKnownSilent = silent;
 }
 
+// 2026-08-18 사장님 재현("볼륨키로 소리 들리다가 앱 갔다 다시 쇼츠 열면 소리가 안 나 — 한 번 켜면
+// 계속 나야지") — "사용자가 볼륨키로 소리를 켰다"(userSilentOverride)가 피드 화면 useRef 로컬이라
+// 재진입마다 리셋되고, 무음스위치 강제가 다시 덮었다. lastKnownSilent과 동일한 처방: 앱 프로세스
+// 전역으로 승격. 프로세스가 살아있는 한(앱을 완전히 껐다 켜기 전까지) 사용자의 "소리 켬" 의사를 기억.
+let userSoundOn = false;
+export function getUserSoundOn(): boolean {
+  return userSoundOn;
+}
+export function setUserSoundOn(on: boolean): void {
+  userSoundOn = on;
+}
+
 export const bluetoothService: BluetoothService = {
   supportsHardwareRemote: false,
 

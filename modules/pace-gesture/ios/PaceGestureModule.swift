@@ -243,7 +243,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // "훠이" 한 번의 시간 규모)에서만 재야 느린 드리프트와 구분된다. 임계 0.16(놓친 시도 25퍼센타일
   // 실측 기반), 연속 2프레임 확인으로 단발 노이즈 차단.
   private let sweepWindowMs: Double = 700           // 안드 SWEEP_WINDOW_MS
-  private let sweepRatioThreshold: Double = 0.16    // 안드 SWEEP_RATIO_THRESHOLD
+  // 2026-08-18(3차) — 0.13 하향은 실수였다(안드 파일의 경고 "이 값을 만지려면 '가만히' 구간을 함께
+  // 재라"를 정확히 어김). 실기기 재현: 손을 들고만 있어도 1~2초마다 오발화(가만히 든 손의 흔들림
+  // 실측 최대 0.185 > 0.13). 안드 검증값 0.16으로 복원 — 약한 손짓(0.17~0.24)은 여전히 통과.
+  private let sweepRatioThreshold: Double = 0.16
   private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES
   private var xHistory: [(t: Double, x: Double)] = []
   private var sweepStreak: Int = 0
@@ -464,6 +467,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let wrist = hand[0], mcp = hand[9]
       let handSize = Double(hypot(wrist.x - mcp.x, wrist.y - mcp.y))
       if handSize < self.minHandSize { return }
+      // 🔴 2026-08-18 실기기 채증으로 확정(오발화 6연속 전부 y=0.88~0.96) — 거치된 폰 카메라의
+      // **프레임 최하단 가장자리**(폰 바로 앞 책상면/거치대 영역)에서 MediaPipe가 뭔가를 손으로
+      // 오인해 sweep 0.2~0.9짜리 유령 손짓을 계속 만들었다("아무것도 안 했는데 혼자 5번 넘어감").
+      // 진짜 손짓은 카메라 높이(프레임 중앙대)에서 이뤄지므로 하단 가장자리 손은 통째로 무시한다.
+      if Double(wrist.y) > 0.85 { return }
       // 부재→근접 등장 안전망: 이전에 손을 본 적이 있고(lastHandSeenMs>0), 그 뒤 ≥reappearGapMs 동안
       // 손이 안 보이다가 지금 ≥reappearMinSize로 크게 나타났다면 폰 쪽으로 접근한 것 → 발화.
       // (growth 경로는 접근 "초반의 작은 프레임"이 있어야 하는데 부하 시 그걸 놓치므로 이 경로로 보완.)
@@ -491,7 +499,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f sweep=%.2f", handSize, growth, sweep)) }
       if self.sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.sweepStreak = 0
-        self.fireTrigger(String(format: "sweep=%.2f", sweep), nowMs)
+        // 2026-08-18 오발화 원인 판별용 — 손의 화면 위치(y: 0=상단 1=하단)와 크기를 함께 남긴다.
+        // 타이핑 손(거치 폰 앞 키보드)은 하단 가장자리, 진짜 손짓은 중앙 높이라는 가설 검증.
+        self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f", sweep, Double(wrist.y), handSize), nowMs)
         return
       }
       if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {

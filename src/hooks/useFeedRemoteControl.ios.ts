@@ -51,12 +51,17 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
       if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
       pauseTimerRef.current = setTimeout(() => {
         try { modRef.current?.setWavePaused?.(false); } catch {}
-      }, 1600);
+      }, 500); // 2026-08-18 1600→500: 리로드 없는 SWIPE_NAV에선 긴 정지가 불필요한데, 1.6s 정지가
+               // 빠른 연속 손짓(≤1.6s 간격)을 한 번 걸러 한 번씩 통째로 삼켰다("2번 중 2번째만" 재현).
+               // 중복 발화는 네이티브 불응(1.2s)+JS 쿨다운(1.5s)이 계속 막는다.
     } catch {}
   };
   const fireNext = () => {
     const nowMs = Date.now();
-    if (nowMs - lastNextRef.current < 1500) return;
+    // 2026-08-18 실기기 로그로 확정 — 사장님 손짓 리듬(1.3~1.6s 간격)의 절반이 이 1500ms에 삼켜져
+    // "한 번 걸러 한 번" 패턴을 만들었다(WAVE 발화 로그는 있는데 SWIPE가 없는 교대 패턴). 중복
+    // 발화는 네이티브 불응(1200ms)이 이미 막으므로 JS 쿨다운은 이벤트 폭주 대비 최소값만 남긴다.
+    if (nowMs - lastNextRef.current < 800) return;
     lastNextRef.current = nowMs;
     cbRef.current.onNext(); // onNext(=피드 goNext)가 pauseWaveForTransition을 부른다 — 중복 방지 위해 여기선 안 부름
   };

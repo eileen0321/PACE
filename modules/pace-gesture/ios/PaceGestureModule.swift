@@ -270,6 +270,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var rearmBelowSize: Double = 0
   private var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0 // 발화 순간 손목 위치(이동 해제 판정용)
   private var lastWristX: Double = 0, lastWristY: Double = 0     // 매 프레임 갱신 → fireTrigger가 앵커로 복사
+  private var cameraStartedAtMs: Double = 0   // 웜업 판정(안드 WARMUP_* 이식 — captureOutput 주석)
+  private var firstDetectionDone = false      // 첫 손 인식 후 웜업 종료
   // 🔬 2026-08-18(밤) 유령 발화 채증 — 파라미터 추측 튜닝을 끝내기 위해 발화 순간의 카메라 프레임을
   // Documents/wave_debug/에 JPEG로 남긴다(발화 시에만, 최근 30장 유지). MediaPipe가 무엇을 score
   // 0.99짜리 "손"으로 보는지 눈으로 확정한 뒤 제거할 임시 진단 코드.
@@ -407,6 +409,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     nc.addObserver(self, selector: #selector(sessionRuntimeError(_:)), name: .AVCaptureSessionRuntimeError, object: session)
     session.startRunning()
     paceGLog("[pace-wave] camera started (front, portrait+mirror)")
+    cameraStartedAtMs = CFAbsoluteTimeGetCurrent() * 1000 // 웜업 시계 시작(captureOutput 주석)
+    firstDetectionDone = false
     // 워치독: 프레임이 2.5초 이상 안 오면(인터럽션이 안 끝나거나 조용히 정지) 원인 불문 카메라를 강제 재시작.
     // "잘되다가 갑자기 안되고 계속 안됨"의 근본 대응 — 인터럽션-종료 알림에만 의존하던 복구의 사각지대를 메운다.
     lastFrameAt = CFAbsoluteTimeGetCurrent()
@@ -461,7 +465,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     lastFrameAt = now // 워치독용(스로틀 전) — paused여도 갱신돼 워치독이 카메라를 죽었다고 오판·재시작하지 않음
     if paused { return } // 영상 전환(페이지 리로드) 중엔 추론을 멈춰 CPU를 페이지 로드에 양보(카메라는 켠 채)
     let nowMs = now * 1000
-    guard nowMs - lastProcessedMs >= processIntervalMs else { return } // 안드와 동일 150ms 간격
+    // 🔴 2026-08-19 안드 웜업 패치 이식(안드 2026-08-18 실측 "세션 시작 후 첫 인식까지 27초") — 카메라
+    // 직후엔 노출/초점이 안 잡혀 인식 가능한 프레임이 드문데 150ms 간격까지 겹치면 첫 인식이 수십 초
+    // 밀린다(iOS 실측: 00:21:44 시작→00:22:57 첫 발화, 73초 공백 = "포커스 온 직후 손짓 안 됨").
+    // 첫 손 인식 전까지만 60ms로 촘촘히 보고, 붙으면 원래 간격으로 복귀(배터리 특성 유지). 최대 20초.
+    let warmingUp = !firstDetectionDone && (nowMs - cameraStartedAtMs) < 20000
+    let interval = warmingUp ? 60.0 : processIntervalMs
+    guard nowMs - lastProcessedMs >= interval else { return }
     lastProcessedMs = nowMs
     guard let lm = landmarker else { return }
     // occlusion 안전망 — Y(루마) 평면 평균 밝기(전부 camera queue라 상태 접근 안전)
@@ -514,6 +524,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let prevSeen = self.lastHandSeenMs
       self.lastHandSeenMs = nowMs
       self.lastWristX = Double(wrist.x); self.lastWristY = Double(wrist.y) // 재무장 이동판정 앵커용
+      if !self.firstDetectionDone {
+        self.firstDetectionDone = true // 웜업 종료 → 처리 간격 150ms 복귀(captureOutput 주석)
+        paceGLog("[pace-wave] 첫 손 인식 — 웜업 종료(%.0fms 소요)", nowMs - self.cameraStartedAtMs)
+      }
 
       // (제거됨 2026-08-18) reappear 경로 — 안드에 없는 iOS 임의 발명품이었고 한 손짓의 스트로크
       // 사이 손 이탈/복귀를 새 손짓으로 오인해 연발("한 손짓에 4번")의 공범이었다. 안드 파리티로 삭제.

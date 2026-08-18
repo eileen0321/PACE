@@ -286,6 +286,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var phoneHeldNow = false
   private var lastVolumePressMs: Double = 0
   private var handlingObserversInstalled = false
+  private var pendingGrowthWork: DispatchWorkItem? = nil // 접근(growth) 발화 0.9초 보류(뻗은 손 취소용)
   private func installHandlingObservers() {
     guard !handlingObserversInstalled else { return }
     handlingObserversInstalled = true
@@ -658,7 +659,25 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         return
       }
       if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
-        self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
+        // 🔴 2026-08-19 01:28 실측("손짓 후 볼륨키 누르면 넘어감" — growth=1.36 발화 후 눌림) —
+        // 접근(growth) 트리거는 "볼륨키를 누르러 폰으로 뻗는 손"과 물리적으로 동일한 동작이다.
+        // 즉시 발화하지 않고 0.9초 보류: 그 사이 볼륨키 눌림이 오면 뻗은 손으로 확정하고 취소,
+        // 안 오면 정상 발화. 주력 제스처인 좌우 손짓(sweep)은 즉시 발화 유지(반응성 무손해).
+        let reason = String(format: "T%d growth=%.2f speed=%.2f(0.9s확정)", ti, growth, speedPeak)
+        let hs = handSize
+        self.pendingGrowthWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+          guard let self = self else { return }
+          self.pendingGrowthWork = nil
+          if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1200 {
+            paceGLog("[pace-wave] growth 발화 취소 — 직후 볼륨키 눌림(뻗은 손 판정)")
+            return
+          }
+          self.fireTrigger(reason, CFAbsoluteTimeGetCurrent() * 1000, handSize: hs, trackIdx: ti)
+        }
+        self.pendingGrowthWork = work
+        self.lastTriggerMs = nowMs // 보류 중 중복 예약/sweep 이중발화 방지(같은 제스처)
+        self.queue.asyncAfter(deadline: .now() + 0.9, execute: work)
       }
   }
 

@@ -250,6 +250,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES
   private var xHistory: [(t: Double, x: Double)] = []
   private var sweepStreak: Int = 0
+  // 2026-08-18 사장님 재현("한 번 손짓에 4번 넘어감 연달아") — 한 손짓의 왕복 스트로크(2~3초,
+  // 스트로크 간 0.3~0.6s)가 sweep/reappear로 계속 재발화했다. 안드의 "한 제스처=한 발화" 원칙
+  // 이식: 발화 후 손이 프레임에서 1초 이상 사라져야 재무장. 왕복 중엔 절대 재무장 안 되고,
+  // 손을 내렸다 다시 드는 진짜 다음 손짓만 무장된다.
+  private var armed = true
+  private let rearmAbsenceMs: Double = 1000
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
   // = 폰 쪽으로 접근한 것으로 보고 발화한다.
@@ -485,6 +491,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let gap = nowMs - self.lastHandSeenMs
       let prevSeen = self.lastHandSeenMs
       self.lastHandSeenMs = nowMs
+      // 재무장 게이트(위 armed 주석) — 발화 후 손이 rearmAbsenceMs 이상 비웠다 돌아온 경우에만 무장.
+      if !self.armed {
+        if prevSeen > 0 && gap > self.rearmAbsenceMs {
+          self.armed = true
+        } else {
+          self.sweepStreak = 0
+          self.sizeHistory.removeAll()
+          self.xHistory.removeAll()
+          return
+        }
+      }
       if prevSeen > 0 && gap > self.reappearGapMs && handSize >= self.reappearMinSize
           && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.fireTrigger(String(format: "reappear size=%.3f gap=%.0f", handSize, gap), nowMs)
@@ -530,6 +547,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·메인 dispatch).
   private func fireTrigger(_ reason: String, _ nowMs: Double) {
     lastTriggerMs = nowMs
+    armed = false // 재무장은 손이 1초+ 사라졌다 돌아올 때(위 게이트)
     sizeHistory.removeAll(); lumaHistory.removeAll(); xHistory.removeAll(); sweepStreak = 0
     paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")

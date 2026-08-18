@@ -9761,3 +9761,14 @@ y좌표 하단 게이트 / 재무장 타임아웃 / 연타=볼륨·단발=넘김
 
 **임시 진단(릴리즈 전 제거 목록):** 발화 순간 JPEG 채증(wave_debug), 근접 로그, cls/silentCheck
 /rearmed NSLog, HID keyChangedHandler 로깅.
+
+### 2026-08-19 01:55 — 🚀 iOS 1.0.4 (빌드 9) App Store Connect 업로드 완료 (무료 로컬 빌드)
+
+- 경로: xcodebuild archive(로컬, 무료) → exportArchive(app-store-connect, 팀 328BF833XS)
+  → eas submit --path(제출은 무과금). EAS 유료 빌드 미사용(사장님 지시 준수).
+- 포함: 오늘 밤 전체 네이티브 수정(손 2개 추적, 센서 융합 볼륨 판정, 웜업, 잠금들) +
+  runtimeVersion 1.0.4 경계. 실광고 = iOS 릴리즈 자동(adsConfig 단일 판정처 확인).
+  발화 사진 채증은 #if DEBUG 가드로 릴리즈에서 컴파일 제외 확인.
+- 릴리즈 노트(심사 안전 버전, 한/영)는 세션 대화에 전달 — 자동재생/볼륨버튼/플랫폼명 배제.
+- 남은 수동 단계: ASC에서 1.0.4 버전 생성 → 빌드 9 선택 → 노트 붙여넣기 → 심사 제출.
+- 제출 추적: https://expo.dev/accounts/strides7/projects/Pace/submissions/99319f7e-87e0-4257-bdb4-5fd7fcb76382

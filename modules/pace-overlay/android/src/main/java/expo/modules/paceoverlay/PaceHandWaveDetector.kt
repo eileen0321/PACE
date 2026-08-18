@@ -69,6 +69,23 @@ object PaceHandWaveDetector {
   // 밖으로 나가는 정도(초 단위)로 손짓이 죽으면 안 되므로 넉넉하게 잡는다.
   private const val FACE_PRESENCE_GRACE_MS = 15_000L
   private const val PROCESS_INTERVAL_MS = 150L
+  // 2026-08-18 실측 — 사장님 "open app으로 쇼츠 시작하면 손짓을 한참 인식 못 하다 뒤늦게 된다".
+  //   세션 시작 직후 로그가 원인을 그대로 보여준다:
+  //     18:43:11 camera bound
+  //     18:43:12~18:43:36  face=없음 gate=off  ← 27초 내내 얼굴도 손도 near-miss조차 없음
+  //     18:43:38 FACE 첫 인식
+  //   카메라가 막 켜진 직후에는 노출·초점이 안 잡혀 프레임이 인식에 쓸 만하지 않은데, 우리는
+  //   그 구간에도 초당 6~7장(150ms)만 처리한다. 배터리를 아끼려고 둔 값이 **첫 인식을 27초까지
+  //   늦추는 대가**로 돌아왔다. 사용자 체감은 "손짓이 안 먹다가 갑자기 된다"다.
+  //   → 첫 인식이 붙기 전까지만 촘촘히 본다. 붙고 나면 곧바로 원래 간격으로 돌아가므로
+  //     정상 사용 구간의 배터리 특성은 그대로다(이 파일 상단 배터리 설계 주석의 전제를 안 깬다).
+  //   ⚠️ 앱과 무관하다 — 감지기는 카메라만 본다. 유튜브를 먼저 열면 유튜브가, 틱톡을 먼저 열면
+  //     틱톡이 이 손해를 본다. "틱톡은 바로 되더라"는 그때 카메라가 이미 데워져 있었기 때문이다.
+  private const val WARMUP_PROCESS_INTERVAL_MS = 60L
+  private const val WARMUP_FACE_INTERVAL_MS = 250L
+  // 웜업을 아무리 길어도 여기서 끊는다 — 인식이 영영 안 붙는 환경(렌즈 가림 등)에서 고속 처리가
+  // 계속 돌면 그게 곧 배터리 문제가 된다.
+  private const val WARMUP_MAX_MS = 20_000L
   // 2026-08-05 실측 — "매 넘김마다 첫 손짓이 안 된다"의 정체를 처음으로 숫자로 확인했다.
   // 실기기 로그(사장님이 실제로 손짓한 구간, WAVE 67회에서 연속 손짓 인접 간격 n=41):
   //     최소 1.33s / 25% 3.15s / 중앙 4.51s / 75% 5.57s
@@ -335,6 +352,10 @@ object PaceHandWaveDetector {
   private var lastTriggerAtMs = 0L
   // 마지막으로 손 랜드마크를 실제로 잡은 시각 — 위 HAND_LOST_GRACE_MS 판정용.
   private var lastLandmarkAtMs = 0L
+  /** 카메라가 붙은 시각 — 웜업 구간 판정용(WARMUP_* 주석 참고). */
+  private var cameraBoundAtMs = 0L
+  /** 손이든 얼굴이든 **처음으로 뭔가 인식된** 적이 있는가. 붙으면 웜업을 끝낸다. */
+  @Volatile private var firstDetectionDone = false
   // 진단 카운터(2026-08-05) — analyzeFrame 진입 / detectAsync 호출 / onResult 수신.
   @Volatile private var framesIn = 0
   @Volatile private var detectSent = 0
@@ -402,6 +423,8 @@ object PaceHandWaveDetector {
     xHistory.clear()
     sweepStreak = 0
     lastTriggerAtMs = 0L
+    cameraBoundAtMs = System.currentTimeMillis()
+    firstDetectionDone = false
     lastLandmarkAtMs = 0L // 새 세션 — 이전 세션의 "마지막으로 손을 본 시각"이 남으면 유예 판정이 틀어진다
     lastFaceCheckAtMs = 0L
     lastFaceSeenAtMs = 0L
@@ -562,7 +585,10 @@ object PaceHandWaveDetector {
       val faceAge = if (faceEverSeen) "${now - lastFaceSeenAtMs}ms전" else "없음"
       Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
     }
-    if (!running || now - lastProcessedAtMs < PROCESS_INTERVAL_MS) {
+    // 웜업 중(첫 인식 전, 최대 WARMUP_MAX_MS)에는 촘촘히 본다 — 위 WARMUP_* 주석 참고.
+    val warmingUp = !firstDetectionDone && cameraBoundAtMs > 0L && now - cameraBoundAtMs < WARMUP_MAX_MS
+    val procInterval = if (warmingUp) WARMUP_PROCESS_INTERVAL_MS else PROCESS_INTERVAL_MS
+    if (!running || now - lastProcessedAtMs < procInterval) {
       proxy.close()
       return
     }
@@ -579,7 +605,8 @@ object PaceHandWaveDetector {
       // 2026-08-15 — 얼굴 확인은 **손의 냉각기간과 무관하게** 자체 주기로 돈다. 사람이 자리를 뜬
       // 순간이 하필 냉각기간과 겹쳤다고 그 1초를 건너뛸 이유가 없다. 비싼 YUV→Bitmap 변환은 둘 중
       // 하나라도 필요할 때만 한 번 하고 **같은 비트맵을 나눠 쓴다**(변환을 두 번 하지 않는다).
-      val faceDue = faceDetector != null && now - lastFaceCheckAtMs >= FACE_INTERVAL_MS
+      val faceInterval = if (warmingUp) WARMUP_FACE_INTERVAL_MS else FACE_INTERVAL_MS
+      val faceDue = faceDetector != null && now - lastFaceCheckAtMs >= faceInterval
       val handDue = now - lastTriggerAtMs > REFRACTORY_MS
       if (!faceDue && !handDue) return
       val bitmap = yuv420ToBitmap(proxy)
@@ -635,8 +662,18 @@ object PaceHandWaveDetector {
    * 어두운 방에서 손짓이 통째로 죽는 걸 사용자는 원인도 모른 채 겪게 된다.
    */
   private fun shouldTrustHandSignal(now: Long): Boolean {
-    if (faceDetector == null || !faceEverSeen) return true // 게이트 미적용(위 안전장치)
-    return now - lastFaceSeenAtMs <= FACE_PRESENCE_GRACE_MS
+    // 🔴 2026-08-18 사장님 지적 — "얼굴 인식 전제 조건을 빼야겠네. 옆에서 손짓만 할 수 있잖아."
+    //   맞는 지적이고, 내가 그 사용법을 안 봤다. 폰을 거치대에 세워두고 **화면 옆에서 손만 흔드는**
+    //   건 오히려 흔한 자세인데, 얼굴을 전제로 걸면 그게 통째로 막힌다. 실제로 세션 시작 후 27초간
+    //   얼굴을 못 잡아 gate=off였고(2026-08-18 로그) 사용자는 "손짓이 한참 안 된다"를 겪었다.
+    //
+    //   얼굴 인식 자체는 **버리지 않는다.** 8/15에 이걸 넣은 목적은 둘이었는데 성격이 다르다:
+    //     (a) 손짓 오탐 차단 — 여기. **철회한다.** 못 잡는 대가가 잘못 잡는 대가보다 크다.
+    //         오탐은 SWEEP_CONFIRM_FRAMES(연속 2프레임)와 임계값이 맡는다.
+    //     (b) 수면감지에 "사람이 자리에 없다"를 알려주기 — personAbsentForMs(). **유지한다.**
+    //         그쪽은 사람이 앞에 있는지가 곧 판단 근거라 얼굴이 정확히 맞는 신호다.
+    //   즉 얼굴은 계속 보되, 손짓을 막는 데에는 쓰지 않는다.
+    return true
   }
 
   /**

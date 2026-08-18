@@ -130,7 +130,7 @@ android {
         //       검증: near-end 4연속 32/33s·49/50s·47/48s·37/38s, no-progressbar 발사 0회
         //     · 앱 전환 시 세션 분리, 앱별 사용시간 집계(분석 탭 "YouTube 15m·88% / TikTok 2m·12%")
         //     · 접근성 OFF→ON 배너 양방향, 서버 날짜 클램프(±1일)
-        versionCode 14
+        versionCode 15
         // ⚠️ bare workflow에서 **진짜 값은 이 파일**이다(위 versionCode 주석 참고). app.json의
         //   expo.version과 반드시 같이 올릴 것 — 2026-08-13에 versionCode만 12로 올리고 이 문자열을
         //   1.0.2로 남겨둬서, 스토어에 1.0.2로 올라갈 뻔했다(QA_FULL_TEST 발견 13).

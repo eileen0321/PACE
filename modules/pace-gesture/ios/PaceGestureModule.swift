@@ -259,6 +259,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 안드에 있는 속도 조건(growth는 속도 피크와 AND)도 이번에 이식 — 그동안 iOS만 growth 단독이었다.
   private let speedThresholdPerSec: Double = 0.25   // 안드 SPEED_THRESHOLD_PER_SEC
   private let speedPeakWindowMs: Double = 700       // 안드 SPEED_PEAK_WINDOW_MS
+  // 🔴 2026-08-18(밤) 정정 — "재무장 게이트는 iOS 임의 발명품"이라며 지운 게 **틀렸다.** 안드
+  // PaceHandWaveDetector.kt에 원래부터 있는 로직이다(awaitingRearm/rearmBelowSize, 2026-08-01
+  // "손을 밀어낸 뒤 안 치우고 머물면 잔류 흔들림만으로 REFRACTORY_MS마다 재트리거" 실기기 확정).
+  // 지운 결과가 바로 오늘 밤 유령 연발(1.2초 간격 리듬 발화)이다. 안드 확정값 그대로 복원:
+  // 발화 시점 손 크기의 85% 이하로 작아지거나(=손을 물렸다는 증거) 1.5초 타임아웃이어야 재무장.
+  private let rearmSizeRatio: Double = 0.85         // 안드 REARM_SIZE_RATIO
+  private let rearmTimeoutMs: Double = 1500         // 안드 REARM_TIMEOUT_MS
+  private var awaitingRearm = false
+  private var rearmBelowSize: Double = 0
+  private var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0 // 발화 순간 손목 위치(이동 해제 판정용)
+  private var lastWristX: Double = 0, lastWristY: Double = 0     // 매 프레임 갱신 → fireTrigger가 앵커로 복사
+  // 🔬 2026-08-18(밤) 유령 발화 채증 — 파라미터 추측 튜닝을 끝내기 위해 발화 순간의 카메라 프레임을
+  // Documents/wave_debug/에 JPEG로 남긴다(발화 시에만, 최근 30장 유지). MediaPipe가 무엇을 score
+  // 0.99짜리 "손"으로 보는지 눈으로 확정한 뒤 제거할 임시 진단 코드.
+  private var lastPixelBuffer: CVPixelBuffer?
+  private let ciContext = CIContext(options: nil)
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
   // = 폰 쪽으로 접근한 것으로 보고 발화한다.
@@ -331,7 +347,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
-      if !p { self.sizeHistory.removeAll(); self.lumaHistory.removeAll(); self.xHistory.removeAll(); self.sweepStreak = 0; self.lastHandSeenMs = 0 }
+      if !p { self.sizeHistory.removeAll(); self.lumaHistory.removeAll(); self.xHistory.removeAll(); self.sweepStreak = 0; self.lastHandSeenMs = 0; self.awaitingRearm = false }
     }
   }
 
@@ -452,6 +468,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
       let luma = avgLuma(pb)
       if luma >= 0 { checkOcclusion(luma, nowMs) }
+      lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
     }
     // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
     // CMSampleBuffer→MPImage 래핑이 오토릴리즈 객체를 쌓아 장시간 세션에서 메모리 증가 보고가 있다(값싼 보험).
@@ -470,6 +487,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let nowMs = Double(timestampInMilliseconds)
     queue.async { // 상태(sizeHistory/lastTriggerMs)를 camera queue 하나로 직렬화(occlusion과 공유)
       guard let hand = result?.landmarks.first, hand.count > 9 else {
+        // 🔴 안드 onResult 파리티(2026-08-18 밤) — 손이 안 잡힌 프레임에서 **즉시** 이력을 버리고
+        // 재무장한다. 안드가 2026-08-05 실측으로 확정한 결함: 이력을 유지하면 손 인식이 잠깐 끊겼다
+        // **다른 위치에서** 다시 잡힐 때 그 점프가 "가로로 크게 흔들었다"(sweep 0.2~2.3)로 계산돼
+        // 안 움직였는데도 연발한다 — 오늘 밤 유령 발화(sweep 0.2~0.5, score 1.0 리듬 연발)의 서명과
+        // 정확히 일치한다. iOS는 지금까지 no-hand에서 이력을 안 버리고 있었다(파리티 누락).
+        self.awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것(안드와 동일)
+        self.sizeHistory.removeAll(); self.xHistory.removeAll(); self.sweepStreak = 0
         self.logTick += 1; if self.logTick % 10 == 0 { self.onDiag("no hand") }
         return
       }
@@ -478,26 +502,45 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let wrist = hand[0], mcp = hand[9]
       let handSize = Double(hypot(wrist.x - mcp.x, wrist.y - mcp.y))
       if handSize < self.minHandSize { return }
-      // 🔴 2026-08-18 실기기 채증으로 확정(오발화 6연속 전부 y=0.88~0.96) — 거치된 폰 카메라의
-      // **프레임 최하단 가장자리**(폰 바로 앞 책상면/거치대 영역)에서 MediaPipe가 뭔가를 손으로
-      // 오인해 sweep 0.2~0.9짜리 유령 손짓을 계속 만들었다("아무것도 안 했는데 혼자 5번 넘어감").
-      // 진짜 손짓은 카메라 높이(프레임 중앙대)에서 이뤄지므로 하단 가장자리 손은 통째로 무시한다.
-      if Double(wrist.y) > 0.85 {
-        // 거부도 던지지 말고 관찰 — 거치 상태의 "진짜 손짓"이 여기 걸리는지(y·score 분포) 확인용.
-        self.logTick += 1
-        if self.logTick % 5 == 0 { paceGLog("[pace-wave] gate-reject y=%.2f size=%.2f score=%.2f", Double(wrist.y), handSize, handScore) }
-        return
-      }
+      // ⛔ 2026-08-18(밤) 하단 y게이트(>0.85 무시) 제거 — 실기기 로그로 폐기 확정. 사장님의 거치
+      // 각도에서는 **진짜 손짓이 y=0.82~0.93(프레임 하단)에서 잡힌다**: 22:37:45 정상 발화(y=0.82,
+      // 전환 성공) 직후의 진짜 손짓들이 전부 gate-reject(y=0.86~0.93, score 0.96~0.99)로 차단돼
+      // "손짓 하나도 안 됨"이 됐다. 게이트는 안드에 없는 iOS 임의 발명품이었고(파리티 위반),
+      // 오발 연발 방지는 안드와 동일한 재무장 게이트 + 손 소실 시 이력 폐기가 맡는다.
       // 부재→근접 등장 안전망: 이전에 손을 본 적이 있고(lastHandSeenMs>0), 그 뒤 ≥reappearGapMs 동안
       // 손이 안 보이다가 지금 ≥reappearMinSize로 크게 나타났다면 폰 쪽으로 접근한 것 → 발화.
       // (growth 경로는 접근 "초반의 작은 프레임"이 있어야 하는데 부하 시 그걸 놓치므로 이 경로로 보완.)
       let gap = nowMs - self.lastHandSeenMs
       let prevSeen = self.lastHandSeenMs
       self.lastHandSeenMs = nowMs
+      self.lastWristX = Double(wrist.x); self.lastWristY = Double(wrist.y) // 재무장 이동판정 앵커용
 
       // (제거됨 2026-08-18) reappear 경로 — 안드에 없는 iOS 임의 발명품이었고 한 손짓의 스트로크
       // 사이 손 이탈/복귀를 새 손짓으로 오인해 연발("한 손짓에 4번")의 공범이었다. 안드 파리티로 삭제.
       _ = gap; _ = prevSeen;
+      // 안드 파리티 — 재무장 게이트(상수 주석 참고): 발화 후 손이 그대로 머물러 있으면 잔류 흔들림을
+      // 새 제스처로 세지 않는다. 축소(shrink) 또는 타임아웃으로만 재무장. 어느 쪽으로 풀렸는지 로그
+      // 1줄(안드 "rearmed after …ms by=" 와 동일) — 이후 튜닝은 이 실측으로만 한다.
+      if self.awaitingRearm {
+        // 🔴 2026-08-18(밤) 타임아웃 재무장 제거 — 발화 순간 프레임 채증으로 확정된 사용 자세(얼굴 근처에
+        // 손을 상시 두는 턱 괴기·머리 만지기)에서는 손이 화면을 떠나지 않으므로, 1.5초 타임아웃이
+        // 있으면 그 손의 일상 흔들림이 1.5~3초마다 재발화하는 폭주가 된다(22:52~53 실측: 머리 만지는
+        // 손이 반전 게이트까지 통과해 연발). 재무장 해제는 세 가지뿐:
+        //   ① 축소(0.85배) — 손을 뒤로 뺌  ② 화면에서 사라짐(no-hand 경로)
+        //   ③ 이동 — 발화 지점에서 1.5 손폭 이상 떨어진 곳에서 손이 잡힘(23:17 실기기 재현 "발화 1회 후
+        //      하나도 안 됨"의 처방: 제자리 턱 괸 손이 같은 크기로 계속 잡히면 ①②가 영영 안 성립해
+        //      영구 잠금이 됐다. 제자리 꼼지락(±0.3 손폭)은 잠금 유지, 옆에서 들어오는 새 손짓은 즉시 해제).
+        let moved = Double(hypot(Double(wrist.x) - self.rearmAnchorX, Double(wrist.y) - self.rearmAnchorY))
+        if handSize <= self.rearmBelowSize || moved > 1.5 * max(handSize, 0.08) {
+          paceGLog("[pace-wave] rearmed after %.0fms by=%@ size=%.2f moved=%.2f",
+                   nowMs - self.lastTriggerMs,
+                   handSize <= self.rearmBelowSize ? "shrink" : "moved",
+                   handSize, moved)
+          self.awaitingRearm = false
+        } else {
+          return // 손이 여전히 그 자리에 그 크기로 있음 — 새 제스처가 아니다
+        }
+      }
       self.sizeHistory.append((nowMs, handSize))
       while let f = self.sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.sizeHistory.removeFirst() }
       // 🔴 sweep 축(2026-08-18 안드 이식) — 좌우 휘젓기: 짧은 창 안 손목 x 이동폭/손 크기.
@@ -507,7 +550,28 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let mx = self.xHistory.map({ $0.x }).max(), let mn = self.xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
       }
-      if sweep > self.sweepRatioThreshold { self.sweepStreak += 1 } else { self.sweepStreak = 0 }
+      // 🔴 2026-08-18(밤) 발화 순간 프레임 채증으로 확정된 진짜 원인 — "유령"은 턱을 괸 사장님 본인의
+      // 손이었다(3장 전부 얼굴 옆 턱받침 손, score 1.0). 그 손을 고쳐 잡는 **한 방향 드리프트**가
+      // sweep 0.36~0.39로 임계(0.16)를 넘어 연발했다. 진짜 "훠이" 손짓은 좌우 **왕복**이므로,
+      // sweep 발화에 "유의미한 방향 반전 ≥1회"를 요구한다(스트로크 최소폭 = 손 크기의 12% —
+      // 정지 손 관측 잡음 최대 0.185*size보다 낮고, 왕복 스트로크는 크게 상회). 드리프트는 반전
+      // 0회라 차단, 왕복 손짓은 700ms 창 안에 1~3회 반전이라 통과. 채증 사진 기반 최소 수정.
+      var reversals = 0
+      if handSize > 0, self.xHistory.count >= 3 {
+        let minStroke = 0.12 * handSize
+        var lastDir = 0
+        var anchorX = self.xHistory[0].x
+        for p in self.xHistory.dropFirst() {
+          let dx = p.x - anchorX
+          if abs(dx) >= minStroke {
+            let dir = dx > 0 ? 1 : -1
+            if lastDir != 0 && dir != lastDir { reversals += 1 }
+            lastDir = dir
+            anchorX = p.x
+          }
+        }
+      }
+      if sweep > self.sweepRatioThreshold && reversals >= 1 { self.sweepStreak += 1 } else { self.sweepStreak = 0 }
       guard let oldest = self.sizeHistory.first else { return }
       let growth = handSize / oldest.size
       // 안드 파리티 — 속도 피크: 최근 speedPeakWindowMs 안의 |크기 변화율| 최대(초당). 손짓 초반은
@@ -525,11 +589,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.sweepStreak = 0
         // 2026-08-18 오발화 원인 판별용 — 손의 화면 위치(y: 0=상단 1=하단)와 크기를 함께 남긴다.
         // 타이핑 손(거치 폰 앞 키보드)은 하단 가장자리, 진짜 손짓은 중앙 높이라는 가설 검증.
-        self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f score=%.2f", sweep, Double(wrist.y), handSize, handScore), nowMs)
+        self.fireTrigger(String(format: "sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", sweep, reversals, Double(wrist.y), handSize, handScore), nowMs, handSize: handSize)
         return
       }
       if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
-        self.fireTrigger(String(format: "growth=%.2f speed=%.2f", growth, speedPeak), nowMs)
+        self.fireTrigger(String(format: "growth=%.2f speed=%.2f", growth, speedPeak), nowMs, handSize: handSize)
       }
     }
   }
@@ -544,10 +608,34 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
   }
 
-  // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·메인 dispatch).
-  private func fireTrigger(_ reason: String, _ nowMs: Double) {
+  // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·재무장·메인 dispatch).
+  // handSize>0인 손 경로만 재무장 게이트를 건다(occlusion은 손 크기 개념이 없어 안드와 동일하게 제외).
+  private func fireTrigger(_ reason: String, _ nowMs: Double, handSize: Double = 0) {
     lastTriggerMs = nowMs
     sizeHistory.removeAll(); lumaHistory.removeAll(); xHistory.removeAll(); sweepStreak = 0
+    if handSize > 0 {
+      awaitingRearm = true
+      rearmBelowSize = handSize * rearmSizeRatio
+      rearmAnchorX = lastWristX; rearmAnchorY = lastWristY
+    }
+    // 🔬 유령 채증(상단 lastPixelBuffer 주석) — 발화 순간 프레임을 JPEG로 저장. 발화당 1장이라 비용 미미.
+    if let pb = lastPixelBuffer {
+      let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("wave_debug", isDirectory: true)
+      try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      let ci = CIImage(cvPixelBuffer: pb)
+      if let data = ciContext.jpegRepresentation(of: ci, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]) {
+        let name = String(format: "wave_%.0f.jpg", nowMs)
+        try? data.write(to: dir.appendingPathComponent(name))
+        paceGLog("[pace-wave] 📸 frame saved %@", name)
+        // 최근 30장만 유지
+        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil), files.count > 30 {
+          for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(files.count - 30) {
+            try? FileManager.default.removeItem(at: f)
+          }
+        }
+      }
+    }
     paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")
     DispatchQueue.main.async { self.onWave() }

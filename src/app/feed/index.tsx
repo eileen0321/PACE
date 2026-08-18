@@ -1018,6 +1018,9 @@ export default function PaceFeedScreen() {
   // 으로 하이재킹(토글 OFF면 폰 볼륨 항상 정상). Android는 접근성 오버레이(Kotlin) 별도 — co-session 확인 필요.
   useVolumeNext({
     enabled: isAutoMode && volumeKeyRemote,
+    // 2026-08-18 "처음부터 체크 못해?" — 피드에 있는 동안 감시(KVO/세션)를 미리 데워 포커스 온 직후
+    // 첫 눌림부터 잡는다(하이재킹 자체는 enabled가 켜야 시작 — useVolumeNext.ios.ts 주석).
+    armed: volumeKeyRemote,
     onNext: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goNext(); },
     onPrevious: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goPrev(); },
     // 볼륨 0 세션 — zeroVolRemoteRef 선언부(위) 주석 참고. 시작 시 즉시 잠그고, 종료 시 풀면

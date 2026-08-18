@@ -4,6 +4,7 @@ import AudioToolbox
 import MediaPlayer
 import QuartzCore
 import UIKit
+import CoreMotion
 
 // Pace iOS 볼륨키 리모컨 (2026-07-21 사용자 지시, 2026-07-27 재확인).
 // 시스템 출력 볼륨(AVAudioSession.outputVolume)을 KVO로 관찰 → 볼륨 버튼이 눌리면 실제 볼륨을 바꾸지 않고
@@ -52,6 +53,7 @@ public class PaceVolumeKeyModule: Module {
   // 무음이면 iOS가 소리 없이 즉시(0.2초보다 훨씬 빠르게) 완료 콜백을 준다. 안 무음이면 실제로 0.2초가
   // 걸린다 — 그 차이로 스위치 상태를 역산한다.
   private var muteCheckSoundId: SystemSoundID = 0
+  private var lastMuteVerdict: Bool? = nil // 진단 로그 스팸 방지(판정 변경시만 기록)
   private var muteCheckStartedAt: CFTimeInterval = 0
   private var muteCheckPending: Promise?
 
@@ -68,6 +70,71 @@ public class PaceVolumeKeyModule: Module {
   // 활성 상태로 유지할지/기본값으로 되돌릴지는 "둘 다 꺼졌을 때만" 판단해야 서로를 안 밟는다.
   private var remoteActive = false
   private var unmuteWatchActive = false
+  // 🔴 2026-08-18 사장님 지적("리모컨 처음은 볼륨으로 되다가 영상으로 넘어가. 처음부터 체크 못해?") —
+  // KVO/세션 준비를 포커스 온 순간에 시작하니 켜자마자 누른 첫 눌림이 감시가 붙기 전에 새어나갔다.
+  // 2단계로 분리: start()=무장(피드 진입 시 — 세션/뷰/KVO/모션을 미리 데움, 볼륨은 추적만),
+  // setEngaged(true)=개입(포커스 온 — baseline 클램프 + 하이재킹 시작, 지연 0). 개입 전 눌림은
+  // 평소처럼 볼륨만 바뀌고 baseline 추적으로 따라간다.
+  private var engaged = false
+  // 🔴 2026-08-18 사장님 설계 지시("손으로 폰을 잡고 누를 때는 흔들림이 있고, 블루투스 리모컨은 폰이
+  // 정지된 상태에서 누를 것") — 웹서치+독립 AI 검토로 타당성 확정(선행연구: 하드웨어 버튼 누름은
+  // 0.05~0.3g 충격, 손에 쥔 폰은 생리적 손떨림으로 RMS 0.01~0.03g가 상시 존재, 거치된 폰은
+  // 0.002~0.02g 바닥 노이즈 — "쥠/거치"를 연속 상태로 분류 가능). 판정 트리:
+  //   ① 충전 중 = 거치 확정 → 리모컨(넘김)   ② 모션 RMS가 거치 수준 → 리모컨(넘김)
+  //   ③ 쥠 상태 + 눌림 직전 450ms 내 충격 스파이크 → 폰 물리버튼 → 볼륨만 조절(넘김 없음)
+  //   ④ 쥠 상태지만 스파이크 없음(한 손에 폰, 다른 손에 리모컨) → 리모컨(넘김)
+  // 가속도계 raw 100Hz만 쓴다(자이로/deviceMotion은 전력 수 mA로 비쌈 — 검토 권고).
+  private let motionManager = CMMotionManager()
+  private var motionStarted = false
+  private var motionPrimed = false
+  private var gLpX = 0.0, gLpY = 0.0, gLpZ = 0.0 // ~1Hz 저역 = 중력 추정(고역 성분 추출용)
+  private var accRmsSq = 0.0                     // 고역 가속도 제곱의 EMA(대략 2초 창)
+  private var motionHeld = false                 // true=손에 쥠 / false=거치 (히스테리시스 전환)
+  private var lastSpikeAtMs: Double = 0          // 마지막 임계 초과 충격 시각
+  private var lastSpikeMag: Double = 0           // 그 충격의 크기(g) — 임계 튜닝용 로그
+  private var lastBigSpikeAtMs: Double = 0       // 폰 직접 누름 수준(>0.12g) 충격 시각 — 판정용
+  private var lastBigSpikeMag: Double = 0
+
+  private func startMotion() {
+    guard motionManager.isAccelerometerAvailable, !motionStarted else { return }
+    motionStarted = true
+    UIDevice.current.isBatteryMonitoringEnabled = true
+    motionPrimed = false
+    accRmsSq = 0; motionHeld = false; lastSpikeAtMs = 0
+    motionManager.accelerometerUpdateInterval = 1.0 / 100.0
+    let q = OperationQueue(); q.maxConcurrentOperationCount = 1
+    motionManager.startAccelerometerUpdates(to: q) { [weak self] data, _ in
+      guard let self = self, let a = data?.acceleration else { return }
+      if !self.motionPrimed { // 첫 샘플로 중력 추정을 시드(초기 1g가 스파이크로 오인되는 것 방지)
+        self.gLpX = a.x; self.gLpY = a.y; self.gLpZ = a.z; self.motionPrimed = true; return
+      }
+      self.gLpX = self.gLpX * 0.99 + a.x * 0.01
+      self.gLpY = self.gLpY * 0.99 + a.y * 0.01
+      self.gLpZ = self.gLpZ * 0.99 + a.z * 0.01
+      let dx = a.x - self.gLpX, dy = a.y - self.gLpY, dz = a.z - self.gLpZ
+      let mag = (dx * dx + dy * dy + dz * dz).squareRoot()
+      self.accRmsSq = self.accRmsSq * 0.995 + mag * mag * 0.005
+      let rms = self.accRmsSq.squareRoot()
+      // 히스테리시스 — 경계값 근처에서 파닥거리지 않게 진입/이탈 임계를 분리(검토 권고 0.008~0.012g).
+      if self.motionHeld { if rms < 0.007 { self.motionHeld = false } }
+      else { if rms > 0.012 { self.motionHeld = true } }
+      if mag > 0.03 { // 진단용 소충격 추적(판정엔 미사용 — 아래 bigSpike만 판정에 쓴다)
+        self.lastSpikeAtMs = CACurrentMediaTime() * 1000
+        self.lastSpikeMag = mag
+      }
+      // 폰 버튼 직접 누름의 충격만 잡는 강한 임계 — 실측 위계: 쥔 손 떨림 0.03~0.06g < 책상 전달
+      // 리모컨 진동 0.03~0.044g < 직접 누름 0.12~0.135g(23:29 실측, 살짝 누르면 더 낮음).
+      // 0.12는 턱걸이라 약한 누름을 놓쳐 "폰버튼인데 넘어감"이 남았다 → 위계의 빈 구간(0.06~0.12)
+      // 중앙인 0.085로 하향(양쪽 모두 여유).
+      if mag > 0.085 {
+        self.lastBigSpikeAtMs = CACurrentMediaTime() * 1000
+        self.lastBigSpikeMag = mag
+      }
+    }
+  }
+  private func stopMotion() {
+    if motionStarted { motionManager.stopAccelerometerUpdates(); motionStarted = false }
+  }
 
   private func ensureSessionActive() {
     do {
@@ -104,32 +171,35 @@ public class PaceVolumeKeyModule: Module {
         // 찰나) — 지금까지의 무음스위치 강제(video.muted)와 근본적으로 상충하는 카테고리였다. .ambient는
         // KVO 감지는 그대로 유지하면서 무음 스위치를 존중하고, "진짜 미디어 세션"으로 취급되지 않아
         // 볼륨키가 실제 출력을 올리지도 않는다.
-        self.remoteActive = true
-        self.ensureSessionActive()
+        // 🔴 2026-08-18(밤) 회귀 수정("왜 소리가 하나도 안 키워지냐") — 무장 단계에서 세션을 활성화했더니
+        // 포커스 오프 중의 무음스위치 감지(0.2초 타이밍 트릭)가 교란돼 영상이 무음으로 잠겼다.
+        // 무장은 KVO 인프라(뷰/옵저버/모션)만 준비하고, 세션 활성화(remoteActive 포함)는 개입
+        // (setEngaged(true))으로 미룬다 — 포커스 오프의 오디오 경로가 이전과 완전히 동일해진다.
+        self.startMotion() // 폰버튼/리모컨 모션 판별(위 주석) — 가속도계 100Hz
 
         // ── 방식 A: outputVolume KVO — 싸구려 카메라 BT 리모컨(볼륨키 HID)을 잡는 유일한 길 ──
-        if self.volumeView == nil {
-          let mv = MPVolumeView(frame: CGRect(x: -3000, y: -3000, width: 1, height: 1))
-          Self.topWindow()?.addSubview(mv)
-          self.volumeView = mv
-        }
+        // ⚠️ MPVolumeView는 여기(무장)서 만들지 않는다 — 2026-08-18 사장님 재현("포커스 오프인데 볼륨
+        // HUD가 안 떠"): 이 뷰가 화면에 존재하는 것만으로 iOS가 시스템 볼륨 HUD를 숨긴다. 뷰는 볼륨을
+        // "쓸 때"(하이재킹)만 필요하므로 setEngaged(true)에서 만들고 (false)에서 제거한다. KVO 감시는
+        // 뷰 없이도 동작한다.
         // 위에서 세션 활성화 전에 읽은 사용자 현재 볼륨(cur)을 baseline으로 "그대로" 쓴다 — 클램프/강제 금지.
         // 2026-08-04 사장님 지적("볼륨 다 줄이고 포커스 온했는데 볼륨이 커져") — 기존 [0.125,0.875] 클램프가
         // 사용자가 0(무음)으로 둔 볼륨을 0.125(2칸)로 끌어올려 "볼륨이 커지는" 문제였다. "사용자 볼륨을 절대
         // 안 건드린다"가 감지 여지 확보보다 우선이므로 클램프 제거 — baseline = 사용자 실제 볼륨. iOS 볼륨은
         // 1/16 스텝이라 스텝 정렬만 유지(이미 스텝이라 사실상 no-op). 극단값(0/최대)에선 한 방향 감지가 안 될
         // 수 있으나, 사용자가 맞춘 볼륨을 바꾸는 것보다 낫다.
-        var base = (cur * 16).rounded() / 16
-        // 위 emulatedZero 주석 참고 — 양극단이면 한 방향 감지가 원천 불가라 [1/16, 15/16] 안쪽 유지.
-        self.emulatedZero = base < 0.03
-        if base < 0.0625 { base = 0.0625 }
-        if base > 0.9375 { base = 0.9375 }
-        self.baseline = base
-        self.setSystemVolume(self.baseline)
-        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur), emulatedZero=\(self.emulatedZero))") // 진단(테스트 후 제거)
+        // 무장 단계에서는 볼륨을 건드리지 않는다 — baseline은 추적용으로만 잡는다(클램프는 setEngaged에서).
+        self.baseline = (cur * 16).rounded() / 16
+        self.engaged = false
+        NSLog("PACEVOL start(무장) OK — baseline추적=\(self.baseline) (현재볼륨 \(cur))") // 진단(테스트 후 제거)
         self.observer = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
           guard let self = self else { return }
           let v = s.outputVolume
+          if !self.engaged { // 무장(감시)만 — 개입 전 볼륨 변경은 그대로 두고 기준만 따라간다
+            NSLog("PACEVOL 볼륨변화 수신(비개입) v=\(v)") // 진단 — 눌림이 네이티브까지 오는지 추적
+            self.baseline = (v * 16).rounded() / 16
+            return
+          }
           // 우리가 baseline으로 되돌린 것 때문에 생긴 KVO면 무시(값이 baseline과 거의 같음 = 같은 스텝).
           // 사용자 눌림은 baseline에서 한 스텝(±0.0625) 벗어나므로 확실히 구분된다. 예전 ignoreNext 플래그
           // 방식은 리셋 KVO가 타이밍/정렬 문제로 안 오면 다음 눌림을 잡아먹어 "두 번 눌러야 넘어가" 버그가
@@ -149,6 +219,35 @@ public class PaceVolumeKeyModule: Module {
             self.baseline = (v * 16).rounded() / 16 // 다음 비교 기준을 실제 볼륨으로 갱신(리셋 안 함)
             return
           }
+          // 모션 기반 폰버튼/리모컨 판별(위 startMotion 주석) — 2026-08-18 사장님 지적("거치대에 놓고
+          // 손으로 볼륨키를 누를 수도 있잖아")으로 단순화: 폰 버튼을 직접 누르면 쥠/거치와 무관하게
+          // 폰에 충격이 전달되므로 **눌림과 시간 동기화된 충격 = 폰 버튼(볼륨만), 없으면 = 리모컨(넘김)**.
+          // 리모컨은 손에 들고 누르는 게 보통이라 폰엔 충격이 없다. (같은 책상에 리모컨을 놓고 누르면
+          // 책상 진동이 전달될 수 있으나 직접 누름보다 훨씬 약함 — 0.05g 임계로 구분, 실측 튜닝 대상.)
+          // 🔴 2026-08-18(3차) 사장님 실기기("지금 블루투스로 볼륨만 되잖아") — 스파이크 경로가 리모컨을
+          // 폰버튼으로 오판했다. 실측: 리모컨 클릭 진동이 책상→거치대를 타고 폰에 0.030~0.044g로 전달돼
+          // 눌림과 시간동기(4~111ms전)로 찍힌다 — 독립 AI 검토가 경고한 바로 그 케이스("같은 책상 리모컨
+          // 클릭은 시간상관 진동을 만든다, 상태 분류를 1차로 쓰라")를 임계 하향(0.05→0.03)이 다시 열었다.
+          // → 스파이크는 판정에서 제외(진단 로그만). **판정은 순수 쥠/거치 상태(손떨림 RMS)로만**:
+          //   쥠(생리적 손떨림 상시 존재) → 폰버튼(볼륨만) / 거치(정지) → 리모컨(넘김).
+          //   거치 상태에서 폰 버튼을 손가락으로 누르는 경우는 리모컨으로 오판되는 한계가 남지만(넘어감),
+          //   리모컨이 볼륨만 되는 것(핵심 기능 사망)보다 훨씬 낫다. rms를 로그에 남겨 쥠 고착도 검증.
+          // 🔴 2026-08-18(4차·최종) 실기기 rms=0.05 실측 — 사장님은 **폰을 쥔 채 리모컨을 누른다**.
+          // "쥠=폰버튼" 규칙이 그 리모컨을 죽였다("리모컨 하나도 안 되잖아"). 실측 충격 위계가 답을 줬다:
+          //   쥔 손 떨림 0.03~0.06g < 책상 전달 리모컨 진동 0.03~0.044g < 폰 버튼 직접 누름 0.1g+
+          // → 판정 규칙 하나로 통일: **눌림과 시간동기(450ms)된 강한 충격(>0.12g) = 폰버튼(볼륨만),
+          //   그 외 전부 = 리모컨(넘김)**. 쥠/거치 상태는 판정에서 제외(진단 로그만 유지).
+          // ⛔ 2026-08-18(자정) 폰버튼/리모컨 구분 기능 보류 — 오늘 밤 세 규칙이 전부 실기기에서 반증됐다:
+          //   ① 쥠 상태 판정 → 쥔 채 리모컨을 누르는 실사용에서 리모컨 사망 (rms=0.05 실측)
+          //   ② 약충격(0.03~0.085) → 책상 전달 리모컨 진동(0.030~0.044g)이 폰버튼으로 오판
+          //   ③ 강충격(0.085~0.12) → 살살 누른 폰버튼이 임계 아래로 새어 리모컨으로 오판
+          // 물리 신호가 겹치는 구간이 있어 단일 임계로는 신뢰선 미달 — 출시 버전은 원래 확정 사양
+          // (개입 중 눌림 = 넘김 + 볼륨 1칸, 출처 무관)으로 두고, 아래 판정 로그만 계속 수집해
+          // 다음 업데이트에서 실측 기반으로 다시 켠다.
+          let rms = self.accRmsSq.squareRoot()
+          let bigAge = CACurrentMediaTime() * 1000 - self.lastBigSpikeAtMs
+          let bigInfo = self.lastBigSpikeAtMs > 0 && bigAge < 450 ? String(format: "%.3fg/%dms전", self.lastBigSpikeMag, Int(bigAge)) : "없음"
+          NSLog("PACEVOL cls(로그만)=\(bigInfo == "없음" ? "리모컨추정" : "폰버튼추정") 강충격=\(bigInfo) rms=\(String(format: "%.4f", rms)) held=\(self.motionHeld)")
           let direction = v >= self.baseline ? "up" : "down"
           // 2026-08-18 사양 — 눌림을 실제 볼륨 한 칸 조절로도 반영(위 emulatedZero 주석). 예전처럼
           // baseline으로 "되돌리는" 게 아니라 baseline 자체를 한 칸 이동시키고 거기로 맞춘다.
@@ -179,6 +278,7 @@ public class PaceVolumeKeyModule: Module {
         center.previousTrackCommand.isEnabled = true
         if self.nextTarget == nil {
           self.nextTarget = center.nextTrackCommand.addTarget { [weak self] _ in
+            guard self?.engaged == true else { return .success } // 개입 전엔 무시(무장만)
             NSLog("PACEVOL onVolumeButton(MRC) next") // 진단(테스트 후 제거)
             self?.sendEvent("onVolumeButton", ["direction": "up"])
             return .success
@@ -186,6 +286,7 @@ public class PaceVolumeKeyModule: Module {
         }
         if self.prevTarget == nil {
           self.prevTarget = center.previousTrackCommand.addTarget { [weak self] _ in
+            guard self?.engaged == true else { return .success } // 개입 전엔 무시(무장만)
             NSLog("PACEVOL onVolumeButton(MRC) prev") // 진단(테스트 후 제거)
             self?.sendEvent("onVolumeButton", ["direction": "down"])
             return .success
@@ -194,7 +295,48 @@ public class PaceVolumeKeyModule: Module {
         // 2026-08-18 사장님 지적("아니 그럼 무음에서 소리가 나잖아") — 볼륨 0에서 클램프하면 1칸
         // 소리가 나는 문제. 클램프 사실을 JS에 알려주면 JS가 영상 자체를 muted로 잠가 "소리는 0
         // 그대로 + 눌림 감지는 가능" 둘 다 만족시킨다(이 앱의 유일한 소리원이 영상이므로).
-        promise.resolve(["clampedFromZero": cur < 0.03])
+        promise.resolve(["clampedFromZero": false]) // 무장 단계 — 클램프는 setEngaged(true)가 한다
+      }
+    }
+
+    // 개입 on/off — 포커스 세션 토글에 맞춰 하이재킹만 켜고 끈다(감시 인프라는 start/stop이 관리).
+    AsyncFunction("setEngaged") { (on: Bool, promise: Promise) in
+      DispatchQueue.main.async {
+        if on {
+          // 세션 활성화는 여기서(위 무장 주석) — iOS18 stale 볼륨 버그 대비, 활성화 "전"에 현재 볼륨을 읽는다.
+          let cur = self.session.outputVolume
+          self.remoteActive = true
+          self.ensureSessionActive()
+          if self.volumeView == nil { // 개입 동안만 존재(무장 중엔 시스템 볼륨 HUD를 가리지 않도록)
+            let mv = MPVolumeView(frame: CGRect(x: -3000, y: -3000, width: 1, height: 1))
+            Self.topWindow()?.addSubview(mv)
+            self.volumeView = mv
+          }
+          var base = (cur * 16).rounded() / 16
+          self.emulatedZero = base < 0.03
+          if base < 0.0625 { base = 0.0625 }
+          if base > 0.9375 { base = 0.9375 }
+          self.baseline = base
+          self.setSystemVolume(self.baseline)
+          self.engaged = true
+          NSLog("PACEVOL engage ON — baseline=\(self.baseline) (현재볼륨 \(cur), emulatedZero=\(self.emulatedZero))")
+          promise.resolve(["clampedFromZero": cur < 0.03])
+        } else {
+          self.engaged = false
+          if self.emulatedZero { // 가상 0인 채 개입 종료 → 사용자 의도(무음)대로 진짜 0 복원
+            if let slider = self.volumeView?.subviews.compactMap({ $0 as? UISlider }).first {
+              slider.value = 0
+            }
+            self.emulatedZero = false
+          }
+          self.remoteActive = false
+          self.deactivateSessionIfIdle() // 개입 종료 = 세션도 반납(무음스위치 감지 등 기존 경로 원복)
+          let mvToRemove = self.volumeView // HUD 정상화(위 주석) — 값 전파 시간을 주고 0.3초 뒤 제거
+          self.volumeView = nil
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { mvToRemove?.removeFromSuperview() }
+          NSLog("PACEVOL engage OFF")
+          promise.resolve(["clampedFromZero": false])
+        }
       }
     }
 
@@ -224,6 +366,7 @@ public class PaceVolumeKeyModule: Module {
         // 뒤로 앱이 살아있는 내내 무음 스위치가 무시됐다. 2026-08-08 — startSilentUnmuteWatch(항상 켜짐)와
         // 세션을 공유하게 되며 무조건 되돌리면 그 watch를 밟으므로, 둘 다 꺼졌을 때만 되돌린다.
         self.remoteActive = false
+        self.stopMotion()
         self.deactivateSessionIfIdle()
       }
     }
@@ -250,6 +393,11 @@ public class PaceVolumeKeyModule: Module {
           DispatchQueue.main.async {
             let elapsed = CACurrentMediaTime() - self.muteCheckStartedAt
             let isMuted = elapsed < 0.19 // 0.2초 파일보다 확실히 빠르면 무음(여유 10ms — 콜백 디스패치 지연 흡수)
+            // 2026-08-18(밤) 진단 — "왜 소리가 안 나" 추적: 판정이 바뀔 때만 1줄(2초 폴링 스팸 방지).
+            if isMuted != self.lastMuteVerdict {
+              self.lastMuteVerdict = isMuted
+              NSLog("PACEVOL silentCheck 판정변경 → \(isMuted ? "무음(스위치ON 추정)" : "소리남") elapsed=\(Int(elapsed * 1000))ms")
+            }
             self.muteCheckPending?.resolve(isMuted)
             self.muteCheckPending = nil
           }
@@ -301,9 +449,16 @@ public class PaceVolumeKeyModule: Module {
     // 유지 안 되는 것 같은데") — 볼륨이 정확히 0으로 떨어진 직후의 슬라이더 복원(0→1/16)이 실기기에서
     // 간헐적으로 무시된다(볼륨 HUD 표시 중 MPVolumeView 세트가 씹히는 iOS 특성으로 추정). 복원이
     // 실패하면 바닥 감지 여지가 사라져 리모컨이 통째로 죽으므로, 250ms 뒤 실제 outputVolume을 재확인해
-    // 어긋나 있으면 한 번 더 쓴다(재시도가 만든 KVO는 baseline 근접 가드가 무시 — 루프 없음).
+    // 어긋나 있으면 한 번 더 쓴다.
+    // 🔴 2026-08-18(밤) 실기기 로그로 확정된 재앙 — 이 재시도가 **예약 당시의 낡은 value**를 쓰는 바람에,
+    // 사용자가 연타로 baseline을 이동시킨 뒤 낡은 값으로 볼륨을 되돌렸고, 그 한 스텝 변화가 KVO에서
+    // "반대 방향 버튼 눌림"으로 잡혀 위/아래 스와이프 무한 핑퐁이 났다(22:52:43~47 restore-retry→dir=up
+    // →dir=down 반복, 사장님 "리모컨 키에 왜 영상이 계속 바껴"). 세대 카운터로 고친다: 새
+    // setSystemVolume이 불리면 이전에 예약된 재시도는 전부 무효(최신 목표의 재시도만 산다).
+    restoreGen += 1
+    let gen = restoreGen
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-      guard let self = self else { return }
+      guard let self = self, gen == self.restoreGen else { return } // 더 새 목표가 생겼으면 이 재시도 폐기
       if abs(self.session.outputVolume - value) > 0.03,
          let s2 = self.volumeView?.subviews.compactMap({ $0 as? UISlider }).first {
         NSLog("PACEVOL restore-retry v=\(self.session.outputVolume) → \(value)")
@@ -311,6 +466,7 @@ public class PaceVolumeKeyModule: Module {
       }
     }
   }
+  private var restoreGen = 0
 
   // 2026-08-05 사장님 지시 — A2DP는 그 자체로 "볼륨"으로 판단하고(아래 isKnownAudioAccessoryConnected의
   // A2DP 조기 반환 참고 — 이름 대조 불필요, 프로파일 자체가 순수 오디오 전용이라 리모컨일 수가 없음),

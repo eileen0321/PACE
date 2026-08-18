@@ -464,6 +464,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.logTick += 1; if self.logTick % 10 == 0 { self.onDiag("no hand") }
         return
       }
+      // 2026-08-18 — 유령 손(책상면 오인) vs 진짜 손 판별용: MediaPipe 손 신뢰도 점수.
+      let handScore = Double(result?.handedness.first?.first?.score ?? -1)
       let wrist = hand[0], mcp = hand[9]
       let handSize = Double(hypot(wrist.x - mcp.x, wrist.y - mcp.y))
       if handSize < self.minHandSize { return }
@@ -471,7 +473,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // **프레임 최하단 가장자리**(폰 바로 앞 책상면/거치대 영역)에서 MediaPipe가 뭔가를 손으로
       // 오인해 sweep 0.2~0.9짜리 유령 손짓을 계속 만들었다("아무것도 안 했는데 혼자 5번 넘어감").
       // 진짜 손짓은 카메라 높이(프레임 중앙대)에서 이뤄지므로 하단 가장자리 손은 통째로 무시한다.
-      if Double(wrist.y) > 0.85 { return }
+      if Double(wrist.y) > 0.85 {
+        // 거부도 던지지 말고 관찰 — 거치 상태의 "진짜 손짓"이 여기 걸리는지(y·score 분포) 확인용.
+        self.logTick += 1
+        if self.logTick % 5 == 0 { paceGLog("[pace-wave] gate-reject y=%.2f size=%.2f score=%.2f", Double(wrist.y), handSize, handScore) }
+        return
+      }
       // 부재→근접 등장 안전망: 이전에 손을 본 적이 있고(lastHandSeenMs>0), 그 뒤 ≥reappearGapMs 동안
       // 손이 안 보이다가 지금 ≥reappearMinSize로 크게 나타났다면 폰 쪽으로 접근한 것 → 발화.
       // (growth 경로는 접근 "초반의 작은 프레임"이 있어야 하는데 부하 시 그걸 놓치므로 이 경로로 보완.)
@@ -501,7 +508,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.sweepStreak = 0
         // 2026-08-18 오발화 원인 판별용 — 손의 화면 위치(y: 0=상단 1=하단)와 크기를 함께 남긴다.
         // 타이핑 손(거치 폰 앞 키보드)은 하단 가장자리, 진짜 손짓은 중앙 높이라는 가설 검증.
-        self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f", sweep, Double(wrist.y), handSize), nowMs)
+        self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f score=%.2f", sweep, Double(wrist.y), handSize, handScore), nowMs)
         return
       }
       if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {

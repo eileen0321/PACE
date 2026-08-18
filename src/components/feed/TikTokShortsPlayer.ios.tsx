@@ -1221,7 +1221,24 @@ const INJECTED_JS_BEFORE_LOAD = `
   function getActiveVideo(){
     var activeSlide = document.querySelector('.swiper-slide-active');
     var v = activeSlide ? activeSlide.querySelector('video') : null;
-    return v || document.querySelector('video');
+    if (v) return v;
+    // 🔴 2026-08-18 사장님 재현("영상 중간에 혼자 넘어감") — /foryou는 swiper가 없어 여기로 오는데,
+    // 예전 폴백(querySelector('video') = DOM 첫 번째 영상)은 **화면 밖 프리로드 영상**을 잡을 수
+    // 있었다(과거 조사에서 r.top=909 실측된 그 문제 — 스케일 경로는 고쳤는데 이 종료/진행률 감지
+    // 경로만 남아 있었다). 프리로드 영상이 끝나거나 루프백하면 보고 있는 영상이 중간이어도 ended로
+    // 오판 → 자동넘김 오발사. 스케일 경로와 동일하게 뷰포트 겹침 최대 영상을 고른다.
+    try {
+      var vhA = window.innerHeight || 0;
+      var vidsA = document.querySelectorAll('video');
+      var bestA = null, boA = -1;
+      for (var ai = 0; ai < vidsA.length; ai++) {
+        var ra = vidsA[ai].getBoundingClientRect();
+        var ova = Math.min(ra.bottom, vhA) - Math.max(ra.top, 0);
+        if (ova > boA) { boA = ova; bestA = vidsA[ai]; }
+      }
+      if (bestA && boA > 0) return bestA;
+    } catch(eGa) {}
+    return document.querySelector('video');
   }
   function markAdvancingOnce(video){
     if (video.__paceAdvancing) return false;
@@ -1363,7 +1380,20 @@ const INJECTED_JS_BEFORE_LOAD = `
     video.__paceEndedHooked = true;
     try { video.loop = false; } catch(e) {}
     video.addEventListener('ended', function(){
+      // 🔴 2026-08-18("지금도 막 넘어감") — 이 리스너는 DOM 첫 video(프리로드 포함)에 걸린다.
+      // 화면 밖 프리로드 영상의 ended가 그대로 자동넘김을 쏘던 두 번째 발원지 — 활성(뷰포트
+      // 겹침 30%+) 영상일 때만 인정한다. getActiveVideo 수정(폴링 경로)과 한 쌍.
+      try {
+        var reE = video.getBoundingClientRect();
+        var vhE = window.innerHeight || 0;
+        var ovE = Math.min(reE.bottom, vhE) - Math.max(reE.top, 0);
+        if (!vhE || ovE < vhE * 0.3) {
+          send({ type: 'domlog', text: '🔚 비활성 영상 ended 무시 top=' + reE.top.toFixed(0) });
+          return;
+        }
+      } catch(eEh) {}
       if (!markEndedOnce(video)) return;
+      send({ type: 'domlog', text: '🔚 ended(DOM이벤트) 발사' });
       send({ type: 'ended' });
     }, false);
   }
@@ -1526,7 +1556,14 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
-    if ((nearEnd || loopedBack) && markEndedOnce(v)) { send({ type: 'ended' }); }
+    if ((nearEnd || loopedBack) && markEndedOnce(v)) {
+      // 🔴 중간 넘김 채증(2026-08-18) — 어떤 조건이, 어느 영상(뷰포트 위치)에서 발사됐는지 상시 기록.
+      try {
+        var rEd = v.getBoundingClientRect();
+        send({ type: 'domlog', text: '🔚 ended판정 near=' + nearEnd + ' loop=' + loopedBack + ' t=' + t.toFixed(1) + ' dur=' + (v.duration || 0).toFixed(1) + ' lastT=' + pollLastT.toFixed(1) + ' top=' + rEd.top.toFixed(0) });
+      } catch(eEd) {}
+      send({ type: 'ended' });
+    }
     pollLastT = t;
   }
 

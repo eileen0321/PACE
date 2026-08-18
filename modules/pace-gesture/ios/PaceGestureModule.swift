@@ -494,7 +494,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f sweep=%.2f", handSize, growth, sweep)) }
       if self.sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.sweepStreak = 0
-        self.fireTrigger(String(format: "sweep=%.2f", sweep), nowMs)
+        // 2026-08-18 오발화 원인 판별용 — 손의 화면 위치(y: 0=상단 1=하단)와 크기를 함께 남긴다.
+        // 타이핑 손(거치 폰 앞 키보드)은 하단 가장자리, 진짜 손짓은 중앙 높이라는 가설 검증.
+        self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f", sweep, Double(wrist.y), handSize), nowMs)
         return
       }
       if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {

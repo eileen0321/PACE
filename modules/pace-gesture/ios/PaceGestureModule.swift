@@ -243,11 +243,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // "훠이" 한 번의 시간 규모)에서만 재야 느린 드리프트와 구분된다. 임계 0.16(놓친 시도 25퍼센타일
   // 실측 기반), 연속 2프레임 확인으로 단발 노이즈 차단.
   private let sweepWindowMs: Double = 700           // 안드 SWEEP_WINDOW_MS
-  // 2026-08-18(2차) 실기기 로그 — 사장님 손짓 sweep이 세션/자세에 따라 0.17~0.24까지 내려와 임계
-  // 0.16 바로 위에 걸침(아까는 0.29~0.58). 절반이 문턱 아래로 떨어지며 "또 안 된다" 재현 → 0.13으로.
-  // 안드 실측 분포(가만히 중앙 0.030/p95 0.092)보다 충분히 위고, 단발 스파이크는 연속 2프레임
-  // 확인이 거른다. 오탐이 보고되면 다음 수는 임계 복원이 아니라 안드의 얼굴 게이트 이식.
-  private let sweepRatioThreshold: Double = 0.13
+  // 2026-08-18(3차) — 0.13 하향은 실수였다(안드 파일의 경고 "이 값을 만지려면 '가만히' 구간을 함께
+  // 재라"를 정확히 어김). 실기기 재현: 손을 들고만 있어도 1~2초마다 오발화(가만히 든 손의 흔들림
+  // 실측 최대 0.185 > 0.13). 안드 검증값 0.16으로 복원 — 약한 손짓(0.17~0.24)은 여전히 통과.
+  private let sweepRatioThreshold: Double = 0.16
   private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES
   private var xHistory: [(t: Double, x: Double)] = []
   private var sweepStreak: Int = 0

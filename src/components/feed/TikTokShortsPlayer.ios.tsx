@@ -1221,7 +1221,24 @@ const INJECTED_JS_BEFORE_LOAD = `
   function getActiveVideo(){
     var activeSlide = document.querySelector('.swiper-slide-active');
     var v = activeSlide ? activeSlide.querySelector('video') : null;
-    return v || document.querySelector('video');
+    if (v) return v;
+    // 🔴 2026-08-18 사장님 재현("영상 중간에 혼자 넘어감") — /foryou는 swiper가 없어 여기로 오는데,
+    // 예전 폴백(querySelector('video') = DOM 첫 번째 영상)은 **화면 밖 프리로드 영상**을 잡을 수
+    // 있었다(과거 조사에서 r.top=909 실측된 그 문제 — 스케일 경로는 고쳤는데 이 종료/진행률 감지
+    // 경로만 남아 있었다). 프리로드 영상이 끝나거나 루프백하면 보고 있는 영상이 중간이어도 ended로
+    // 오판 → 자동넘김 오발사. 스케일 경로와 동일하게 뷰포트 겹침 최대 영상을 고른다.
+    try {
+      var vhA = window.innerHeight || 0;
+      var vidsA = document.querySelectorAll('video');
+      var bestA = null, boA = -1;
+      for (var ai = 0; ai < vidsA.length; ai++) {
+        var ra = vidsA[ai].getBoundingClientRect();
+        var ova = Math.min(ra.bottom, vhA) - Math.max(ra.top, 0);
+        if (ova > boA) { boA = ova; bestA = vidsA[ai]; }
+      }
+      if (bestA && boA > 0) return bestA;
+    } catch(eGa) {}
+    return document.querySelector('video');
   }
   function markAdvancingOnce(video){
     if (video.__paceAdvancing) return false;

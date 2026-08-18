@@ -62,6 +62,9 @@ export function useVolumeNext({ enabled, armed, onNext, onPrevious, onZeroVolume
       // 같이 보낸다. 상태가 올 때마다 피드에 전달해 영상 muted 잠금/해제("무음에서도 볼륨키면 소리")를 맞춘다.
       const emu = (payload as { emulatedZero?: boolean } | null)?.emulatedZero;
       if (typeof emu === 'boolean') onZeroRef.current?.(emu);
+      // 2026-08-19 — 연타(볼륨 조절 의도)는 네이티브가 navigate:false로 보낸다(볼륨/가상0 상태만
+      // 동기화하고 넘김은 하지 않는다). 단발 클릭만 navigate:true로 넘김 실행.
+      if ((payload as { navigate?: boolean } | null)?.navigate === false) return;
       if (payload?.direction === 'down' && onPrevRef.current) {
         if (__DEV__) console.log('[volumekey] 🔉 볼륨↓ → previous');
         onPrevRef.current();

@@ -706,6 +706,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       tracks[trackIdx].rearmAnchorY = tracks[trackIdx].lastY
     }
     // 🔬 유령 채증(상단 lastPixelBuffer 주석) — 발화 순간 프레임을 JPEG로 저장. 발화당 1장이라 비용 미미.
+    // ⚠️ DEBUG 전용 — 릴리즈 빌드에 사용자 카메라 사진 저장이 실려 나가면 안 된다(2026-08-19 출시 전 가드).
+    #if DEBUG
     if let pb = lastPixelBuffer {
       let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("wave_debug", isDirectory: true)
@@ -723,6 +725,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
     }
+    #endif
     paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")
     DispatchQueue.main.async { self.onWave() }

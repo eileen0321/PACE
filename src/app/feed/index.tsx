@@ -726,6 +726,10 @@ export default function PaceFeedScreen() {
   // 사장님 실기기 재현이 바로 이것. ref 초기값(false)은 컴포넌트가 새로 마운트될 때만 자연히 리셋되므로,
   // 폴링 effect 안에서는 더 이상 건드리지 않는다(아래).
   const userSilentOverrideRef = useRef(false);
+  // 2026-08-18 사장님 사양("사용자가 0까지 줄이면 최저 1이지만 0인 것처럼 소리 안 나게") — 볼륨 0인
+  // 채 리모컨 세션을 시작하면 네이티브가 감지용으로 시스템 볼륨을 1칸으로 클램프한다. 그 동안 영상을
+  // 강제 muted로 잠가 실제 소리는 0을 유지한다(세션 종료 시 네이티브가 볼륨 0 복원 + 여기서 잠금 해제).
+  const zeroVolRemoteRef = useRef(false);
   // 2026-08-15 — 마지막으로 확인된 무음 스위치 상태. YouTube/TikTok 플레이어의 initialMuted prop으로
   // 넘겨서, 새 영상(WebView 콜드 스타트)이 뜨자마자 이미 알고 있는 값으로 시작하게 한다 — 없으면
   // checkSilentSwitch()가 비동기(200~300ms)라 그동안 소리가 새는 "나왔다가 안 나와" 증상이 생긴다
@@ -781,7 +785,7 @@ export default function PaceFeedScreen() {
         }
         setLastKnownSilent(isSilent);
         // 볼륨키로 이미 소리를 켠 세션이면 폴링이 다시 강제무음하지 않는다(아래 onSilentUnmute 참고).
-        if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent);
+        if (!userSilentOverrideRef.current) playerRef.current?.setMuted(isSilent || zeroVolRemoteRef.current);
       }).catch(() => {});
     };
     check();
@@ -1006,6 +1010,13 @@ export default function PaceFeedScreen() {
     enabled: isAutoMode && volumeKeyRemote,
     onNext: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goNext(); },
     onPrevious: () => { markUserInput(); remoteActivityAtRef.current = Date.now(); goPrev(); },
+    // 볼륨 0 세션 — zeroVolRemoteRef 선언부(위) 주석 참고. 시작 시 즉시 잠그고, 종료 시 풀면
+    // 2초 무음스위치 폴링이 실제 스위치 상태로 곧 되돌린다.
+    onZeroVolumeSession: (active) => {
+      zeroVolRemoteRef.current = active;
+      if (active) playerRef.current?.setMuted(true);
+      else if (getLastKnownSilent() !== true) playerRef.current?.setMuted(false);
+    },
   });
 
   // 영상 종료 시 Auto Mode 여부로 분기(상태 전이표 규칙 D) — 켜져 있으면 계속 정주행, 꺼져 있으면

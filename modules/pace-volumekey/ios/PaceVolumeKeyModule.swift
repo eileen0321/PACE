@@ -155,8 +155,17 @@ public class PaceVolumeKeyModule: Module {
       // 🔴 2026-08-19 00:51 실측("거치되어 있는데" 판정은 쥠) — 거치 후에도 이탈 임계(0.007)에 못 내려가
       // 쥠이 고착, 4초 상속이 살아남아 리모컨을 볼륨으로 삼켰다(충전 진동 등 주변 노이즈로 추정).
       // 이탈 0.007→0.012, 진입 0.012→0.018로 상향(실측 쥠 떨림 0.024~0.058이라 진입 여유 충분).
-      if self.motionHeld { if rms < 0.012 { self.motionHeld = false } }
-      else { if rms > 0.018 { self.motionHeld = true } }
+      if self.motionHeld {
+        if rms < 0.012 {
+          self.motionHeld = false
+          NotificationCenter.default.post(name: Notification.Name("PacePhoneHandled"), object: nil, userInfo: ["held": false])
+        }
+      } else if rms > 0.018 {
+        self.motionHeld = true
+        // 손짓 모듈에 "폰을 만지는 중" 신호 — 폰으로 손을 뻗거나 쥐고 있는 동안 그 손이 카메라에
+        // 손짓으로 오인되는 것을 잠그기 위함(2026-08-19 01:01 사장님 재현 "손으로 누를 때 영상 넘어감").
+        NotificationCenter.default.post(name: Notification.Name("PacePhoneHandled"), object: nil, userInfo: ["held": true])
+      }
       // 내려놓기/집어들기 수준의 대형 충격(0.35g+, 실측 내려놓기 0.728g)은 볼륨 조절 세션을 즉시
       // 종료시킨다 — "손으로 볼륨한 뒤 두고 리모컨" 시퀀스에서 상속이 리모컨을 삼키는 것을 행위
       // 수준에서 차단(정상 폰버튼 누름이 0.35g를 넘는 경우엔 그 눌림의 판정이 다시 앵커를 세운다).
@@ -289,6 +298,8 @@ public class PaceVolumeKeyModule: Module {
           // 방식은 리셋 KVO가 타이밍/정렬 문제로 안 오면 다음 눌림을 잡아먹어 "두 번 눌러야 넘어가" 버그가
           // 났다 — 상태 없는 값 비교로 대체.
           if abs(v - self.baseline) < 0.03 { return }
+          // 볼륨키가 눌렸다 = 폰 근처에 손이 있다 → 손짓 모듈에 억제 신호(위 PacePhoneHandled 주석 참고)
+          NotificationCenter.default.post(name: Notification.Name("PaceVolumePressed"), object: nil)
           // 2026-08-05 사장님 지시 — "연결된 블루투스가 에어팟/버즈/JBL 등 알려진 이름이면 그냥 볼륨으로
           // 인식하자". 눌림의 "출처"(폰 물리버튼 vs 리모컨)는 여전히 iOS가 앱에 안 알려주지만(리서치로
           // 확인됨 — AVAudioSession은 오디오 라우팅만 노출, 입력 이벤트 소스는 별개 체계라 연결 안 됨),
@@ -343,10 +354,18 @@ public class PaceVolumeKeyModule: Module {
           let nowK = CACurrentMediaTime() * 1000
           var verdict = "리모컨"
           var why = "거치"
-          // ⛔ 2026-08-19 00:46 사장님 지시("일단 손 안 잡으면 리모컨으로 영상만 넘기던지") — 거치
-          // 직접충격 예외 경로(00:35 추가) 폐기. 거치 = 무조건 리모컨(넘김만). 근거: 폰을 내려놓는
-          // 충격(실측 0.728g)이 "폰버튼"으로 오인돼 상속 창을 열고 직후 리모컨 눌림까지 볼륨으로
-          // 삼켰다. 거치+손가락 폰버튼은 넘어가는 한계를 감수(사장님 우선순위 확정).
+          // 🔴 2026-08-19 00:58 재추가(사장님 재현 "거치인데 손으로 볼륨 누르면 넘어감") — 00:46에
+          // 지시로 제거했던 거치 직접충격 예외를 **상하한 밴드**로 되살린다: 0.08~0.35g(또는 회전
+          // 0.12~0.45rad)만 폰버튼. 하한은 책상 전달 진동(≤0.044g) 차단, 상한은 내려놓기/집어들기
+          // (0.7g+, 00:46 사고 원인) 차단. + 대형 충격의 상속 앵커 차단(motion 핸들러)과 상속의
+          // 쥠 게이트가 이미 들어가 있어 00:46의 "내려놓은 직후 리모컨 삼킴" 재발 경로는 막혀 있다.
+          if !self.motionHeld {
+            let (_, ap) = self.spikeZ(&self.accSamples, nowK)
+            let (_, gp) = self.spikeZ(&self.gyroSamples, nowK)
+            if (ap >= 0.08 && ap < 0.35) || (gp >= 0.12 && gp < 0.45) {
+              verdict = "폰버튼"; why = String(format: "거치·직접충격 %.3fg/%.2frad", ap, gp)
+            }
+          }
           if self.motionHeld {
             let (az, ap) = self.spikeZ(&self.accSamples, nowK)
             let (gz, gp) = self.spikeZ(&self.gyroSamples, nowK)

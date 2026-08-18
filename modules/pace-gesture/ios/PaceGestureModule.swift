@@ -280,6 +280,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var tracks = [HandTrack(), HandTrack()]
   private var cameraStartedAtMs: Double = 0   // 웜업 판정(안드 WARMUP_* 이식 — captureOutput 주석)
   private var firstDetectionDone = false      // 첫 손 인식 후 웜업 종료
+  // 🔴 2026-08-19 01:01 — "폰을 만지는 중" 손짓 발화 잠금(볼륨 모듈이 NotificationCenter로 알림).
+  // 폰으로 손을 뻗어 볼륨키를 누르는 동작이 카메라에 손짓으로 오인돼 영상이 넘어가던 것 차단:
+  // 폰이 손에 잡혀 있는 동안(PacePhoneHandled) + 볼륨키 눌림 후 1.5초(PaceVolumePressed)는 발화 금지.
+  private var phoneHeldNow = false
+  private var lastVolumePressMs: Double = 0
+  private var handlingObserversInstalled = false
+  private func installHandlingObservers() {
+    guard !handlingObserversInstalled else { return }
+    handlingObserversInstalled = true
+    NotificationCenter.default.addObserver(forName: Notification.Name("PacePhoneHandled"), object: nil, queue: nil) { [weak self] n in
+      self?.phoneHeldNow = (n.userInfo?["held"] as? Bool) ?? false
+    }
+    NotificationCenter.default.addObserver(forName: Notification.Name("PaceVolumePressed"), object: nil, queue: nil) { [weak self] _ in
+      self?.lastVolumePressMs = CFAbsoluteTimeGetCurrent() * 1000
+    }
+  }
   // 🔬 2026-08-18(밤) 유령 발화 채증 — 파라미터 추측 튜닝을 끝내기 위해 발화 순간의 카메라 프레임을
   // Documents/wave_debug/에 JPEG로 남긴다(발화 시에만, 최근 30장 유지). MediaPipe가 무엇을 score
   // 0.99짜리 "손"으로 보는지 눈으로 확정한 뒤 제거할 임시 진단 코드.
@@ -300,6 +316,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     self.onDiag = onDiag
     super.init()
     setupLandmarker()
+    installHandlingObservers()
   }
 
   private static func modelPath() -> String? {
@@ -561,6 +578,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   }
 
   private func processTrack(_ ti: Int, _ c: (x: Double, y: Double, size: Double, score: Double), _ nowMs: Double) {
+      // 폰 취급 중 발화 잠금(상단 installHandlingObservers 주석) — 이력은 계속 쌓되 판정만 건너뛰면
+      // 잠금 해제 직후 낡은 이동이 발화할 수 있어, 트랙 자체를 건너뛴다(이력도 안 쌓음 → 깨끗한 재시작).
+      if self.phoneHeldNow || CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
+        self.logTick += 1
+        if self.logTick % 20 == 0 { paceGLog("[pace-wave] 발화잠금(폰 취급 중) held=%@", self.phoneHeldNow ? "Y" : "N") }
+        return
+      }
       let handSize = c.size
       let handScore = c.score
       // 트랙 갱신

@@ -31,6 +31,14 @@ public class PaceVolumeKeyModule: Module {
   // 설정과 무관하게 0.5로 고정/들쑥날쑥해지는 문제가 있었음 — 사용자 실기기 지적). start()에서 현재 볼륨으로
   // 세팅하되, 양극단(0/1)이면 눌림 감지 여지가 없어 [0.1, 0.9]로만 살짝 클램프한다.
   private var baseline: Float = 0.5
+  // 2026-08-18 사장님 사양 확정(3연속 지시 종합: "볼륨 0이면 이전 안 간다는 거야" → "무음에서 소리
+  // 나잖아" → "4,5로 올리면 4,5, 0까지 줄이면 최저 1이지만 0인 것처럼", "무음에서도 볼륨키면 소리
+  // 들리기로 했잖아") — 리모컨 세션 중 볼륨키는 영상 넘김과 **동시에 실제 볼륨도 조절**한다(유튜브/
+  // 인스타 관행: 볼륨키는 항상 제 역할). 업=볼륨 한 칸↑, 다운=한 칸↓(바닥 1/16 — 0까지 내리면 KVO
+  // 감지가 죽으므로), 바닥에서 또 다운이면 "가상 0"(emulatedZero — JS가 영상을 muted로 잠가 무음),
+  // 가상 0에서 업이면 소리 복귀. 세션 종료 시 가상 0이었으면 진짜 0으로 되돌린다(그 외엔 사용자가
+  // 세션 중 만든 볼륨이 곧 최종 볼륨이라 복원 안 함).
+  private var emulatedZero = false
   private var nextTarget: Any?
   private var prevTarget: Any?
 
@@ -111,9 +119,14 @@ public class PaceVolumeKeyModule: Module {
         // 안 건드린다"가 감지 여지 확보보다 우선이므로 클램프 제거 — baseline = 사용자 실제 볼륨. iOS 볼륨은
         // 1/16 스텝이라 스텝 정렬만 유지(이미 스텝이라 사실상 no-op). 극단값(0/최대)에선 한 방향 감지가 안 될
         // 수 있으나, 사용자가 맞춘 볼륨을 바꾸는 것보다 낫다.
-        self.baseline = (cur * 16).rounded() / 16
+        var base = (cur * 16).rounded() / 16
+        // 위 emulatedZero 주석 참고 — 양극단이면 한 방향 감지가 원천 불가라 [1/16, 15/16] 안쪽 유지.
+        self.emulatedZero = base < 0.03
+        if base < 0.0625 { base = 0.0625 }
+        if base > 0.9375 { base = 0.9375 }
+        self.baseline = base
         self.setSystemVolume(self.baseline)
-        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur))") // 진단(테스트 후 제거)
+        NSLog("PACEVOL start OK — baseline=\(self.baseline) (현재볼륨 \(cur), emulatedZero=\(self.emulatedZero))") // 진단(테스트 후 제거)
         self.observer = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
           guard let self = self else { return }
           let v = s.outputVolume
@@ -137,8 +150,23 @@ public class PaceVolumeKeyModule: Module {
             return
           }
           let direction = v >= self.baseline ? "up" : "down"
-          NSLog("PACEVOL onVolumeButton(KVO) dir=\(direction) v=\(v)") // 진단(테스트 후 제거)
-          self.sendEvent("onVolumeButton", ["direction": direction])
+          // 2026-08-18 사양 — 눌림을 실제 볼륨 한 칸 조절로도 반영(위 emulatedZero 주석). 예전처럼
+          // baseline으로 "되돌리는" 게 아니라 baseline 자체를 한 칸 이동시키고 거기로 맞춘다.
+          if direction == "up" {
+            if self.emulatedZero {
+              self.emulatedZero = false // 가상 0에서 업 = 소리 복귀(볼륨은 바닥 1/16부터)
+            } else {
+              self.baseline = min(self.baseline + 0.0625, 0.9375)
+            }
+          } else {
+            if self.baseline <= 0.0625 + 0.001 {
+              self.emulatedZero = true // 바닥에서 다운 = 가상 0(무음 잠금, 시스템 볼륨은 1/16 유지)
+            } else {
+              self.baseline = max(self.baseline - 0.0625, 0.0625)
+            }
+          }
+          NSLog("PACEVOL onVolumeButton(KVO) dir=\(direction) v=\(v) base→\(self.baseline) emu0=\(self.emulatedZero)") // 진단(테스트 후 제거)
+          self.sendEvent("onVolumeButton", ["direction": direction, "emulatedZero": self.emulatedZero])
           self.setSystemVolume(self.baseline)
         }
 
@@ -161,7 +189,10 @@ public class PaceVolumeKeyModule: Module {
             return .success
           }
         }
-        promise.resolve(nil)
+        // 2026-08-18 사장님 지적("아니 그럼 무음에서 소리가 나잖아") — 볼륨 0에서 클램프하면 1칸
+        // 소리가 나는 문제. 클램프 사실을 JS에 알려주면 JS가 영상 자체를 muted로 잠가 "소리는 0
+        // 그대로 + 눌림 감지는 가능" 둘 다 만족시킨다(이 앱의 유일한 소리원이 영상이므로).
+        promise.resolve(["clampedFromZero": cur < 0.03])
       }
     }
 
@@ -172,8 +203,20 @@ public class PaceVolumeKeyModule: Module {
       if let t = self.nextTarget { center.nextTrackCommand.removeTarget(t); self.nextTarget = nil }
       if let t = self.prevTarget { center.previousTrackCommand.removeTarget(t); self.prevTarget = nil }
       DispatchQueue.main.async {
-        self.volumeView?.removeFromSuperview()
+        // 가상 0 상태로 세션을 끝냈으면 진짜 0으로 되돌린다(사용자 의도가 무음이었으므로). 그 외엔
+        // 세션 중 사용자가 볼륨키로 만든 볼륨이 곧 최종 볼륨이라 아무것도 안 건드린다. volumeView
+        // 제거 "전"에 동기로 슬라이더에 쓰고, 값이 시스템에 전파될 시간을 주기 위해 제거는 0.3초 뒤.
+        if self.emulatedZero {
+          if let slider = self.volumeView?.subviews.compactMap({ $0 as? UISlider }).first {
+            slider.value = 0
+          }
+          self.emulatedZero = false
+        }
+        let mvToRemove = self.volumeView
         self.volumeView = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+          mvToRemove?.removeFromSuperview()
+        }
         // 2026-08-07 사용자 지적("무음일 때 쇼츠 소리가 왜 나, 유튜브랑 정책 맞추라고") — 예전엔 이 stop()이
         // 세션 카테고리를 원래대로 안 되돌려서, 리모컨(opt-in, 기본 OFF)을 단 한 번이라도 켰다 껐으면 그
         // 뒤로 앱이 살아있는 내내 무음 스위치가 무시됐다. 2026-08-08 — startSilentUnmuteWatch(항상 켜짐)와
@@ -225,6 +268,13 @@ public class PaceVolumeKeyModule: Module {
           guard let self = self else { return }
           let v = s.outputVolume
           if abs(v - self.unmuteBaselineVolume) < 0.01 { return } // 노이즈/리모컨 리셋 왕복 흡수
+          // 2026-08-18 — 리모컨 세션의 클램프/리셋(우리가 프로그램적으로 baseline에 맞춘 것)은 사용자
+          // 눌림이 아니다. 이걸 "무음 해제 신호"로 오인하면 볼륨 0으로 두고 포커스 켠 사용자의 무음이
+          // 풀린다 — remoteActive 중 baseline과 같은 스텝으로의 변경은 무시.
+          if self.remoteActive && abs(v - self.baseline) < 0.03 {
+            self.unmuteBaselineVolume = v
+            return
+          }
           self.unmuteBaselineVolume = v
           NSLog("PACEVOL onSilentUnmute v=\(v)") // 진단(테스트 후 제거)
           self.sendEvent("onSilentUnmute", [:])

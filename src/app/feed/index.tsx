@@ -146,6 +146,11 @@ export default function PaceFeedScreen() {
   const bonusMinutes = useDailyBonusStore((s) => s.extraMinutes); // 오늘 보너스(광고/크레딧 연장분)
   const [status, setStatus] = useState<PlayerStatus>('IDLE');
   const [isAutoMode, setIsAutoMode] = useState(false);
+  // 2026-08-18 사장님 재현("포커스 끄고 볼륨 누르는데 소리 안 나") — 아래 onSilentUnmute의 60초
+  // 억제 창이 포커스 상태를 안 보고 토글 ON만 봐서, 리모컨 쓰다 포커스를 꺼도 60초간 볼륨키
+  // 무음해제가 계속 무시됐다. 리스너 클로저에서 최신 포커스 상태를 보려고 ref 미러를 둔다.
+  const isAutoModeRef = useRef(false);
+  isAutoModeRef.current = isAutoMode;
   // 2026-08-01 성능 감사 — diag 상태는 렌더에서 전혀 안 쓰였는데(오버레이 미표시) onDiag/onAudioDiag가
   // dev에서 초당 ~3회 setDiag로 피드(WebView 서브트리 포함)를 리렌더시켜 dev 손짓 테스트를 흐렸다.
   // 죽은 상태라 제거 — 온디바이스 진단은 PaceGestureLog.nativeLog(리렌더 무관)가 담당.
@@ -804,7 +809,9 @@ export default function PaceFeedScreen() {
       // 리모컨을 최근(60초 이내, 배지와 동일 창) 실제로 쓴 경우만 억제 — 그 밖엔(폰 물리버튼이거나
       // 리모컨을 안 쓴 지 오래됐으면) 기존 2026-08-08 동작(눌리면 무조건 언뮤트) 그대로.
       const recentlyUsedRemote = Date.now() - remoteActivityAtRef.current < REMOTE_MUTE_SUPPRESS_WINDOW_MS;
-      if (volumeKeyRemote && recentlyUsedRemote) return;
+      // 억제는 "리모컨 세션이 실제로 켜져 있는 동안"(포커스 ON + 토글 ON)만 — 포커스를 끄는 순간
+      // 볼륨키는 순수 볼륨으로 돌아가므로 무음해제도 즉시 정상 동작해야 한다(2026-08-18 재현 수정).
+      if (volumeKeyRemote && isAutoModeRef.current && recentlyUsedRemote) return;
       userSilentOverrideRef.current = true;
       playerRef.current?.setMuted(false);
     });

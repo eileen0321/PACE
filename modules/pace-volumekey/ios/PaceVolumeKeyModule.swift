@@ -297,6 +297,19 @@ public class PaceVolumeKeyModule: Module {
   private func setSystemVolume(_ value: Float) {
     guard let slider = self.volumeView?.subviews.compactMap({ $0 as? UISlider }).first else { return }
     DispatchQueue.main.async { slider.value = value }
+    // 🔴 2026-08-18 사장님 실기기 재현("볼륨만큼만 이전으로 가고 그 뒤로 키 눌러도 안 됨", "볼륨 1이
+    // 유지 안 되는 것 같은데") — 볼륨이 정확히 0으로 떨어진 직후의 슬라이더 복원(0→1/16)이 실기기에서
+    // 간헐적으로 무시된다(볼륨 HUD 표시 중 MPVolumeView 세트가 씹히는 iOS 특성으로 추정). 복원이
+    // 실패하면 바닥 감지 여지가 사라져 리모컨이 통째로 죽으므로, 250ms 뒤 실제 outputVolume을 재확인해
+    // 어긋나 있으면 한 번 더 쓴다(재시도가 만든 KVO는 baseline 근접 가드가 무시 — 루프 없음).
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      guard let self = self else { return }
+      if abs(self.session.outputVolume - value) > 0.03,
+         let s2 = self.volumeView?.subviews.compactMap({ $0 as? UISlider }).first {
+        NSLog("PACEVOL restore-retry v=\(self.session.outputVolume) → \(value)")
+        s2.value = value
+      }
+    }
   }
 
   // 2026-08-05 사장님 지시 — A2DP는 그 자체로 "볼륨"으로 판단하고(아래 isKnownAudioAccessoryConnected의

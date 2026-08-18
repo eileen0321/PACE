@@ -143,7 +143,22 @@ const INJECTED_JS = `
       v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생
       v.play().then(function () { audibleOk = true; ad('audible-ok'); /* clearUnmutePopup 제거: mp.unMute()가 오디오 재버퍼링(씹힘) 유발 — 소리는 setter로 이미 남 */ }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
-        v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백(audibleOk 아직 false라 통과)
+        // 🔴 2026-08-18 사장님 재현("포커스 오프인데 볼륨키 움직여도 소리 안 나") + 콘솔 실측 —
+        // 손짓/자동으로 넘어간 뒤의 모든 영상이 여기(blocked)로 떨어져 무음 폴백인 채 남았다(첫
+        // 영상만 audible-ok). WebKit이 합성 내비게이션 후의 "소리 재생 시작"을 제스처 없는 자동재생
+        // 으로 거부하는 것 — 대신 무음으로 재생을 붙인 "다음" 프로그램적 음소거 해제는 허용되므로,
+        // 재생이 시작되면 잠깐 뒤 스스로 소리를 되살린다(무음 강제 중이면 그대로 둠).
+        v.muted = true;
+        v.play().then(function () {
+          setTimeout(function () {
+            if (window.__paceForceSilent) { ad('audible-late-skip(forceSilent)'); return; }
+            v.muted = false;
+            setTimeout(function () {
+              if (!v.muted) { audibleOk = true; ad('audible-late-ok'); }
+              else { ad('audible-late-fail'); }
+            }, 150);
+          }, 250);
+        }).catch(function () {});
       });
     }
     // ⚡ 프리로드: 다음 영상 페이지를 미리 로드해 두면 넘길 때 전체 페이지 재로드 간극(="매 영상 처음 씹힘")이
@@ -347,12 +362,20 @@ const INJECTED_JS_SWIPE = `
   // 아래 onTouchFinish가 별도 경로(네이티브 스크롤 우선)로 처리한다(2026-08-05 2차).
   function swipe(dir) {
     var before = '' + location.href;
+    // 🔴 2026-08-18 사장님 실기기 확정("첫 손짓은 100% 무시") + 콘솔 실측(감지기는 20/20 발화) —
+    // 재시도 판정을 href 전체 비교로 해서, 유튜브가 같은 영상에서 URL 파라미터만 손보면(문서화된
+    // 습성 — pollTick의 URLCHG same-video 참고) "넘어갔다"로 오판해 재시도를 건너뛰었다. 영상 id로
+    // 비교해야 정확하다. 1차(450ms)에 스크롤 폴백, 그래도 그대로면 2차(1100ms)로 한 번 더.
+    var beforeVid = videoIdOf(before);
     var tried = doSwipe(dir, false);
-    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + before.slice(-16) });
+    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' vid=' + beforeVid });
     scheduleFastPoll();
     setTimeout(function () {
-      if (('' + location.href) === before) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); scheduleFastPoll(); }
+      if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); scheduleFastPoll(); }
     }, 450);
+    setTimeout(function () {
+      if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry2 dir=' + dir }); scheduleFastPoll(); }
+    }, 1100);
   }
   window.paceAdvance = function () { swipe(1); };
   window.pacePrevious = function () { swipe(-1); };
@@ -387,6 +410,14 @@ const INJECTED_JS_SWIPE = `
       }
       send({ type: 'domlog', text: 'URLCHG same-video skip ' + h.slice(-24) });
     }
+    // 🔴 2026-08-18 사장님 지적("넘어간 뒤 멈칫했다가 재생되는 딜레이") — 안드는 네이티브 유튜브
+    // 앱이라 다음 영상을 미리 디코딩해 두지만, 웹 유튜브는 넘어간 뒤에야 데이터를 받는다. 페이지의
+    // 모든 video에 preload=auto를 강제해(틱톡 플레이어와 같은 처방) 프리로드된 다음 영상 요소가
+    // 미리 버퍼를 채우게 한다 — 전환 직후 첫 프레임 대기를 줄인다.
+    try {
+      var vidsAll = document.querySelectorAll('video');
+      for (var pv = 0; pv < vidsAll.length; pv++) { if (vidsAll[pv].preload !== 'auto') vidsAll[pv].preload = 'auto'; }
+    } catch (ePre) {}
     var v = curV; if (!v) return;
     if (v.__ok && v.muted && !window.__paceForceSilent) { v.muted = false; }
     // 안전망: 무음스위치가 켜진 채로 어떤 경로로든 muted가 풀려 있으면 매 500ms마다 네이티브 setter로 되돌린다.

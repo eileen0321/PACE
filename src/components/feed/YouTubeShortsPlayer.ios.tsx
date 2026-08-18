@@ -347,12 +347,20 @@ const INJECTED_JS_SWIPE = `
   // 아래 onTouchFinish가 별도 경로(네이티브 스크롤 우선)로 처리한다(2026-08-05 2차).
   function swipe(dir) {
     var before = '' + location.href;
+    // 🔴 2026-08-18 사장님 실기기 확정("첫 손짓은 100% 무시") + 콘솔 실측(감지기는 20/20 발화) —
+    // 재시도 판정을 href 전체 비교로 해서, 유튜브가 같은 영상에서 URL 파라미터만 손보면(문서화된
+    // 습성 — pollTick의 URLCHG same-video 참고) "넘어갔다"로 오판해 재시도를 건너뛰었다. 영상 id로
+    // 비교해야 정확하다. 1차(450ms)에 스크롤 폴백, 그래도 그대로면 2차(1100ms)로 한 번 더.
+    var beforeVid = videoIdOf(before);
     var tried = doSwipe(dir, false);
-    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' href=' + before.slice(-16) });
+    send({ type: 'domlog', text: 'SWIPE dir=' + dir + ' tried=' + tried.join(',') + ' vid=' + beforeVid });
     scheduleFastPoll();
     setTimeout(function () {
-      if (('' + location.href) === before) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); scheduleFastPoll(); }
+      if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry dir=' + dir + ' (scroll fallback)' }); scheduleFastPoll(); }
     }, 450);
+    setTimeout(function () {
+      if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry2 dir=' + dir }); scheduleFastPoll(); }
+    }, 1100);
   }
   window.paceAdvance = function () { swipe(1); };
   window.pacePrevious = function () { swipe(-1); };

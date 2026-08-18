@@ -231,9 +231,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var logTick = 0
   private let processIntervalMs: Double = 150      // 안드 PROCESS_INTERVAL_MS (⚠️ 2026-07-28 100ms 롤백 — 어젯밤 검증값으로 복구)
   private let refractoryMs: Double = 1200           // 안드 REFRACTORY_MS
-  private let growthWindowMs: Double = 700          // 안드 GROWTH_WINDOW_MS
-  private let growthRatioThreshold: Double = 1.2    // 안드 GROWTH_RATIO_THRESHOLD
-  private let minHandSize: Double = 0.03            // 안드 MIN_HAND_SIZE
+  // 🔴 2026-08-18 사장님 실기기 재현("동일 손짓에 안드만 넘어가고 애플은 아예 안 넘어가네 대부분")
+  // — 안드는 그동안 실기기 실측으로 아홉 차례 튜닝돼(PaceHandWaveDetector.kt의 장문 주석들) 좌우
+  // 휘젓기(sweep) 축까지 갖췄는데 iOS는 초기 이식본(접근 growth 단일 축, 짧은 창) 그대로였다.
+  // 안드 최종값으로 정렬: growth 창 700→2500ms, 임계 1.2→1.3, 손 크기 하한 0.03→0.08,
+  // + sweep 축 신규 이식(아래 sweep* 상수·xHistory — 안드 2026-08-16 실측 확정값 그대로).
+  private let growthWindowMs: Double = 2500         // 안드 GROWTH_WINDOW_MS(2026 튜닝값)
+  private let growthRatioThreshold: Double = 1.3    // 안드 GROWTH_RATIO_THRESHOLD(2026 튜닝값)
+  private let minHandSize: Double = 0.08            // 안드 MIN_HAND_SIZE(2026 튜닝값)
+  // sweep(좌우 휘젓기) — 안드 실측 주석 요약: 손목 x 이동폭을 손 크기로 정규화, 짧은 창(700ms —
+  // "훠이" 한 번의 시간 규모)에서만 재야 느린 드리프트와 구분된다. 임계 0.16(놓친 시도 25퍼센타일
+  // 실측 기반), 연속 2프레임 확인으로 단발 노이즈 차단.
+  private let sweepWindowMs: Double = 700           // 안드 SWEEP_WINDOW_MS
+  private let sweepRatioThreshold: Double = 0.16    // 안드 SWEEP_RATIO_THRESHOLD
+  private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES
+  private var xHistory: [(t: Double, x: Double)] = []
+  private var sweepStreak: Int = 0
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
   // = 폰 쪽으로 접근한 것으로 보고 발화한다.
@@ -306,7 +319,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
-      if !p { self.sizeHistory.removeAll(); self.lumaHistory.removeAll(); self.lastHandSeenMs = 0 }
+      if !p { self.sizeHistory.removeAll(); self.lumaHistory.removeAll(); self.xHistory.removeAll(); self.sweepStreak = 0; self.lastHandSeenMs = 0 }
     }
   }
 
@@ -464,10 +477,23 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       self.sizeHistory.append((nowMs, handSize))
       while let f = self.sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.sizeHistory.removeFirst() }
+      // 🔴 sweep 축(2026-08-18 안드 이식) — 좌우 휘젓기: 짧은 창 안 손목 x 이동폭/손 크기.
+      self.xHistory.append((nowMs, Double(wrist.x)))
+      while let f = self.xHistory.first, nowMs - f.t > self.sweepWindowMs { self.xHistory.removeFirst() }
+      var sweep = 0.0
+      if let mx = self.xHistory.map({ $0.x }).max(), let mn = self.xHistory.map({ $0.x }).min(), handSize > 0 {
+        sweep = (mx - mn) / handSize
+      }
+      if sweep > self.sweepRatioThreshold { self.sweepStreak += 1 } else { self.sweepStreak = 0 }
       guard let oldest = self.sizeHistory.first else { return }
       let growth = handSize / oldest.size
       self.logTick += 1
-      if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f", handSize, growth)) }
+      if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f sweep=%.2f", handSize, growth, sweep)) }
+      if self.sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.sweepStreak = 0
+        self.fireTrigger(String(format: "sweep=%.2f", sweep), nowMs)
+        return
+      }
       if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.fireTrigger(String(format: "growth=%.2f", growth), nowMs)
       }
@@ -487,7 +513,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·메인 dispatch).
   private func fireTrigger(_ reason: String, _ nowMs: Double) {
     lastTriggerMs = nowMs
-    sizeHistory.removeAll(); lumaHistory.removeAll()
+    sizeHistory.removeAll(); lumaHistory.removeAll(); xHistory.removeAll(); sweepStreak = 0
     paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")
     DispatchQueue.main.async { self.onWave() }

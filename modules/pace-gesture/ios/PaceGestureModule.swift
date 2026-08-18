@@ -578,11 +578,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   }
 
   private func processTrack(_ ti: Int, _ c: (x: Double, y: Double, size: Double, score: Double), _ nowMs: Double) {
-      // 폰 취급 중 발화 잠금(상단 installHandlingObservers 주석) — 이력은 계속 쌓되 판정만 건너뛰면
-      // 잠금 해제 직후 낡은 이동이 발화할 수 있어, 트랙 자체를 건너뛴다(이력도 안 쌓음 → 깨끗한 재시작).
-      if self.phoneHeldNow || CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
+      // 폰 취급 중 발화 잠금(상단 installHandlingObservers 주석).
+      // ⛔ 01:06 실기기 — phoneHeldNow(쥠 상태) 조건이 고착돼(해제 임계 미달 지속) 손짓 전체를 잠갔다
+      // ("손짓 10번 안 됨" + 발화잠금 로그 연속). 쥠 상태는 오늘 내내 불안정했으므로 잠금 조건에서
+      // 제외하고, 정확한 이벤트인 **볼륨키 눌림 후 1.5초**만 잠근다(뻗는 손 오인의 핵심 창).
+      if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
         self.logTick += 1
-        if self.logTick % 20 == 0 { paceGLog("[pace-wave] 발화잠금(폰 취급 중) held=%@", self.phoneHeldNow ? "Y" : "N") }
+        if self.logTick % 20 == 0 { paceGLog("[pace-wave] 발화잠금(볼륨눌림 직후)") }
         return
       }
       let handSize = c.size

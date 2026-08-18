@@ -806,6 +806,26 @@ export default function PaceFeedScreen() {
     // 않게 무음이 풀리는 걸 막기 위해, 이 강제 언뮤트를 아예 끈다 — 그 시간 동안은 물리 볼륨버튼을
     // 눌러도 더 이상 소리가 안 난다(리모컨과 구분 불가하므로 트레이드오프, 무음 우선). 리모컨 토글이
     // 꺼져 있으면(리모컨을 안 쓰는 평소) 기존 2026-08-08 동작 그대로 유지.
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [playing, volumeKeyRemote]);
+
+  // 🔴 2026-08-19 00:41 사장님 재현("무음에서 볼륨 누르면 켜지게 하라고 해서 그렇게 하고 있잖아" —
+  // 그런데 안 켜짐) — 무음해제 감지(unmute-watch)가 위 폴링 이펙트에 묶여 `playing`일 때만 켜졌다.
+  // 유튜브 스로틀로 영상이 stall(재생 아님)인 동안 감지가 통째로 꺼져 "볼륨 눌러도 소리 안 켜짐"이
+  // 됐다. 감지는 재생 여부와 무관하게 **피드 화면에 있는 동안 항상** 켠다(무음스위치 폴링만 playing 게이트 유지).
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    type WatchMod = {
+      startSilentUnmuteWatch(): void;
+      stopSilentUnmuteWatch(): void;
+      addListener(event: 'onSilentUnmute', listener: () => void): { remove: () => void };
+    };
+    let mod: WatchMod | null;
+    try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
+    if (!mod) return;
     mod.startSilentUnmuteWatch();
     const sub = mod.addListener('onSilentUnmute', () => {
       // 리모컨을 최근(60초 이내, 배지와 동일 창) 실제로 쓴 경우만 억제 — 그 밖엔(폰 물리버튼이거나
@@ -819,12 +839,10 @@ export default function PaceFeedScreen() {
       playerRef.current?.setMuted(false);
     });
     return () => {
-      cancelled = true;
-      clearInterval(id);
       sub.remove();
       mod!.stopSilentUnmuteWatch();
     };
-  }, [playing, volumeKeyRemote]);
+  }, [volumeKeyRemote]);
 
   // 2026-07-29 사장님 지시 — "무입력 idle 하드상한". 유튜브는 ~30분 무입력이면 "Continue watching?"으로
   // 스스로 멈추는데, PACE 자동모드의 프로그램 넘김(advance 주입)이 그 idle 타이머를 계속 리셋해 유튜브가

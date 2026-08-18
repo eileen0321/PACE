@@ -336,6 +336,18 @@ public class PaceVolumeKeyModule: Module {
           let nowK = CACurrentMediaTime() * 1000
           var verdict = "리모컨"
           var why = "거치"
+          if !self.motionHeld {
+            // 🔴 2026-08-19 00:35 사장님("간헐적으로 손 볼륨으로 영상이 넘어가긴 하는데") — 거치 상태에서
+            // 손가락으로 폰 버튼을 누르는 케이스가 스파이크 미검사로 리모컨 판정되던 한계 보완.
+            // 거치는 배경 σ가 바닥(0.002)이라 z-점수는 책상 전달 진동에도 폭발하므로 **절대 임계**만 쓴다:
+            // 직접 누름 실측 0.12~0.18g vs 책상 전달 최대 0.044g → 0.08g. 회전 0.12rad/s(거치 폰의
+            // 회전은 직접 접촉 없이는 불가능).
+            let (_, ap) = self.spikeZ(&self.accSamples, nowK)
+            let (_, gp) = self.spikeZ(&self.gyroSamples, nowK)
+            if ap >= 0.08 || gp >= 0.12 {
+              verdict = "폰버튼"; why = String(format: "거치·직접충격 %.3fg/%.2frad", ap, gp)
+            }
+          }
           if self.motionHeld {
             let (az, ap) = self.spikeZ(&self.accSamples, nowK)
             let (gz, gp) = self.spikeZ(&self.gyroSamples, nowK)
@@ -353,7 +365,11 @@ public class PaceVolumeKeyModule: Module {
           // iOS 자동반복 이벤트들은 무충격이라 리모컨으로 새어 넘어갔다(로그: 폰버튼↔리모컨 0.5초 교차).
           // 충격으로 확정된 폰버튼 누름 후 600ms 내 눌림은 같은 손가락의 연속 입력으로 상속한다.
           // 리모컨 클릭은 애초에 충격 확정이 없어 이 상속의 기점이 될 수 없다(영향 없음).
-          if verdict == "리모컨" && nowK - self.lastPhonePressAtMs < 900 { // 600→900ms(00:19 실측 649ms 이탈)
+          // 🔴 2026-08-19 00:38 실측("손 위치 바꾸니까 몇 개 넘어감") — 그립에 따라 누름 충격이 완전히
+          // 흡수돼 센서 무신호(az0.2~3.3)인 경우가 존재 → 센서 한계. 행동 맥락으로 보완: 폰버튼 확정
+          // 후 4초는 "볼륨 조절 행위 계속"으로 상속(볼륨 조절은 수 초간 연타하는 행위, 그 틈에 리모컨
+          // 전환은 드묾. 샌 3건도 직전 폰버튼 3.2초 뒤라 이 창이면 커버). 900ms→4000ms.
+          if verdict == "리모컨" && nowK - self.lastPhonePressAtMs < 4000 {
             verdict = "폰버튼"; why = "연속누름 상속 \(Int(nowK - self.lastPhonePressAtMs))ms"
           }
           if verdict == "폰버튼" { self.lastPhonePressAtMs = nowK }

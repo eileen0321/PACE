@@ -154,7 +154,9 @@ public class PaceVolumeKeyModule: Module {
           // baseline으로 "되돌리는" 게 아니라 baseline 자체를 한 칸 이동시키고 거기로 맞춘다.
           if direction == "up" {
             if self.emulatedZero {
-              self.emulatedZero = false // 가상 0에서 업 = 소리 복귀(볼륨은 바닥 1/16부터)
+              // 2026-08-18 사장님 확정("무음에서 플레이 중 업 누르면 소리 안 커지고 영상만 넘어가") —
+              // 가상 0에선 업도 영상 넘김만 하고 무음을 유지한다. 소리 복귀는 세션 종료 후 사용자가
+              // 평소처럼 볼륨을 올릴 때. (직전 구현 "업=소리 복귀"는 이 확정으로 폐기.)
             } else {
               self.baseline = min(self.baseline + 0.0625, 0.9375)
             }

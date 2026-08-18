@@ -143,7 +143,22 @@ const INJECTED_JS = `
       v.muted = false; v.volume = 1.0; // 처음부터 소리 켜고 1회 재생
       v.play().then(function () { audibleOk = true; ad('audible-ok'); /* clearUnmutePopup 제거: mp.unMute()가 오디오 재버퍼링(씹힘) 유발 — 소리는 setter로 이미 남 */ }).catch(function (e) {
         send({ type: 'audio', tag: 'audible-blocked', err: String(e && e.name), muted: v.muted });
-        v.muted = true; v.play().catch(function () {}); // 소리 차단된 드문 기기에서만 무음 폴백(audibleOk 아직 false라 통과)
+        // 🔴 2026-08-18 사장님 재현("포커스 오프인데 볼륨키 움직여도 소리 안 나") + 콘솔 실측 —
+        // 손짓/자동으로 넘어간 뒤의 모든 영상이 여기(blocked)로 떨어져 무음 폴백인 채 남았다(첫
+        // 영상만 audible-ok). WebKit이 합성 내비게이션 후의 "소리 재생 시작"을 제스처 없는 자동재생
+        // 으로 거부하는 것 — 대신 무음으로 재생을 붙인 "다음" 프로그램적 음소거 해제는 허용되므로,
+        // 재생이 시작되면 잠깐 뒤 스스로 소리를 되살린다(무음 강제 중이면 그대로 둠).
+        v.muted = true;
+        v.play().then(function () {
+          setTimeout(function () {
+            if (window.__paceForceSilent) { ad('audible-late-skip(forceSilent)'); return; }
+            v.muted = false;
+            setTimeout(function () {
+              if (!v.muted) { audibleOk = true; ad('audible-late-ok'); }
+              else { ad('audible-late-fail'); }
+            }, 150);
+          }, 250);
+        }).catch(function () {});
       });
     }
     // ⚡ 프리로드: 다음 영상 페이지를 미리 로드해 두면 넘길 때 전체 페이지 재로드 간극(="매 영상 처음 씹힘")이

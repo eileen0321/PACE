@@ -304,6 +304,14 @@ class PaceOverlayService : Service() {
           hideShortsHotList()
           hideShareSheet() // 위와 같은 이유 — 감시 대상 앱을 벗어나면 우리 창은 전부 정리한다.
           hideSearchPanel()
+          // 🔴 2026-08-18 사장님 지적 — "포커스 세션이 끝났어요 오버레이가, 유튜브 창이 작아졌는데
+          //   홈에 계속 뜨는 게 말이 되냐". 말이 안 된다. 바로 위 주석이 "우리 창은 전부 정리한다"고
+          //   써 있는데 **이 슬롯 하나가 목록에서 빠져 있었다.** 그래서 연장 팝업/접근성 안내가
+          //   유튜브를 나가도 런처 위에 그대로 남았다.
+          //   ⚠️ "아직 보고 계세요?"(PROMPTED)만은 예외다 — 그건 전체화면이라 뜨는 순간 감시 앱
+          //     창이 windows 목록에서 사라져 shouldShow가 false가 된다. 여기서 같이 지우면 그 팝업이
+          //     **스스로를 지워** 30초 타임아웃에 도달하지 못한다(2026-08-06에 겪은 교착 그대로).
+          if (sleepStage != SLEEP_STAGE_PROMPTED) hideExtendChoice()
         }
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
@@ -2827,8 +2835,30 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.MATCH_PARENT,
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-      0,
+      // 🔴 2026-08-18 사장님 지적 — "팝업 뒤 반투명 막이 상태바는 안 덮는다".
+      //   flags=0이면 MATCH_PARENT가 **시스템 UI를 뺀 영역**만 채운다. 그래서 딤이 상태바만 비켜 가
+      //   화면이 어색하게 잘려 보인다. 같은 파일의 암전 오버레이(하드블록)는 이미 아래 조합으로
+      //   해결해뒀는데(5006행) 이 팝업들에는 안 들어가 있었다.
+      //   ⚠️ 모달 성격은 그대로다 — FLAG_NOT_TOUCHABLE을 넣지 않으므로 터치는 계속 흡수한다.
+      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      // 노치/펀치홀 기기에서도 딤이 상단 끝까지 닿게 한다 — FLAG_LAYOUT_* 만으로는 컷아웃 영역이
+      // 남는다(같은 파일 암전 오버레이가 이미 쓰는 조합).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+      }
+    }
+    // 🔴 2026-08-18 사장님 지적 2차 — "상태바는 덮는데 화면이 작아지면 하단키는 또 안 덮네".
+    //   맞다. 위 창 플래그는 창을 넓힐 뿐이고, **뷰가 시스템 바 아래까지 깔리게 하는 건 별개**다.
+    //   상단만 보고 하단(내비게이션 바)을 안 봤다.
+    //   LAYOUT_* 계열은 **숨기지 않고 뒤로 깔리게만** 한다 — 암전 오버레이가 쓰는 IMMERSIVE(실제로
+    //   숨김)와 다르다. 팝업은 몇 초 뜨는 안내라 바를 숨기면 화면이 튀므로 이쪽이 맞다.
+    @Suppress("DEPRECATION")
+    container.systemUiVisibility = (
+      View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     )
     try {
       windowManager?.addView(container, params)
@@ -2917,8 +2947,30 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.MATCH_PARENT,
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-      0,
+      // 🔴 2026-08-18 사장님 지적 — "팝업 뒤 반투명 막이 상태바는 안 덮는다".
+      //   flags=0이면 MATCH_PARENT가 **시스템 UI를 뺀 영역**만 채운다. 그래서 딤이 상태바만 비켜 가
+      //   화면이 어색하게 잘려 보인다. 같은 파일의 암전 오버레이(하드블록)는 이미 아래 조합으로
+      //   해결해뒀는데(5006행) 이 팝업들에는 안 들어가 있었다.
+      //   ⚠️ 모달 성격은 그대로다 — FLAG_NOT_TOUCHABLE을 넣지 않으므로 터치는 계속 흡수한다.
+      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      // 노치/펀치홀 기기에서도 딤이 상단 끝까지 닿게 한다 — FLAG_LAYOUT_* 만으로는 컷아웃 영역이
+      // 남는다(같은 파일 암전 오버레이가 이미 쓰는 조합).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+      }
+    }
+    // 🔴 2026-08-18 사장님 지적 2차 — "상태바는 덮는데 화면이 작아지면 하단키는 또 안 덮네".
+    //   맞다. 위 창 플래그는 창을 넓힐 뿐이고, **뷰가 시스템 바 아래까지 깔리게 하는 건 별개**다.
+    //   상단만 보고 하단(내비게이션 바)을 안 봤다.
+    //   LAYOUT_* 계열은 **숨기지 않고 뒤로 깔리게만** 한다 — 암전 오버레이가 쓰는 IMMERSIVE(실제로
+    //   숨김)와 다르다. 팝업은 몇 초 뜨는 안내라 바를 숨기면 화면이 튀므로 이쪽이 맞다.
+    @Suppress("DEPRECATION")
+    container.systemUiVisibility = (
+      View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     )
     try {
       windowManager?.addView(container, params)
@@ -3065,8 +3117,30 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.MATCH_PARENT,
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-      0, // 포커스 가능해야 버튼 탭이 먹는다
+      // 🔴 2026-08-18 사장님 지적 — "팝업 뒤 반투명 막이 상태바는 안 덮는다".
+      //   flags=0이면 MATCH_PARENT가 **시스템 UI를 뺀 영역**만 채운다. 그래서 딤이 상태바만 비켜 가
+      //   화면이 어색하게 잘려 보인다. 같은 파일의 암전 오버레이(하드블록)는 이미 아래 조합으로
+      //   해결해뒀는데(5006행) 이 팝업들에는 안 들어가 있었다.
+      //   ⚠️ 모달 성격은 그대로다 — FLAG_NOT_TOUCHABLE을 넣지 않으므로 터치는 계속 흡수한다.
+      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      // 노치/펀치홀 기기에서도 딤이 상단 끝까지 닿게 한다 — FLAG_LAYOUT_* 만으로는 컷아웃 영역이
+      // 남는다(같은 파일 암전 오버레이가 이미 쓰는 조합).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+      }
+    }
+    // 🔴 2026-08-18 사장님 지적 2차 — "상태바는 덮는데 화면이 작아지면 하단키는 또 안 덮네".
+    //   맞다. 위 창 플래그는 창을 넓힐 뿐이고, **뷰가 시스템 바 아래까지 깔리게 하는 건 별개**다.
+    //   상단만 보고 하단(내비게이션 바)을 안 봤다.
+    //   LAYOUT_* 계열은 **숨기지 않고 뒤로 깔리게만** 한다 — 암전 오버레이가 쓰는 IMMERSIVE(실제로
+    //   숨김)와 다르다. 팝업은 몇 초 뜨는 안내라 바를 숨기면 화면이 튀므로 이쪽이 맞다.
+    @Suppress("DEPRECATION")
+    container.systemUiVisibility = (
+      View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     )
     try {
       windowManager?.addView(container, params)
@@ -5136,8 +5210,30 @@ class PaceOverlayService : Service() {
       WindowManager.LayoutParams.MATCH_PARENT,
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
       else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-      0, // flags=0: 풀스크린 전체가 터치를 그대로 흡수(모달) — 알약과 반대로 "통과 금지"가 목적
+      // 🔴 2026-08-18 사장님 지적 — "팝업 뒤 반투명 막이 상태바는 안 덮는다".
+      //   flags=0이면 MATCH_PARENT가 **시스템 UI를 뺀 영역**만 채운다. 그래서 딤이 상태바만 비켜 가
+      //   화면이 어색하게 잘려 보인다. 같은 파일의 암전 오버레이(하드블록)는 이미 아래 조합으로
+      //   해결해뒀는데(5006행) 이 팝업들에는 안 들어가 있었다.
+      //   ⚠️ 모달 성격은 그대로다 — FLAG_NOT_TOUCHABLE을 넣지 않으므로 터치는 계속 흡수한다.
+      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       android.graphics.PixelFormat.TRANSLUCENT
+    ).apply {
+      // 노치/펀치홀 기기에서도 딤이 상단 끝까지 닿게 한다 — FLAG_LAYOUT_* 만으로는 컷아웃 영역이
+      // 남는다(같은 파일 암전 오버레이가 이미 쓰는 조합).
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+      }
+    }
+    // 🔴 2026-08-18 사장님 지적 2차 — "상태바는 덮는데 화면이 작아지면 하단키는 또 안 덮네".
+    //   맞다. 위 창 플래그는 창을 넓힐 뿐이고, **뷰가 시스템 바 아래까지 깔리게 하는 건 별개**다.
+    //   상단만 보고 하단(내비게이션 바)을 안 봤다.
+    //   LAYOUT_* 계열은 **숨기지 않고 뒤로 깔리게만** 한다 — 암전 오버레이가 쓰는 IMMERSIVE(실제로
+    //   숨김)와 다르다. 팝업은 몇 초 뜨는 안내라 바를 숨기면 화면이 튀므로 이쪽이 맞다.
+    @Suppress("DEPRECATION")
+    root.systemUiVisibility = (
+      View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     )
     windowManager?.addView(blockOverlayView, params)
   }

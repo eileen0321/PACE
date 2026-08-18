@@ -254,12 +254,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 스트로크 간 0.3~0.6s)가 sweep/reappear로 계속 재발화했다. 안드의 "한 제스처=한 발화" 원칙
   // 이식: 발화 후 손이 프레임에서 1초 이상 사라져야 재무장. 왕복 중엔 절대 재무장 안 되고,
   // 손을 내렸다 다시 드는 진짜 다음 손짓만 무장된다.
-  private var armed = true
-  // (2차 조정) 1000ms 완전 부재 요구는 과했다 — 손짓 사이에 손을 화면 근처에 두는 자연스러운
-  // 습관에서 첫 발화 후 영구 잠김("한 번도 안 되잖아"). 부재 400ms(스트로크 간 간격보다는 길고
-  // 손을 잠깐 내리는 것보다는 짧음) + 발화 후 2500ms 경과 시 무조건 재무장(교착 방지 상한).
-  private let rearmAbsenceMs: Double = 400
-  private let rearmTimeoutMs: Double = 2500
+  // 2026-08-18 사장님 지시("안드랑 같이 하라고, 니 맘대로 설정하지 말고") — iOS 임의 발명품
+  // (재무장 게이트, reappear 경로)을 전부 제거하고 안드 PaceHandWaveDetector와 로직·값 완전 동일화.
+  // 안드에 있는 속도 조건(growth는 속도 피크와 AND)도 이번에 이식 — 그동안 iOS만 growth 단독이었다.
+  private let speedThresholdPerSec: Double = 0.25   // 안드 SPEED_THRESHOLD_PER_SEC
+  private let speedPeakWindowMs: Double = 700       // 안드 SPEED_PEAK_WINDOW_MS
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
   // = 폰 쪽으로 접근한 것으로 보고 발화한다.
@@ -495,22 +494,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let gap = nowMs - self.lastHandSeenMs
       let prevSeen = self.lastHandSeenMs
       self.lastHandSeenMs = nowMs
-      // 재무장 게이트(위 armed 주석) — 발화 후 손이 rearmAbsenceMs 이상 비웠다 돌아온 경우에만 무장.
-      if !self.armed {
-        if (prevSeen > 0 && gap > self.rearmAbsenceMs) || (nowMs - self.lastTriggerMs > self.rearmTimeoutMs) {
-          self.armed = true
-        } else {
-          self.sweepStreak = 0
-          self.sizeHistory.removeAll()
-          self.xHistory.removeAll()
-          return
-        }
-      }
-      if prevSeen > 0 && gap > self.reappearGapMs && handSize >= self.reappearMinSize
-          && nowMs - self.lastTriggerMs > self.refractoryMs {
-        self.fireTrigger(String(format: "reappear size=%.3f gap=%.0f", handSize, gap), nowMs)
-        return
-      }
+
+      // (제거됨 2026-08-18) reappear 경로 — 안드에 없는 iOS 임의 발명품이었고 한 손짓의 스트로크
+      // 사이 손 이탈/복귀를 새 손짓으로 오인해 연발("한 손짓에 4번")의 공범이었다. 안드 파리티로 삭제.
+      _ = gap; _ = prevSeen;
       self.sizeHistory.append((nowMs, handSize))
       while let f = self.sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.sizeHistory.removeFirst() }
       // 🔴 sweep 축(2026-08-18 안드 이식) — 좌우 휘젓기: 짧은 창 안 손목 x 이동폭/손 크기.
@@ -523,6 +510,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if sweep > self.sweepRatioThreshold { self.sweepStreak += 1 } else { self.sweepStreak = 0 }
       guard let oldest = self.sizeHistory.first else { return }
       let growth = handSize / oldest.size
+      // 안드 파리티 — 속도 피크: 최근 speedPeakWindowMs 안의 |크기 변화율| 최대(초당). 손짓 초반은
+      // 빠르지만 작고 후반은 크지만 느려 같은 프레임 AND는 못 걸므로 창 내 최댓값으로 본다(안드 주석).
+      var speedPeak = 0.0
+      for si2 in 1..<self.sizeHistory.count {
+        let a = self.sizeHistory[si2 - 1], b = self.sizeHistory[si2]
+        if nowMs - b.t > self.speedPeakWindowMs { continue }
+        let dt = (b.t - a.t) / 1000.0
+        if dt > 0 { speedPeak = max(speedPeak, abs(b.size - a.size) / dt) }
+      }
       self.logTick += 1
       if self.logTick % 4 == 0 { self.onDiag(String(format: "hand=%.3f growth=%.2f sweep=%.2f", handSize, growth, sweep)) }
       if self.sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
@@ -532,8 +528,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.fireTrigger(String(format: "sweep=%.2f y=%.2f size=%.2f score=%.2f", sweep, Double(wrist.y), handSize, handScore), nowMs)
         return
       }
-      if growth > self.growthRatioThreshold && nowMs - self.lastTriggerMs > self.refractoryMs {
-        self.fireTrigger(String(format: "growth=%.2f", growth), nowMs)
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.fireTrigger(String(format: "growth=%.2f speed=%.2f", growth, speedPeak), nowMs)
       }
     }
   }
@@ -551,7 +547,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // growth/occlusion 공유 발동 — 안드 fireTrigger와 동일(refractory·이력초기화·메인 dispatch).
   private func fireTrigger(_ reason: String, _ nowMs: Double) {
     lastTriggerMs = nowMs
-    armed = false // 재무장은 손이 1초+ 사라졌다 돌아올 때(위 게이트)
     sizeHistory.removeAll(); lumaHistory.removeAll(); xHistory.removeAll(); sweepStreak = 0
     paceGLog("[pace-wave] 👋 WAVE! %@", reason)
     onDiag("👋 WAVE! \(reason)")

@@ -287,6 +287,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var xHistory: [(t: Double, x: Double, y: Double)] = [] // 2026-08-21 glide(2D) 위해 y 추가
     var sweepStreak = 0
     var glideStreak = 0
+    // 2026-08-21 01:49 실측 — 문턱 언저리 손짓(rel 1.08→0.84→0.73→1.02 교대)이 "연속 N프레임"을
+    // 영영 못 채움. 연속 대신 **0.6초 창 내 초과 횟수**로 계수(같은 증거량, 교대 패턴 허용).
+    var glideHitTimes: [Double] = []
     var lastX: Double = 0, lastY: Double = 0
     var lastSeenMs: Double = 0
     var awaitingRearm = false
@@ -694,11 +697,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let absTh = self.glideAbsMinPerSec * band.mul
       let glideHit = glideRel > relTh && glideAbs > absTh
       // (burst 해제 판정은 델리게이트 말미의 전역 블록으로 이동 — 선언부 "모른다≠떠났다" 주석)
-      if glideHit { self.tracks[ti].glideStreak += 1 } else { self.tracks[ti].glideStreak = 0 }
+      if glideHit { self.tracks[ti].glideHitTimes.append(nowMs) }
+      self.tracks[ti].glideHitTimes.removeAll { nowMs - $0 > 600 } // 0.6초 창(구조체 주석)
+      let glideHitCount = self.tracks[ti].glideHitTimes.count
       let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
-      if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit
+      if (glideInstant || glideHitCount >= band.confirm) && glideHit
          && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
-        self.tracks[ti].glideStreak = 0
+        self.tracks[ti].glideHitTimes.removeAll()
         self.globalBurstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
         // 🔴 2026-08-21 01:12 실측("가리고 볼륨 누르는데 영상 넘어감") — 폰/렌즈로 **뻗는 손**의 측면
         // 성분이 glide로 발화했다. 구분: 뻗는 손은 커지면서 움직임(growth>1.15 동반), 순수 좌우

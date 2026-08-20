@@ -259,8 +259,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // glide(2D 순간속도) 축 — 안드 2026-08-21 이식: 기존 sweep은 x만 봐서 상하/대각 손짓이 원리적으로
   // 안 잡혔다. 인접 샘플 미분이라 "느린 드리프트=빠른 손짓" 혼동이 구조적으로 없다. 두 문턱 AND:
   // 상대(손너비/초, 물리 속도) + 절대(화면비율/초, 지터 바닥 — handSize로 안 나눠 멀수록 자동 보수화).
-  private let glideRelMinPerSec: Double = 0.9
-  private let glideAbsMinPerSec: Double = 0.09
+  // 🔴 2026-08-21 02:01 안드 실측 재조정 이식(edba5de) — "손 들고만 있어도 넘어감" 수정: 들고 있는
+  // 손의 노이즈 상한(abs 0.22/rel 1.81)의 약 2배. 진짜 손짓(2.2/9.97)과 10배 차이라 여유 통과.
+  private let glideRelMinPerSec: Double = 3.5
+  private let glideAbsMinPerSec: Double = 0.45
   private let glideMaxSampleGapMs: Double = 400     // 놓쳤다 재포착 "순간이동" 오탐 차단
   private let glideInstantMargin: Double = 3.0      // 두 축 동시 3배 초과 = 1프레임 확정(안드 실측: 첫 프레임 5~10배가 2연속 요구에 버려짐)
   private var xHistory: [(t: Double, x: Double)] = []

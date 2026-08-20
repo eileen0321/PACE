@@ -177,7 +177,7 @@ object PaceHandWaveDetector {
   // 진짜 원인은 감지 축이 하나뿐이었던 것이었다(SWEEP_RATIO_THRESHOLD 주석 참고).
   // 이제 좌우 흔들기는 스윕 축이 담당하므로, 성장 축은 "의도적으로 손을 카메라 쪽으로 확 미는"
   // 동작만 잡도록 관측된 노이즈 상한(1.164)보다 확실히 위로 올린다.
-  private const val GROWTH_RATIO_THRESHOLD = 1.60
+  private const val GROWTH_RATIO_THRESHOLD = 1.3
 
   // 2026-08-03 실측 데이터 기반 추가 축(속도). 진단 모드로 모은 1,134 프레임(평소 795 / 성공 58 /
   // 놓친 시도 35)을 분석한 결과가 근거이며, 상세 표는 PACE_PROJECT_MANAGEMENT.md에 있다.
@@ -193,14 +193,14 @@ object PaceHandWaveDetector {
   //   growth>1.20 AND 속도>0.3 → 놓친 35건 중 14건 회수, 평소 오탐 0.00%(0/827)
   //   growth>1.20 단독            → 21건 회수, 오탐 15.3%
   // 평소의 느린 손 움직임(오탐의 대부분)이 속도 조건에서 걸러지기 때문이다.
-  private const val SPEED_ASSIST_GROWTH_THRESHOLD = 1.40
+  private const val SPEED_ASSIST_GROWTH_THRESHOLD = 1.20
   // 2026-08-03 실기기 재측정으로 0.3 → 0.25. 근거: 사장님 실사용 로그에서 growth는 1.20을 넘겼는데
   // 속도만 미달해 놓친 4건이 **전부 정확히 0.278**이었다(0.3 바로 아래에 몰림). 0.25면 그 4건이 전부
   // 회수되고, 그 아래로 더 내려도 추가 회수가 없다(0.20/0.15에서도 회수 4건으로 동일) — 즉 0.25가
   // 이 분포에서 회수를 다 가져가는 최소값이다.
   // 이 값은 growth>1.20과 **AND**로만 쓰이므로 단독으로 오탐을 만들 수 없다. 평소(정지) 프레임은
   // growth가 1.0 근처라 애초에 이 분기에 도달하지 않는다.
-  private const val SPEED_THRESHOLD_PER_SEC = 5.0
+  private const val SPEED_THRESHOLD_PER_SEC = 0.25
   // 두 피크는 시간이 어긋난다 — 손짓 초반은 빠르지만 아직 작고(속도 피크), 후반은 크지만 이미
   // 느려진다(성장 피크). 그래서 "같은 프레임에서 둘 다 만족"으로 걸면 57 프레임 중 5개만 통과해
   // 사실상 안 잡힌다. 속도는 최근 창 안의 최댓값으로 본다(성장 창 GROWTH_WINDOW_MS와 별개).
@@ -259,7 +259,7 @@ object PaceHandWaveDetector {
   //   ⚠️ 오탐 방어는 임계값이 아니라 다른 축이 맡는다 — SWEEP_CONFIRM_FRAMES(연속 2프레임)가
   //     단발 노이즈를 막고, 얼굴 게이트가 "사람이 없을 때"를 통째로 막는다. 2026-08-15에 크기
   //     임계값(0.20)으로 오탐을 막으려다 실패한 전례가 있다 — 그 오탐의 handSize는 0.209였다.
-  private const val SWEEP_RATIO_THRESHOLD = 1.20
+  private const val SWEEP_RATIO_THRESHOLD = 0.16
 
   // 🔴 2026-08-09 사장님 지적 — "안 움직이거나 조금만 움직여도 카메라 위치에서 손짓으로 인식해서
   //   영상이 넘어간다", "카메라 높이에 손이 있으면 살짝만 움직여도 영상이 넘어가네".
@@ -391,9 +391,9 @@ object PaceHandWaveDetector {
   //     정할 것. 손짓 성공값만 보고 내리면 이 파일이 열 번 반복한 실패를 열한 번째로 반복한다.
   //   ⚠️ 감도가 부족하다는 보고가 오면 **gA를 먼저 내려라**(1.8→1.5는 4건, →1.2는 6건).
   //     gR은 far 노이즈 max가 10.4로 높아 내릴 여유가 적다.
-  private const val GLIDE_ABS_MIN_PER_SEC = 1.8
+  private const val GLIDE_ABS_MIN_PER_SEC = 0.45
   /** 손너비/초. "훠이" 한 번은 0.3~0.5초에 1~2 손너비를 지나가므로 2~6 h/s가 나온다. */
-  private const val GLIDE_REL_MIN_PER_SEC = 8.0
+  private const val GLIDE_REL_MIN_PER_SEC = 3.5
   /** 인접 샘플 간격이 이보다 벌어지면 속도로 안 센다 — 손을 놓쳤다 다른 위치에서 다시 잡은
    *  "순간이동"이 초고속으로 계산되던 2026-08-05 오탐 회귀(s=2.307)를 원천 차단한다. */
   private const val GLIDE_MAX_SAMPLE_GAP_MS = 400L
@@ -427,9 +427,9 @@ object PaceHandWaveDetector {
   //   확정 프레임까지 밴드별로 나누는 이유: 가까운 손은 화면을 금방 벗어나 샘플이 2~3개밖에
   //   안 남는다(MediaPipe가 프레임 가장자리에서 손을 놓친다). 거기에 연속 2프레임을 요구하면
   //   "카메라 앞을 스치듯 지나가는" 가장 확실한 손짓이 오히려 제일 안 잡힌다 — 실제로 지금이 그렇다.
-  private const val NEAR_BAND_MULT = 1.0
+  private const val NEAR_BAND_MULT = 0.7
   private const val MID_BAND_MULT = 1.0
-  private const val FAR_BAND_MULT = 1.0
+  private const val FAR_BAND_MULT = 1.8
   private const val NEAR_BAND_CONFIRM_FRAMES = 1
   private const val MID_BAND_CONFIRM_FRAMES = 2
   private const val FAR_BAND_CONFIRM_FRAMES = 3

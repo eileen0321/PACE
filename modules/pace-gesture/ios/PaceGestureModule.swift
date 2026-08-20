@@ -229,7 +229,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
   private var logTick = 0
-  private let processIntervalMs: Double = 150      // 안드 PROCESS_INTERVAL_MS (⚠️ 2026-07-28 100ms 롤백 — 어젯밤 검증값으로 복구)
+  private let processIntervalMs: Double = 80       // 안드 2026-08-21 실측값 이식(1899cf3 — 150ms는 빠른 손짓 프레임을 놓침)
   private let refractoryMs: Double = 1200           // 안드 REFRACTORY_MS
   // 🔴 2026-08-18 사장님 실기기 재현("동일 손짓에 안드만 넘어가고 애플은 아예 안 넘어가네 대부분")
   // — 안드는 그동안 실기기 실측으로 아홉 차례 튜닝돼(PaceHandWaveDetector.kt의 장문 주석들) 좌우
@@ -247,7 +247,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 재라"를 정확히 어김). 실기기 재현: 손을 들고만 있어도 1~2초마다 오발화(가만히 든 손의 흔들림
   // 실측 최대 0.185 > 0.13). 안드 검증값 0.16으로 복원 — 약한 손짓(0.17~0.24)은 여전히 통과.
   private let sweepRatioThreshold: Double = 0.16
-  private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES
+  private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES(밴드 확정프레임이 우선)
+  // 🔴 2026-08-21 안드 실측 이식(1899cf3 §1) — 거리 밴드: 신호(손의 물리 속도)는 거리 무관이지만
+  // 노이즈(랜드마크 지터)는 1/handSize로 멀수록 폭증 → SNR이 거리마다 다른데 문턱이 하나였던 것이
+  // "내리면 원거리 오탐 / 올리면 근거리 미탐" 왕복의 구조적 원인. 밴드별 배수·확정프레임 차등.
+  private func bandOf(_ size: Double) -> (mul: Double, confirm: Int, name: String) {
+    if size >= 0.20 { return (0.7, 1, "near") }   // ≈10~15cm — 관대
+    if size >= 0.135 { return (1.0, 2, "mid") }   // ≈20cm 사거리 경계 — 기존과 동일(회귀 최소)
+    return (1.8, 3, "far")                         // 사거리 밖 — 보수적
+  }
+  // glide(2D 순간속도) 축 — 안드 2026-08-21 이식: 기존 sweep은 x만 봐서 상하/대각 손짓이 원리적으로
+  // 안 잡혔다. 인접 샘플 미분이라 "느린 드리프트=빠른 손짓" 혼동이 구조적으로 없다. 두 문턱 AND:
+  // 상대(손너비/초, 물리 속도) + 절대(화면비율/초, 지터 바닥 — handSize로 안 나눠 멀수록 자동 보수화).
+  private let glideRelMinPerSec: Double = 0.9
+  private let glideAbsMinPerSec: Double = 0.09
+  private let glideMaxSampleGapMs: Double = 400     // 놓쳤다 재포착 "순간이동" 오탐 차단
+  private let glideInstantMargin: Double = 3.0      // 두 축 동시 3배 초과 = 1프레임 확정(안드 실측: 첫 프레임 5~10배가 2연속 요구에 버려짐)
   private var xHistory: [(t: Double, x: Double)] = []
   private var sweepStreak: Int = 0
   // 2026-08-18 사장님 재현("한 번 손짓에 4번 넘어감 연달아") — 한 손짓의 왕복 스트로크(2~3초,
@@ -269,8 +284,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 🔴 2026-08-19(새벽) 손 2개 독립 추적(델리게이트 주석 참고) — 트랙별 이력/재무장 상태.
   private struct HandTrack {
     var sizeHistory: [(t: Double, size: Double)] = []
-    var xHistory: [(t: Double, x: Double)] = []
+    var xHistory: [(t: Double, x: Double, y: Double)] = [] // 2026-08-21 glide(2D) 위해 y 추가
     var sweepStreak = 0
+    var glideStreak = 0
     var lastX: Double = 0, lastY: Double = 0
     var lastSeenMs: Double = 0
     var awaitingRearm = false
@@ -287,6 +303,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastVolumePressMs: Double = 0
   private var handlingObserversInstalled = false
   private var pendingGrowthWork: DispatchWorkItem? = nil // 접근(growth) 발화 0.9초 보류(뻗은 손 취소용)
+  private var lastNearHandMs: Double = 0 // near 밴드 손 최근 관측 — luma(가림) 문턱 완화 게이트(안드 이식)
   private func installHandlingObservers() {
     guard !handlingObserversInstalled else { return }
     handlingObserversInstalled = true
@@ -340,6 +357,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 간격 추론이라 A16 CPU 한 코어로 충분(≈20~40ms)하고, GPU를 영상 디코딩/합성에 온전히 양보한다.
     options.baseOptions.delegate = .CPU
     options.runningMode = .liveStream
+    // 🔴 2026-08-21 안드 실측 이식(1899cf3 §7-②) — 인식 실패의 주범은 임계값이 아니라 **검출률**이었다
+    // (안드 실측: 전체 프레임의 84.5%에서 손 랜드마크 0개, 기본 신뢰도 0.5가 원인). 0.3으로 하향.
+    // 오탐 방어는 판정 축(sweep/glide 문턱·밴드·재무장)이 맡으므로 검출은 관대하게 받는 게 맞다.
+    options.minHandDetectionConfidence = 0.3
+    options.minHandPresenceConfidence = 0.3
+    options.minTrackingConfidence = 0.3
     // 🔴 2026-08-19(새벽) 1→2 — numHands=1은 상시 손(턱 괴기)이 추적을 선점하면 다른 손 손짓이
     // 인식 대상조차 안 되는 구조적 결함(델리게이트 주석). 두 손을 받아 트랙별로 독립 판정한다.
     options.numHands = 2
@@ -607,10 +630,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           return // 이 손은 아직 재무장 안 됨(다른 손은 별도 트랙에서 자유)
         }
       }
+      // 거리 밴드(상수 주석 참고) — 이후 모든 문턱에 배수, 확정프레임에 밴드값 적용.
+      let band = self.bandOf(handSize)
+      if band.name == "near" { self.lastNearHandMs = nowMs } // 근접 luma 완화 게이트용(checkOcclusion)
+      // glide(2D 순간속도) — 직전 샘플과의 미분. 반드시 "이번 샘플 append 전"의 마지막 샘플과 비교.
+      var glideRel = 0.0, glideAbs = 0.0
+      if let prev = self.tracks[ti].xHistory.last, nowMs - prev.t <= self.glideMaxSampleGapMs, nowMs > prev.t {
+        let dtS = (nowMs - prev.t) / 1000.0
+        glideAbs = Double(hypot(c.x - prev.x, c.y - prev.y)) / dtS
+        glideRel = handSize > 0 ? glideAbs / handSize : 0
+      }
       self.tracks[ti].sizeHistory.append((nowMs, handSize))
       while let f = self.tracks[ti].sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.tracks[ti].sizeHistory.removeFirst() }
       // sweep 축(안드 이식) — 좌우 휘젓기: 짧은 창 안 손목 x 이동폭/손 크기.
-      self.tracks[ti].xHistory.append((nowMs, c.x))
+      self.tracks[ti].xHistory.append((nowMs, c.x, c.y))
       while let f = self.tracks[ti].xHistory.first, nowMs - f.t > self.sweepWindowMs { self.tracks[ti].xHistory.removeFirst() }
       var sweep = 0.0
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
@@ -632,7 +665,18 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           }
         }
       }
-      if sweep > self.sweepRatioThreshold && reversals >= 1 { self.tracks[ti].sweepStreak += 1 } else { self.tracks[ti].sweepStreak = 0 }
+      if sweep > self.sweepRatioThreshold * band.mul && reversals >= 1 { self.tracks[ti].sweepStreak += 1 } else { self.tracks[ti].sweepStreak = 0 }
+      // glide 판정 — 두 문턱 AND(밴드 배수 적용). 문턱의 3배를 두 축 동시 초과하면 1프레임 확정.
+      let relTh = self.glideRelMinPerSec * band.mul
+      let absTh = self.glideAbsMinPerSec * band.mul
+      let glideHit = glideRel > relTh && glideAbs > absTh
+      if glideHit { self.tracks[ti].glideStreak += 1 } else { self.tracks[ti].glideStreak = 0 }
+      let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
+      if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.tracks[ti].glideStreak = 0
+        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
+        return
+      }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return }
       let growth = handSize / oldest.size
       // 속도 피크(안드 파리티) — 최근 창 안 |크기 변화율| 최대.
@@ -648,12 +692,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if self.logTick % 4 == 0 { self.onDiag(String(format: "T%d hand=%.3f growth=%.2f sweep=%.2f", ti, handSize, growth, sweep)) }
       // 🔬 2026-08-19 01:00 진단("10번 중 2번만 발화") — 비발화 순간의 수치를 네이티브 로그로 노출.
       // sweep이 임계 근처(0.10+)일 때만 1줄 — 손짓 시도는 찍히고 정지 손은 안 찍히는 수준으로 스팸 억제.
-      if sweep > 0.10 {
-        paceGLog("[pace-wave] 근접 T%d sweep=%.2f rev=%d streak=%d growth=%.2f speed=%.2f size=%.2f y=%.2f refract=%.0f",
-                 ti, sweep, reversals, self.tracks[ti].sweepStreak, growth, speedPeak, handSize, c.y,
-                 nowMs - self.lastTriggerMs)
+      if sweep > 0.10 || glideRel > 0.4 {
+        paceGLog("[pace-wave] 근접 T%d band=%@ glideR=%.2f glideA=%.2f gStreak=%d sweep=%.2f rev=%d sStreak=%d growth=%.2f size=%.2f refract=%.0f",
+                 ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
+                 self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= self.sweepConfirmFrames && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return
@@ -686,8 +730,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
     guard let brightest = lumaHistory.map({ $0.luma }).max(), brightest > 0 else { return }
-    if luma / brightest <= lumaDropRatio && luma <= lumaDarkAbsMax && nowMs - lastTriggerMs > refractoryMs {
-      fireTrigger(String(format: "occlusion luma=%.0f", luma), nowMs)
+    // 2026-08-21 안드 이식(1899cf3 §1) — NEAR 밴드 손을 1.2초 안에 본 경우에만 문턱 완화
+    // (0.45→0.68 / 70→130): "손이 렌즈 코앞"이라는 독립 증거가 있을 때만이라 조명 오탐은 안 는다.
+    let nearRecent = nowMs - lastNearHandMs < 1200
+    let dropR = nearRecent ? 0.68 : lumaDropRatio
+    let darkMax = nearRecent ? 130.0 : lumaDarkAbsMax
+    if luma / brightest <= dropR && luma <= darkMax && nowMs - lastTriggerMs > refractoryMs {
+      fireTrigger(String(format: "occlusion luma=%.0f%@", luma, nearRecent ? " near완화" : ""), nowMs)
     }
   }
 

@@ -10027,3 +10027,17 @@ WRAP 창이고, 이 파일에 "검색 입력창이 포커스를 가져가는 순
    원복할 것: `diagEnabled = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0`
 2. `.env`의 **`EXPO_PUBLIC_AD_TEST_DEVICES=true`**(로컬 전용, gitignore라 커밋 안 됨) —
    §3의 실광고 사고 방지용. **스토어 빌드 전에 반드시 제거**(안 지우면 그 빌드 수익 0).
+
+### 2026-08-21 01:00 — (Mac) 안드 1899cf3 손짓 대개편 iOS 이식 + 윈도우 iOS분 검증
+
+이식 완료(전부 안드 실기기 실측 검증된 항목만): ①인식 신뢰도 0.5→0.3(안드 "84.5% 미검출"의 처방
+— minHandDetection/Presence/Tracking 모두) ②처리 간격 150→80ms ③glide 2D 순간속도 축(상하/대각
+손짓, rel 0.9×밴드 AND abs 0.09×밴드, 갭 400ms) ④거리 밴드 near0.20×0.7·1f / mid0.135×1.0·2f /
+far×1.8·3f — sweep·glide 문턱과 확정프레임에 공통 적용 ⑤즉시확정(두 축 3배 동시 초과 시 1프레임)
+⑥근접(1.2s 내 near 손) 시 luma 가림 완화 0.68/130. 해상도는 iOS가 이미 VGA라 불변.
+**보류**: gross-motion 8x8 격자 + 노출 고정 — 안드 자체가 실기기 검증 미완이라 확정 후 이식.
+사양서(01:10 섹션)의 sweep 확정프레임 항목은 밴드 확정프레임으로 대체됨.
+
+윈도우 iOS분 검증: PaceWidgetLiveActivity(고정 범위 PaceCountdown) + PaceAttributes.startDate —
+**Xcode 컴파일 통과**(기기 설치 빌드에 포함). endOrphanedOverlays 콜드스타트 정리 JS도 탑재됨.
+실기기 확인 항목: 앱 강제종료 후 와치/잠금화면 타이머가 종료시각에 멈추는지, 재실행 시 사라지는지.

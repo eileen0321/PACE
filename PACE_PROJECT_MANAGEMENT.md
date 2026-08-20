@@ -10138,3 +10138,54 @@ MediaPipe 모델 2개를 동기 로딩**한다. 이게 메인 스레드를 수 �
 `PaceOverlayModule`의 setTestMode 로그. 튜닝 끝나면 제거.
 - [ ] 🟡 정리(2026-08-21): git 히스토리에 pace_demo_part1/2.mp4(합 85MB) 잔존(df628b5 추가→edba5de
   삭제, 트리는 깨끗). 한가할 때 양 세션 조율 후 filter-repo로 이력 제거+강제푸시(양쪽 재클론 필요).
+
+### 🔴🔴 2026-08-21 새벽 — **애플 출시 빌드 전 반드시 확인할 것** (Windows 세션이 남김)
+
+Windows 세션이 2026-08-20 밤~21 새벽에 **iOS에 영향 가는 파일 5개**를 건드렸다.
+**Swift는 Windows에서 컴파일이 불가능해 전부 미검증이다.** 맥이 출시 빌드를 말기 전에 확인할 것.
+
+#### ① `targets/widget/PaceWidgetLiveActivity.swift` — 🔴 가장 위험, 컴파일 검증 0
+
+Live Activity 카운트다운을 **`PaceCountdown`이라는 새 struct로 통째로 교체**했다.
+근거(사장님 "앱을 죽였는데 맥은 와치에서도 계속 Pace 시간 가는 게 보임"):
+기존 코드가 매 렌더마다 `Text(timerInterval: Date()...endDate)`로 **하한을 "지금"으로 새로 만들어서**
+ ① endDate가 지난 뒤 재렌더되면 lowerBound > upperBound = **Swift 런타임 트랩**
+ ② 하한이 계속 밀려 **타이머에 끝이 없다** → 앱이 죽어도 시스템이 계속 굴린다(= 신고된 증상)
+→ 고정 `startDate...endDate`로 변경하고 지난 세션은 "0:00" 표시.
+
+⚠️ **맥이 할 일**: 빌드가 통과하는지 + **실기기에서 잠금화면/다이나믹아일랜드 타이머가 정상인지** 육안 확인.
+   이상하면 이 파일만 되돌리면 된다: `git checkout ecd768d -- targets/widget/PaceWidgetLiveActivity.swift`
+   (되돌리면 위 ①②는 다시 살아난다 — 그건 별도 과제로 남겨둘 것)
+
+#### ② `src/app/_layout.tsx` — 공용 파일이라 iOS도 탄다
+
+ · `Promise.all([settingsReady, subscriptionReady])` → **`allSettled`**.
+   근거: RevenueCat 초기화 실패(D11 ConfigurationError) 시 그 `.then`이 통째로 안 돌아서
+   `enforceFreeFocusSessionDuration()`이 호출조차 안 됐다(= `setIsPremium`이 네이티브에 영영 안 밀림).
+   실기기 로그로 확인된 실제 버그. iOS에도 같은 개선이 적용된다.
+ · 콜드스타트 `overlayService.endOrphanedOverlays?.()` 호출 추가(아래 ③과 한 쌍).
+ · 🔴 **`console.warn('[testMode] push', on)` 진단 로그가 남아 있다 — 출시 빌드 전 제거할 것.**
+
+#### ③ `src/services/platform/overlayService.ios.ts` — 미검증
+
+ · `endSession()`에 `endAll()` 추가(핸들을 잃은 유령 Activity까지 정리)
+ · `endOrphanedOverlays()` 신설 — 콜드스타트마다 1회. 기존엔 정리가 `startSession()` 안에만 있어서
+   **새 세션을 시작해야만** 유령이 사라졌다(앱만 열거나 안 열면 최대 8시간 잔류 + 와치 미러링).
+ ⚠️ 웹 확인: Live Activity가 앱 프로세스와 분리돼 살아남는 건 **애플의 의도된 설계**이고,
+   강제종료 뒤에는 staleDate/dismissalPolicy로도 못 지운다 — **앱이 다시 살아나 직접 end**가 유일한 길.
+
+#### ④ `src/services/platform/types.ts` / `bluetoothService.ios.ts` — 무해
+
+ `setTestMode`(iOS no-op), `endOrphanedOverlays?`/`isNativeSessionRunning?`(optional) 추가.
+
+#### ⑤ `app.json` — **iOS는 안 건드렸다**
+
+`android.runtimeVersion`만 `1.0` → `1.0.5`. iOS의 `1.0.4`는 그대로다.
+(안드로이드가 옛 OTA 번들을 물고 있어 JS 수정이 전부 무시되던 문제 — §10 참고)
+
+#### ⑥ 손짓 오발화는 **iOS와 무관**
+
+Windows 세션이 밤새 만진 건 `PaceHandWaveDetector.kt`(Android 전용)다.
+iOS 손짓은 맥이 관리하는 `modules/pace-gesture/ios/PaceGestureModule.swift`라 서로 영향이 없다.
+⚠️ 단 Android 쪽은 **아직 오발화가 남아 있다**(30초에 7회, sweep·growth+speed·glide 세 축 모두).
+  near 밴드 배수(×0.7)를 데이터 없이 넣은 것이 원인 중 하나로 확인됨 — Android 세션이 이어서 처리.

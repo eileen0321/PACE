@@ -16,6 +16,7 @@ public class PaceLiveActivityModule: Module {
     AsyncFunction("start") { (params: [String: Any], promise: Promise) in
       guard #available(iOS 16.1, *) else { promise.resolve(false); return }
       guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+        NSLog("[PACELA] start blocked: areActivitiesEnabled=false (설정에서 꺼짐)")
         promise.resolve(false); return // 설정에서 Live Activities 꺼둠
       }
       let title = (params["title"] as? String) ?? "Focus"
@@ -29,8 +30,10 @@ public class PaceLiveActivityModule: Module {
       do {
         let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
         self.currentActivity = activity
+        NSLog("[PACELA] started id=%@ end=%@", activity.id, endDate as NSDate)
         promise.resolve(true)
       } catch {
+        NSLog("[PACELA] request FAILED: %@", String(describing: error))
         promise.resolve(false)
       }
     }
@@ -66,7 +69,9 @@ public class PaceLiveActivityModule: Module {
     AsyncFunction("endAll") { (promise: Promise) in
       guard #available(iOS 16.1, *) else { promise.resolve(true); return }
       Task {
-        for activity in Activity<PaceAttributes>.activities {
+        let list = Activity<PaceAttributes>.activities
+        if !list.isEmpty { NSLog("[PACELA] endAll: ending %d activities", list.count) }
+        for activity in list {
           await activity.end(nil, dismissalPolicy: .immediate)
         }
         self.currentActivity = nil

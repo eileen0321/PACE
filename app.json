@@ -2,14 +2,14 @@
   "expo": {
     "name": "Pace",
     "slug": "Pace",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "scheme": "pace",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "buildNumber": "11",
+      "buildNumber": "12",
       "bundleIdentifier": "com.strides7.pace",
       "appleTeamId": "328BF833XS",
       "infoPlist": {
@@ -20,7 +20,7 @@
       },
       "icon": "./assets/icon-phone11.png",
       "backgroundColor": "#0B0C0F",
-      "runtimeVersion": "1.0.4"
+      "runtimeVersion": "1.0.5"
     },
     "android": {
       "package": "com.strides7.pace",

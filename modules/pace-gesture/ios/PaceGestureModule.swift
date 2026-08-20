@@ -710,7 +710,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           if let o = self.tracks[ti].sizeHistory.first, o.size > 0 { return handSize / o.size }
           return 1.0
         }()
-        if growthNow > 1.15 {
+        // 2026-08-21 01:35 실측 — 이 보류가 mid/far 일반 손짓까지 잡아 0.9초씩 지연("틱톡 느림" 체감의
+        // 주범). 뻗는 손은 반드시 폰 가까이(near, size≥0.20)에서 끝나므로 near에서만 보류한다.
+        if band.name == "near" && growthNow > 1.15 {
           let hs = handSize
           self.pendingGrowthWork?.cancel()
           let work = DispatchWorkItem { [weak self] in

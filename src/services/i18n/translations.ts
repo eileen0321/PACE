@@ -552,6 +552,7 @@ export const translations = {
       // 트레이드오프, PaceVolumeKeyModule.swift 참고) — 그래서 리모컨과 블루투스 이어폰을 동시에 쓸
       // 수 없다는 걸 가이드에 미리 알린다(사장님 지시).
       bluetoothRemoteHintIOSCaveat: "Note: can't be used at the same time as Bluetooth headphones (AirPods etc.) — the remote's button presses just adjust volume while they're connected.",
+      volumeCoverHintIOS: 'To adjust volume while the remote is active: cover the front camera with your hand and press the volume buttons — they will change the volume instead of skipping videos.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: 'Recommended',
       nextShort: 'Next Short',
@@ -1035,6 +1036,7 @@ export const translations = {
       // 조절을 못하냐") — 손짓 hint와 길이가 맞게 한 문장으로 줄였다.
       bluetoothRemoteHint: '볼륨 버튼 있는 블루투스 리모컨이면 뭐든 페어링만 하면 바로 돼요.',
       bluetoothRemoteHintIOSCaveat: '단, 블루투스 이어폰(에어팟 등)과 동시에는 못 써요 — 이어폰이 연결돼 있으면 리모컨을 눌러도 그냥 볼륨만 바뀌어요.',
+      volumeCoverHintIOS: '리모컨 사용 중 소리 크기를 바꾸려면: 앞면 카메라를 손으로 가린 채 볼륨 버튼을 누르세요 — 영상이 넘어가지 않고 볼륨만 조절돼요.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: '추천',
       nextShort: '다음 영상',

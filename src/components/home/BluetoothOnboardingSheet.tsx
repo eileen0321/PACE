@@ -95,6 +95,11 @@ export function BluetoothOnboardingSheet({ visible, onEnable, onDismiss }: {
               출처를 구분할 수 있어 이 제약이 없다 — iOS에만 캐비엇을 붙인다. */}
           {Platform.OS === 'ios' ? ` ${t('handsFreeSheet.bluetoothRemoteHintIOSCaveat')}` : ''}
         </Text>
+        {/* 2026-08-21 사장님 지시 — iOS 전용: 리모컨 활성 중 볼륨 조절은 "카메라 가리고 볼륨키"
+            (렌즈가림 신호로 폰버튼 확정 판정 — PaceVolumeKeyModule 참고). 안드는 출처 구분이 되어 불필요. */}
+        {Platform.OS === 'ios' && (
+          <Text style={styles.hintText}>{t('handsFreeSheet.volumeCoverHintIOS')}</Text>
+        )}
         <View style={styles.actionRow}>
           <View style={styles.iconStage}><GestureFlickIllustration /></View>
           <Text style={styles.actionLabel}>{t('handsFreeSheet.handWaveLabel')} <Text style={styles.actionArrow}>→</Text> {t('handsFreeSheet.nextShort')}</Text>

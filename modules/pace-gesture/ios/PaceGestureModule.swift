@@ -609,9 +609,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         maxAbs = max(maxAbs, self.processTrack(ti, cands[ci], nowMs))
       }
       // 전역 burst 해제 판정(선언부 "모른다≠떠났다" 주석) — 양성 증거로만 해제.
+      if !assigned.isEmpty { self.lastHandSeenMs = nowMs }
       if assigned.isEmpty {
         self.stillnessStartMs = 0 // 검출 공백 = 모른다 → 정지 시계 리셋
-        if self.tracks.allSatisfy({ $0.lastSeenMs == 0 }) { self.globalBurstFired = false } // 손이 완전히 떠남
+        // "떠남" 판정은 0.7초 지속 부재 — 스윕 스트로크가 화면 밖으로 살짝 나갔다 오는 순간(~100-300ms,
+        // 안드 실측)이 떠남으로 오인돼 burst가 손짓 도중 풀리는 것 방지(01:25 실측 2연발 잔존 원인 후보).
+        if self.lastHandSeenMs > 0 && nowMs - self.lastHandSeenMs > 700 { self.globalBurstFired = false }
       } else if maxAbs > 0.04 {
         self.stillnessStartMs = 0 // 움직이는 손 존재
       } else {

@@ -278,7 +278,8 @@ export default function RootLayout() {
     const on = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
     // 진단(임시) — 이 경로는 지금까지 **조용히 실패**했다. JS의 `PaceOverlay?.`도, 네이티브의
     // `reactContext?.let`도 null이면 아무 로그 없이 넘어가서 어디서 끊겼는지 알 수가 없었다.
-    console.warn('[testMode] push', on);
+    // 2026-08-21 출시 정리(윈도우 세션 체크리스트 ②) — 무조건 warn은 제거, 개발 빌드에서만 출력.
+    if (__DEV__) console.log('[testMode] push', on);
     bluetoothService.setTestMode(on).catch((e) => console.warn('[testMode] failed', String(e)));
   }, []);
 

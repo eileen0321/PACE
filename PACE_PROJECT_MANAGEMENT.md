@@ -10136,3 +10136,5 @@ MediaPipe 모델 2개를 동기 로딩**한다. 이게 메인 스레드를 수 �
 
 **되돌릴 임시 진단** — `diagEnabled = true`(릴리즈 강제), `[testMode] push` console.warn,
 `PaceOverlayModule`의 setTestMode 로그. 튜닝 끝나면 제거.
+- [ ] 🟡 정리(2026-08-21): git 히스토리에 pace_demo_part1/2.mp4(합 85MB) 잔존(df628b5 추가→edba5de
+  삭제, 트리는 깨끗). 한가할 때 양 세션 조율 후 filter-repo로 이력 제거+강제푸시(양쪽 재클론 필요).

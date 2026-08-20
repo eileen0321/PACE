@@ -254,10 +254,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private func bandOf(_ size: Double) -> (mul: Double, confirm: Int, name: String) {
     if size >= 0.20 { return (0.7, 1, "near") }   // ≈10~15cm — 관대
     if size >= 0.135 { return (1.0, 2, "mid") }   // ≈20cm 사거리 경계 — 기존과 동일(회귀 최소)
-    // far ×1.8→×1.3, 3회→2회 (2026-08-21 01:51 실측): 사장님 실사용 거리(손 0.09~0.10, ≈30cm)의
-    // 손짓 피크가 1.37~1.60으로 ×1.8 문턱(1.62)에 간발 미달해 전멸했다. ×1.3(문턱 1.17)은
-    // 원거리 대기 잡음 실측 최대(~1.0)와 분리 유지.
-    return (1.3, 2, "far")
+    return (1.8, 3, "far")                         // 안드 원값(FAR_BAND ×1.8·3f) — 파리티 복원
   }
   // glide(2D 순간속도) 축 — 안드 2026-08-21 이식: 기존 sweep은 x만 봐서 상하/대각 손짓이 원리적으로
   // 안 잡혔다. 인접 샘플 미분이라 "느린 드리프트=빠른 손짓" 혼동이 구조적으로 없다. 두 문턱 AND:
@@ -610,22 +607,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
       // 트랙별 판정(기존 단일 파이프라인과 동일 로직 — 상수 주석들 참고)
-      var maxAbs = 0.0
-      for (ti, ci) in assigned {
-        maxAbs = max(maxAbs, self.processTrack(ti, cands[ci], nowMs))
-      }
-      // 전역 burst 해제 판정(선언부 "모른다≠떠났다" 주석) — 양성 증거로만 해제.
+      // ⛔ 2026-08-21 안드 파리티 복원 — 전역 burst/정지시계 장치(iOS 창작) 제거. 재발화 방지는
+      // 안드 원본(refractory 1.2s + 재무장 shrink/timeout)이 담당한다.
       if !assigned.isEmpty { self.lastHandSeenMs = nowMs }
-      if assigned.isEmpty {
-        self.stillnessStartMs = 0 // 검출 공백 = 모른다 → 정지 시계 리셋
-        // "떠남" 판정은 0.7초 지속 부재 — 스윕 스트로크가 화면 밖으로 살짝 나갔다 오는 순간(~100-300ms,
-        // 안드 실측)이 떠남으로 오인돼 burst가 손짓 도중 풀리는 것 방지(01:25 실측 2연발 잔존 원인 후보).
-        if self.lastHandSeenMs > 0 && nowMs - self.lastHandSeenMs > 700 { self.globalBurstFired = false }
-      } else if maxAbs > 0.04 {
-        self.stillnessStartMs = 0 // 움직이는 손 존재
-      } else {
-        if self.stillnessStartMs == 0 { self.stillnessStartMs = nowMs }
-        else if nowMs - self.stillnessStartMs > 600 { self.globalBurstFired = false } // 보이면서 0.6초 정지
+      for (ti, ci) in assigned {
+        _ = self.processTrack(ti, cands[ci], nowMs)
       }
     }
   }
@@ -648,12 +634,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // 세지 않는다. 해제: ①축소 0.85배 ②트랙 소멸 ③발화 지점서 1.5손폭 이상 이동(23:17 영구잠금 처방).
       // 다른 트랙(다른 손)은 이 게이트와 무관하게 자유롭다 — 손 2개 개편의 핵심 이득.
       if self.tracks[ti].awaitingRearm {
-        let moved = Double(hypot(c.x - self.tracks[ti].rearmAnchorX, c.y - self.tracks[ti].rearmAnchorY))
-        if handSize <= self.tracks[ti].rearmBelowSize || moved > 1.5 * max(handSize, 0.08) {
-          paceGLog("[pace-wave] rearmed(T%d) after %.0fms by=%@ size=%.2f moved=%.2f",
+        // 안드 원본 그대로(2026-08-21 파리티 복원) — 해제: 축소 0.85배 또는 타임아웃 1.5초.
+        // (이동 해제는 iOS 창작이라 제거. 영구 잠금은 안드처럼 타임아웃이 방지한다.)
+        if handSize <= self.tracks[ti].rearmBelowSize || nowMs - self.lastTriggerMs > 1500 {
+          paceGLog("[pace-wave] rearmed(T%d) after %.0fms by=%@ size=%.2f",
                    ti, nowMs - self.lastTriggerMs,
-                   handSize <= self.tracks[ti].rearmBelowSize ? "shrink" : "moved",
-                   handSize, moved)
+                   handSize <= self.tracks[ti].rearmBelowSize ? "shrink" : "timeout", handSize)
           self.tracks[ti].awaitingRearm = false
         } else {
           return 0.05 // 이 손은 아직 재무장 안 됨(다른 손은 별도 트랙에서 자유)
@@ -662,18 +648,27 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // 거리 밴드(상수 주석 참고) — 이후 모든 문턱에 배수, 확정프레임에 밴드값 적용.
       let band = self.bandOf(handSize)
       if band.name == "near" { self.lastNearHandMs = nowMs } // 근접 luma 완화 게이트용(checkOcclusion)
-      // glide(2D 순간속도) — 직전 샘플과의 미분. 반드시 "이번 샘플 append 전"의 마지막 샘플과 비교.
-      var glideRel = 0.0, glideAbs = 0.0
-      if let prev = self.tracks[ti].xHistory.last, nowMs - prev.t <= self.glideMaxSampleGapMs, nowMs > prev.t {
-        let dtS = (nowMs - prev.t) / 1000.0
-        glideAbs = Double(hypot(c.x - prev.x, c.y - prev.y)) / dtS
-        glideRel = handSize > 0 ? glideAbs / handSize : 0
-      }
       self.tracks[ti].sizeHistory.append((nowMs, handSize))
       while let f = self.tracks[ti].sizeHistory.first, nowMs - f.t > self.growthWindowMs { self.tracks[ti].sizeHistory.removeFirst() }
       // sweep 축(안드 이식) — 좌우 휘젓기: 짧은 창 안 손목 x 이동폭/손 크기.
       self.tracks[ti].xHistory.append((nowMs, c.x, c.y))
       while let f = self.tracks[ti].xHistory.first, nowMs - f.t > self.sweepWindowMs { self.tracks[ti].xHistory.removeFirst() }
+      // 🔴 2026-08-21 안드 완전 파리티 — glide는 프레임당 순간값이 아니라 **최근 500ms 창 내 인접샘플
+      // 속도의 최댓값**(안드 peakGlideAbsPerSec 그대로). 프레임당 값은 출렁여(1.08→0.84→0.73) 연속
+      // 확정을 영영 못 채웠다 — 안드가 "먼 손짓도 잘만" 되는 이유가 피크 유지였다.
+      var glideAbs = 0.0
+      do {
+        let recent = self.tracks[ti].xHistory.filter { nowMs - $0.t <= 500 }
+        if recent.count >= 2 {
+          for i in 1..<recent.count {
+            let dtMs = recent[i].t - recent[i - 1].t
+            if dtMs < 20 || dtMs > self.glideMaxSampleGapMs { continue }
+            let v = Double(hypot(recent[i].x - recent[i - 1].x, recent[i].y - recent[i - 1].y)) / (dtMs / 1000.0)
+            if v > glideAbs { glideAbs = v }
+          }
+        }
+      }
+      let glideRel = handSize > 0 ? glideAbs / handSize : 0
       var sweep = 0.0
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
@@ -698,50 +693,24 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // glide 판정 — 두 문턱 AND(밴드 배수 적용). 문턱의 3배를 두 축 동시 초과하면 1프레임 확정.
       let relTh = self.glideRelMinPerSec * band.mul
       let absTh = self.glideAbsMinPerSec * band.mul
-      let glideHit = glideRel > relTh && glideAbs > absTh
-      // (burst 해제 판정은 델리게이트 말미의 전역 블록으로 이동 — 선언부 "모른다≠떠났다" 주석)
-      if glideHit { self.tracks[ti].glideHitTimes.append(nowMs) }
-      self.tracks[ti].glideHitTimes.removeAll { nowMs - $0 > 600 } // 0.6초 창(구조체 주석)
-      let glideHitCount = self.tracks[ti].glideHitTimes.count
-      let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
-      if (glideInstant || glideHitCount >= band.confirm) && glideHit
-         && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
-        self.tracks[ti].glideHitTimes.removeAll()
-        self.globalBurstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
-        // 🔴 2026-08-21 01:12 실측("가리고 볼륨 누르는데 영상 넘어감") — 폰/렌즈로 **뻗는 손**의 측면
-        // 성분이 glide로 발화했다. 구분: 뻗는 손은 커지면서 움직임(growth>1.15 동반), 순수 좌우
-        // 손짓은 growth≈1.0. 커지는 중이면 0.9초 보류(그 사이 볼륨 눌림/렌즈가림 오면 취소 —
-        // growth 보류와 동일 경로), 아니면 즉시 발화.
-        let reason = String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize)
-        // growth 본계산(아래 guard)보다 앞이라 조기 추정치를 따로 계산(같은 정의: 창 최초 대비 배율)
-        let growthNow: Double = {
-          if let o = self.tracks[ti].sizeHistory.first, o.size > 0 { return handSize / o.size }
-          return 1.0
-        }()
-        // 2026-08-21 01:35 실측 — 이 보류가 mid/far 일반 손짓까지 잡아 0.9초씩 지연("틱톡 느림" 체감의
-        // 주범). 뻗는 손은 반드시 폰 가까이(near, size≥0.20)에서 끝나므로 near에서만 보류한다.
-        if band.name == "near" && growthNow > 1.15 {
-          let hs = handSize
-          self.pendingGrowthWork?.cancel()
-          let work = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            self.pendingGrowthWork = nil
-            let nowW = CFAbsoluteTimeGetCurrent() * 1000
-            if nowW - self.lastVolumePressMs < 1500 || nowW - self.lastLensCoveredPostMs < 1000 {
-              paceGLog("[pace-wave] glide(접근성) 발화 취소 — 볼륨/가림 신호(뻗은 손 판정)")
-              return
-            }
-            self.fireTrigger(reason + "(0.9s확정)", nowW, handSize: hs, trackIdx: ti)
-          }
-          self.pendingGrowthWork = work
-          self.queue.asyncAfter(deadline: .now() + 0.9, execute: work)
-        } else {
-          self.fireTrigger(reason, nowMs, handSize: handSize, trackIdx: ti)
-        }
+      // 🔴 안드 파리티(1899cf3 그대로) — 연속 프레임 확정 + 압도적 마진 1프레임. 임의 장치(윈도우 계수·
+      // 전역 burst·접근 보류) 전부 제거. 재발화 방지는 안드처럼 refractory(1.2s)+재무장이 담당.
+      let glidedNow = glideAbs > absTh && glideRel > relTh
+      self.tracks[ti].glideStreak = glidedNow ? self.tracks[ti].glideStreak + 1 : 0
+      let glideOverwhelming = glidedNow &&
+        glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
+      let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
+      if glided && nowMs - self.lastTriggerMs > self.refractoryMs {
+        self.tracks[ti].glideStreak = 0
+        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
-      let growth = handSize / oldest.size
+      // 안드 파리티 — growth 기준은 "창 내 최솟값"(가장 오래된 샘플 X): 손을 이미 든 채 흔들면 오래된
+      // 샘플 기준으론 비율이 영영 안 올라 "첫 손짓 무조건 실패"가 됐다(안드 2026-08-02 실측 수정).
+      if oldest.t == nowMs { return glideAbs } // 비교할 과거가 없음(안드 동일 가드)
+      let baselineSize = self.tracks[ti].sizeHistory.map { $0.size }.min() ?? handSize
+      let growth = baselineSize > 0 ? handSize / baselineSize : 1.0
       // 속도 피크(안드 파리티) — 최근 창 안 |크기 변화율| 최대.
       var speedPeak = 0.0
       let sh = self.tracks[ti].sizeHistory
@@ -760,33 +729,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
+      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
-        self.globalBurstFired = true; self.lastGlobalMotionMs = nowMs // 전역 burst당 1회(선언부 주석)
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
-        self.globalBurstFired = true // 2026-08-21 01:30 실측 — growth 경로가 burst 게이트를 우회해 페어 발화하던 구멍
-        // 🔴 2026-08-19 01:28 실측("손짓 후 볼륨키 누르면 넘어감" — growth=1.36 발화 후 눌림) —
-        // 접근(growth) 트리거는 "볼륨키를 누르러 폰으로 뻗는 손"과 물리적으로 동일한 동작이다.
-        // 즉시 발화하지 않고 0.9초 보류: 그 사이 볼륨키 눌림이 오면 뻗은 손으로 확정하고 취소,
-        // 안 오면 정상 발화. 주력 제스처인 좌우 손짓(sweep)은 즉시 발화 유지(반응성 무손해).
-        let reason = String(format: "T%d growth=%.2f speed=%.2f(0.9s확정)", ti, growth, speedPeak)
-        let hs = handSize
-        self.pendingGrowthWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-          guard let self = self else { return }
-          self.pendingGrowthWork = nil
-          if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1200 {
-            paceGLog("[pace-wave] growth 발화 취소 — 직후 볼륨키 눌림(뻗은 손 판정)")
-            return
-          }
-          self.fireTrigger(reason, CFAbsoluteTimeGetCurrent() * 1000, handSize: hs, trackIdx: ti)
-        }
-        self.pendingGrowthWork = work
-        self.lastTriggerMs = nowMs // 보류 중 중복 예약/sweep 이중발화 방지(같은 제스처)
-        self.queue.asyncAfter(deadline: .now() + 0.9, execute: work)
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
+        // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
+        // 최상단)과 재무장(안드 원본)이 담당.
+        self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
       }
       return glideAbs
   }

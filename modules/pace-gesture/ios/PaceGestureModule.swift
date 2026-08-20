@@ -254,7 +254,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private func bandOf(_ size: Double) -> (mul: Double, confirm: Int, name: String) {
     if size >= 0.20 { return (0.7, 1, "near") }   // ≈10~15cm — 관대
     if size >= 0.135 { return (1.0, 2, "mid") }   // ≈20cm 사거리 경계 — 기존과 동일(회귀 최소)
-    return (1.8, 3, "far")                         // 사거리 밖 — 보수적
+    // far ×1.8→×1.3, 3회→2회 (2026-08-21 01:51 실측): 사장님 실사용 거리(손 0.09~0.10, ≈30cm)의
+    // 손짓 피크가 1.37~1.60으로 ×1.8 문턱(1.62)에 간발 미달해 전멸했다. ×1.3(문턱 1.17)은
+    // 원거리 대기 잡음 실측 최대(~1.0)와 분리 유지.
+    return (1.3, 2, "far")
   }
   // glide(2D 순간속도) 축 — 안드 2026-08-21 이식: 기존 sweep은 x만 봐서 상하/대각 손짓이 원리적으로
   // 안 잡혔다. 인접 샘플 미분이라 "느린 드리프트=빠른 손짓" 혼동이 구조적으로 없다. 두 문턱 AND:

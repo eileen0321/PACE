@@ -621,7 +621,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // ⛔ 01:06 실기기 — phoneHeldNow(쥠 상태) 조건이 고착돼(해제 임계 미달 지속) 손짓 전체를 잠갔다
       // ("손짓 10번 안 됨" + 발화잠금 로그 연속). 쥠 상태는 오늘 내내 불안정했으므로 잠금 조건에서
       // 제외하고, 정확한 이벤트인 **볼륨키 눌림 후 1.5초**만 잠근다(뻗는 손 오인의 핵심 창).
-      if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
+      if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 500 { // 1500→500ms(2026-08-21 사장님 지시)
         self.logTick += 1
         if self.logTick % 20 == 0 { paceGLog("[pace-wave] 발화잠금(볼륨눌림 직후)") }
         return 0.05 // 폰 취급 중 — 정지 아님으로 취급

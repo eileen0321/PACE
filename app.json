@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "buildNumber": "10",
+      "buildNumber": "11",
       "bundleIdentifier": "com.strides7.pace",
       "appleTeamId": "328BF833XS",
       "infoPlist": {

@@ -287,11 +287,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var xHistory: [(t: Double, x: Double, y: Double)] = [] // 2026-08-21 glide(2D) 위해 y 추가
     var sweepStreak = 0
     var glideStreak = 0
-    // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — 움직임 burst당 1회 발화.
-    // 연속 손짓(1~2초) 중 불응(1.2s)이 끝나면 재발화하던 것을 구조적으로 차단: 움직임이 400ms 이상
-    // 멎어야 새 burst = 새 손짓으로 인정.
-    var burstFired = false
-    var lastMotionActiveMs: Double = 0
     var lastX: Double = 0, lastY: Double = 0
     var lastSeenMs: Double = 0
     var awaitingRearm = false
@@ -299,6 +294,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0
   }
   private var tracks = [HandTrack(), HandTrack()]
+  // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
+  // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
+  // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
+  private var globalBurstFired = false
+  private var lastGlobalMotionMs: Double = 0
   private var cameraStartedAtMs: Double = 0   // 웜업 판정(안드 WARMUP_* 이식 — captureOutput 주석)
   private var firstDetectionDone = false      // 첫 손 인식 후 웜업 종료
   // 🔴 2026-08-19 01:01 — "폰을 만지는 중" 손짓 발화 잠금(볼륨 모듈이 NotificationCenter로 알림).
@@ -675,17 +675,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let relTh = self.glideRelMinPerSec * band.mul
       let absTh = self.glideAbsMinPerSec * band.mul
       let glideHit = glideRel > relTh && glideAbs > absTh
-      // burst 경계 판정(구조체 주석) — 움직임이 400ms 이상 멎었다가 다시 시작하면 새 손짓.
+      // 전역 burst 경계 판정(선언부 주석) — 모든 손의 움직임이 600ms 이상 멎어야 새 손짓으로 인정.
       if glideHit {
-        if nowMs - self.tracks[ti].lastMotionActiveMs > 400 { self.tracks[ti].burstFired = false }
-        self.tracks[ti].lastMotionActiveMs = nowMs
+        if nowMs - self.lastGlobalMotionMs > 600 { self.globalBurstFired = false }
+        self.lastGlobalMotionMs = nowMs
         self.tracks[ti].glideStreak += 1
       } else { self.tracks[ti].glideStreak = 0 }
       let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
       if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit
-         && nowMs - self.lastTriggerMs > self.refractoryMs && !self.tracks[ti].burstFired {
+         && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
         self.tracks[ti].glideStreak = 0
-        self.tracks[ti].burstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
+        self.globalBurstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
         return
       }
@@ -709,9 +709,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs && !self.tracks[ti].burstFired {
+      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
         self.tracks[ti].sweepStreak = 0
-        self.tracks[ti].burstFired = true; self.tracks[ti].lastMotionActiveMs = nowMs // burst당 1회(구조체 주석)
+        self.globalBurstFired = true; self.lastGlobalMotionMs = nowMs // 전역 burst당 1회(선언부 주석)
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return
       }

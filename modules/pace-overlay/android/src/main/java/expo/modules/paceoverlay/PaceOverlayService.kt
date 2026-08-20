@@ -311,7 +311,35 @@ class PaceOverlayService : Service() {
           //   ⚠️ "아직 보고 계세요?"(PROMPTED)만은 예외다 — 그건 전체화면이라 뜨는 순간 감시 앱
           //     창이 windows 목록에서 사라져 shouldShow가 false가 된다. 여기서 같이 지우면 그 팝업이
           //     **스스로를 지워** 30초 타임아웃에 도달하지 못한다(2026-08-06에 겪은 교착 그대로).
-          if (sleepStage != SLEEP_STAGE_PROMPTED) hideExtendChoice()
+          // 🔴 2026-08-20 사장님 신고 — "광고를 보게 해줘야 할 거 아냐, 왜 맘대로 팝업이 없어져".
+          //   실기기 로그가 그대로 보여준다(15초에 4번 누르셨고 매번 0.3~0.8초 만에 사라졌다):
+          //     23:16:48.181 AD_TRIGGER 배지 탭 → 연장 선택 카드 표시
+          //     23:16:48.759 pill HIDE fg=youtube a11yFg=youtube usage=null win=false self=false
+          //     23:16:50.486 (다시 탭) → 23:16:50.786 pill HIDE
+          //   `PaceRewardedAdActivity` 로그는 한 줄도 없다 = **광고까지 도달조차 못 했다.**
+          //
+          //   원인은 바로 위 PROMPTED 예외 주석이 이미 설명해둔 그 교착과 **완전히 같은 것**이다.
+          //   연장 카드는 화면 전체를 덮는 모달 오버레이(FLAG_NOT_TOUCHABLE 없음 + 딤)라, 뜨는 순간
+          //   유튜브 창이 접근성 windows 목록에서 밀려나 `windowVisibleOrNull=false`가 된다.
+          //   그러면 shouldShow=false → 1초 폴이 hideExtendChoice()를 부른다 → **팝업이 스스로를 지운다.**
+          //   2026-08-18에 이 슬롯을 정리 목록에 추가하면서 PROMPTED만 예외로 뒀는데, AD_TRIGGER로
+          //   뜨는 이 카드도 정확히 같은 자기소거에 걸린다는 걸 못 봤다.
+          //
+          //   → 창 신호(win) 대신 **이벤트/UsageStats 신호**로 판단한다. 그 둘은 우리 오버레이가
+          //     최상단을 가져가도 여전히 유튜브를 가리키므로(위 로그의 fg=youtube a11yFg=youtube),
+          //     "사용자가 진짜로 다른 앱/런처로 나갔는가"만 정확히 구분한다.
+          //   2026-08-18의 요구("세션 끝나고 유튜브를 나갔는데 런처 위에 팝업이 남는다")는 그대로
+          //   지켜진다 — 런처로 나가면 fg/usage가 런처를 가리켜 둘 다 false가 되고 그때 정리된다.
+          //   갇힐 위험 없음: 이 카드에는 "나중에" 버튼과 바깥 탭 닫기가 이미 있다.
+          //   판정은 **"감시 앱이 보이는가"가 아니라 "사용자가 진짜 딴 데 갔는가"** 로 세운다.
+          //   전자로 쓰면 신호가 잠깐 비는 순간(실측 23:17:01 `fg=null a11yFg=null usage=null`)에
+          //   또 지워진다 — 모른다는 것과 떠났다는 것은 다르다. 셋 중 하나라도 **우리 앱도 아니고
+          //   감시 대상 앱도 아닌** 패키지를 실제로 지목할 때만 정리한다.
+          //   (우리 패키지를 제외하는 이유는 위 captureInFlight와 같다 — 우리 오버레이/캡처 액티비티가
+          //    잠깐 전경을 가져가는 건 사용자가 떠난 게 아니다.)
+          val userWentElsewhere = listOfNotNull(foregroundPackage, usageStatsForeground, accessibilityForeground)
+            .any { it != packageName && !SupportedApps.PACKAGES.contains(it) }
+          if (sleepStage != SLEEP_STAGE_PROMPTED && userWentElsewhere) hideExtendChoice()
         }
       } catch (e: Exception) {
         Log.w("PaceOverlay", "foregroundPollRunnable failed, will retry next poll", e)
@@ -1389,6 +1417,14 @@ class PaceOverlayService : Service() {
     // 자체는 정상 동작한다.
     private var instance: PaceOverlayService? = null
 
+    // 🔴 2026-08-20 — 아래 isServiceAlive()(2026-08-02에 이미 있던 것)에 새 용도가 하나 붙었다.
+    //   사장님 신고 "open app 누르니 죽었어" + "포커스도 10분으로 초기화"는 같은 사건이었고,
+    //   `_layout.tsx`의 고아 세션 복구가 **살아있는 세션을 죽이고 새 세션으로 갈아끼운** 것이었다.
+    //   그 로직의 전제는 "프로세스가 죽어 추적이 끊겼다"인데 실제로 죽은 건 **액티비티뿐**이었다
+    //   (삼성 배터리 관리 등으로 흔하다). 두 경우를 가르는 유일한 신호가 인스턴스 생존 여부다 —
+    //   SharedPreferences(session_active)는 프로세스가 죽어도 값이 남아 구분이 안 된다.
+    //   PaceOverlayModule의 isNativeSessionRunning이 이 함수를 그대로 노출한다.
+
     // 2026-07-26 사용자 지시 — 수면감지 무진동 타이머는 가속도계(폰 물리적 움직임)만 보는데, Focus
     // Session의 핵심은 "폰을 안 만지고 손짓/스냅/블루투스 리모컨으로만 조작"이다. 그래서 정상적으로
     // 핸즈프리를 쓰기만 해도 폰 자체는 안 움직이니 결국 잠들었다고 오판하는 문제가 실기기에서
@@ -1622,8 +1658,47 @@ class PaceOverlayService : Service() {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PREMIUM, isPremium).apply()
     }
 
-    private fun isPremium(context: Context): Boolean =
+    // 🔴 2026-08-21 — private → internal. PaceAccessibilityService의 볼륨키 하이재킹 게이트가
+    //   이 값을 봐야 한다(아래 isHandsFreeAllowed 참고).
+    internal fun isPremium(context: Context): Boolean =
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_IS_PREMIUM, false)
+
+    /**
+     * 🔴 2026-08-21 사장님 신고 — "지금 포커스 오프인데 블루투스로 영상 옮겨지는 건 머니",
+     * "이럼 누가 유료를 해", "매출이 나겠어".
+     *
+     * 정확한 지적이고, 기능 버그이자 **수익 구멍**이었다. `PaceAccessibilityService.onKeyEvent`의
+     * 볼륨키 하이재킹 게이트가 `bluetoothVolumeKeySkipEnabled` **하나뿐**이라:
+     *   · Focus Session이 꺼져 있어도 리모컨으로 영상이 넘어갔다
+     *   · 무료 사용자도 그대로 다 됐다
+     * D9(2026-07-26)에서 "리모컨 지원(핸즈프리 컨트롤)"을 프리미엄 전용으로 게이팅했는데,
+     * 그건 **JS 쪽(home.tsx의 Auto Mode 재개, BluetoothOnboardingSheet)만**이었고 이 네이티브
+     * 키 경로는 통째로 빠져 있었다. 페이월이 광고하는 기능이 무료로 다 동작하고 있었던 것이다.
+     *
+     * 요구 조건은 **FOCUS ON(PREF_AUTO_MODE) 하나**다. iOS와 정확히 같은 규칙이다
+     * (feed/index.tsx의 `isAutoMode && volumeKeyRemote` / `isAutoMode && handsFreeGesture`).
+     *
+     * ⚠️ 2026-08-21에 처음엔 `PREF_SESSION_ACTIVE`로 걸었다가 **틀린 플래그임이 실사용에서
+     *   드러났다**(사장님 "포커스 온일 때 손짓 블루투스 되는 거잖아 왜 지금도 되"). 둘은 다르다:
+     *     · PREF_SESSION_ACTIVE — 세션(알약/카운트다운)이 도는가. **영상 보는 내내 true**다.
+     *     · PREF_AUTO_MODE("bt_auto_mode") — 알약의 **FOCUS ON/OFF**. 사장님이 말하는 "포커스"가 이것이고,
+     *       iOS의 isAutoMode에 대응한다.
+     *   세션으로 걸면 FOCUS를 꺼도 세션은 살아있으므로 게이트가 사실상 항상 열린다 = 안 고친 것과 같다.
+     *   이 파일의 다른 핸즈프리 게이팅(1580행)도 이미 PREF_AUTO_MODE를 쓴다 — 그쪽과 기준을 맞춘다.
+     *
+     * ⚠️ **프리미엄 조건은 걸지 않는다.** 2026-08-21에 한 번 넣었다가 사장님 지시로 도로 뺐다 —
+     *   2026-07-26 사장님 결정("D9 프리미엄 게이팅을 다시 무료로 개방")과 정면으로 충돌하기 때문이다.
+     *   그 결정의 근거가 코드에 남아 있다: "Focus Session 자동넘김 자체가 이미 무료라, 그걸 화면 안
+     *   만지고 넘기는 트리거만 유료로 막는 게 정책상 어색하다"(home.tsx). iOS도 프리미엄을 안 건다 —
+     *   여기에만 걸면 다시 플랫폼 간 정책 불일치가 생긴다.
+     *   즉 이 경로의 버그는 "무료라서"가 아니라 **"Focus OFF에서도 동작한 것"** 하나였다.
+     *
+     * 판정은 서비스 인스턴스가 아니라 prefs(PREF_SESSION_ACTIVE)로 한다 — 접근성 서비스는
+     * PaceOverlayService와 생명주기가 달라 인스턴스가 없을 수도 있는데, 그때도 세션은 살아있을 수 있다.
+     */
+    fun isHandsFreeAllowed(context: Context): Boolean =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(PREF_AUTO_MODE, false)
 
     // 보상형 광고 시청 완료 후 호출 — 이미 타임아웃으로 꺼져 있으면 워처를 다시 켜고, extraMinutes
     // 뒤에 다시 자동 종료되도록 예약(원래 설정값(PREF_FOCUS_SESSION_MINUTES)이 아니라 이 값을 씀).

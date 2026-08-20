@@ -870,6 +870,18 @@ class PaceAccessibilityService : AccessibilityService() {
     // 그쪽은 이미 isSupportedAppWindowVisible()(getWindows() 기반, 이벤트가 아니라 "지금 이 순간"을
     // 직접 조회)로 보강했는데 이 볼륨키 경로만 낡은 신호를 그대로 쓰고 있었다. 동일하게 보강한다.
     if (!bluetoothVolumeKeySkipEnabled) return false
+    // 🔴 2026-08-21 사장님 신고("포커스 오프인데 블루투스로 영상 옮겨지는 건 머니", "이럼 누가 유료를 해").
+    //   위 2026-07-27 주석이 "isWatching 대신 bluetoothVolumeKeySkipEnabled로 게이팅"이라고 적어둔 대로
+    //   이 경로에는 **세션 조건이 없었다.** 그 결과 Focus Session이 꺼져 있어도 리모컨으로 영상이
+    //   계속 넘어갔다. 손짓 감지기는 세션에 묶여 있는데 볼륨키만 상시라 내부적으로도 앞뒤가 안 맞았다.
+    //   ⚠️ 프리미엄 조건은 **걸지 않는다** — 2026-08-21에 한 번 넣었다가 사장님 지시로 뺐다.
+    //     2026-07-26 결정(D9 프리미엄 게이팅 → 무료 개방)과 충돌하고, iOS도 안 걸어서 여기만 걸면
+    //     플랫폼 간 정책 불일치가 다시 생긴다. 이 경로의 버그는 Focus OFF 동작 하나뿐이다.
+    //   근거와 판정은 PaceOverlayService.isHandsFreeAllowed 주석에 모아뒀다.
+    if (!PaceOverlayService.isHandsFreeAllowed(this)) {
+      Log.i("PaceAccessibility", "볼륨키 스킵 차단 — Focus Session 비활성")
+      return false
+    }
     if (!SupportedApps.PACKAGES.contains(currentForegroundPackage) && !supportedAppWindowVisible()) {
       return false
     }

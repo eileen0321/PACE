@@ -34,6 +34,15 @@ export const overlayService: OverlayService = {
   async endSession() {
     if (!PaceLiveActivity) return;
     await PaceLiveActivity.end().catch(() => {});
+    // 2026-08-20 — end()는 모듈이 핸들을 들고 있는 Activity만 끝낸다. 프로세스가 중간에 재시작됐거나
+    // 어떤 이유로든 핸들을 잃었으면 조용히 no-op이 되어 유령이 남는다. 정상 종료 경로에서도 한 번 더
+    // 전수 정리한다(이미 끝난 것에 대해서는 무해한 no-op).
+    await PaceLiveActivity.endAll().catch(() => {});
+  },
+  // types.ts의 endOrphanedOverlays 주석 참고 — 콜드스타트 시 강제종료로 남은 유령 Live Activity 정리.
+  async endOrphanedOverlays() {
+    if (!PaceLiveActivity) return;
+    await PaceLiveActivity.endAll().catch(() => {});
   },
   async hasOverlayPermission() {
     return true; // iOS는 시스템 오버레이 개념 자체가 없음(Live Activity로 대체) — no-op

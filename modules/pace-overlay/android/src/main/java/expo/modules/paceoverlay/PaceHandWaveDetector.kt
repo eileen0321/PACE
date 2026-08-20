@@ -64,11 +64,29 @@ object PaceHandWaveDetector {
   // 얼굴 확인 주기. 사람이 있다/없다는 초 단위로 바뀌는 값이 아니라 1초면 충분하고, 손 인식
   // 프레임 예산(PROCESS_INTERVAL_MS 150ms)을 뺏지 않는 게 이 값의 존재 이유다 — 손짓이 잘 안
   // 된다는 보고가 이미 있는 상태라(US21) 손 쪽 처리량은 1프레임도 줄이면 안 된다.
-  private const val FACE_INTERVAL_MS = 1000L
+  // 🔴 2026-08-20 실측으로 확정 — 1000ms는 **손 인식 프레임을 훔치고 있었다.** 하트비트가 그대로 보여준다:
+  //     HB in=2366 sent=757 → in=2428 sent=773 (3초)  = 카메라 62장 중 **16장만 처리**(≈5.3fps)
+  //   손이 있을 때 80ms(12.5fps)를 요청해도 실제로는 190ms/장이다. 처리가 간격을 못 따라간다.
+  //   얼굴 감지는 **같은 단일 스레드 executor에서 동기(RunningMode.IMAGE)로** 도는 데다,
+  //   손 불응 구간에도 비싼 YUV→Bitmap 변환을 강제로 일으킨다(analyzeFrame의 faceDue 분기).
+  //   그런데 이 값이 쓰이는 곳은 이제 **수면감지의 personAbsentForMs() 하나뿐**이다 —
+  //   손짓 게이트(shouldTrustHandSignal)는 2026-08-18에 철회돼 항상 true를 반환한다.
+  //   수면감지 임계는 **분 단위**(5~20분)라 1초 해상도가 전혀 필요 없다. 과다 표본이었다.
+  //   → 2.5초로 낮춘다. 수면감지 정확도에는 영향이 없고, 손 인식은 프레임을 돌려받는다.
+  private const val FACE_INTERVAL_MS = 2500L
   // 얼굴을 마지막으로 본 뒤 이만큼 안에 들어온 손 신호만 인정한다. 고개를 돌리거나 잠깐 화면
   // 밖으로 나가는 정도(초 단위)로 손짓이 죽으면 안 되므로 넉넉하게 잡는다.
   private const val FACE_PRESENCE_GRACE_MS = 15_000L
-  private const val PROCESS_INTERVAL_MS = 150L
+  // 🔴 2026-08-21 — 150 → 80. 아래 HAND_ACTIVE_PROCESS_INTERVAL_MS(손이 보이는 동안만 촘촘히)는
+  //   **닭이 먼저냐 달걀이 먼저냐에 걸려 무용지물이었다** — 손이 84.5% 확률로 안 잡히니 "손이 보이는
+  //   동안"이라는 조건 자체가 거의 성립하지 않아, 실제로는 계속 150ms로 돌고 있었다.
+  //   실측 하트비트가 그대로 보여준다: sent가 3초에 17~18 증가 = 170ms/장 ≈ 150ms 간격 그대로.
+  //   6.7fps면 0.3초짜리 손짓에 프레임이 2장뿐이고, 그 2장이 블러지면 검출은 0이다.
+  //   ⚠️ 배터리: 이 파일 상단 설계 주석의 "처리 빈도가 배터리에 가장 직접적"이라는 판단은 여전히
+  //     맞다. 다만 지금은 **기능이 사실상 동작하지 않는 상태**라 그 절충의 전제가 성립하지 않는다.
+  //     인식률이 회복되면 HAND_ACTIVE 분기가 제 역할을 하게 되므로, 그때 이 값을 다시 올려
+  //     "손 없을 때만 느리게"로 되돌리는 것을 검토할 것(그 판단은 nohand 비율 실측 후에).
+  private const val PROCESS_INTERVAL_MS = 80L
   // 2026-08-18 실측 — 사장님 "open app으로 쇼츠 시작하면 손짓을 한참 인식 못 하다 뒤늦게 된다".
   //   세션 시작 직후 로그가 원인을 그대로 보여준다:
   //     18:43:11 camera bound
@@ -86,6 +104,30 @@ object PaceHandWaveDetector {
   // 웜업을 아무리 길어도 여기서 끊는다 — 인식이 영영 안 붙는 환경(렌즈 가림 등)에서 고속 처리가
   // 계속 돌면 그게 곧 배터리 문제가 된다.
   private const val WARMUP_MAX_MS = 20_000L
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // 🟢 2026-08-20 사장님 지적 — "손짓하고 다음 영상까지 개느리다"(반응 지연). 지연 예산을 뜯어보면:
+  //     ① 프레임 샘플링       PROCESS_INTERVAL_MS 150ms  → 평균 75ms 대기
+  //     ② 확정 프레임         연속 2프레임 요구           → +150ms
+  //     ③ MediaPipe 추론      기기 부하 시 700ms 넘김(이 파일이 직접 관측해 기록해둔 값)
+  //     ④ 발동 후 불응        REFRACTORY_MS 1200ms 동안 **추론 자체를 건너뜀**
+  //     ⑤ 스와이프 스트로크   SWIPE_FLING_MS 120ms + 유튜브 자체 스냅 애니메이션
+  //   ②는 위 거리 밴드에서 near=1프레임으로 이미 줄였다. 여기서는 ①과 ④를 줄인다.
+  //
+  //   ① — **손이 실제로 프레임에 있을 때만** 촘촘히 본다. 지연이 문제가 되는 순간은 오직 그때이고,
+  //   세션 시간의 대부분(손이 없는 구간)은 기존 150ms 그대로라 이 파일의 배터리 설계 전제가 안 깨진다.
+  //   웜업(60ms)과 같은 발상을 "손이 보이는 동안"으로 확장한 것이다.
+  private const val HAND_ACTIVE_PROCESS_INTERVAL_MS = 80L
+  /** 마지막 랜드마크 이후 이 시간 안이면 "손이 프레임에 있다"로 보고 위 간격을 쓴다. */
+  private const val HAND_ACTIVE_WINDOW_MS = 700L
+  //   ④ — 불응 구간(1.2초) 동안 추론을 통째로 건너뛰던 최적화(2026-08-01)가, 그 사이 sizeHistory/
+  //   posHistory를 텅 빈 채로 유지시킨다. 그래서 불응이 끝난 **뒤에도** 비교할 과거 샘플이 쌓일
+  //   때까지 두세 프레임을 더 기다려야 한다 — 이 파일이 실측한 "물리적 최단 재발화 1350ms"의 정체다.
+  //   → 불응 후반부터는 추론을 재개해 이력만 데워둔다. **발동 게이트(pastRefractory)는 그대로**
+  //     REFRACTORY_MS 전체를 지키므로 중복 발동 위험은 늘지 않는다. 재무장(awaitingRearm) 판정도
+  //     이제 불응 중에 제대로 돌아간다(지금까지는 결과가 아예 안 와서 불응이 끝나야 확인됐다).
+  //   비용은 트리거당 추가 추론 몇 프레임뿐이고, 손짓을 한 직후라 손이 아직 화면에 있는 구간이다.
+  private const val DETECT_RESUME_AFTER_TRIGGER_MS = 600L
   // 2026-08-05 실측 — "매 넘김마다 첫 손짓이 안 된다"의 정체를 처음으로 숫자로 확인했다.
   // 실기기 로그(사장님이 실제로 손짓한 구간, WAVE 67회에서 연속 손짓 인접 간격 n=41):
   //     최소 1.33s / 25% 3.15s / 중앙 4.51s / 75% 5.57s
@@ -247,6 +289,102 @@ object PaceHandWaveDetector {
   // Apple WWDC20 방식(연속 프레임 증거 누적)의 우리 버전 — 아래 sweptNow/sweepStreak 주석 참고.
   // PROCESS_INTERVAL_MS(150ms) x 2 = 300ms. 애플 권장 구간(0.1~0.8초) 안이고 실제 손짓보다 짧다.
   private const val SWEEP_CONFIRM_FRAMES = 2
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // 🟢 2026-08-20 사장님 지시 — **거리별 임계값(distance-banded)** 로 방향 전환.
+  //
+  //   원문: "손이 카메라 가까워서 흔들어도 화면이 넘어가게 — 확실한 손짓이니까. 최대가 20cm
+  //   떨어졌을 때고, 그 안 범위에서는 카메라 앞에서 손이 **어떤 방향이든** 지나갈 때 반응하는데,
+  //   거리에 따라 임계값을 다르게 하면 되잖아. 가까이에서는 손이 크게 보일 거고 20cm 떨어진
+  //   손짓은 작게 보일 거니까, 가까이 크게 보이면서 지나갈 때 임계값 / 멀리 작은데 손짓으로
+  //   판단할 때 보수적인 임계값."
+  //
+  //   이 지시가 왜 옳은지 — 이 파일이 아홉 번 실패한 이유를 정확히 짚는다. 지금까지의 모든 축은
+  //   **거리 무관(scale-invariant)** 하게 설계돼 있었다(sweep은 handSize로 나누고, speed도 배/초라
+  //   상대값이다). 그런데 신호와 노이즈는 거리에 따라 **정반대로** 움직인다:
+  //     · 신호(손의 실제 물리적 속도)는 거리와 무관하다 — 손너비/초로 재면 어느 거리든 같은 값.
+  //     · 노이즈(MediaPipe 랜드마크 지터)는 **픽셀 단위로 일정**하다. 손너비로 나누는 순간
+  //       노이즈는 1/handSize로 커진다 = **멀수록 폭증한다.**
+  //   즉 SNR이 거리에 따라 달라지는데 문턱은 하나였다. 그 하나를 내리면 먼 거리 오탐이 터지고
+  //   ("지맘대로 넘어감"), 올리면 가까운 거리 정탐이 죽는다("손짓이 안 됨"). 실제로 이 파일의
+  //   기록이 그 두 증상을 번갈아 오간 로그다. 거리별로 나누면 그 맞바꿈 자체가 사라진다.
+  //
+  //   거리 ↔ handSize 환산(핀홀 모델, distance ∝ 1/apparentSize). 이 파일에 이미 남아있는 실측
+  //   분포로 앵커를 잡았다 — "손을 렌즈에 대고 훠이" 구간이 0.20~0.35(2026-08-14 발동 34건 전수),
+  //   실사용 거리 손짓이 0.09~0.19(같은 로그의 아래 무리), 성공 손짓 최솟값이 0.096.
+  //     handSize ≈ 0.30 → ≈10cm  /  0.20 → ≈15cm  /  0.15 → ≈20cm  /  0.10 → ≈30cm
+  //   사장님이 말한 사거리(최대 20cm)의 경계가 handSize ≈ 0.15 부근이다.
+  //   ⚠️ 이 환산은 앵커 두 점으로 맞춘 근사다. 다음 실기기 세션에서 DIAG의 band=/size= 로그로
+  //     밴드별 분포를 다시 뽑아 경계를 재확인할 것(이 파일의 기존 경고와 같은 절차).
+  /** 이 이상이면 손이 렌즈 코앞(≈10~15cm) — "확실한 손짓"이라 가장 관대하게 본다. */
+  private const val NEAR_BAND_HAND_SIZE = 0.20
+  /** 이 이상이면 사장님이 말한 사거리(≈20cm) 안 — 표준 임계값. 미만은 사거리 밖이라 보수적으로. */
+  private const val MID_BAND_HAND_SIZE = 0.135
+
+  // ── 신규 축: glide(2D 이동 속도) — "어떤 방향이든" 요구사항을 담당한다 ──
+  //
+  //   기존 sweep 축은 **손목 x좌표만** 본다(이 파일 전체에서 y는 한 번도 안 쓴다). 그래서
+  //   위아래로 훑거나 대각선으로 지나가는 손짓은 원리적으로 안 잡힌다 — 사장님이 "어떤 방향이든"
+  //   이라고 하신 요구사항이 코드에 아예 없었다.
+  //   → 손목의 (x, y) 2D 변위를 쓴다. 방향에 대해 완전히 대칭이므로 가로·세로·대각선이 동등하다.
+  //
+  //   그리고 sweep의 고질적 결함(윈도우 내 max−min이라 **느린 드리프트와 빠른 손짓이 같은 값**)을
+  //   구조적으로 피한다 — 이 축은 max−min이 아니라 **인접 샘플 간 변화율의 최댓값**(순간 속도)이다.
+  //   실측 오탐이 전부 "speed=0.0인데 sweep만 큼"이었던 이유가 바로 이것이고, 순간 속도로 재면
+  //   그 유형은 원천적으로 값이 안 나온다.
+  //
+  //   두 문턱을 **AND**로 건다. 이게 거리별 적응의 핵심 장치다:
+  //     · REL(손너비/초) — 물리적 손 속도. 거리와 무관하므로 "진짜 손짓인가"를 판정한다.
+  //     · ABS(화면비율/초) — 픽셀 지터 바닥. handSize로 나누지 않으므로 **멀수록 자동으로 넘기
+  //       어려워진다**(같은 REL을 내려면 더 빨리 움직여야 한다). 사장님이 말한 "멀면 보수적"이
+  //       별도 분기 없이 이 한 줄에서 나온다.
+  private const val GLIDE_WINDOW_MS = 500L
+  /** 화면비율/초. 320x240 프레임에서 랜드마크 지터는 프레임당 1~2px(≈0.01) 수준이라 그 위. */
+  private const val GLIDE_ABS_MIN_PER_SEC = 0.09
+  /** 손너비/초. "훠이" 한 번은 0.3~0.5초에 1~2 손너비를 지나가므로 2~6 h/s가 나온다. */
+  private const val GLIDE_REL_MIN_PER_SEC = 0.9
+  /** 인접 샘플 간격이 이보다 벌어지면 속도로 안 센다 — 손을 놓쳤다 다른 위치에서 다시 잡은
+   *  "순간이동"이 초고속으로 계산되던 2026-08-05 오탐 회귀(s=2.307)를 원천 차단한다. */
+  private const val GLIDE_MAX_SAMPLE_GAP_MS = 400L
+  /**
+   * 🔴 2026-08-21 실측 — 연속 프레임 요구가 **진짜 손짓을 대부분 버리고 있었다.**
+   *
+   * 사장님 "지금도 10번은 안 됨" 시점의 로그. 문턱은 glideR=0.9 / glideA=0.09인데:
+   * ```
+   * 00:08:57.959 glideR=6.89 glideA=1.34  near-miss streak=1  → 손을 놓쳐 2프레임째가 안 옴 → 무시
+   * 00:09:01.110 glideR=4.35 glideA=0.83  near-miss streak=1  → 무시
+   * 00:09:05.607 glideR=6.09 glideA=1.09  near-miss streak=1
+   * 00:09:05.671 glideR=6.36              2프레임째 도착      → WAVE ✅
+   * 00:09:07.109 glideR=9.14 glideA=1.65  near-miss streak=1  → 무시
+   * 00:09:08.698 glideR=8.27 glideA=1.43  near-miss streak=1  → 무시
+   * ```
+   * **첫 프레임에서 이미 문턱의 5~10배(glideA는 9~18배)로 완벽하게 감지된다.** 그런데 전부
+   * `streak=1`에서 막힌다 — MediaPipe가 손을 1~2프레임만 잡고 놓치기 때문에 2프레임째가 안 온다.
+   * 2프레임째가 오면 발화, 안 오면 무시 = 정확히 "10번에 몇 번만 되는" 증상.
+   *
+   * 연속 프레임 요구(Apple WWDC20 증거 누적)의 목적은 **문턱 근처의 단발 노이즈** 제거다.
+   * 문턱의 10배짜리 신호는 그 목적의 대상이 아니다 — 노이즈가 그만큼 튀지 않는다.
+   * → 두 축이 **동시에** 이 배수를 넘으면 1프레임으로 확정한다. 문턱 근처 구간은 기존대로
+   *   연속 프레임을 요구하므로, 오탐 방어는 그대로 남는다.
+   * ⚠️ 이 값을 내리려면 반드시 "가만히 든 손" 구간의 glideA/glideR 분포를 함께 재서 정할 것
+   *   (이 파일이 아홉 번 반복한 실패가 전부 그 데이터 없이 문턱을 만진 결과다).
+   */
+  private const val GLIDE_INSTANT_MARGIN = 3.0
+
+  // ── 밴드별 배수 / 확정 프레임 수 ──
+  //   가까울수록 관대(배수 ↓, 확정 프레임 ↓), 멀수록 보수적(배수 ↑, 확정 프레임 ↑).
+  //   확정 프레임까지 밴드별로 나누는 이유: 가까운 손은 화면을 금방 벗어나 샘플이 2~3개밖에
+  //   안 남는다(MediaPipe가 프레임 가장자리에서 손을 놓친다). 거기에 연속 2프레임을 요구하면
+  //   "카메라 앞을 스치듯 지나가는" 가장 확실한 손짓이 오히려 제일 안 잡힌다 — 실제로 지금이 그렇다.
+  private const val NEAR_BAND_MULT = 0.7
+  private const val MID_BAND_MULT = 1.0
+  private const val FAR_BAND_MULT = 1.8
+  private const val NEAR_BAND_CONFIRM_FRAMES = 1
+  private const val MID_BAND_CONFIRM_FRAMES = 2
+  private const val FAR_BAND_CONFIRM_FRAMES = 3
+
+  /** 큰 손(NEAR 밴드)을 이 시간 안에 봤으면 렌즈 가림(luma) 판정도 함께 완화한다 — 아래 주석 참고. */
+  private const val NEAR_HAND_RECENT_MS = 1200L
   // 2026-08-05 — 손이 "정말 나갔다"고 판단하기까지의 유예. 스윕 양 끝의 모션블러/프레임 이탈로
   // 한두 프레임 놓치는 것과, 손을 실제로 내린 것을 구분한다. PROCESS_INTERVAL_MS(150ms) 기준
   // 두세 프레임 분량 — 실제로 손을 내리면 그보다 훨씬 오래 비므로 구분이 확실하다.
@@ -309,6 +447,55 @@ object PaceHandWaveDetector {
   private const val LUMA_WINDOW_MS = 400L
   private const val LUMA_DROP_RATIO = 0.45 // 최근 대비 밝기가 이 비율 이하로 떨어지면(45% 이하) 발동
   private const val LUMA_DARK_ABS_MAX = 70.0 // 절대 밝기도 충분히 어두워야(0~255) — 정상 조도 변화 오탐 방지
+  // 🟢 2026-08-20 거리별 적응의 일부 — **큰 손을 방금 봤을 때만** 가림 판정을 완화한다.
+  //   위 두 값은 "렌즈를 완전히 덮었을 때"만 걸리도록 아주 빡빡하다. 그런데 20cm 안에서 손이
+  //   렌즈 앞을 **스쳐 지나가면** 프레임이 통째로 까매지지는 않고 절반쯤 어두워졌다 밝아진다 —
+  //   지금 값으로는 한 번도 안 걸린다. 반대로 이 값을 그냥 낮추면 조명 변화/사람이 지나가는 그림자가
+  //   전부 발동한다(그래서 원래 빡빡했다).
+  //   → NEAR 밴드 손(handSize ≥ 0.20)을 최근 NEAR_HAND_RECENT_MS 안에 실제로 본 경우에만 완화한다.
+  //     "손이 렌즈 코앞에 있다"는 독립적인 증거가 이미 있는 상태이므로, 그때의 밝기 급감은
+  //     조명 변화가 아니라 그 손이 지나간 것으로 보는 게 맞다.
+  private const val LUMA_DROP_RATIO_NEAR = 0.68
+  private const val LUMA_DARK_ABS_MAX_NEAR = 130.0
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // 🟢 2026-08-21 신규 축: gross-motion(격자 밝기 변화) — **큰 손짓 전용**.
+  //
+  //   사장님: "손을 크게 흔들면 안 되?", "사람들마다 손 흔드는 게 틀릴 거 아냐 큰 손짓도 인식해야지."
+  //   맞는 요구다. 그런데 실측이 보여준 문제는 임계값이 아니라 **손을 아예 못 찾는 것**이었다:
+  //     00:14:37~00:15:04 적당히 흔든 27초 → WAVE 26회(전부 정상 스와이프)
+  //     00:15:04~00:15:43 크게 흔든 39초  → out +30 / nohand +30 ... **손 검출 0개**
+  //   같은 구간에 얼굴은 계속 잡힌다(face=390ms전). 얼굴은 안 움직여 선명하고, 크고 빠른 손은
+  //   모션블러 + 프레임 이탈로 팜 디텍터가 아예 못 잡는다.
+  //   → **손 랜드마크에 의존하지 않는 축**이 필요하다. 노출 고정(30fps AE)만으로는 블러를 줄일 뿐
+  //     "손이 프레임을 스치듯 지나가 버리는" 경우를 못 잡는다.
+  //
+  //   원리: 손이 렌즈 앞을 지나가면 화면의 **넓은 영역이 동시에 어두워졌다가 돌아온다.** Y평면을
+  //   8x8 격자로 줄여 평균 밝기를 재고, 짧은 시간(GROSS_MOTION_LAG_MS) 전과 비교해 **많은 칸이
+  //   한꺼번에 어두워졌는지**만 본다. MediaPipe를 안 거치므로 블러/이탈과 무관하고 계산도 거의 공짜다
+  //   (Y평면은 averageLuma가 이미 읽고 있다).
+  //
+  //   기존 luma 축(checkOcclusion)과 다른 점: 그쪽은 **화면 전체 평균**이라 "렌즈를 완전히 덮은"
+  //   경우만 잡힌다(그래서 임계가 45%/절대밝기 70으로 아주 빡빡하다). 이쪽은 **공간 분포**를 보므로
+  //   손이 화면의 절반만 스쳐도 잡힌다.
+  //
+  //   오탐 방어 3중:
+  //    ① 얼굴이 최근에 보였을 때만(사람이 앞에 있음) — 커튼/그림자/빈 방을 통째로 배제
+  //    ② 변한 칸의 대부분이 **어두워진** 쪽이어야 함 — 폰을 집어 들거나 장면이 바뀌면 밝아진 칸과
+  //       어두워진 칸이 섞인다. 손이 빛을 가리는 것은 한 방향이다.
+  //    ③ REFRACTORY_MS를 손 랜드마크 경로와 공유(fireTrigger) — 같은 동작이 두 번 발화하지 않는다
+  private const val MOTION_GRID = 8
+  /** 격자 평균을 낼 때의 픽셀 샘플링 간격 — 전 픽셀을 볼 필요가 없다(평균이라 4픽셀당 1개면 충분). */
+  private const val MOTION_SAMPLE_STEP = 4
+  private const val GROSS_MOTION_WINDOW_MS = 700L
+  /** 이만큼 전 프레임과 비교한다 — 손짓 한 번의 시간 규모(80ms 간격 기준 2~3프레임). */
+  private const val GROSS_MOTION_LAG_MS = 180L
+  /** 칸 평균 밝기(0~255)가 이만큼 변해야 "변한 칸"으로 센다. */
+  private const val GROSS_MOTION_CELL_DELTA = 30
+  /** 전체 칸 중 이 비율 이상이 변해야 발동 — 손이 화면의 절반 이상을 지나갔다는 뜻. */
+  private const val GROSS_MOTION_CELL_FRACTION = 0.55
+  /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
+  private const val GROSS_MOTION_DARKEN_RATIO = 0.7
 
   @Volatile private var running = false
   // 2026-07-28 감사 발견 — start()/stop()이 빠르게 연속 호출되면(예: Focus 탭 "손짓" 스위치를 짧은
@@ -361,6 +548,15 @@ object PaceHandWaveDetector {
   @Volatile private var detectSent = 0
   @Volatile private var resultsIn = 0
   @Volatile private var lastHeartbeatAtMs = 0L
+  // 🟢 2026-08-20 — 지연 예산 ③(MediaPipe 추론 시간)을 실제로 재기 위한 계측. 이 파일은 "기기 부하 시
+  // 700ms를 훌쩍 넘긴다"고 적어뒀지만 그 값을 상시로 보고 있지는 않았다 — 사장님이 "손짓하고 넘어가기까지
+  // 개느리다"고 하실 때, 그게 우리 로직(간격/확정프레임) 탓인지 추론 탓인지 구분할 근거가 없다.
+  // detectAsync 직전 시각을 남겨 onResult에서 왕복 시간을 재고 하트비트에 같이 찍는다(공짜 계측).
+  @Volatile private var lastDetectSentAtMs = 0L
+  @Volatile private var lastInferenceMs = 0L
+  // 결과는 왔는데 **손 랜드마크가 0개**였던 횟수. DIAG는 손을 찾았을 때만 찍히므로, 이 값이 없으면
+  // "손을 못 찾은 것"과 "찾았는데 문턱을 못 넘은 것"을 구분할 수 없다 — 그 구분이 진단의 전부다.
+  @Volatile private var noHandResults = 0
   // 2026-08-01 사용자 지적("화면이 2개씩 넘어가냐 큐에 넣었다가") — 손을 밀어낸 뒤 바로 안 치우고
   // 카메라 앞에 머물러 있으면, 그 잔류 흔들림만으로도 GROWTH_WINDOW_MS(700ms) 새 창에서 growthRatio가
   // 다시 1.2를 넘어 REFRACTORY_MS(1.2초)만 지나면 또 트리거됐다(실기기 로그로 확인 — 한 번의 제스처
@@ -369,14 +565,22 @@ object PaceHandWaveDetector {
   // 게이트를 추가한다. 손이 화면에서 완전히 사라지는 경우(landmarks 없음)도 물러난 것으로 간주.
   // sweep 조건이 연속으로 몇 프레임 만족됐는지(오탐 방지 — SWEEP_CONFIRM_FRAMES 주석 참고).
   private var sweepStreak = 0
+  // 신규 glide(2D 속도) 축의 연속 프레임 카운터 — sweepStreak과 같은 원리, 축만 다르다.
+  private var glideStreak = 0
+  /** 마지막으로 NEAR 밴드 크기의 손을 본 시각 — luma 완화 게이트용(LUMA_*_NEAR 주석 참고). */
+  @Volatile private var lastNearHandAtMs = 0L
   private var awaitingRearm = false
   private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
   private val sizeHistory = ArrayDeque<Pair<Long, Double>>()
-  // (timestamp, wrist.x) 짧은 이력 — 좌우 흔들기(스윕) 판정용. sizeHistory와 같은 윈도우/원리.
-  private val xHistory = ArrayDeque<Pair<Long, Double>>()
+  // (timestamp, wrist.x, wrist.y) 짧은 이력 — sizeHistory와 같은 윈도우/원리.
+  // 2026-08-20에 x만 담던 것을 (x, y)로 확장했다. 기존 sweep 축은 그대로 x(second)만 쓰고,
+  // 신규 glide 축이 (x, y) 2D를 써서 "어떤 방향이든"을 담당한다 — 기존 판정은 한 줄도 안 바뀐다.
+  private val posHistory = ArrayDeque<Triple<Long, Double, Double>>()
   // (timestamp, averageLuma) 짧은 이력 — occlusion(가려짐) 안전망용, sizeHistory와 동일한 원리.
   private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
+  // (timestamp, 8x8 격자 평균밝기) — 큰 손짓 축(gross-motion)용. 64개 Int라 메모리도 무시할 만하다.
+  private val gridHistory = ArrayDeque<Pair<Long, IntArray>>()
 
   // 2026-07-24: 프로젝트에 트랜지티브로 딸려온 androidx.lifecycle 버전이 LifecycleOwner를 순수 Java
   // 인터페이스(getLifecycle())로 노출해 Kotlin `override val lifecycle` 프로퍼티 오버라이드 문법이
@@ -411,7 +615,14 @@ object PaceHandWaveDetector {
     }
     running = true
     // 디버그 빌드에서만 매 프레임 진단 로그(위 diagEnabled 주석 참고). 릴리즈에서는 항상 false.
-    diagEnabled = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    // 🔴 2026-08-20 임시 진단(사장님 "됐다 안 됐다 너무 심하잖아") — **릴리즈에서도 강제로 켠다.**
+    //   이유: 실패하는 순간의 값이 없으면 또 임계값을 추측으로 만지게 되고, 그게 이 파일이 아홉 번
+    //   반복한 실패의 정확한 원인이다("검열된 데이터로 임계값 조정"). 성공 로그(WAVE)만으로는
+    //   "왜 안 잡혔나"를 절대 알 수 없다 — 안 잡힌 프레임은 아무 흔적도 안 남기기 때문이다.
+    //   지금 처리율이 ≈5fps라 로그도 초당 5줄뿐이라 스팸이 아니다.
+    //   ⚠️ 원인 확정 후 반드시 아래 한 줄로 되돌릴 것:
+    //      diagEnabled = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    diagEnabled = true
     lastDiagAtMs = 0L
     val myGeneration = ++startGeneration
     Handler(Looper.getMainLooper()).post { startOnMainThread(context, onWave, myGeneration) }
@@ -420,8 +631,11 @@ object PaceHandWaveDetector {
   private fun startOnMainThread(context: Context, onWave: () -> Unit, myGeneration: Int) {
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
-    xHistory.clear()
+    posHistory.clear()
     sweepStreak = 0
+    glideStreak = 0
+    lastNearHandAtMs = 0L
+    gridHistory.clear()
     lastTriggerAtMs = 0L
     cameraBoundAtMs = System.currentTimeMillis()
     firstDetectionDone = false
@@ -464,9 +678,22 @@ object PaceHandWaveDetector {
           )
           .setRunningMode(RunningMode.LIVE_STREAM)
           .setNumHands(1)
-          .setMinHandDetectionConfidence(0.5f)
-          .setMinTrackingConfidence(0.5f)
-          .setMinHandPresenceConfidence(0.5f)
+          // 🔴 2026-08-21 실측으로 확정된 **진짜 병목** — 임계값이 아니라 **손 인식 자체**였다.
+          //   사장님 "손짓 10번 안 됨" 시점의 하트비트(nohand 카운터는 이 조사를 위해 새로 넣었다):
+          //     00:00:58 out=2651 nohand=2233 / 00:01:01 out=2669 nohand=2251 / 00:01:04 out=2687 nohand=2269
+          //   out과 nohand가 **1:1로 증가한다** = 모든 프레임에서 손 랜드마크가 0개다(전체의 84.5%).
+          //   같은 비트맵에서 **얼굴은 계속 잡힌다**(face=396ms전) — 카메라도 사람도 정상인데 손만 못 찾는다.
+          //   그리고 손이 잡힌 프레임의 DIAG dt(손 인식 사이 간격)가 **207,888ms / 33,462ms**였다.
+          //   즉 사장님이 208초간 손짓하는 동안 손을 딱 한 번 찾았고, **찾은 4번 중 3번은 즉시 발화했다.**
+          //   → 판정 로직(밴드/glide)은 멀쩡하다. 인식률이 0에 가까운 것이 100% 원인이다.
+          //
+          //   얼굴은 정지해 선명하고 손은 빠르게 움직여 **모션블러**가 걸린다(게다가 자정 실내라
+          //   노출시간이 길다). 블러진 손은 palm detector가 0.5 신뢰도를 못 넘긴다.
+          //   → 0.3으로 내린다. 오탐 우려는 낮다 — 이 값은 "손인가"의 문턱일 뿐이고, "손짓인가"는
+          //     그 뒤의 밴드/glide/확정프레임이 판정한다(그쪽은 실측으로 정상 동작이 확인됐다).
+          .setMinHandDetectionConfidence(0.3f)
+          .setMinTrackingConfidence(0.3f)
+          .setMinHandPresenceConfidence(0.3f)
           .setResultListener { result, _ -> onResult(result, onWave) }
           .setErrorListener { e -> Log.e(TAG, "HandLandmarker error", e) }
           .build()
@@ -499,20 +726,70 @@ object PaceHandWaveDetector {
         }
         cameraProvider = provider
 
-        val analysis = ImageAnalysis.Builder()
-          .setTargetResolution(Size(320, 240))
+        fun buildAnalysis(useFixed30FpsAe: Boolean): ImageAnalysis = ImageAnalysis.Builder()
+          // 🔴 2026-08-21 — 320x240에서 손이 화면의 20%면 팜 영역이 **48px**밖에 안 된다. 거기에
+          //   모션블러까지 겹치면 palm detector가 못 찾는다(위 setMinHandDetectionConfidence 주석의
+          //   실측: nohand 84.5%). 얼굴은 정지 상태라 이 해상도로도 잡히지만 손은 안 잡힌다.
+          //   → 480x360으로 올린다(픽셀 2.25배). MediaPipe는 내부적으로 자기 입력 크기로 리사이즈하므로
+          //     추론 시간 자체는 거의 안 변하고, 늘어나는 비용은 YUV→Bitmap 변환분뿐이다
+          //     (실측 infer=50~150ms에 아직 여유가 있다 — 처리 간격이 아니라 이 값이 한계가 되면
+          //     하트비트의 sent/in 비율이 즉시 떨어지므로 다음 로그에서 바로 확인된다).
+          .setTargetResolution(Size(480, 360))
           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+          .also { builder ->
+            // 🔴 2026-08-21 사장님 "손을 크게 흔들면 안 되?????" — 실측으로 확인했고, **맞다.**
+            //   00:14:37~00:15:04 적당한 속도로 흔든 27초: WAVE 26회(전부 정상 스와이프)
+            //   00:15:04~00:15:43 크게 흔든 39초: out +30/nohand +30 ... **손 검출 0개**
+            //   같은 구간에 얼굴은 계속 잡힌다(face=390ms전) — 얼굴은 안 움직여 선명하기 때문이다.
+            //   즉 크고 빠른 손짓일수록 **모션블러**로 팜 디텍터가 손을 아예 못 찾는다.
+            //   임계값·밴드·glide는 이미 정상 동작하므로(잡히기만 하면 26/26 발화) 남은 건 블러뿐이다.
+            //
+            //   → 자동노출(AE)의 목표 프레임레이트 하한을 올려 **노출시간 자체를 강제로 짧게** 만든다.
+            //     AE는 어두우면 노출시간을 늘려 밝기를 확보하는데(자정 실내라 특히), 그게 곧 블러다.
+            //     30fps를 유지하라고 못 박으면 노출시간이 ~33ms 이하로 묶여 움직이는 손이 선명해진다.
+            //     밝기는 ISO로 보상되어 노이즈가 늘지만, 팜 디텍터에는 노이즈보다 블러가 훨씬 치명적이다.
+            //   ⚠️ 기기가 [30,30]을 지원하지 않으면 bindToLifecycle이 예외를 던진다 — 그러면 손짓이
+            //     통째로 죽으므로, 아래 바인딩부에서 실패 시 이 옵션 없이 한 번 더 시도한다.
+            if (useFixed30FpsAe) {
+              try {
+                androidx.camera.camera2.interop.Camera2Interop.Extender(builder)
+                  .setCaptureRequestOption(
+                    android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                    android.util.Range(30, 30)
+                  )
+              } catch (e: Exception) {
+                Log.w(TAG, "Camera2Interop AE 설정 실패 — 기본 노출로 진행", e)
+              }
+            }
+          }
           .build()
-        analysisExecutor?.let { executor ->
-          analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy, onWave) }
-        }
-        imageAnalysis = analysis
 
-        provider.unbindAll()
-        @Suppress("DEPRECATION")
-        owner.registry.markState(Lifecycle.State.RESUMED)
-        provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
-        Log.i(TAG, "camera bound, watching for hand-wave")
+        fun attachAndBind(useFixed30FpsAe: Boolean) {
+          val analysis = buildAnalysis(useFixed30FpsAe)
+          analysisExecutor?.let { executor ->
+            analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy, onWave) }
+          }
+          imageAnalysis = analysis
+          provider.unbindAll()
+          @Suppress("DEPRECATION")
+          owner.registry.markState(Lifecycle.State.RESUMED)
+          provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
+        }
+
+        try {
+          attachAndBind(true)
+          Log.i(TAG, "camera bound, watching for hand-wave (고정30fpsAE=on)")
+        } catch (e: Exception) {
+          // 🔴 2026-08-21 — [30,30] AE 범위를 지원하지 않는 기기는 옵션을 붙이는 시점이 아니라
+          //   **실제 바인딩 시점에** 예외를 던진다. 그대로 두면 손짓이 통째로 죽으므로 이 옵션만
+          //   빼고 정확히 한 번 다시 시도한다(블러 개선은 못 받지만 기능은 살아남는다).
+          //   ⚠️ start()를 재귀 호출하면 안 된다 — handLandmarker/executor를 닫지 않고 새로 만들어
+          //     누수 + 이 파일이 기록한 SIGSEGV 경로(닫히는 중인 landmarker 접근)를 되살린다.
+          //     그래서 카메라 유스케이스만 다시 만들어 붙인다.
+          Log.w(TAG, "고정 30fps AE 바인딩 실패 — 기본 노출로 재시도", e)
+          attachAndBind(false)
+          Log.i(TAG, "camera bound, watching for hand-wave (고정30fpsAE=off)")
+        }
       } catch (e: Exception) {
         // 카메라가 다른 앱(예: 통화)에 물려있거나 기기가 거부하는 경우 등 — running=false만 하고
         // 끝내면 이미 만들어둔 handLandmarker/executor가 그대로 새는 진짜 리소스 누수였다. stop()과
@@ -583,11 +860,18 @@ object PaceHandWaveDetector {
       // 2026-08-15 — 얼굴 상태를 여기 얹는다. 얼굴 게이트는 "어두운 방에서 얼굴을 못 봐서 손짓이
       // 죽는가"를 실측해야 신뢰할 수 있는데, 그걸 볼 수 있는 주기적 신호가 이것뿐이다.
       val faceAge = if (faceEverSeen) "${now - lastFaceSeenAtMs}ms전" else "없음"
-      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
+      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn nohand=$noHandResults infer=${lastInferenceMs}ms running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
     }
     // 웜업 중(첫 인식 전, 최대 WARMUP_MAX_MS)에는 촘촘히 본다 — 위 WARMUP_* 주석 참고.
     val warmingUp = !firstDetectionDone && cameraBoundAtMs > 0L && now - cameraBoundAtMs < WARMUP_MAX_MS
-    val procInterval = if (warmingUp) WARMUP_PROCESS_INTERVAL_MS else PROCESS_INTERVAL_MS
+    // 🟢 2026-08-20 — 손이 실제로 프레임에 있는 동안만 촘촘히 본다(HAND_ACTIVE_* 주석 참고).
+    // 지연이 문제 되는 건 오직 이 구간이고, 손이 없는 대부분의 시간은 기존 150ms 그대로다.
+    val handActive = lastLandmarkAtMs > 0L && now - lastLandmarkAtMs <= HAND_ACTIVE_WINDOW_MS
+    val procInterval = when {
+      warmingUp -> WARMUP_PROCESS_INTERVAL_MS
+      handActive -> HAND_ACTIVE_PROCESS_INTERVAL_MS
+      else -> PROCESS_INTERVAL_MS
+    }
     if (!running || now - lastProcessedAtMs < procInterval) {
       proxy.close()
       return
@@ -596,6 +880,8 @@ object PaceHandWaveDetector {
     try {
       // occlusion 안전망 — Y평면 평균 밝기만 보는 거라 MediaPipe 추론 전에 먼저, 훨씬 싸게 계산.
       checkOcclusion(averageLuma(proxy), now, onWave)
+      // 큰 손짓 축 — 손 랜드마크와 무관하게 Y평면만 보므로 여기서 같이 싸게 처리한다.
+      checkGrossMotion(lumaGrid(proxy), now, onWave)
       // 2026-08-01 최적화(로그 실측 기반) — REFRACTORY_MS(1.2초) 안에서는 fireTrigger/onResult가
       // 어차피 새 트리거를 무시하는데(디바운스), 지금까진 그 1.2초 동안도(≈8프레임) 매번 YUV→Bitmap
       // 변환 + MediaPipe 손 랜드마크 추론(가장 비싼 연산, 화면전환 애니메이션 도중 손이 아직
@@ -607,7 +893,11 @@ object PaceHandWaveDetector {
       // 하나라도 필요할 때만 한 번 하고 **같은 비트맵을 나눠 쓴다**(변환을 두 번 하지 않는다).
       val faceInterval = if (warmingUp) WARMUP_FACE_INTERVAL_MS else FACE_INTERVAL_MS
       val faceDue = faceDetector != null && now - lastFaceCheckAtMs >= faceInterval
-      val handDue = now - lastTriggerAtMs > REFRACTORY_MS
+      // 🟢 2026-08-20 — 불응 구간 **후반부터는 추론을 재개**해 이력(sizeHistory/posHistory)만 데워둔다.
+      //   발동 게이트는 onResult의 pastRefractory(REFRACTORY_MS 전체)가 그대로 지키므로 중복 발동
+      //   위험은 안 늘고, 불응이 끝나는 순간 이미 비교할 과거 샘플이 쌓여 있어 곧바로 판정할 수 있다.
+      //   (기존엔 불응 종료 후 새로 두세 프레임을 더 모아야 했다 — 실측 "최단 재발화 1350ms"의 원인.)
+      val handDue = now - lastTriggerAtMs > DETECT_RESUME_AFTER_TRIGGER_MS
       if (!faceDue && !handDue) return
       val bitmap = yuv420ToBitmap(proxy)
       if (bitmap != null) {
@@ -622,7 +912,7 @@ object PaceHandWaveDetector {
         // 그 경우 handLandmarker는 이미 닫혔거나 닫히는 중이다(널 체크만으로는 close()가 진행 중인
         // 순간을 못 걸러낸다 — 그 틈이 정확히 SIGSEGV가 났던 창이다).
         synchronized(landmarkerLock) {
-          if (running) { handLandmarker?.detectAsync(mpImage, now); detectSent++ }
+          if (running) { lastDetectSentAtMs = System.currentTimeMillis(); handLandmarker?.detectAsync(mpImage, now); detectSent++ }
         }
       }
     } catch (e: Exception) {
@@ -692,6 +982,78 @@ object PaceHandWaveDetector {
   // Y평면(휘도) 바이트를 그대로 평균 — YUV_420_888에서 Y가 곧 밝기이므로 비트맵 변환 없이 가장 싸게
   // "이 프레임이 전체적으로 얼마나 밝은지"를 얻는다. 320x240 전체를 순회해도 매 프레임이 아니라
   // PROCESS_INTERVAL_MS(150ms)당 1번뿐이라 비용이 무시할 만하다.
+  /**
+   * Y평면을 MOTION_GRID x MOTION_GRID 격자로 줄여 칸별 평균 밝기(0~255)를 낸다.
+   * MediaPipe도 Bitmap 변환도 안 거치므로 사실상 공짜다 — 위 gross-motion 주석 참고.
+   */
+  private fun lumaGrid(proxy: ImageProxy): IntArray {
+    val plane = proxy.planes[0]
+    val buf = plane.buffer.duplicate()
+    val rowStride = plane.rowStride
+    val pixelStride = plane.pixelStride
+    val w = proxy.width
+    val h = proxy.height
+    val sums = IntArray(MOTION_GRID * MOTION_GRID)
+    val counts = IntArray(MOTION_GRID * MOTION_GRID)
+    var y = 0
+    while (y < h) {
+      val gy = (y * MOTION_GRID) / h
+      var x = 0
+      while (x < w) {
+        val pos = y * rowStride + x * pixelStride
+        if (pos < buf.limit()) {
+          val idx = gy * MOTION_GRID + (x * MOTION_GRID) / w
+          sums[idx] += (buf.get(pos).toInt() and 0xFF)
+          counts[idx]++
+        }
+        x += MOTION_SAMPLE_STEP
+      }
+      y += MOTION_SAMPLE_STEP
+    }
+    for (i in sums.indices) if (counts[i] > 0) sums[i] /= counts[i]
+    return sums
+  }
+
+  /**
+   * 큰 손짓 전용 축 — 넓은 영역이 한꺼번에 **어두워졌는지**만 본다(위 gross-motion 상수 주석 참고).
+   * 손 랜드마크를 안 쓰므로 모션블러/프레임 이탈로 팜 디텍터가 실패하는 바로 그 상황에 오히려 강하다.
+   */
+  private fun checkGrossMotion(grid: IntArray, now: Long, onWave: () -> Unit) {
+    gridHistory.addLast(now to grid)
+    while (gridHistory.isNotEmpty() && now - gridHistory.first().first > GROSS_MOTION_WINDOW_MS) {
+      gridHistory.removeFirst()
+    }
+    // 오탐 방어 ① — 사람이 앞에 있을 때만. 얼굴을 한 번도 못 본 세션에서는 이 축을 아예 끈다
+    // (깜깜한 방에서 얼굴이 안 잡히는 경우까지 오탐 위험을 안고 갈 이유가 없다 — 그쪽은 손 랜드마크
+    //  경로가 그대로 담당한다).
+    if (!faceEverSeen || now - lastFaceSeenAtMs > FACE_PRESENCE_GRACE_MS) return
+    // GROSS_MOTION_LAG_MS 이상 지난 프레임 중 **가장 최근** 것과 비교한다.
+    val ref = gridHistory.lastOrNull { now - it.first >= GROSS_MOTION_LAG_MS } ?: return
+    var changed = 0
+    var darkened = 0
+    for (i in grid.indices) {
+      val d = grid[i] - ref.second[i]
+      if (kotlin.math.abs(d) >= GROSS_MOTION_CELL_DELTA) {
+        changed++
+        if (d < 0) darkened++
+      }
+    }
+    if (changed == 0) return
+    val fraction = changed.toDouble() / grid.size
+    val darkenRatio = darkened.toDouble() / changed
+    // 오탐 방어 ② — 변한 칸의 대부분이 어두워진 쪽이어야 한다. 폰을 집어 들거나 장면이 바뀌면
+    // 밝아진 칸과 어두워진 칸이 섞이지만, 손이 빛을 가리는 것은 한 방향이다.
+    if (fraction >= GROSS_MOTION_CELL_FRACTION && darkenRatio >= GROSS_MOTION_DARKEN_RATIO) {
+      fireTrigger(
+        "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio lag=${now - ref.first}ms",
+        onWave
+      )
+    } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.6) {
+      // 튜닝 근거 확보 — 아깝게 못 넘긴 경우만 남긴다(이 파일의 near-miss와 같은 원칙).
+      Log.d(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio(th=$GROSS_MOTION_DARKEN_RATIO)")
+    }
+  }
+
   private fun averageLuma(proxy: ImageProxy): Double {
     val yBuffer = proxy.planes[0].buffer
     val yBytes = ByteArray(yBuffer.remaining())
@@ -712,8 +1074,16 @@ object PaceHandWaveDetector {
     val brightestInWindow = lumaHistory.maxOfOrNull { it.second } ?: return
     if (brightestInWindow <= 0.0) return
     val dropRatio = luma / brightestInWindow
-    if (dropRatio <= LUMA_DROP_RATIO && luma <= LUMA_DARK_ABS_MAX) {
-      fireTrigger("occlusion luma=$luma brightestInWindow=$brightestInWindow dropRatio=$dropRatio", onWave)
+    // 🟢 2026-08-20 — "큰 손을 방금 봤는가"로 두 벌의 임계값을 고른다(LUMA_*_NEAR 주석 참고).
+    // 손이 렌즈 코앞에 있다는 독립 증거가 있을 때만 완화하므로, 조명 변화 오탐은 늘지 않는다.
+    val nearHandRecent = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= NEAR_HAND_RECENT_MS
+    val dropTh = if (nearHandRecent) LUMA_DROP_RATIO_NEAR else LUMA_DROP_RATIO
+    val darkTh = if (nearHandRecent) LUMA_DARK_ABS_MAX_NEAR else LUMA_DARK_ABS_MAX
+    if (dropRatio <= dropTh && luma <= darkTh) {
+      fireTrigger(
+        "occlusion near=$nearHandRecent luma=$luma brightestInWindow=$brightestInWindow dropRatio=$dropRatio(th=$dropTh)",
+        onWave
+      )
     }
   }
 
@@ -772,6 +1142,35 @@ object PaceHandWaveDetector {
   }
 
   /**
+   * 🟢 2026-08-20 신규 — 최근 GLIDE_WINDOW_MS 안에서 관측된 손목의 **2D 순간 이동 속도** 최댓값
+   * (화면비율/초). 방향 무관: hypot(dx, dy)이므로 가로·세로·대각선이 완전히 동등하다.
+   *
+   * peakGrowthSpeedPerSec와 같은 "인접 샘플 미분" 방식이다. sweep처럼 윈도우 내 max−min을 쓰지
+   * 않는 이유는 이 파일이 이미 비싸게 배운 것이다 — max−min에는 시간 개념이 없어서 2.5초에 걸친
+   * 느린 드리프트가 0.4초짜리 빠른 손짓과 같은 값으로 나온다(실측 오탐: sweep=0.227인데 speed=0.0).
+   *
+   * 샘플 간격이 GLIDE_MAX_SAMPLE_GAP_MS를 넘으면 그 구간은 건너뛴다 — 손을 잠깐 놓쳤다가 **다른
+   * 위치에서** 다시 잡히는 "순간이동"이 초고속으로 계산되던 2026-08-05 오탐 회귀(s=2.307)를 막는다.
+   */
+  private fun peakGlideAbsPerSec(now: Long): Double {
+    if (posHistory.size < 2) return 0.0
+    val recent = posHistory.filter { now - it.first <= GLIDE_WINDOW_MS }
+    if (recent.size < 2) return 0.0
+    var peak = 0.0
+    for (i in 1 until recent.size) {
+      val (tPrev, xPrev, yPrev) = recent[i - 1]
+      val (tCur, xCur, yCur) = recent[i]
+      val dtMs = tCur - tPrev
+      // 같은 밀리초 두 샘플 → 0으로 나눠 Infinity가 되고 그 프레임이 영원히 피크로 남는다.
+      if (dtMs < 20L || dtMs > GLIDE_MAX_SAMPLE_GAP_MS) continue
+      val dist = hypot(xCur - xPrev, yCur - yPrev)
+      val v = dist / (dtMs / 1000.0)
+      if (v > peak) peak = v
+    }
+    return peak
+  }
+
+  /**
    * 최근 SPEED_PEAK_WINDOW_MS 안에서 관측된 handSize 증가 속도의 최댓값(배/초).
    *
    * 인접한 두 샘플만 보고 (다음/이전 - 1) / 경과초로 계산한다. 손 크기 자체가 아니라 "이전 크기 대비
@@ -801,7 +1200,9 @@ object PaceHandWaveDetector {
 
   private fun onResult(result: HandLandmarkerResult, onWave: () -> Unit) {
     resultsIn++
+    if (lastDetectSentAtMs > 0L) lastInferenceMs = System.currentTimeMillis() - lastDetectSentAtMs
     if (result.landmarks().isEmpty()) {
+      noHandResults++
       awaitingRearm = false // 손이 화면에서 사라짐 = 확실히 물러난 것으로 보고 재무장
       // 2026-08-02 — 손이 사라졌으면 이전 접근 동작의 크기 이력도 버린다. 남겨두면 다음에 손을
       // 다시 넣었을 때 "직전 동작의 큰 손"이 최솟값 기준에 섞여 들어가(또는 반대로 남은 작은 값이
@@ -832,8 +1233,9 @@ object PaceHandWaveDetector {
       //     발화 직후의 재무장/불응 구간(REFRACTORY_MS + awaitingRearm + sizeHistory.clear)일 가능성이
       //     크다 — 그쪽은 실측(rearmed after …ms 로그) 없이 건드리지 않는다.
       sizeHistory.clear()
-      xHistory.clear() // 가로 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
+      posHistory.clear() // 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
       sweepStreak = 0 // 연속 프레임 증거도 함께 버린다 — 안 그러면 손이 다시 들어오자마자 확정된다
+      glideStreak = 0
       return
     }
     lastLandmarkAtMs = System.currentTimeMillis()
@@ -876,18 +1278,50 @@ object PaceHandWaveDetector {
     // 손목 x좌표의 윈도우 내 이동폭(최대-최소)을 손 크기로 정규화해서 쓴다 — 픽셀/정규화 좌표를
     // 그대로 쓰면 손이 카메라에 가까울수록(=화면에서 클수록) 같은 동작이 더 큰 값으로 나와 거리에
     // 따라 감도가 달라지지만, 손 크기로 나누면 "내 손 너비의 몇 배를 움직였나"가 되어 거리와 무관해진다.
-    xHistory.addLast(now to wrist.x().toDouble())
-    while (xHistory.isNotEmpty() && now - xHistory.first().first > GROWTH_WINDOW_MS) {
-      xHistory.removeFirst()
+    posHistory.addLast(Triple(now, wrist.x().toDouble(), wrist.y().toDouble()))
+    while (posHistory.isNotEmpty() && now - posHistory.first().first > GROWTH_WINDOW_MS) {
+      posHistory.removeFirst()
     }
-    // ⚠️ xHistory 자체는 GROWTH_WINDOW_MS(2.5초)로 유지하되(다른 축이 그 길이를 쓴다),
+    // ⚠️ posHistory 자체는 GROWTH_WINDOW_MS(2.5초)로 유지하되(다른 축이 그 길이를 쓴다),
     //   sweep은 **최근 SWEEP_WINDOW_MS(700ms) 구간만** 잘라서 잰다 — 위 SWEEP_WINDOW_MS 주석의 근거.
     //   이게 없으면 2.5초에 걸친 느린 드리프트가 빠른 손짓과 같은 값으로 나온다(실측: speed=0.0인데
     //   sweep=0.227로 발동).
-    val sweepWindow = xHistory.filter { now - it.first <= SWEEP_WINDOW_MS }
+    val sweepWindow = posHistory.filter { now - it.first <= SWEEP_WINDOW_MS }
     val sweepRatio = if (sweepWindow.size >= 2) {
       (sweepWindow.maxOf { it.second } - sweepWindow.minOf { it.second }) / handSize
     } else 0.0
+
+    // ── 🟢 2026-08-20 신규: 거리 밴드 + glide(2D 순간 속도) ──
+    if (handSize >= NEAR_BAND_HAND_SIZE) lastNearHandAtMs = now
+    val band = when {
+      handSize >= NEAR_BAND_HAND_SIZE -> "near"
+      handSize >= MID_BAND_HAND_SIZE -> "mid"
+      else -> "far"
+    }
+    val bandMult = when (band) {
+      "near" -> NEAR_BAND_MULT
+      "mid" -> MID_BAND_MULT
+      else -> FAR_BAND_MULT
+    }
+    val bandConfirm = when (band) {
+      "near" -> NEAR_BAND_CONFIRM_FRAMES
+      "mid" -> MID_BAND_CONFIRM_FRAMES
+      else -> FAR_BAND_CONFIRM_FRAMES
+    }
+    // 인접 샘플 간 2D 변위/경과시간의 **최댓값**(=순간 최고 속도). max−min이 아니므로 느린 드리프트가
+    // 누적되지 않고, hypot(dx, dy)라 방향에 완전히 대칭이다(가로·세로·대각선 동등).
+    val glideAbsPerSec = peakGlideAbsPerSec(now)
+    val glideRelPerSec = glideAbsPerSec / handSize
+    val glidedNow =
+      glideAbsPerSec > GLIDE_ABS_MIN_PER_SEC * bandMult &&
+        glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult
+    glideStreak = if (glidedNow) glideStreak + 1 else 0
+    // 압도적 마진이면 1프레임으로 확정 — GLIDE_INSTANT_MARGIN 주석의 실측 근거 참고.
+    // 두 축이 **동시에** 배수를 넘어야 하므로 한쪽 축의 튐만으로는 성립하지 않는다.
+    val glideOverwhelming = glidedNow &&
+      glideAbsPerSec > GLIDE_ABS_MIN_PER_SEC * bandMult * GLIDE_INSTANT_MARGIN &&
+      glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult * GLIDE_INSTANT_MARGIN
+    val glided = glideStreak >= bandConfirm || glideOverwhelming
 
     sizeHistory.addLast(now to handSize)
     while (sizeHistory.isNotEmpty() && now - sizeHistory.first().first > GROWTH_WINDOW_MS) {
@@ -944,7 +1378,7 @@ object PaceHandWaveDetector {
     if (diagEnabled) {
       val dt = if (lastDiagAtMs > 0) now - lastDiagAtMs else 0
       lastDiagAtMs = now
-      Log.d(TAG, "DIAG dt=$dt g=$growthRatio s=$sweepRatio v=$peakSpeed size=$handSize n=${sizeHistory.size}")
+      Log.d(TAG, "DIAG dt=$dt g=$growthRatio s=$sweepRatio v=$peakSpeed size=$handSize band=$band gA=$glideAbsPerSec gR=$glideRelPerSec n=${sizeHistory.size}")
     }
 
     val grew = growthRatio > GROWTH_RATIO_THRESHOLD
@@ -984,27 +1418,41 @@ object PaceHandWaveDetector {
     //   분리가 안 되는 축이라 임계값을 어디에 두어도 정탐을 같이 잘라낸다.
     //   → 오탐은 다른 수단으로 막는다. 얼굴 게이트(사람 없으면 손 신호 무시)와 triggerNext()의
     //     "직접 고른 영상 보호"가 그 역할이고, 둘 다 이미 들어가 있다.
-    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD
+    // 🟢 2026-08-20 — sweep 축에도 **거리 밴드**를 적용한다(사장님 지시). 임계값의 "절대값"은
+    //   그대로 두고 밴드 배수만 곱한다 — 이 파일이 경고한 "SWEEP_RATIO_THRESHOLD를 만지려면 diag로
+    //   가만히 구간을 함께 재라"를 지키는 방식이다(기준값 자체는 손 안 댐, mid 밴드는 배수 1.0이라
+    //   **지금과 완전히 동일하게** 동작한다).
+    //   위 실측 오탐 두 건이 왜 이걸로 죽는지: handSize=0.131 / 0.096은 둘 다 far 밴드다(<0.135).
+    //   far 배수 1.8 → 문턱 0.16×1.8 = 0.288이고 확정 프레임도 3으로 오른다. 반대로 near 밴드는
+    //   0.16×0.7 = 0.112 + 확정 1프레임이라, 렌즈 코앞을 스치는 손짓이 훨씬 쉽게 걸린다.
+    val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult
     sweepStreak = if (sweptNow) sweepStreak + 1 else 0
-    val swept = sweepStreak >= SWEEP_CONFIRM_FRAMES
+    // 확정 프레임 수도 밴드값을 따른다. mid는 MID_BAND_CONFIRM_FRAMES(2) = SWEEP_CONFIRM_FRAMES(2)라
+    // 기존과 동일하고, near는 1로 내려가고 far는 3으로 올라간다.
+    val swept = sweepStreak >= bandConfirm
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로
     // 잡히고, 놓치던 것 중 일부만 추가로 잡힌다. 기존 축을 조이면서 새 축을 넣었다가 오히려 더
     // 나빠졌던 2026-08-02의 실패를 반복하지 않기 위함이다.
     val grewFast = growthRatio > SPEED_ASSIST_GROWTH_THRESHOLD && peakSpeed > SPEED_THRESHOLD_PER_SEC
 
-    if (!grew && !swept && !grewFast &&
-      (growthRatio > SPEED_ASSIST_GROWTH_THRESHOLD * 0.97 || sweepRatio > SWEEP_RATIO_THRESHOLD * 0.7)
+    if (!grew && !swept && !grewFast && !glided &&
+      (growthRatio > SPEED_ASSIST_GROWTH_THRESHOLD * 0.97 ||
+        sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult * 0.7 ||
+        glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult * 0.6)
     ) {
       // 2026-08-03 — 게이트를 GROWTH_RATIO_THRESHOLD(1.30)가 아니라 SPEED_ASSIST_GROWTH_THRESHOLD
       // (1.20) 기준으로 낮춘다. 새 축이 판정하는 구간이 1.20~1.30인데 기존 게이트로는 그 구간의
       // 실패가 로그에 안 남아, 다음에 이 축을 조정할 때 또 잘린 데이터만 보게 된다(그 "검열된 데이터"가
       // 그동안 임계값 조정이 매번 실패한 근본 원인이었다). speed도 같이 남긴다.
-      Log.d(TAG, "near-miss growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=$SWEEP_RATIO_THRESHOLD) speed=$peakSpeed(th=$SPEED_THRESHOLD_PER_SEC) handSize=$handSize")
+      // 2026-08-20 — 밴드/glide도 같이 남긴다. 밴드별 분포를 못 뽑으면 이 방식은 다음에 조정할 근거가
+      // 없어지고, 그러면 이 파일이 아홉 번 반복한 "검열된 데이터로 임계값 만지기"를 또 하게 된다.
+      Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) streak=$glideStreak speed=$peakSpeed handSize=$handSize")
     }
 
-    // 접근(밀기)과 스윕(좌우 흔들기)은 OR — 둘 중 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept || grewFast) && pastRefractory) {
+    // 접근(밀기)·스윕(좌우)·glide(어떤 방향이든)는 OR — 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
+    if ((grew || swept || grewFast || glided) && pastRefractory) {
       val by = when {
+        glided -> "glide"
         swept -> "sweep"
         grew -> "growth"
         else -> "growth+speed"
@@ -1015,14 +1463,15 @@ object PaceHandWaveDetector {
       if (!shouldTrustHandSignal(now)) {
         Log.i(TAG, "WAVE 차단 by=$by handSize=$handSize — 사람 없음(마지막 얼굴 ${now - lastFaceSeenAtMs}ms 전)")
         lastTriggerAtMs = now
-        sizeHistory.clear(); xHistory.clear(); sweepStreak = 0
+        sizeHistory.clear(); posHistory.clear(); sweepStreak = 0; glideStreak = 0
         return
       }
-      Log.i(TAG, "WAVE detected by=$by growth=$growthRatio sweep=$sweepRatio speed=$peakSpeed handSize=$handSize")
+      Log.i(TAG, "WAVE detected by=$by band=$band growth=$growthRatio sweep=$sweepRatio glideA=$glideAbsPerSec glideR=$glideRelPerSec speed=$peakSpeed handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
-      xHistory.clear()
+      posHistory.clear()
       sweepStreak = 0
+      glideStreak = 0
       awaitingRearm = true
       rearmBelowSize = handSize * REARM_SIZE_RATIO
       // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드

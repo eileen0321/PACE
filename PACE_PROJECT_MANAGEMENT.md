@@ -9772,3 +9772,258 @@ y좌표 하단 게이트 / 재무장 타임아웃 / 연타=볼륨·단발=넘김
 - 릴리즈 노트(심사 안전 버전, 한/영)는 세션 대화에 전달 — 자동재생/볼륨버튼/플랫폼명 배제.
 - 남은 수동 단계: ASC에서 1.0.4 버전 생성 → 빌드 9 선택 → 노트 붙여넣기 → 심사 제출.
 - 제출 추적: https://expo.dev/accounts/strides7/projects/Pace/submissions/99319f7e-87e0-4257-bdb4-5fd7fcb76382
+
+### 2026-08-20(Windows/Android) — 🟢 손짓 **거리별 임계값**으로 방향 전환 + 실기기 원인 확정("토글이 꺼져 있었다") + 아이콘 패딩 + Live Activity 유령
+
+#### 0. 🔴 가장 중요한 발견 — "손짓 하나도 안 됨"은 임계값 문제가 아니었다
+
+사장님 "지금 손짓 하나도 안되는데 기기에서 머냐" → 실기기 logcat으로 즉시 확정:
+
+- `PaceOverlayService` 세션은 **정상 동작**(`tick remaining=39`, `pill SHOW`, 접근성 폴링 전부 살아있음)
+- 그런데 `PaceHandWaveDetector` 로그가 **한 줄도 없음**. 이 감지기는 켜져 있으면 3초마다 `HB`를
+  무조건 찍고, 카메라 권한이 없으면 `CAMERA not granted — not starting`을 찍는다. **둘 다 없다
+  = `start()`가 애초에 호출된 적이 없다.**
+- 호출부 3곳(`PaceOverlayService.kt` 1561 / 1777 / 1832)이 전부 같은 조건에 걸려 있다:
+  `prefs.getBoolean(PREF_HANDSFREE_GESTURE_ENABLED, false)` → **기기 pref가 false**.
+  같은 로그의 `autoNext=false`도 같은 그림.
+- **추가 지뢰**: `dumpsys package`에서 카메라 권한이 `granted=true, flags=[...|ONE_TIME]` —
+  "이번만 허용"으로 준 권한이라 안드로이드가 수시로 자동 회수한다. 회수되면 손짓이 또 조용히
+  죽는다(2026-08-16 "권한 노티도 없고 손짓은 안 되는데"가 정확히 이 증상).
+
+⚠️ **다음 세션이 반드시 지킬 것**: "손짓이 안 된다" 보고를 받으면 **임계값을 만지기 전에
+logcat에서 `HB` 하트비트가 찍히는지부터 본다.** HB가 없으면 감지 문제가 아니라 시작 문제다.
+이 파일이 아홉 번 임계값을 헛돌린 이유 중 일부가 이것일 가능성이 크다.
+
+🟡 **미해결 제품 이슈**: 손짓 토글이 꺼져 있는데 UI 어디에도 그 사실이 드러나지 않는다.
+사장님이 "손짓이 안 된다"고 느낀 시간의 상당 부분이 여기였을 수 있다 — 세션 시작 시 토글이
+꺼져 있으면 알려주거나, 아예 Focus Session과 묶는 것을 검토할 것.
+
+#### 1. 손짓 — 사장님 지시대로 **거리별 임계값(distance-banded)** 으로 전환
+
+사장님 사양: "최대 20cm, 그 안에서는 손이 **어떤 방향이든** 지나가면 반응. 가까우면 손이 크게
+보이니 관대한 임계값, 멀면 작게 보이니 보수적인 임계값."
+
+왜 이 지시가 옳은지(= 이 파일이 아홉 번 실패한 구조적 이유):
+기존 축은 전부 **거리 무관(scale-invariant)** 하게 설계돼 있었다(sweep은 handSize로 나누고,
+speed도 배/초). 그런데 신호와 노이즈가 거리에 따라 **정반대로** 움직인다 —
+신호(손의 물리적 속도)는 거리와 무관하지만, 노이즈(랜드마크 지터)는 **픽셀 단위로 일정**해서
+handSize로 나누는 순간 1/handSize로 **멀수록 폭증**한다. 즉 SNR이 거리마다 다른데 문턱은
+하나였다. 내리면 먼 거리 오탐("지맘대로 넘어감"), 올리면 가까운 거리 미탐("손짓이 안 됨") —
+이 파일의 기록이 그 둘을 번갈아 오간 로그다. 거리별로 나누면 그 맞바꿈 자체가 사라진다.
+
+구현(`PaceHandWaveDetector.kt`):
+- **거리 밴드**: `NEAR_BAND_HAND_SIZE=0.20`(≈10~15cm) / `MID_BAND_HAND_SIZE=0.135`(≈20cm, 사거리 경계)
+  / 그 미만 far. 환산 앵커는 이 파일에 이미 있던 실측 분포(렌즈 코앞 0.20~0.35, 실사용 0.09~0.19).
+- **밴드별 배수/확정프레임**: near ×0.7·1프레임 / mid ×1.0·2프레임 / far ×1.8·3프레임.
+  **mid는 배수 1.0 + 2프레임이라 기존과 완전히 동일하게 동작한다**(회귀 위험 최소).
+- **신규 축 `glide`(2D 순간 속도)** — "어떤 방향이든"을 담당. 기존 sweep은 손목 **x만** 봐서
+  위아래/대각선 손짓이 원리적으로 안 잡혔다. glide는 hypot(dx,dy)라 방향 대칭이고,
+  max−min이 아니라 **인접 샘플 미분(순간 속도)** 이라 "느린 드리프트 = 빠른 손짓" 문제가 구조적으로 없다.
+  두 문턱을 AND: `GLIDE_REL_MIN_PER_SEC=0.9`(손너비/초, 물리적 속도) AND
+  `GLIDE_ABS_MIN_PER_SEC=0.09`(화면비율/초, 지터 바닥 — handSize로 안 나누므로 **멀수록 자동으로
+  넘기 어려워진다** = "멀면 보수적"이 별도 분기 없이 이 한 줄에서 나온다).
+  `GLIDE_MAX_SAMPLE_GAP_MS=400`으로 "손 놓쳤다 다른 위치에서 재포착 = 순간이동" 오탐(2026-08-05 s=2.307) 차단.
+- **SWEEP_RATIO_THRESHOLD(0.16)는 값을 안 건드렸다** — 이 파일의 경고("만지려면 diag로 가만히
+  구간을 같이 재라")를 지켰다. 밴드 배수만 곱한다. 실측 오탐 2건(handSize 0.131 / 0.096)은 둘 다
+  far 밴드라 문턱이 0.288 + 3프레임으로 올라가 자동으로 걸러진다.
+- **luma(렌즈 가림) 완화** — NEAR 밴드 손을 1.2초 안에 본 경우에만 `LUMA_DROP_RATIO` 0.45→0.68,
+  `LUMA_DARK_ABS_MAX` 70→130. "손이 렌즈 코앞에 있다"는 독립 증거가 있을 때만 완화하므로
+  조명 변화 오탐은 안 는다.
+
+#### 2. 손짓→다음 영상 지연(사장님 "개느리다") — 예산 ①④ 축소 + ③ 계측 신설
+
+- ① 샘플링: **손이 프레임에 있는 동안만** 80ms(`HAND_ACTIVE_PROCESS_INTERVAL_MS`), 없으면 기존 150ms.
+  지연이 문제 되는 순간은 오직 손이 있을 때이고, 세션 대부분(손 없음)은 그대로라 배터리 설계 전제가 안 깨진다.
+- ② 확정프레임: near 밴드 1프레임(위 밴드 표) → -150ms.
+- ④ 불응 구간: `DETECT_RESUME_AFTER_TRIGGER_MS=600` — 불응 후반부터 추론을 재개해 이력만 데워둔다.
+  **발동 게이트(pastRefractory)는 REFRACTORY_MS 전체를 그대로 지키므로 중복 발동 위험은 안 는다.**
+  기존엔 불응이 끝난 뒤 두세 프레임을 더 모아야 했다(실측 "최단 재발화 1350ms"의 정체).
+  ⚠️ 단 `awaitingRearm` early-return이 이력 적재보다 앞이라, 이 이득은 손을 뒤로 뺀 경우(shrink로
+  조기 재무장)에만 실현된다 — 그게 실제 사용 흐름이라 문제는 없지만 알고 있을 것.
+- ③ 추론 지연: `lastDetectSentAtMs`/`lastInferenceMs` 신설 → 하트비트에 `infer=NNNms` 상시 표기.
+  이 파일은 "부하 시 700ms 넘김"이라 적어뒀지만 그 값을 상시로 보고 있지 않았다 — 다음 "느리다"
+  보고 때 우리 로직 탓인지 MediaPipe 탓인지 **로그 한 줄로 구분**할 수 있다.
+
+**검증 상태**: `:pace-overlay:compileDebugKotlin` BUILD SUCCESSFUL. **실기기 검증 미완**
+(설치 시도 중 릴리즈 빌드가 `:app:packageRelease`에서 실패, 재시도 중). 다음 세션은 반드시
+①`HB ... infer=` 하트비트가 찍히는지 ②`WAVE detected by=glide band=near` 가 실제로 나오는지
+③near/mid/far 밴드별 `near-miss band=` 분포를 받아서 확인할 것.
+
+#### 3. 🔴 광고 — 기기 릴리즈 빌드가 **실광고**를 띄우고 있었다(사장님이 직접 클릭)
+
+사장님 "광고를 누르는데 왜 광고창이 계속 없어져" → 조사 중 훨씬 심각한 것을 발견:
+`.env:53`에 `EXPO_PUBLIC_ANDROID_REAL_ADS=true`가 켜져 있어 릴리즈 = **실광고**였고,
+`configureAdsForTesting()`은 릴리즈에서 조기 return이라 **테스트기기 등록조차 안 된다**
+(`adsConfig.ts:63`). 즉 사장님이 그 광고를 누른 것 = **자가 클릭 = 무효 트래픽**이고,
+이 파일 주석이 기록한 그 사고(`2026-08-10 실광고 올렸다 versionCode 7→8→9 롤백`)와 같은
+AdMob 계정 정지 위험이다.
+→ `.env`에 `EXPO_PUBLIC_AD_TEST_DEVICES=true` 추가(로컬 테스트 안전장치). 이러면 `USE_REAL_ADS`가
+  강제로 false가 되고 테스트기기 등록도 살아난다.
+⚠️ **스토어 빌드 전에는 반드시 이 줄을 지울 것**(안 지우면 그 빌드 수익 0).
+"광고창이 없어지는" 것 자체는 버그가 아니다 — 누르면 광고주 페이지로 나가는 게 정상이고
+그때 `onAdDismissedFullScreenContent`가 액티비티를 닫는다. **+5분 보상은 누르는 게 아니라 끝까지 봐야** 나온다.
+
+#### 4. 아이콘 "너무 꽉 차 보임" — 패딩은 설정값이 없다, PNG에 구워야 한다
+
+Expo SDK 57 앱 config에 **icon padding/inset/scale 옵션은 존재하지 않는다**(공식 스키마 확인:
+`icon`, `ios.icon`(string 또는 light/dark/tinted 객체 또는 `.icon` 파일), `android.adaptiveIcon`의
+foregroundImage/backgroundImage/backgroundColor/monochromeImage — 여백 관련 필드 없음).
+→ 여백은 이미지 자체에 넣어야 한다. 원본은 `assets/_icon-originals/`에 백업.
+
+- **`android-icon-foreground.png`**: 기존엔 아트가 캔버스의 65%에 **불투명 검정이 512 전체**를
+  덮고 있었다(=배경 레이어가 아예 안 보이고, 둥근 마스크 안에 사각 판이 또 들어간 이중 프레임).
+  → 콘텐츠 **48%**(246px) + 가장자리 페더로 재생성. 런처는 108dp 중 **가운데 72dp만** 보여주므로
+  (=1.5배 확대) 56%로 했을 때 뷰포트의 84%라 여전히 꽉 찼다 — 48%가 뷰포트의 약 72%다.
+  마스크(원형/스퀘어클) 미리보기로 육안 확인 완료.
+- **`android-icon-monochrome.png`**: 콘텐츠 78.5% → 48%(66dp safe zone = 61% 초과 상태였음).
+- **`icon-phone11.png`(iOS)**: 아트가 캔버스의 92%를 채워 스퀘어클 마스크에 모서리가 잘렸다
+  → 아트 **74%** + 테두리색(#151624) 채움 + 페더(이음매 제거).
+- ⚠️ **스플래시는 손대지 않았다** — `splash-icon.png`/`splash-blank.png`/`ios-splash-icon.png`
+  수정시각 그대로(7/25, 8/1, 8/2). `git status`에도 안 뜬다.
+- 미처리: `play-store-icon-512.png`(플레이 콘솔 수동 업로드분)은 app.json이 참조하지 않아 그대로 뒀다.
+
+#### 5. iOS — "앱을 죽였는데 맥/와치에서 Pace 시간이 계속 감" (Mac 세션 검증 필요)
+
+원인 두 개. 웹 확인 결과 **Live Activity가 앱 프로세스와 분리돼 살아남는 건 애플의 의도된 설계**이고,
+강제종료 뒤에는 staleDate/dismissalPolicy로도 못 지운다(프로세스가 죽어 재렌더 트리거가 없음).
+지우는 유일한 길은 **앱이 다시 살아나서 직접 end를 부르는 것**이다.
+
+- (a) `PaceWidgetLiveActivity.swift` — 매 렌더마다 `Text(timerInterval: Date()...endDate)`로
+  **하한을 "지금"으로 새로 만들고** 있었다. ① endDate가 지난 뒤 재렌더되면 lowerBound > upperBound
+  = **Swift 런타임 트랩**(update()가 음수 remainingMinutes로 오는 경로도 동일) ② 하한이 계속 밀려
+  타이머에 **끝이 없다** = 앱이 죽어도 시스템이 계속 굴린다.
+  → `PaceCountdown` 뷰 신설, **고정된 startDate...endDate**로 변경(종료시각에서 멈춤) + 지난 세션은 "0:00".
+- (b) 정리(endAll)가 `startSession()` 안에만 있어서 **새 세션을 시작해야만** 유령이 사라졌다.
+  → `types.ts`에 `endOrphanedOverlays?()` 신설(optional), `overlayService.ios.ts`가 `endAll()`로 구현,
+  `_layout.tsx`가 **콜드스타트마다 1회**(세션 running이 아닐 때만) 호출. `endSession()`에도 endAll 추가.
+  ⚠️ Android는 의도적으로 미구현 — Android의 `endSession()`은 `PaceOverlay.stop()`이라 여기에
+  매핑하면 BOOT_COMPLETED 복구로 되살린 정상 세션을 콜드스타트마다 죽인다.
+- **검증 상태**: `npx tsc --noEmit` 통과. **Swift는 Windows에서 컴파일 불가 — Mac 세션이
+  빌드/실기기 확인 필요**(D8과 같은 취급).
+
+#### 6. 🔴 연장/광고 팝업이 **스스로를 지우고 있었다** — 사용자 전원이 겪는 버그(전수 감사 포함)
+
+사장님 "광고를 보게 해줘야 할 거 아냐, 왜 맘대로 팝업이 없어져". 실기기 로그가 그대로 보여준다
+(15초에 4번 누르셨고 매번 0.3~0.8초 만에 사라졌다):
+```
+23:16:48.181 AD_TRIGGER 배지 탭 → 연장 선택 카드 표시
+23:16:48.759 pill HIDE fg=youtube a11yFg=youtube usage=null win=false self=false
+23:16:50.486 (다시 탭) → 23:16:50.786 pill HIDE
+```
+`PaceRewardedAdActivity` 로그는 한 줄도 없다 = **광고까지 도달조차 못 한다.** 즉 무료 사용자가
++5분을 받을 방법이 아예 막혀 있었다(수익 경로이기도 하다).
+
+**원인**: 연장 카드는 MATCH_PARENT 전체화면 모달이라 뜨는 순간 유튜브 창이 접근성 windows 목록에서
+밀려나 `windowVisibleOrNull=false` → `shouldShow=false` → 1초 폴이 `hideExtendChoice()`를 부른다.
+**같은 파일이 `SLEEP_STAGE_PROMPTED`에 대해 이미 설명해둔 그 교착**("팝업이 스스로를 지워 30초
+타임아웃에 도달하지 못한다")과 완전히 동일한데, 2026-08-18에 이 슬롯을 정리 목록에 추가하면서
+PROMPTED만 예외로 두고 AD_TRIGGER 카드는 못 봤다.
+
+**수정**: 판정을 "감시 앱이 보이는가"(win)가 아니라 **"사용자가 진짜 딴 데 갔는가"** 로 바꿨다.
+세 신호(foregroundPackage/usageStatsForeground/accessibilityForeground) 중 하나라도 **우리 앱도 아니고
+감시 대상 앱도 아닌** 패키지를 실제로 지목할 때만 정리한다.
+⚠️ 1차 수정(`eventBasedVisible || usageBasedVisible`)은 **불완전했다** — 실측 `23:17:01 fg=null
+a11yFg=null usage=null` 구간에서 또 지워진다. **"모른다"와 "떠났다"는 다르다.** 이 구분이 이 수정의 핵심.
+2026-08-18의 요구("런처 위에 팝업이 남는다")는 그대로 지켜진다(런처는 위 조건에 걸린다).
+갇힐 위험 없음 — 카드에 "나중에" 버튼 + 바깥 탭 닫기가 이미 있다.
+
+**전수 감사(사장님 지시 "또 있나 전수 확인해")** — 오버레이 창 12개의 실제 `flags` 인자를 전부 확인.
+자기소거 성립 조건은 ①전체화면이거나 포커스를 가져감(→win이 뒤집힘) + ②정리 블록에 있음:
+
+| 창 | 크기 | NOT_FOCUSABLE | 정리블록 | 판정 |
+|---|---|---|---|---|
+| `showExtendChoiceOverlay` | MATCH×MATCH | ❌ | ✅ | 🔴 신고된 버그 — 수정 |
+| `showAccessibilityRequiredOverlay` | MATCH×MATCH | ❌ | ✅(슬롯 공유) | 🔴 **신규 발견 — 같은 수정으로 해결** |
+| `showStillWatchingPrompt` | MATCH×MATCH | ❌ | ✅ | 🟢 이미 예외(PROMPTED) |
+| `showSearchPanel` | WRAP | ❌(키보드용 의도적) | ✅ | 🟡 **잔여 후보 — 아래** |
+| `showPaceMenu`/`showSavedFavoriteList`/`showShareSheet`/`showShortsHotList` | WRAP | ✅ | ✅ | 🟢 안전 |
+| `showOverlay`(알약)/`showLimitNoticeToast` | WRAP | ✅ | — | 🟢 안전 |
+| `showBlockOverlay`×2 | MATCH×MATCH | ❌ | 블록에 없음 | 🟢 대상 아님 |
+
+🔴 **신규 발견의 무게**: `showAccessibilityRequiredOverlay`가 `extendChoiceView` 슬롯을 재사용하므로
+같은 자기소거에 걸려 있었다 — 즉 **"접근성이 꺼져 있다"고 알려주는 안내창이 0.5초 만에 사라져서**
+사용자는 왜 아무것도 안 되는지 알 방법이 없었다. §0의 "손짓이 조용히 죽는다"와 정확히 맞물린다.
+
+🟡 **감시 항목(고치지 않음)**: `showSearchPanel`은 키보드 때문에 `FLAG_NOT_FOCUSABLE`을 뺀 유일한
+WRAP 창이고, 이 파일에 "검색 입력창이 포커스를 가져가는 순간 UsageStats가 우리 앱을 전경으로
+지목한다"(2026-08-13)는 실측 기록이 있다. 사실이면 `selfForeground=true`로 같은 자기소거가 성립한다.
+다만 검색은 실제로 정상 동작 중이고(8/13 로그에 검색→유튜브 이동 성공), 증거 없이 고치면 8/18의
+"런처 위에 남음"이 되살아난다 — **이 파일의 원칙(실측 없이 만지지 않는다)대로 후보로만 남긴다.**
+검색창이 저절로 닫히는 게 관측되면 그때 같은 수정을 얹을 것.
+
+#### 7. (같은 세션 후속, 새벽) 실기기 로그로 손짓 원인 3단계 확정 + 볼륨키 게이트 버그
+
+⚠️ 위 §1~2에 적은 "거리 밴드/glide 도입"은 맞았지만, **그것만으로는 안 됐다.** 실기기 로그를
+단계별로 받아 원인을 세 번 갈아탔고, 그 과정 자체가 다음 세션에 중요하므로 순서대로 남긴다.
+
+**① "손짓 하나도 안 됨" → 감지기가 시작조차 안 됨** (§0 참고, `handsfree_gesture_enabled=false`)
+
+**② 토글을 켠 뒤 "10번에 2~3번" → 손 인식 자체가 안 됨**
+   진단용으로 `nohand` 카운터(랜드마크 0개인 결과 수)와 릴리즈 강제 DIAG를 새로 넣어 확정:
+   `out`과 `nohand`가 **1:1로 증가**(2703 중 2285, 84.5%) = 모든 프레임에서 손을 못 찾는다.
+   같은 비트맵에서 **얼굴은 계속 잡힌다**. 손 잡힌 프레임의 DIAG `dt`가 **207,888ms**였다 —
+   208초 동안 손을 한 번 찾았고, **찾은 4번 중 3번은 즉시 발화**했다. 판정 로직은 멀쩡했다.
+   → 세 가지를 같은 방향(검출률↑)으로: 인식 신뢰도 0.5→**0.3**, 해상도 320x240→**480x360**,
+     처리 간격 150→**80ms**. (⚠️ `HAND_ACTIVE_PROCESS_INTERVAL_MS`는 닭-달걀에 걸려 무용지물이었다 —
+     손이 84% 안 잡히니 "손이 보이는 동안" 조건 자체가 성립을 안 했다. 인식률 회복 후 재검토할 것.)
+
+**③ 그래도 놓침 → 확정 프레임(2연속)이 진짜 손짓을 버리고 있었다**
+   실측(문턱 glideR=0.9 / glideA=0.09):
+   ```
+   00:08:57.959 glideR=6.89 glideA=1.34  near-miss streak=1 → 손 놓쳐 2프레임째 없음 → 무시
+   00:09:07.109 glideR=9.14 glideA=1.65  near-miss streak=1 → 무시
+   00:09:10.295 glideR=9.21              2프레임째 도착      → WAVE ✅
+   ```
+   **첫 프레임에서 이미 문턱의 5~10배로 완벽히 감지**되는데 전부 `streak=1`에서 막혔다.
+   연속 프레임(Apple 증거 누적)의 목적은 *문턱 근처 단발 노이즈* 제거인데, 10배짜리는 그 대상이 아니다.
+   → `GLIDE_INSTANT_MARGIN=3.0` — 두 축이 **동시에** 문턱의 3배를 넘으면 1프레임 확정.
+     이후 실측: 27초간 **WAVE 26회 → 스와이프 27회**(전부 정상). 손짓 기능이 처음으로 실사용 수준이 됨.
+
+**④ "크게 흔들면 안 됨"(사장님 지적, 맞았다)**
+   ```
+   00:14:37~00:15:04 적당히 흔든 27초 → WAVE 26회
+   00:15:04~00:15:43 크게 흔든 39초  → out +30 / nohand +30 ... 손 검출 0개
+   ```
+   얼굴은 계속 잡힌다 — 정지해서 선명하기 때문. 크고 빠른 손은 **모션블러 + 프레임 이탈**로
+   팜 디텍터가 아예 못 잡는다. 사장님: "사람들마다 손 흔드는 게 틀릴 거 아냐 큰 손짓도 인식해야지".
+   → 두 갈래로 대응:
+     (a) **노출 고정** — Camera2Interop로 `CONTROL_AE_TARGET_FPS_RANGE=[30,30]`. 어두우면 AE가
+         노출시간을 늘리는데(자정 실내) 그게 곧 블러다. 30fps를 못 박아 ~33ms 이하로 묶는다.
+         ⚠️ 미지원 기기는 **바인딩 시점에** 예외 → 이 옵션만 빼고 1회 재바인딩하는 폴백 포함
+         (start() 재귀 호출 금지 — handLandmarker 누수 + 이 파일이 기록한 SIGSEGV 경로가 되살아난다).
+     (b) **신규 축 gross-motion** — 손 랜드마크에 의존하지 않는다. Y평면을 8x8 격자로 줄여
+         180ms 전과 비교, **넓은 영역이 한꺼번에 어두워졌는지**만 본다. MediaPipe를 안 거치므로
+         블러/이탈에 강하다(오히려 크고 빠를수록 가리는 면적이 커서 유리). 기존 luma 축은 화면
+         **전체 평균**이라 렌즈를 완전히 덮어야 걸리지만, 이쪽은 **공간 분포**라 절반만 스쳐도 잡힌다.
+         오탐 방어 3중: 얼굴 최근 관측 + 변한 칸의 70%↑가 **어두워진** 쪽 + 불응시간 공유.
+   **실기기 검증 미완** — 다음 세션이 `WAVE detected (gross-motion ...)` / `gross-motion near-miss`
+   실측으로 `GROSS_MOTION_CELL_FRACTION`(0.55)·`GROSS_MOTION_DARKEN_RATIO`(0.7)를 확정할 것.
+
+#### 8. 🔴 볼륨키(블루투스 리모컨)가 **FOCUS OFF에서도 동작** — 게이트 자체가 없었다
+
+사장님 "지금 포커스 오프인데 블루투스로 영상 옮겨지는 건 머니".
+`PaceAccessibilityService.onKeyEvent`의 게이트가 `bluetoothVolumeKeySkipEnabled` **하나뿐**이었다
+(2026-07-27 주석: "isWatching 대신 bluetoothVolumeKeySkipEnabled로 게이팅"). 손짓 감지기는 FOCUS OFF에서
+`PaceHandWaveDetector.stop()`으로 정상 정지하는데(1863행) **볼륨키만 상시 동작**이라 플랫폼 내부에서도
+앞뒤가 안 맞았다. iOS는 `isAutoMode && volumeKeyRemote`로 이미 올바르게 걸려 있다(feed/index.tsx).
+→ `PaceOverlayService.isHandsFreeAllowed()` 신설, onKeyEvent에서 확인.
+
+⚠️ **이 수정에서 두 번 틀렸다. 다음 세션은 같은 함정을 밟지 말 것:**
+ 1. **프리미엄 조건을 넣었다가 뺐다.** 사장님 "이럼 누가 유료를 해"를 듣고 프리미엄까지 걸었는데,
+    그건 **2026-07-26 사장님 결정("D9 프리미엄 게이팅 → 무료 개방")과 정면 충돌**이다. 근거가 코드에
+    남아 있다: "Focus Session 자동넘김 자체가 이미 무료라, 그걸 화면 안 만지고 넘기는 트리거만 유료로
+    막는 게 정책상 어색하다"(home.tsx). iOS도 프리미엄을 안 건다 — 여기만 걸면 정책 불일치가 재발한다.
+    사장님 확인("포커스 온일 때 손짓 블루투스 되는 거잖아") 후 제거. **이 경로의 버그는 FOCUS OFF 동작 하나뿐이다.**
+ 2. **틀린 플래그로 걸었다.** 처음에 `PREF_SESSION_ACTIVE`로 걸었는데 그건 사장님이 말하는 "포커스"가 아니다:
+      · `PREF_SESSION_ACTIVE` — 세션(알약/카운트다운)이 도는가. **영상 보는 내내 true**
+      · `PREF_AUTO_MODE`("bt_auto_mode") — 알약의 **FOCUS ON/OFF**. iOS의 isAutoMode 대응
+    세션으로 걸면 FOCUS를 꺼도 게이트가 항상 열려 **안 고친 것과 같다**(사장님 "왜 지금도 되").
+    → `PREF_AUTO_MODE`로 수정. 같은 파일 1580행의 기존 핸즈프리 게이팅도 이 플래그를 쓴다.
+
+#### 9. ⚠️ 되돌려야 할 임시 변경 2건 (잊지 말 것)
+
+1. `PaceHandWaveDetector.startOnMainThread`의 **`diagEnabled = true`** — 릴리즈에서도 매 프레임
+   진단 로그를 강제로 켜둔 상태다(원인 추적용). 원래는 디버그 빌드에서만 켜진다. 튜닝이 끝나면
+   원복할 것: `diagEnabled = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0`
+2. `.env`의 **`EXPO_PUBLIC_AD_TEST_DEVICES=true`**(로컬 전용, gitignore라 커밋 안 됨) —
+   §3의 실광고 사고 방지용. **스토어 빌드 전에 반드시 제거**(안 지우면 그 빌드 수익 0).

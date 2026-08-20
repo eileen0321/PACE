@@ -64,6 +64,44 @@ export interface OverlayService {
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   endSession(): Promise<void>;
+  /**
+   * 🔴 2026-08-20 사장님 신고 — "앱을 죽였는데 맥/애플워치에서 Pace 시간이 계속 가는 게 보인다."
+   *
+   * iOS Live Activity는 **앱 프로세스와 생명주기가 분리돼 있다**(애플의 의도된 설계). 앱을 강제
+   * 종료하면 endSession()이 실행될 기회 자체가 없고, 시스템은 남은 Activity를 최대 8시간 유지하며
+   * (잠금화면 잔류는 12시간) watchOS Smart Stack에도 그대로 미러링한다. staleDate/dismissalPolicy로도
+   * **프로세스가 죽은 뒤에는** 지울 수 없다 — 지우려면 앱이 다시 살아나서 직접 end를 불러야 한다.
+   *
+   * 기존 코드에는 그 "다시 살아났을 때"의 정리가 `startSession()` 안에만 있었다. 즉 사용자가 앱을
+   * 죽인 뒤 **새 세션을 시작해야만** 유령 Activity가 사라진다 — 그냥 앱만 열거나 아예 안 열면
+   * 몇 시간 동안 남는다. 콜드스타트마다 부르는 이 훅이 그 구멍을 막는다.
+   *
+   * endSession()과 다른 점: endSession()은 모듈이 **핸들을 들고 있는** Activity만 끝낸다. 프로세스가
+   * 재시작되면 그 핸들이 사라지므로 endSession()은 조용히 아무것도 안 한다. 이쪽은 시스템에 등록된
+   * 것을 전부(Activity<PaceAttributes>.activities) 훑어서 끝낸다.
+   *
+   * Android는 미구현(optional) — 오버레이가 우리 포그라운드 서비스라 프로세스와 함께 죽는다.
+   * ⚠️ 절대 Android의 endSession()에 매핑하지 말 것: 재부팅 복구(BOOT_COMPLETED)로 네이티브가
+   *   되살려둔 정상 세션을 콜드스타트마다 죽이게 된다.
+   */
+  endOrphanedOverlays?(): Promise<void>;
+  /**
+   * 🔴 2026-08-20 — 네이티브 세션(Android 포그라운드 서비스)이 **지금 살아있는가**.
+   *
+   * 사장님 신고 "open app 누르니 죽었어" + "포커스도 10분으로 초기화되어 있고"는 같은 사건이었다.
+   * 실기기 로그: 액티비티가 0개인 상태(`Task{... sz=0}`)에서 Open App → 앱은 958ms 만에 정상
+   * 표시(크래시 아님) → 그 직후 `PaceOverlayModule.start()`가 호출돼 **새 세션이 시작**됐다.
+   * 범인은 `_layout.tsx`의 고아 세션 복구다. 그 로직의 전제는 "프로세스가 죽어 추적이 끊겼다"인데,
+   * 실제로 죽은 건 **액티비티뿐**이고(삼성 배터리 관리 등으로 흔하다) 포그라운드 서비스는 39분짜리
+   * 세션을 멀쩡히 돌리고 있었다 — 알약·틱·손짓 감지가 전부 정상이었던 게 그 증거다.
+   * 그런데 복구 로직이 그걸 확인하지 않아 **멀쩡한 세션을 닫고 새 세션(무료 기본값)으로 갈아끼웠다.**
+   *
+   * SharedPreferences(`session_active`)만으로는 구분이 안 된다 — 프로세스가 죽어도 값이 남기 때문이다.
+   * 서비스 인스턴스의 생존 여부만이 두 경우를 정확히 가른다(PaceOverlayService.isServiceAlive 참고).
+   *
+   * iOS는 미구현(optional) — 그쪽엔 상시 백그라운드 세션 주체가 없다(overlayService.ios.ts 참고).
+   */
+  isNativeSessionRunning?(): Promise<boolean>;
   /** Android: "다른 앱 위에 표시"(SYSTEM_ALERT_WINDOW) 권한 실제 부여 상태. iOS: 항상 true(no-op, 개념 자체가 없음). */
   hasOverlayPermission(): Promise<boolean>;
   requestOverlayPermission(): Promise<void>;

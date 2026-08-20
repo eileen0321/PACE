@@ -801,5 +801,12 @@ class PaceOverlayModule : Module() {
     Function("isSnapDetectionRunning") {
       PaceSnapDetector.isRunning()
     }
+
+    // 🔴 2026-08-20 — 네이티브 세션(포그라운드 서비스)이 **지금 살아있는가**.
+    // _layout.tsx의 고아 세션 복구가 살아있는 세션을 죽이고 새로 시작하던 버그 수정용
+    // (PaceOverlayService.isServiceAlive 주석에 실기기 로그 근거 있음).
+    Function("isNativeSessionRunning") {
+      PaceOverlayService.isServiceAlive()
+    }
   }
 }

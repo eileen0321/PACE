@@ -26,6 +26,7 @@ let PaceOverlay: {
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
   consumeExpired(): { reason: string; sleepOnsetAtMs: number } | null;
+  isNativeSessionRunning(): boolean;
   getVideoWatchCount(): number;
   getWatchedSeconds(): number;
   getSupportedAppForegroundSecondsToday(): number;
@@ -101,6 +102,15 @@ export const overlayService: OverlayService = {
 
   async endSession() {
     await PaceOverlay?.stop();
+  },
+  // types.ts의 isNativeSessionRunning 주석 참고 — 콜드스타트 고아 세션 복구가
+  // **살아있는 세션을 죽이고 새로 시작하던** 버그(2026-08-20) 방지용.
+  async isNativeSessionRunning() {
+    try {
+      return PaceOverlay?.isNativeSessionRunning() ?? false;
+    } catch {
+      return false;
+    }
   },
 
   async hasOverlayPermission() {

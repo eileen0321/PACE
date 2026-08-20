@@ -243,6 +243,21 @@ export default function RootLayout() {
     Inter_800ExtraBold,
   });
 
+  // 🔴 2026-08-20 사장님 신고 — "앱을 죽였는데 맥/애플워치에서 Pace 시간이 계속 가는 게 보인다."
+  //   iOS Live Activity는 앱 프로세스와 생명주기가 분리돼 있어(애플의 의도된 설계) 강제종료해도
+  //   시스템이 최대 8시간 유지하고 watchOS Smart Stack에도 그대로 미러링한다. 앱이 죽은 뒤에는
+  //   staleDate/dismissalPolicy로도 못 지운다 — **앱이 다시 살아나서 직접 지우는 것**이 유일한 길이다.
+  //   그런데 기존의 그 정리(endAll)는 startSession() 안에만 있었다 = 사용자가 **새 세션을 시작해야만**
+  //   유령이 사라졌다. 앱만 열거나 아예 안 열면 몇 시간이고 남는다.
+  //   → 콜드스타트마다 1회, 진행 중인 세션이 없을 때만 정리한다.
+  //   ⚠️ endSession()이 아니라 endOrphanedOverlays()를 쓴다 — Android에는 미구현(optional)이라
+  //     자동으로 no-op이 된다. Android의 endSession()은 PaceOverlay.stop()이라 여기서 부르면
+  //     재부팅 복구(BOOT_COMPLETED)로 네이티브가 되살려둔 정상 세션을 매 콜드스타트마다 죽인다.
+  useEffect(() => {
+    if (useSessionStore.getState().status === 'running') return;
+    overlayService.endOrphanedOverlays?.().catch(() => {});
+  }, []);
+
   useEffect(() => {
     // initUser()가 끝나야 토큰 유무(로그인 성공 vs 로컬 전용 게스트 폴백)가 확정되므로, 그 이후에
     // syncFromServer를 불러야 불필요한 401(→자동로그아웃)을 피할 수 있다(services/sync/backendSync
@@ -264,6 +279,12 @@ export default function RootLayout() {
       const userId = useUserStore.getState().user?.id;
       if (!userId) return;
       try {
+        // ⚠️ 이 확인은 반드시 **고아 행을 닫기 전에** 해야 한다 — 닫은 뒤에 확인하면 살아있는
+        //   세션의 DB 행을 이미 지운 뒤라 그 세션의 시청시간이 통째로 유실된다.
+        const nativeSessionAlive = await (
+          overlayService.isNativeSessionRunning?.() ?? Promise.resolve(false)
+        ).catch(() => false);
+        if (nativeSessionAlive) return;
         const orphans = await getOrphanedSessions(userId);
         if (!orphans.length) return;
         const nativeExpiry = Platform.OS === 'android' ? await overlayService.consumeExpired().catch(() => null) : null;
@@ -300,6 +321,19 @@ export default function RootLayout() {
         // 오히려 어색함) — 앱을 다시 열자마자(=화면을 다시 키운 순간) 같은 플랫폼으로 추적/오버레이를
         // 즉시 재개한다. 완전히 새 세션으로 시작(남은시간은 오늘 실사용량 기준 새로 계산)하므로 기존
         // "고아 세션 정리" 자체는 그대로 두고 그 위에 이어붙이는 형태.
+        // 🔴 2026-08-20 사장님 신고("open app 누르니 죽었어" + "포커스도 10분으로 초기화") — 두 증상은
+        //   같은 사건이었다. 실기기 로그로 확정:
+        //     23:54:42.333 Task{... A=com.strides7.pace ... sz=0}  ← 액티비티 0개(콜드 스타트)
+        //     23:54:43.342 Displayed .../.MainActivity: +958ms      ← 앱은 정상 표시(크래시 아님)
+        //     23:54:43.773 PaceOverlayModule: start() called        ← 아래 복구가 새 세션을 시작
+        //   이 복구의 전제는 "프로세스가 죽어 추적이 끊겼다"인데, 실제로 죽은 건 **액티비티뿐**이었다.
+        //   포그라운드 서비스는 39분 남은 세션을 멀쩡히 돌리고 있었고(알약·틱·손짓이 전부 정상
+        //   동작 중이었던 게 증거다), 그 위에 새 세션을 얹으면서 **멀쩡한 세션을 닫고 무료 기본값으로
+        //   갈아끼웠다.** 사용자에겐 "앱이 죽었다 / 포커스가 초기화됐다"로 보인다.
+        //   ⚠️ 액티비티만 죽는 건 예외가 아니라 흔한 일이다(삼성 배터리 관리, 메모리 압박) — 즉
+        //     모든 사용자가 겪는다. 고아 세션 행이 남는 것도 같은 이유라 이 분기는 늘 참이 됐다.
+        //   → 네이티브 서비스가 살아있으면 복구하지 않는다. SharedPreferences로는 구분이 안 되고
+        //     (죽어도 값이 남는다) 서비스 인스턴스 생존 여부만이 두 경우를 정확히 가른다.
         if (Platform.OS === 'android' && !nativeExpiry && orphans.length === 1 && overlayService.supportsSystemOverlay) {
           const settings = useSettingsStore.getState().settings;
           const bonusMinutes = useDailyBonusStore.getState().extraMinutes;

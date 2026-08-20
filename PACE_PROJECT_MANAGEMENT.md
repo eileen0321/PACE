@@ -10041,3 +10041,6 @@ far×1.8·3f — sweep·glide 문턱과 확정프레임에 공통 적용 ⑤즉�
 윈도우 iOS분 검증: PaceWidgetLiveActivity(고정 범위 PaceCountdown) + PaceAttributes.startDate —
 **Xcode 컴파일 통과**(기기 설치 빌드에 포함). endOrphanedOverlays 콜드스타트 정리 JS도 탑재됨.
 실기기 확인 항목: 앱 강제종료 후 와치/잠금화면 타이머가 종료시각에 멈추는지, 재실행 시 사라지는지.
+
+- [ ] 🟡 백로그(2026-08-21): 유튜브 무음 아이콘 표시 불일치 — video.muted 직접 제어라 소리는 나는데
+  유튜브 UI 아이콘이 낡은 무음 상태 표시. 아이콘 동기화 또는 CSS 숨김 검토.

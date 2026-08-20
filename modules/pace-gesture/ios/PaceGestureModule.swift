@@ -409,7 +409,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
-      if !p { self.tracks = [HandTrack(), HandTrack()]; self.lumaHistory.removeAll(); self.lastHandSeenMs = 0 }
+      if !p { self.tracks = [HandTrack(), HandTrack()]; self.lumaHistory.removeAll(); self.lastHandSeenMs = 0; self.stillnessStartMs = 0 } // 정지시계 리셋(01:30 낡은 시계로 burst 즉시해제 연발)
     }
   }
 
@@ -756,7 +756,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
+        self.globalBurstFired = true // 2026-08-21 01:30 실측 — growth 경로가 burst 게이트를 우회해 페어 발화하던 구멍
         // 🔴 2026-08-19 01:28 실측("손짓 후 볼륨키 누르면 넘어감" — growth=1.36 발화 후 눌림) —
         // 접근(growth) 트리거는 "볼륨키를 누르러 폰으로 뻗는 손"과 물리적으로 동일한 동작이다.
         // 즉시 발화하지 않고 0.9초 보류: 그 사이 볼륨키 눌림이 오면 뻗은 손으로 확정하고 취소,
@@ -829,6 +830,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // "움직임 지속" 추적이 끊기고, 600ms 정지 판정이 손짓 도중 성립해 재발화한다(01:11 3연발 원인).
     // 재발화 방지는 globalBurstFired가 담당하므로 이력 유지가 안전하다.
     for i in 0..<tracks.count { tracks[i].sizeHistory.removeAll(); tracks[i].sweepStreak = 0; tracks[i].glideStreak = 0 }
+    stillnessStartMs = 0 // 발화 후 정지 측정은 처음부터 다시(낡은 시계 오판 방지 — 01:30 실측)
     if handSize > 0, trackIdx >= 0, trackIdx < tracks.count {
       tracks[trackIdx].awaitingRearm = true
       tracks[trackIdx].rearmBelowSize = handSize * rearmSizeRatio

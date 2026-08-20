@@ -103,6 +103,8 @@ public class PaceVolumeKeyModule: Module {
   private var keyboardPresent = false // HID 키보드(=BT 리모컨 추정) 연결 상태 — 알림 캐시(coalesced 직접 폴링 금지, 크래시 회피)
   private var kbObserversInstalled = false
   private var lastPhonePressAtMs: Double = 0 // 폰버튼 확정 시각 — 자동반복/연타 상속용(핸들러 주석)
+  private var lastLensCoveredMs: Double = 0  // 렌즈 가림 신호 최근 수신(PaceLensCovered — 2026-08-21 사장님 설계)
+  private var lensObserverInstalled = false
 
   /// 눌림창([now-400ms, now])의 피크를 직전 배경([now-2900, now-450])의 μ/σ 대비 z-점수로 환산.
   /// 고정 임계 3연속 실패(그립마다 절대값이 다름)의 처방 — 본인 손 노이즈 대비 상대 돌출만 본다.
@@ -247,6 +249,12 @@ public class PaceVolumeKeyModule: Module {
         // 무장은 KVO 인프라(뷰/옵저버/모션)만 준비하고, 세션 활성화(remoteActive 포함)는 개입
         // (setEngaged(true))으로 미룬다 — 포커스 오프의 오디오 경로가 이전과 완전히 동일해진다.
         self.startMotion() // 폰버튼/리모컨 모션 판별(위 주석) — 가속도계+자이로 100Hz
+        if !self.lensObserverInstalled { // 렌즈 가림 신호 수신(가림+볼륨=폰버튼 확정 — 핸들러 주석)
+          self.lensObserverInstalled = true
+          NotificationCenter.default.addObserver(forName: Notification.Name("PaceLensCovered"), object: nil, queue: nil) { [weak self] _ in
+            self?.lastLensCoveredMs = CACurrentMediaTime() * 1000
+          }
+        }
         // HID 키보드(=BT 셔터 리모컨류) 존재 감지 — cls 주석 ④. GCKeyboard.coalesced를 수시로 폴링하면
         // bg/fg 전환 중 크래시 사례(iPadOS 18.6+)가 있어, 연결/해제 알림으로 불리언만 캐시한다.
         if !self.kbObserversInstalled {
@@ -312,6 +320,16 @@ public class PaceVolumeKeyModule: Module {
           if self.isKnownAudioAccessoryConnected() {
             NSLog("PACEVOL skip hijack — known audio accessory connected, treating as real volume v=\(v)")
             self.baseline = (v * 16).rounded() / 16 // 다음 비교 기준을 실제 볼륨으로 갱신(리셋 안 함)
+            return
+          }
+          // 🔴 2026-08-21 사장님 설계 — **카메라(전면 렌즈)를 가린 채 볼륨키 = 폰버튼(볼륨만) 확정.**
+          // 손짓 카메라의 가림 감지(PaceLensCovered, 150ms 주기)를 수신해 0.8초 내 가림이면 최우선 적용.
+          // 센서 추정이 아니라 사용자가 의도를 직접 신호하는 확정 규칙이라 다른 모든 판정에 우선한다.
+          if CACurrentMediaTime() * 1000 - self.lastLensCoveredMs < 800 {
+            NSLog("PACEVOL cls=폰버튼(렌즈가림 신호) v=\(v)")
+            self.baseline = (v * 16).rounded() / 16
+            self.lastPhonePressAtMs = CACurrentMediaTime() * 1000 // 가림 후 연타도 상속 보호
+            self.sendEvent("onVolumeButton", ["direction": v >= self.baseline ? "up" : "down", "emulatedZero": self.emulatedZero, "navigate": false])
             return
           }
           // 모션 기반 폰버튼/리모컨 판별(위 startMotion 주석) — 2026-08-18 사장님 지적("거치대에 놓고

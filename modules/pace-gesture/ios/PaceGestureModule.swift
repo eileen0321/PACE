@@ -287,6 +287,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var xHistory: [(t: Double, x: Double, y: Double)] = [] // 2026-08-21 glide(2D) 위해 y 추가
     var sweepStreak = 0
     var glideStreak = 0
+    // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — 움직임 burst당 1회 발화.
+    // 연속 손짓(1~2초) 중 불응(1.2s)이 끝나면 재발화하던 것을 구조적으로 차단: 움직임이 400ms 이상
+    // 멎어야 새 burst = 새 손짓으로 인정.
+    var burstFired = false
+    var lastMotionActiveMs: Double = 0
     var lastX: Double = 0, lastY: Double = 0
     var lastSeenMs: Double = 0
     var awaitingRearm = false
@@ -670,10 +675,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let relTh = self.glideRelMinPerSec * band.mul
       let absTh = self.glideAbsMinPerSec * band.mul
       let glideHit = glideRel > relTh && glideAbs > absTh
-      if glideHit { self.tracks[ti].glideStreak += 1 } else { self.tracks[ti].glideStreak = 0 }
+      // burst 경계 판정(구조체 주석) — 움직임이 400ms 이상 멎었다가 다시 시작하면 새 손짓.
+      if glideHit {
+        if nowMs - self.tracks[ti].lastMotionActiveMs > 400 { self.tracks[ti].burstFired = false }
+        self.tracks[ti].lastMotionActiveMs = nowMs
+        self.tracks[ti].glideStreak += 1
+      } else { self.tracks[ti].glideStreak = 0 }
       let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
-      if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit
+         && nowMs - self.lastTriggerMs > self.refractoryMs && !self.tracks[ti].burstFired {
         self.tracks[ti].glideStreak = 0
+        self.tracks[ti].burstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
         return
       }
@@ -697,8 +709,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs && !self.tracks[ti].burstFired {
         self.tracks[ti].sweepStreak = 0
+        self.tracks[ti].burstFired = true; self.tracks[ti].lastMotionActiveMs = nowMs // burst당 1회(구조체 주석)
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return
       }
@@ -726,6 +739,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   }
 
   // occlusion(렌즈 가림) — 안드 checkOcclusion과 동일: 창 안 최대밝기 대비 급감 + 절대 어두움.
+  // 🔴 2026-08-21 사장님 설계("카메라를 손으로 가리고 볼륨 누르면 볼륨키 되게 하라") — 가림 상태를
+  // 볼륨 모듈에 실시간 공유(PaceLensCovered)한다: 가림 중(+직후) 볼륨키 눌림 = 폰버튼 확정(볼륨만).
+  // 기존 "가림=넘김" 제스처와의 공존: 가림 발화를 0.9초 보류하고, 그 사이 볼륨키가 눌리면
+  // "볼륨 조절 의도의 가림"으로 보고 넘김을 취소한다. 가림만 하고 안 누르면 기존대로 넘김.
+  private var pendingOcclusionWork: DispatchWorkItem? = nil
+  private var lastLensCoveredPostMs: Double = 0
   private func checkOcclusion(_ luma: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
@@ -735,8 +754,26 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let nearRecent = nowMs - lastNearHandMs < 1200
     let dropR = nearRecent ? 0.68 : lumaDropRatio
     let darkMax = nearRecent ? 130.0 : lumaDarkAbsMax
-    if luma / brightest <= dropR && luma <= darkMax && nowMs - lastTriggerMs > refractoryMs {
-      fireTrigger(String(format: "occlusion luma=%.0f%@", luma, nearRecent ? " near완화" : ""), nowMs)
+    if luma / brightest <= dropR && luma <= darkMax {
+      if nowMs - lastLensCoveredPostMs > 150 { // 가림 지속 알림(150ms 스로틀) — 볼륨 모듈이 수신
+        lastLensCoveredPostMs = nowMs
+        NotificationCenter.default.post(name: Notification.Name("PaceLensCovered"), object: nil)
+      }
+      if nowMs - lastTriggerMs > refractoryMs && pendingOcclusionWork == nil {
+        let reason = String(format: "occlusion luma=%.0f%@(0.9s확정)", luma, nearRecent ? " near완화" : "")
+        let work = DispatchWorkItem { [weak self] in
+          guard let self = self else { return }
+          self.pendingOcclusionWork = nil
+          if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
+            paceGLog("[pace-wave] occlusion 발화 취소 — 가림 중 볼륨키 눌림(볼륨 조절 의도)")
+            return
+          }
+          self.fireTrigger(reason, CFAbsoluteTimeGetCurrent() * 1000)
+        }
+        pendingOcclusionWork = work
+        lastTriggerMs = nowMs // 보류 중 재예약 방지(불응 공유)
+        queue.asyncAfter(deadline: .now() + 0.9, execute: work)
+      }
     }
   }
 

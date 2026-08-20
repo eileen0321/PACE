@@ -299,6 +299,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
   private var globalBurstFired = false
   private var lastGlobalMotionMs: Double = 0
+  // 🔴 2026-08-21 01:23 실측 2연발 잔존 — 검출 공백이 "정지"로 오인돼 burst가 풀렸다. 안드 원칙
+  // "모른다 ≠ 떠났다"를 적용: 해제는 **양성 증거**로만 — ①손이 보이면서 0.6초 연속 정지(abs≤0.04)
+  // ②손이 프레임에서 완전히 떠남(전 트랙 소멸). 검출 공백(no-hand 프레임)은 정지 시계를 리셋한다.
+  private var stillnessStartMs: Double = 0
   private var cameraStartedAtMs: Double = 0   // 웜업 판정(안드 WARMUP_* 이식 — captureOutput 주석)
   private var firstDetectionDone = false      // 첫 손 인식 후 웜업 종료
   // 🔴 2026-08-19 01:01 — "폰을 만지는 중" 손짓 발화 잠금(볼륨 모듈이 NotificationCenter로 알림).
@@ -600,8 +604,19 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
       // 트랙별 판정(기존 단일 파이프라인과 동일 로직 — 상수 주석들 참고)
+      var maxAbs = 0.0
       for (ti, ci) in assigned {
-        self.processTrack(ti, cands[ci], nowMs)
+        maxAbs = max(maxAbs, self.processTrack(ti, cands[ci], nowMs))
+      }
+      // 전역 burst 해제 판정(선언부 "모른다≠떠났다" 주석) — 양성 증거로만 해제.
+      if assigned.isEmpty {
+        self.stillnessStartMs = 0 // 검출 공백 = 모른다 → 정지 시계 리셋
+        if self.tracks.allSatisfy({ $0.lastSeenMs == 0 }) { self.globalBurstFired = false } // 손이 완전히 떠남
+      } else if maxAbs > 0.04 {
+        self.stillnessStartMs = 0 // 움직이는 손 존재
+      } else {
+        if self.stillnessStartMs == 0 { self.stillnessStartMs = nowMs }
+        else if nowMs - self.stillnessStartMs > 600 { self.globalBurstFired = false } // 보이면서 0.6초 정지
       }
     }
   }
@@ -675,14 +690,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let relTh = self.glideRelMinPerSec * band.mul
       let absTh = self.glideAbsMinPerSec * band.mul
       let glideHit = glideRel > relTh && glideAbs > absTh
-      // 전역 burst 경계 판정(선언부 주석) — 모든 손의 움직임이 600ms 이상 멎어야 새 손짓으로 인정.
-      // ⚠️ 01:11 실측 3연발 원인 — 판정 기준을 발화 문턱(glideHit)으로 두면 발화 직후 이력 초기화·검출
-      // 공백으로 "움직임 없음"이 손짓 도중에 성립한다. 기준을 **미세 움직임(abs>0.04)**으로 분리:
-      // 손이 조금이라도 움직이는 동안엔 절대 정지로 안 친다.
-      if glideAbs > 0.04 {
-        if nowMs - self.lastGlobalMotionMs > 600 { self.globalBurstFired = false }
-        self.lastGlobalMotionMs = nowMs
-      }
+      // (burst 해제 판정은 델리게이트 말미의 전역 블록으로 이동 — 선언부 "모른다≠떠났다" 주석)
       if glideHit { self.tracks[ti].glideStreak += 1 } else { self.tracks[ti].glideStreak = 0 }
       let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
       if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit

@@ -416,7 +416,7 @@ public class PaceVolumeKeyModule: Module {
           // 흡수돼 센서 무신호(az0.2~3.3)인 경우가 존재 → 센서 한계. 행동 맥락으로 보완: 폰버튼 확정
           // 후 4초는 "볼륨 조절 행위 계속"으로 상속(볼륨 조절은 수 초간 연타하는 행위, 그 틈에 리모컨
           // 전환은 드묾. 샌 3건도 직전 폰버튼 3.2초 뒤라 이 창이면 커버). 900ms→4000ms.
-          if verdict == "리모컨" && self.motionHeld && nowK - self.lastPhonePressAtMs < 2000 { // 4000→2000ms(2026-08-19 01:25 사장님 "4초 너무 길지 않냐" — 볼륨 직후 리모컨 전환 대기 단축)
+          if verdict == "리모컨" && self.motionHeld && nowK - self.lastPhonePressAtMs < 1000 { // 2000→1000ms(2026-08-21 사장님 "그 버퍼 아냐" — 가림+볼륨 확정 경로가 생겨 보호 필요성 반감)
             verdict = "폰버튼"; why = "연속누름 상속 \(Int(nowK - self.lastPhonePressAtMs))ms"
           }
           if verdict == "폰버튼" { self.lastPhonePressAtMs = nowK }

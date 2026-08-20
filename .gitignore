@@ -75,3 +75,6 @@ modules/**/android/.cxx/
 credentials.json
 credentials/
 android/keystore.properties
+
+# 시연 영상(Play Console 제출용) — 100MB 넘어 GitHub에 못 올린다. ../pace_demo_videos/ 에 보관.
+pace_demo*.mp4

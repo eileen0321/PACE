@@ -1654,6 +1654,27 @@ class PaceOverlayService : Service() {
       return Math.ceil(remainMs / 60000.0).toInt()
     }
 
+    /**
+     * 🟢 2026-08-21 — **테스트 빌드 여부**. JS가 `EXPO_PUBLIC_AD_TEST_DEVICES` 기준으로 밀어준다
+     * (isPremium과 완전히 같은 패턴 — 네이티브는 빌드 플래그를 스스로 알 방법이 없다).
+     *
+     * 왜 `ApplicationInfo.FLAG_DEBUGGABLE`을 안 쓰나: 사장님이 실기기에서 검증하시는 빌드는
+     * **릴리즈 서명 빌드**다(디버그 APK는 서명이 안 맞아 설치가 안 되고, 지우고 깔면 데이터와
+     * 접근성 권한이 날아간다). 그래서 debuggable 플래그로는 그 빌드를 절대 못 잡는다.
+     * `.env`의 `EXPO_PUBLIC_AD_TEST_DEVICES=true`는 이미 "이건 테스트용 빌드"를 뜻하고
+     * (테스트 광고 강제 + 테스트기기 등록), 스토어 빌드 전에는 반드시 지우는 값이라 기준으로 맞다.
+     */
+    private const val PREF_TEST_MODE = "test_mode"
+
+    fun setTestMode(context: Context, enabled: Boolean) {
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_TEST_MODE, enabled).apply()
+      Log.i("PaceOverlayService", "testMode=$enabled (광고 연장 하루 제한 ${if (enabled) "해제" else "적용"})")
+    }
+
+    private fun isTestMode(context: Context): Boolean =
+      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_TEST_MODE, false)
+
     fun setIsPremium(context: Context, isPremium: Boolean) {
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PREMIUM, isPremium).apply()
     }
@@ -2170,6 +2191,29 @@ class PaceOverlayService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    // 🔴 2026-08-21 실기기 크래시 — 사장님 "틱톡 틀었는데 왜 오버레이 없어".
+    //   ```
+    //   01:25:36.042 PaceHandWaveDetector: camera bound (고정30fpsAE=on)
+    //   01:25:43.849 E AndroidRuntime: ForegroundServiceDidNotStartInTimeException:
+    //     Context.startForegroundService() did not then call Service.startForeground(): PaceOverlayService
+    //   01:25:44.058 W AccessibilityUserState: Crashed service : PaceAccessibilityService
+    //   ```
+    //   startForegroundService()로 시작된 서비스는 **5초 안에 startForeground()** 를 불러야 하는데,
+    //   그 호출이 ensureInfraReady() 안에 있었고 그건 아래 ACTION_START 처리의 50여 줄 뒤였다.
+    //   데드라인을 놓치면 시스템이 **프로세스를 통째로 죽인다** — 같은 프로세스인 접근성 서비스까지
+    //   함께 죽고(로그의 "Crashed service"), 접근성은 시스템이 재시작해주지만 **오버레이 서비스는
+    //   아무도 되살리지 않는다.** 그래서 알약만 사라진 채 자동넘김은 도는 상태가 된다.
+    //
+    //   → 어떤 액션이든 **가장 먼저** 포그라운드로 승격한다. 이게 안드로이드 공식 권장 패턴이고,
+    //     느린 초기화가 뒤에 무엇이 오든 이 크래시 자체가 성립하지 않게 된다.
+    //   ensureInfraReady()의 startForeground 호출은 그대로 둔다 — 같은 알림 ID로 다시 부르는 것은
+    //   내용 갱신일 뿐이라 무해하고, 그쪽은 remainingMinutes가 확정된 뒤라 표시가 정확하다.
+    //   ⚠️ 이 줄을 다시 아래로 내리지 말 것. 여기가 늦어지는 순간 위 크래시가 그대로 재현된다.
+    try {
+      startForeground(NOTIFICATION_ID, buildNotification(remainingMinutes))
+    } catch (e: Exception) {
+      Log.w("PaceOverlay", "선제 startForeground 실패 — ensureInfraReady에서 재시도된다", e)
+    }
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
       ACTION_START -> {
@@ -3116,7 +3160,13 @@ class PaceOverlayService : Service() {
     //   ⚠️ 크레딧 경로는 이 제한과 무관하다 — 크레딧은 출석 등으로 이미 번 자원이라 성격이 다르고,
     //     사장님 지시도 "보상광고"로 한정했다.
     val adUsed = adExtendCountToday(applicationContext)
-    val adLeft = (MAX_AD_EXTENDS_PER_DAY - adUsed).coerceAtLeast(0)
+    // 🟢 2026-08-21 사장님 지시 — "맥은 dev일 때 검증하려고 광고 계속 보고 연장하게 했어",
+    //   "맥처럼 dev일 때만 동작하게 만들어, 테스트를 못 하잖아".
+    //   무료 세션은 10분이고 그 뒤 FOCUS를 다시 켜려면 광고를 봐야 하는데, 하루 3회를 다 쓰면
+    //   **그날은 더 이상 검증 자체가 불가능**하다(iOS는 이미 dev 우회가 있어 안드로이드만 막혔다).
+    //   → 테스트 빌드에서만 이 캡을 풀어 플랫폼 동작을 맞춘다. 프로덕션 로직은 그대로 3회다.
+    val adLeft = if (isTestMode(applicationContext)) Int.MAX_VALUE
+                 else (MAX_AD_EXTENDS_PER_DAY - adUsed).coerceAtLeast(0)
     if (adLeft > 0) {
       card.addView(button(
         if (ko) "광고 보고 ${EXTEND_MINUTES}분 더 (오늘 $adUsed/$MAX_AD_EXTENDS_PER_DAY)"

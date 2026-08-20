@@ -67,6 +67,14 @@ function enforceFreeFocusSessionDuration(isPremium: boolean) {
   // isPremium이 바뀔 때마다(부팅 1회 + 구독 상태 변경마다) 항상 호출되는 유일한 지점이라 여기서
   // 같이 밀어준다 — 아래 얼리 리턴(무료 전용 로직)보다 먼저 실행해야 true 값도 항상 전달된다.
   if (Platform.OS === 'android') bluetoothService.setIsPremium(isPremium).catch(() => {});
+  // 🟢 2026-08-21 사장님 지시("맥은 dev일 때 검증하려고 광고 계속 보고 연장하게 했어",
+  //   "맥처럼 dev일 때만 동작하게 만들어, 테스트를 못 하잖아").
+  //   무료 세션은 10분이고 그 뒤 FOCUS를 다시 켜려면 광고를 봐야 하는데, 하루 3회를 다 쓰면
+  //   그날은 검증 자체가 불가능해진다. iOS엔 이미 dev 우회가 있어 Android만 막혀 있었다.
+  //   ⚠️ `__DEV__`를 기준으로 쓰면 안 된다 — 실기기 검증 빌드는 **릴리즈 서명 빌드**라
+  //     (디버그 APK는 서명 불일치로 설치 불가, 지우고 깔면 데이터+접근성 권한이 날아간다)
+  //     `__DEV__`가 false다. `EXPO_PUBLIC_AD_TEST_DEVICES`가 이미 "테스트용 빌드"를 뜻하고
+  //     (테스트 광고 강제 + 테스트기기 등록) 스토어 빌드 전엔 반드시 지우는 값이라 기준으로 맞다.
   if (isPremium) return;
   const current = useSettingsStore.getState().settings;
   const patch: { focusSessionDurationMinutes?: number; sleepStillnessMinutes?: number } = {};
@@ -258,6 +266,22 @@ export default function RootLayout() {
     overlayService.endOrphanedOverlays?.().catch(() => {});
   }, []);
 
+  // 🟢 2026-08-21 — 테스트 빌드 플래그를 네이티브에 알린다(광고 연장 하루 3회 캡 해제).
+  //   ⚠️ 처음엔 enforceFreeFocusSessionDuration() 안에 넣었는데 **그건 틀린 자리였다.** 그 함수는
+  //     `Promise.all([settingsReady, subscriptionReady])` 뒤에 있어서, RevenueCat 초기화가 실패하면
+  //     (D11 ConfigurationError — Play에 구독 상품 미등록이라 실기기에서 실제로 실패한다)
+  //     통째로 안 돈다. 실기기 로그에 `testMode=`가 0줄이었던 이유가 정확히 이것이다.
+  //   이 값은 빌드 타임 상수라 구독·설정·로그인 그 무엇에도 의존하지 않는다 — 부팅 즉시,
+  //   아무 조건 없이 밀어준다. 이렇게 두면 다른 초기화가 뭘 실패하든 영향받지 않는다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const on = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
+    // 진단(임시) — 이 경로는 지금까지 **조용히 실패**했다. JS의 `PaceOverlay?.`도, 네이티브의
+    // `reactContext?.let`도 null이면 아무 로그 없이 넘어가서 어디서 끊겼는지 알 수가 없었다.
+    console.warn('[testMode] push', on);
+    bluetoothService.setTestMode(on).catch((e) => console.warn('[testMode] failed', String(e)));
+  }, []);
+
   useEffect(() => {
     // initUser()가 끝나야 토큰 유무(로그인 성공 vs 로컬 전용 게스트 폴백)가 확정되므로, 그 이후에
     // syncFromServer를 불러야 불필요한 401(→자동로그아웃)을 피할 수 있다(services/sync/backendSync
@@ -372,7 +396,15 @@ export default function RootLayout() {
     // 2026-07-26 사용자 지시("무료일땐 Focus Session 10분 고정") — loadSettings()가 먼저 끝나야
     // (그래야 focusSessionDurationMinutes가 저장된 실제 값으로 채워짐) 아래 강제 적용이 방금 로드된
     // 값을 덮어쓰지 않는다 — 둘 다 끝난 뒤에만 실행.
-    Promise.all([settingsReady, subscriptionReady]).then(() => {
+    // 🔴 2026-08-21 실기기로 확정된 버그 — `Promise.all`이라 **둘 중 하나만 실패해도 이 블록이
+    //   통째로 안 돈다.** 그런데 `initSubscription()`은 실패가 흔하다: D11에 기록된 RevenueCat
+    //   `PurchasesError(code=ConfigurationError)`(Play에 구독 상품 미등록)가 그대로 여기 걸린다.
+    //   결과로 `enforceFreeFocusSessionDuration()`이 **한 번도 호출되지 않아** 그 안의 네이티브
+    //   푸시(setIsPremium / setTestMode)가 통째로 유실됐다 — 증상: 광고 연장 테스트 우회가 안 먹고
+    //   (`testMode=` 로그 0줄), 프리미엄 사용자도 네이티브는 계속 무료로 알고 있었다.
+    //   → `allSettled`로 바꾼다. 구독 조회가 실패해도 "무료"로 간주해 나머지는 정상 진행하는 게
+    //     맞다(실패 시 isPremium은 스토어 기본값 false라 판단이 안전한 쪽으로 떨어진다).
+    Promise.allSettled([settingsReady, subscriptionReady]).then(() => {
       const isPremium = useSubscriptionStore.getState().isPremium;
       enforceFreeFocusSessionDuration(isPremium);
     }).catch(() => {}); // 감사 MED — 체인 rejection 시 unhandled 방지

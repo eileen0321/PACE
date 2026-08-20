@@ -10048,3 +10048,91 @@ far×1.8·3f — sweep·glide 문턱과 확정프레임에 공통 적용 ⑤즉�
   vs 유튜브 ~1.5s). 개선안: 피드 진입 시 비활성 플랫폼 웹뷰 사전 예열(메모리 비용 검토 필요).
 - [ ] 🟡 백로그(2026-08-21): 유튜브 장기 stall(스로틀) 시 검은 화면만 보임 → 죽은 앱으로 오인.
   안내 문구 + 자동 리로드/틱톡 전환 제안 UI 검토.
+#### 10. 🔴🔴 오늘 밤 가장 중요한 발견 — **JS 수정이 기기에서 한 줄도 안 돌고 있었다**
+
+```
+[updates] enabled=true embedded=false channel=production runtimeVersion=1.0 updateId=01a0101a-...
+```
+**`embedded=false`** — 앱이 APK 내장 번들이 아니라 **예전에 다운로드해둔 OTA 업데이트 번들**을
+실행 중이었다. APK를 몇 번을 재설치해도 JS는 옛 코드였다.
+
+이게 오늘 밤 내내 사람을 헤매게 만든 원인이다. 증상이 전부 설명된다:
+ · `setTestMode`가 소스에도, 번들에도, APK dex에도 있는데 **호출이 안 됨** → 다른 번들을 실행 중이었으니까
+ · `createBundleReleaseJsAndAssets`를 강제로 다시 돌려도 소용없음 → 애초에 그 번들을 안 읽음
+ · `[versionGate]`(옛 번들에도 있는 로그)는 찍히는데 오늘 추가한 로그만 안 찍힘
+
+**그리고 이건 훨씬 위험한 상태였다.** 오늘 네이티브를 대량 수정했는데(`PaceHandWaveDetector`,
+`PaceOverlayService`, `PaceAccessibilityService`, 신규 네이티브 함수 3개) `runtimeVersion`은 `1.0`
+그대로였다 = **옛 런타임용 OTA 번들이 새 네이티브 바이너리 위에서 돌고 있었다.** iOS는 `1.0.4`로
+관리되는데 **Android만 `1.0`에 방치**돼 있었다.
+
+→ `1.0.5`로 올림. `updateId=null`이 되며 내장 번들이 실행되고 전 구간이 뚫렸다:
+```
+[testMode] push true → PaceOverlayModule: setTestMode(true) reactContext=ok
+                     → PaceOverlayService: testMode=true (광고 연장 하루 제한 해제)
+```
+
+⚠️ **다음 세션이 반드시 알아야 할 것 2가지:**
+ 1. **`android/app/src/main/res/values/strings.xml`의 `expo_runtime_version`도 같이 고쳐야 한다.**
+    `android/` 폴더가 커밋돼 있어서 `app.json`만 바꾸면 prebuild 전까지 반영이 안 된다.
+    안드로이드 네이티브를 바꿀 때마다 **양쪽 다** 올릴 것.
+ 2. **"JS 수정이 안 먹는다" 싶으면 `[updates] embedded=` 부터 확인할 것.** `embedded=false`면
+    무엇을 빌드하든 소용없다. 이 한 줄을 먼저 안 봐서 오늘 빌드·설치를 열 번 넘게 반복했다.
+
+#### 11. 광고 연장 하루 3회 캡 — 테스트 빌드에서만 해제(맥과 동일하게)
+
+사장님 "맥은 dev일 때 검증하려고 광고 계속 보고 연장하게 했어". Android엔 그 우회가 없어서
+3회를 다 쓰면 그날 검증이 불가능했다(무료 세션 10분 → FOCUS 재활성화에 광고 필요).
+→ `setTestMode` 신설(`PaceOverlayService`/`PaceOverlayModule`/`bluetoothService`), `isTestMode()`면
+`adLeft = Int.MAX_VALUE`. 기준은 `EXPO_PUBLIC_AD_TEST_DEVICES`다 — **`__DEV__`를 쓰면 안 된다.**
+실기기 검증 빌드는 릴리즈 서명 빌드라(디버그 APK는 서명 불일치로 설치 불가) `__DEV__`가 false다.
+
+부수적으로 발견해 함께 고친 것: 처음에 이 푸시를 `enforceFreeFocusSessionDuration()` 안에 넣었는데
+그 함수는 `Promise.all([settingsReady, subscriptionReady])` 뒤라 **RevenueCat 초기화가 실패하면
+통째로 안 돈다**(D11 ConfigurationError가 실기기에서 실제로 발생). 즉 **`setIsPremium`도 네이티브에
+안 밀리고 있었다**(프리미엄 사용자를 네이티브가 계속 무료로 인식). `Promise.allSettled`로 교체 +
+`setTestMode`는 아무것에도 의존하지 않는 독립 effect로 분리.
+
+#### 12. 🔴 오버레이가 사라진 원인 = 포그라운드 서비스 크래시(프로세스 전체 사망)
+
+사장님 "틱톡 틀었는데 왜 오버레이 없어".
+```
+01:25:36 PaceHandWaveDetector: camera bound (고정30fpsAE=on)
+01:25:43 E AndroidRuntime: ForegroundServiceDidNotStartInTimeException — PaceOverlayService
+01:25:44 W AccessibilityUserState: Crashed service : PaceAccessibilityService
+```
+`startForegroundService()`로 시작된 서비스는 **5초 안에 `startForeground()`** 를 불러야 하는데 그
+호출이 `ensureInfraReady()` 안(= `onStartCommand` 진입 50여 줄 뒤)에 있었다. 데드라인을 놓치면
+시스템이 **프로세스를 통째로 죽인다** — 접근성 서비스까지 같이 죽고, 접근성은 시스템이 재시작해주지만
+**오버레이 서비스는 아무도 되살리지 않는다**(그래서 알약만 없고 자동넘김은 도는 상태가 됨).
+→ `onStartCommand` **맨 첫 줄**로 이동(안드로이드 공식 권장). ⚠️ 다시 아래로 내리지 말 것.
+
+⚠️ **근본 원인은 아직 남아있다**: `PaceHandWaveDetector.startOnMainThread`가 **메인 스레드에서
+MediaPipe 모델 2개를 동기 로딩**한다. 이게 메인 스레드를 수 초 막아 데드라인을 놓치게 만든다.
+백그라운드로 옮기는 게 진짜 해법인데, 이 파일이 기록한 SIGSEGV 레이스(닫히는 중인 landmarker
+접근)와 얽혀 있어 신중히 해야 한다. **다음 세션 최우선 후보.**
+
+#### 13. 검증 상태(2026-08-21 02:00 기준) — 정직하게
+
+**실기기 로그로 검증됨**
+ · 손짓 감지: 27초간 WAVE 26회 → 스와이프 27회
+ · 연장/광고 팝업 자기소거 수정: 카드가 뜬 뒤 2.1초 후에도 생존(`preload ready`), 화면으로도 확인
+ · 노출 고정: `camera bound (고정30fpsAE=on)` — 이 기기는 [30,30] 지원(폴백 안 탐)
+ · testMode 전 구간: JS→모듈→서비스까지 로그로 확인
+ · 실광고→테스트 광고 전환: 스크린샷의 "테스트 광고" 배지
+
+**코드는 들어갔으나 미검증**
+ · 큰 손짓 gross-motion 축 — `gross-motion` 로그 **0줄**(아직 한 번도 안 돌아봄)
+ · 볼륨키 FOCUS 게이트 — `볼륨키 스킵 차단` 로그 0줄
+ · open app 세션 초기화 방지(`isNativeSessionRunning`)
+ · 포그라운드 크래시 수정(위 §12) — 재현 시도 안 함
+ · 아이콘 패딩 — 홈화면 육안 확인 안 함
+
+**미해결로 남긴 것**
+ · 스와이프 3연발(2.2초 간격, `MANUAL_SWIPE_MIN_GAP_MS` 3초를 안 타는 경로가 있다) — 한 번의
+   넘김에 영상이 2~3개 건너뛰어진다. 예전 "안 눌렀는데 3개 넘어감" 신고와 같은 모양
+ · 손짓 토글이 꺼져 있어도 UI가 아무 말도 안 함(제품 결정 필요)
+ · 메인 스레드 모델 로딩(위 §12)
+
+**되돌릴 임시 진단** — `diagEnabled = true`(릴리즈 강제), `[testMode] push` console.warn,
+`PaceOverlayModule`의 setTestMode 로그. 튜닝 끝나면 제거.

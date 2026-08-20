@@ -22,6 +22,7 @@ let PaceOverlay: {
   setFocusSessionDurationMinutes(minutes: number): void;
   getFocusSessionDurationMinutes(): number;
   setIsPremium(isPremium: boolean): void;
+  setTestMode(enabled: boolean): void;
   setUseRealAds(useRealAds: boolean): void;
   setAdsConsent(canRequestAds: boolean, personalized: boolean): void;
   setAvailableCredits(credits: number): void;
@@ -134,6 +135,16 @@ export const bluetoothService: BluetoothService = {
   // 2026-08-01 — 네이티브 "FOCUS OFF" 배지가 타임아웃 후 탭됐을 때 광고 없이 바로 재활성화할지
   // (프리미엄) 앱을 열어 보상형 광고 모달로 보낼지(무료) 판단하려면 네이티브가 구독 상태를 알아야
   // 한다 — isPremium이 바뀔 때마다 밀어준다(_layout.tsx).
+  // 🟢 2026-08-21 — 테스트 빌드에서만 광고 연장 하루 3회 캡을 푼다(iOS의 dev 우회와 같은 목적).
+  //   네이티브는 빌드 플래그를 스스로 알 수 없어 JS가 밀어준다 — setIsPremium과 동일 패턴.
+  async setTestMode(enabled: boolean) {
+    try {
+      PaceOverlay?.setTestMode(enabled);
+    } catch (e) {
+      console.warn("[bluetoothService.android] setTestMode failed", e);
+    }
+  },
+
   async setIsPremium(isPremium: boolean) {
     try {
       PaceOverlay?.setIsPremium(isPremium);

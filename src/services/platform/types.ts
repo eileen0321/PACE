@@ -257,6 +257,20 @@ export interface BluetoothService {
   /** 네이티브 "FOCUS OFF" 배지 탭 시 광고 게이트 여부 판단용 구독 상태 동기화(Android만 실제 동작, iOS는 no-op). */
   setIsPremium(isPremium: boolean): Promise<void>;
   /**
+   * 🟢 2026-08-21 — 테스트 빌드 여부를 네이티브에 알린다(Android 전용, iOS는 no-op).
+   *
+   * 사장님 지시: "맥은 dev일 때 검증하려고 광고 계속 보고 연장하게 했어 / 맥처럼 dev일 때만
+   * 동작하게 만들어, 테스트를 못 하잖아." 무료 세션은 10분이고 그 뒤 FOCUS를 다시 켜려면
+   * 보상형 광고를 봐야 하는데, 하루 3회(MAX_AD_EXTENDS_PER_DAY)를 다 쓰면 **그날은 검증
+   * 자체가 불가능**해진다. iOS엔 이미 dev 우회가 있어 Android만 막혀 있었다.
+   *
+   * ⚠️ 기준이 `__DEV__`가 아니라 `EXPO_PUBLIC_AD_TEST_DEVICES`인 이유: 실기기 검증 빌드는
+   *   **릴리즈 서명 빌드**라(디버그 APK는 서명 불일치로 설치 불가 — 지우고 깔면 데이터와
+   *   접근성 권한이 날아간다) `__DEV__`가 false다. 그 env는 이미 "테스트용 빌드"를 뜻하고
+   *   스토어 빌드 전에는 반드시 지우는 값이라 기준으로 맞다.
+   */
+  setTestMode(enabled: boolean): Promise<void>;
+  /**
    * 2026-08-02 — 쇼츠 위 FOCUS OFF 선택 팝업(광고/크레딧, Android 네이티브 오버레이)이 크레딧
    * 버튼 노출 여부를 판단하려면 네이티브가 잔액을 알아야 한다(크레딧은 JS 스토어에만 존재).
    * iOS는 이 네이티브 팝업 자체가 없어 no-op.

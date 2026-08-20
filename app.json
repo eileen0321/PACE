@@ -32,7 +32,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "versionCode": 13,
-      "runtimeVersion": "1.0"
+      "runtimeVersion": "1.0.5"
     },
     "web": {
       "favicon": "./assets/favicon.png"

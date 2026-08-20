@@ -93,6 +93,9 @@ export const bluetoothService: BluetoothService = {
   async setFocusSessionDurationMinutes() {},
   async getFocusSessionDurationMinutes() { return 10; },
   async setIsPremium() {}, // no-op — iOS엔 이 네이티브 "FOCUS OFF" 배지/오버레이 알약 자체가 없음
+  // no-op — 광고 연장 하루 제한이 Android 네이티브(MAX_AD_EXTENDS_PER_DAY)에만 있고,
+  // iOS는 dev 우회가 이미 RN 쪽에 있다(types.ts의 setTestMode 주석 참고).
+  async setTestMode() {},
   async setUseRealAds() {},
   async setAdsConsent() {}, // no-op — iOS는 쇼츠 위 네이티브 광고 경로가 없다(RN이 직접 동의를 반영)
   async setAvailableCredits() {}, // no-op — iOS엔 쇼츠 위 네이티브 선택 팝업이 없음(RN 모달로 처리)

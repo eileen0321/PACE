@@ -676,17 +676,42 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let absTh = self.glideAbsMinPerSec * band.mul
       let glideHit = glideRel > relTh && glideAbs > absTh
       // 전역 burst 경계 판정(선언부 주석) — 모든 손의 움직임이 600ms 이상 멎어야 새 손짓으로 인정.
-      if glideHit {
+      // ⚠️ 01:11 실측 3연발 원인 — 판정 기준을 발화 문턱(glideHit)으로 두면 발화 직후 이력 초기화·검출
+      // 공백으로 "움직임 없음"이 손짓 도중에 성립한다. 기준을 **미세 움직임(abs>0.04)**으로 분리:
+      // 손이 조금이라도 움직이는 동안엔 절대 정지로 안 친다.
+      if glideAbs > 0.04 {
         if nowMs - self.lastGlobalMotionMs > 600 { self.globalBurstFired = false }
         self.lastGlobalMotionMs = nowMs
-        self.tracks[ti].glideStreak += 1
-      } else { self.tracks[ti].glideStreak = 0 }
+      }
+      if glideHit { self.tracks[ti].glideStreak += 1 } else { self.tracks[ti].glideStreak = 0 }
       let glideInstant = glideRel > relTh * self.glideInstantMargin && glideAbs > absTh * self.glideInstantMargin
       if (glideInstant || self.tracks[ti].glideStreak >= band.confirm) && glideHit
          && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
         self.tracks[ti].glideStreak = 0
         self.globalBurstFired = true // 이 burst(한 손짓)에서는 더 발화 안 함
-        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
+        // 🔴 2026-08-21 01:12 실측("가리고 볼륨 누르는데 영상 넘어감") — 폰/렌즈로 **뻗는 손**의 측면
+        // 성분이 glide로 발화했다. 구분: 뻗는 손은 커지면서 움직임(growth>1.15 동반), 순수 좌우
+        // 손짓은 growth≈1.0. 커지는 중이면 0.9초 보류(그 사이 볼륨 눌림/렌즈가림 오면 취소 —
+        // growth 보류와 동일 경로), 아니면 즉시 발화.
+        let reason = String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize)
+        if growth > 1.15 {
+          let hs = handSize
+          self.pendingGrowthWork?.cancel()
+          let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingGrowthWork = nil
+            let nowW = CFAbsoluteTimeGetCurrent() * 1000
+            if nowW - self.lastVolumePressMs < 1500 || nowW - self.lastLensCoveredPostMs < 1000 {
+              paceGLog("[pace-wave] glide(접근성) 발화 취소 — 볼륨/가림 신호(뻗은 손 판정)")
+              return
+            }
+            self.fireTrigger(reason + "(0.9s확정)", nowW, handSize: hs, trackIdx: ti)
+          }
+          self.pendingGrowthWork = work
+          self.queue.asyncAfter(deadline: .now() + 0.9, execute: work)
+        } else {
+          self.fireTrigger(reason, nowMs, handSize: handSize, trackIdx: ti)
+        }
         return
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return }
@@ -784,7 +809,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private func fireTrigger(_ reason: String, _ nowMs: Double, handSize: Double = 0, trackIdx: Int = -1) {
     lastTriggerMs = nowMs
     lumaHistory.removeAll()
-    for i in 0..<tracks.count { tracks[i].sizeHistory.removeAll(); tracks[i].xHistory.removeAll(); tracks[i].sweepStreak = 0 }
+    // ⚠️ xHistory는 비우지 않는다(2026-08-21) — 비우면 발화 직후 글라이드 연속성이 끊겨 전역 burst의
+    // "움직임 지속" 추적이 끊기고, 600ms 정지 판정이 손짓 도중 성립해 재발화한다(01:11 3연발 원인).
+    // 재발화 방지는 globalBurstFired가 담당하므로 이력 유지가 안전하다.
+    for i in 0..<tracks.count { tracks[i].sizeHistory.removeAll(); tracks[i].sweepStreak = 0; tracks[i].glideStreak = 0 }
     if handSize > 0, trackIdx >= 0, trackIdx < tracks.count {
       tracks[trackIdx].awaitingRearm = true
       tracks[trackIdx].rearmBelowSize = handSize * rearmSizeRatio

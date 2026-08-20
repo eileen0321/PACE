@@ -392,6 +392,25 @@ const INJECTED_JS_SWIPE = `
   // 폴링 1틱 — href/영상id 변화 감지 재부착 + 진행률/종료 감지. setInterval(500ms, 상시)과
   // scheduleFastPoll(전환 직후 버스트) 양쪽이 공유한다(top-level로 빼 양쪽에서 호출 가능).
   function pollTick() {
+    // 🔴 2026-08-21 사장님("오버레이가 다 없고 까만 화면이야") — 유튜브가 스로틀/네트워크로 장기 정지하면
+    // 검은 프레임만 남아 죽은 앱처럼 보였다. 재생이 15초 이상 전혀 진행되지 않으면(paused 아님·시간 정지)
+    // 페이지를 리로드해 스스로 복구한다(세션당 최대 3회 — 무한 리로드 방지).
+    try {
+      var sv = document.querySelector('video');
+      if (sv && !sv.paused) {
+        var stallNow = Date.now();
+        if (window.__paceStallT !== sv.currentTime) { window.__paceStallT = sv.currentTime; window.__paceStallSince = stallNow; }
+        else if (window.__paceStallSince && stallNow - window.__paceStallSince > 15000) {
+          var srN = 0; try { srN = parseInt(sessionStorage.getItem('paceStallReloads') || '0', 10) || 0; } catch (eSR) {}
+          if (srN < 3) {
+            try { sessionStorage.setItem('paceStallReloads', String(srN + 1)); } catch (eSR2) {}
+            send({ type: 'domlog', text: '🔄 스톨 워치독: 15s 무진행 — 리로드 ' + (srN + 1) + '/3' });
+            location.reload();
+            return;
+          }
+        }
+      }
+    } catch (eStall) {}
     // ⚠️ 2026-08-05 사장님/맥 진단 — "같은 비디오가 짧은 시간에 두 번 걸려 첫 재생이 두 번째에 끊긴다."
     //   원인: 재부착 판단을 **href 전체**로 하고 있었다. 유튜브는 같은 쇼츠를 보면서도 URL 뒤쪽을
     //   손댄다(파라미터 추가/정규화 등). 그때마다 href가 달라져 attach()가 다시 돌고, attach는 끝에서

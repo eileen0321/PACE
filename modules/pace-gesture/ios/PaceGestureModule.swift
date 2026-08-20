@@ -624,7 +624,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
   }
 
-  private func processTrack(_ ti: Int, _ c: (x: Double, y: Double, size: Double, score: Double), _ nowMs: Double) {
+  private func processTrack(_ ti: Int, _ c: (x: Double, y: Double, size: Double, score: Double), _ nowMs: Double) -> Double {
       // 폰 취급 중 발화 잠금(상단 installHandlingObservers 주석).
       // ⛔ 01:06 실기기 — phoneHeldNow(쥠 상태) 조건이 고착돼(해제 임계 미달 지속) 손짓 전체를 잠갔다
       // ("손짓 10번 안 됨" + 발화잠금 로그 연속). 쥠 상태는 오늘 내내 불안정했으므로 잠금 조건에서
@@ -632,7 +632,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if CFAbsoluteTimeGetCurrent() * 1000 - self.lastVolumePressMs < 1500 {
         self.logTick += 1
         if self.logTick % 20 == 0 { paceGLog("[pace-wave] 발화잠금(볼륨눌림 직후)") }
-        return
+        return 0.05 // 폰 취급 중 — 정지 아님으로 취급
       }
       let handSize = c.size
       let handScore = c.score
@@ -650,7 +650,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                    handSize, moved)
           self.tracks[ti].awaitingRearm = false
         } else {
-          return // 이 손은 아직 재무장 안 됨(다른 손은 별도 트랙에서 자유)
+          return 0.05 // 이 손은 아직 재무장 안 됨(다른 손은 별도 트랙에서 자유)
         }
       }
       // 거리 밴드(상수 주석 참고) — 이후 모든 문턱에 배수, 확정프레임에 밴드값 적용.
@@ -730,9 +730,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         } else {
           self.fireTrigger(reason, nowMs, handSize: handSize, trackIdx: ti)
         }
-        return
+        return glideAbs
       }
-      guard let oldest = self.tracks[ti].sizeHistory.first else { return }
+      guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
       let growth = handSize / oldest.size
       // 속도 피크(안드 파리티) — 최근 창 안 |크기 변화율| 최대.
       var speedPeak = 0.0
@@ -756,7 +756,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.tracks[ti].sweepStreak = 0
         self.globalBurstFired = true; self.lastGlobalMotionMs = nowMs // 전역 burst당 1회(선언부 주석)
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
-        return
+        return glideAbs
       }
       if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs && !self.globalBurstFired {
         self.globalBurstFired = true // 2026-08-21 01:30 실측 — growth 경로가 burst 게이트를 우회해 페어 발화하던 구멍
@@ -780,6 +780,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.lastTriggerMs = nowMs // 보류 중 중복 예약/sweep 이중발화 방지(같은 제스처)
         self.queue.asyncAfter(deadline: .now() + 0.9, execute: work)
       }
+      return glideAbs
   }
 
   // occlusion(렌즈 가림) — 안드 checkOcclusion과 동일: 창 안 최대밝기 대비 급감 + 절대 어두움.

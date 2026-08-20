@@ -694,7 +694,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // 손짓은 growth≈1.0. 커지는 중이면 0.9초 보류(그 사이 볼륨 눌림/렌즈가림 오면 취소 —
         // growth 보류와 동일 경로), 아니면 즉시 발화.
         let reason = String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideInstant ? " instant" : "", handSize)
-        if growth > 1.15 {
+        // growth 본계산(아래 guard)보다 앞이라 조기 추정치를 따로 계산(같은 정의: 창 최초 대비 배율)
+        let growthNow: Double = {
+          if let o = self.tracks[ti].sizeHistory.first, o.size > 0 { return handSize / o.size }
+          return 1.0
+        }()
+        if growthNow > 1.15 {
           let hs = handSize
           self.pendingGrowthWork?.cancel()
           let work = DispatchWorkItem { [weak self] in

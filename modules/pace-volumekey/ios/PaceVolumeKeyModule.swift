@@ -329,6 +329,10 @@ public class PaceVolumeKeyModule: Module {
             NSLog("PACEVOL cls=폰버튼(렌즈가림 신호) v=\(v)")
             self.baseline = (v * 16).rounded() / 16
             self.lastPhonePressAtMs = CACurrentMediaTime() * 1000 // 가림 후 연타도 상속 보호
+            // 폰버튼 확정 = 소리 조절 의도 확정 → 무음 잠금 해제 신호(source로 JS 억제조건 우회 —
+            // 2026-08-21 사장님 "가리고 눌렀는데 소리 안 됨": 8/15 억제는 "리모컨과 구분 불가" 전제였는데
+            // 이제 구분되므로 폰버튼 눌림에는 적용하지 않는다)
+            self.sendEvent("onSilentUnmute", ["source": "phonebutton"])
             self.sendEvent("onVolumeButton", ["direction": v >= self.baseline ? "up" : "down", "emulatedZero": self.emulatedZero, "navigate": false])
             return
           }
@@ -419,6 +423,7 @@ public class PaceVolumeKeyModule: Module {
           NSLog("PACEVOL cls=\(verdict) (\(why)) kbd=\(self.keyboardPresent) v=\(v)")
           if verdict == "폰버튼" {
             self.baseline = (v * 16).rounded() / 16 // 실제 볼륨 변경을 그대로 인정(하이재킹 없음)
+            self.sendEvent("onSilentUnmute", ["source": "phonebutton"]) // 위 렌즈가림 분기와 동일한 이유
             return
           }
           let direction = v >= self.baseline ? "up" : "down"

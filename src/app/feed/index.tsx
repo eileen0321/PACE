@@ -767,7 +767,7 @@ export default function PaceFeedScreen() {
       checkSilentSwitch(): Promise<boolean>;
       startSilentUnmuteWatch(): void;
       stopSilentUnmuteWatch(): void;
-      addListener(event: 'onSilentUnmute', listener: () => void): { remove: () => void };
+      addListener(event: 'onSilentUnmute', listener: (payload?: { source?: string }) => void): { remove: () => void };
     };
     let mod: Mod | null;
     try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
@@ -821,19 +821,22 @@ export default function PaceFeedScreen() {
     type WatchMod = {
       startSilentUnmuteWatch(): void;
       stopSilentUnmuteWatch(): void;
-      addListener(event: 'onSilentUnmute', listener: () => void): { remove: () => void };
+      addListener(event: 'onSilentUnmute', listener: (payload?: { source?: string }) => void): { remove: () => void };
     };
     let mod: WatchMod | null;
     try { mod = requireOptionalNativeModule('PaceVolumeKey'); } catch { mod = null; }
     if (!mod) return;
     mod.startSilentUnmuteWatch();
-    const sub = mod.addListener('onSilentUnmute', () => {
+    const sub = mod.addListener('onSilentUnmute', (payload?: { source?: string }) => {
       // 리모컨을 최근(60초 이내, 배지와 동일 창) 실제로 쓴 경우만 억제 — 그 밖엔(폰 물리버튼이거나
       // 리모컨을 안 쓴 지 오래됐으면) 기존 2026-08-08 동작(눌리면 무조건 언뮤트) 그대로.
       const recentlyUsedRemote = Date.now() - remoteActivityAtRef.current < REMOTE_MUTE_SUPPRESS_WINDOW_MS;
       // 억제는 "리모컨 세션이 실제로 켜져 있는 동안"(포커스 ON + 토글 ON)만 — 포커스를 끄는 순간
       // 볼륨키는 순수 볼륨으로 돌아가므로 무음해제도 즉시 정상 동작해야 한다(2026-08-18 재현 수정).
-      if (volumeKeyRemote && isAutoModeRef.current && recentlyUsedRemote) return;
+      // 2026-08-21 — 네이티브가 폰버튼으로 **확정 판정**한 눌림(source=phonebutton)은 억제하지 않는다:
+      // 8/15 억제의 전제("리모컨과 구분 불가")가 센서 융합+렌즈가림 판정으로 깨졌다. 폰버튼 조절 =
+      // 소리 의도("가리고 눌렀는데 소리 안 됨" 수정).
+      if (payload?.source !== 'phonebutton' && volumeKeyRemote && isAutoModeRef.current && recentlyUsedRemote) return;
       userSilentOverrideRef.current = true;
       setUserSoundOn(true); // 재진입에도 유지(프로세스 전역)
       playerRef.current?.setMuted(false);

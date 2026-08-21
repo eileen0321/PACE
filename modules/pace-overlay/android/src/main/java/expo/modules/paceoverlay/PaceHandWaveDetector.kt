@@ -673,7 +673,7 @@ object PaceHandWaveDetector {
     //   지금 처리율이 ≈5fps라 로그도 초당 5줄뿐이라 스팸이 아니다.
     //   ⚠️ 원인 확정 후 반드시 아래 한 줄로 되돌릴 것:
     //      diagEnabled = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-    diagEnabled = true
+    diagEnabled = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
     lastDiagAtMs = 0L
     val myGeneration = ++startGeneration
     Handler(Looper.getMainLooper()).post { startOnMainThread(context, onWave, myGeneration) }

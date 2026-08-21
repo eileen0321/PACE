@@ -456,10 +456,7 @@ class PaceOverlayModule : Module() {
     // 🟢 2026-08-21 — 테스트 빌드 여부(EXPO_PUBLIC_AD_TEST_DEVICES). 광고 연장 하루 3회 캡을
     // 테스트에서만 푼다 — PaceOverlayService.setTestMode 주석에 근거(iOS의 dev 우회와 같은 목적).
     Function("setTestMode") { enabled: Boolean ->
-      // 진단(임시) — reactContext가 null이면 아래 let이 **조용히** 넘어간다. 어디서 끊겼는지 남긴다.
-      val ctx = appContext.reactContext
-      Log.i("PaceOverlayModule", "setTestMode($enabled) 호출됨 reactContext=${if (ctx == null) "null" else "ok"}")
-      ctx?.let { context -> PaceOverlayService.setTestMode(context, enabled) }
+      appContext.reactContext?.let { context -> PaceOverlayService.setTestMode(context, enabled) }
     }
 
     Function("setIsPremium") { isPremium: Boolean ->

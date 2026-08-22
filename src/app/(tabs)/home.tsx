@@ -345,8 +345,12 @@ export default function HomeScreen() {
   //   명시한다. 즉 이 경로는 그 자체로 정책 위반이었다(2026-08-21 접근성 미고지 리젝과 같은 계열).
   //   → 설정으로 보내기 전에 AccessibilityOnboardingSheet(고지·동의 시트)를 먼저 띄운다.
   //     실제 설정 이동은 시트의 "동의하고 설정 열기"를 눌렀을 때만 일어난다.
+  //   🔴 2026-08-22 사장님 "나중에 누르니까 배너 안떠" — 여기서 배너까지 같이 내리면, 시트에서
+  //     "나중에"를 누른 순간 **접근성을 다시 켤 진입점이 아예 사라진다.** 정책이 요구하는
+  //     "거부 후 재요청" 경로가 막히는 건 물론이고, 실사용자도 마음이 바뀌었을 때 되돌아올 길이
+  //     없어진다. 시트는 배너 위에 뜨는 모달이므로 배너를 내릴 이유 자체가 없다 —
+  //     배너는 권한이 실제로 켜졌을 때 AppState 재검사(checkAccessibility)가 알아서 걷어간다.
   const acceptAccessibilityPrompt = useCallback(() => {
-    setShowAccessibilityPrompt(false);
     setShowAccessibilityDisclosure(true);
   }, []);
 

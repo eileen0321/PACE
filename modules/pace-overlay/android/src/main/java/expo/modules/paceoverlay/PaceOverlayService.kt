@@ -159,6 +159,43 @@ class PaceOverlayService : Service() {
   // UsageStatsManager 기반). 2026-07-28 — 원래 "뷰를 매번 add/removeView하지 않고 visibility만
   // 토글" 원칙이었는데, 유령 창 문제로 위 refreshOverlayIfDue()가 주기적으로 강제 재생성한다.
   private val foregroundPollHandler = Handler(Looper.getMainLooper())
+
+  // 🔴 2026-08-22 실기기 크래시(사장님 "유투브 누르니 죽잖아") — 로그:
+  //   17:12:08.638 onStartCommand action=STOP  overlayView=exists
+  //   17:12:08.653 ActivityManager: Bringing down service while still waiting for start foreground
+  //   17:12:08.663 onStartCommand action=START remaining=60
+  //   17:12:08.691 FATAL ForegroundServiceDidNotStartInTimeException
+  //   JS가 새 세션을 시작할 때 기존 세션을 먼저 끄기 때문에 STOP → 25ms 뒤 START이 들어온다.
+  //   ACTION_STOP에서 stopSelf()를 **즉시** 부르면 시스템은 그 ServiceRecord를 내려보내기
+  //   시작하는데, 그 와중에 도착한 startForegroundService()가 **내려가는 중인 같은 레코드**에
+  //   얹힌다. 그 레코드엔 startForeground()가 먹지 않으므로 5초 데드라인을 못 지키고 →
+  //   프로세스가 통째로 죽는다(같은 프로세스인 접근성 서비스까지 함께).
+  //   onStartCommand 맨 앞의 startForegroundSafely()로는 못 막는다 — 호출은 했는데 대상
+  //   레코드가 이미 죽은 레코드였던 것이라, "일찍 부르기"가 아니라 "레코드를 살려두기"가 답이다.
+  //   → stopSelf()를 짧게 미루고, 그 사이 START이 오면 취소한다. 레코드가 살아있는 채로
+  //     재사용되므로 레이스 자체가 성립하지 않는다.
+  //   ⚠️ 다시 즉시 stopSelf()로 되돌리지 말 것.
+  private var pendingStopRunnable: Runnable? = null
+
+  private fun cancelPendingStop() {
+    pendingStopRunnable?.let {
+      foregroundPollHandler.removeCallbacks(it)
+      Log.i("PaceOverlay", "예약된 stopSelf 취소 — 새 START이 도착했다(STOP→START 레이스 회피)")
+      pendingStopRunnable = null
+    }
+  }
+
+  private fun stopSelfDeferred() {
+    cancelPendingStop()
+    val r = Runnable {
+      pendingStopRunnable = null
+      Log.d("PaceOverlay", "지연 stopSelf 실행")
+      stopSelf()
+    }
+    pendingStopRunnable = r
+    foregroundPollHandler.postDelayed(r, STOP_SELF_DEFER_MS)
+  }
+
   private var isPolling = false
   private val foregroundPollRunnable = object : Runnable {
     override fun run() {
@@ -1253,6 +1290,9 @@ class PaceOverlayService : Service() {
     private const val ACTION_STOP = "expo.modules.paceoverlay.STOP"
     // openApp() 직후 이 시간 안에 들어오는 STOP은 무시 — 위 lastOpenAppAtMs 필드 주석 참고.
     private const val OPEN_APP_STOP_GRACE_MS = 3_000L
+    // STOP→START 레이스 회피용 유예(위 pendingStopRunnable 주석 참고). 관측된 JS의 stop→start
+    // 간격(25ms)보다 충분히 크고, 사용자가 종료 지연을 체감하지 않을 만큼 짧아야 한다.
+    private const val STOP_SELF_DEFER_MS = 700L
     const val ACTION_TICK = "expo.modules.paceoverlay.TICK"
     private const val EXTRA_REMAINING = "remainingMinutes"
     private const val EXTRA_AUTO_NEXT = "autoNextEnabled"
@@ -2244,6 +2284,10 @@ class PaceOverlayService : Service() {
     //   ensureInfraReady()의 startForeground 호출은 그대로 둔다 — 같은 알림 ID로 다시 부르는 것은
     //   내용 갱신일 뿐이라 무해하고, 그쪽은 remainingMinutes가 확정된 뒤라 표시가 정확하다.
     //   ⚠️ 이 줄을 다시 아래로 내리지 말 것. 여기가 늦어지는 순간 위 크래시가 그대로 재현된다.
+    //   ⚠️ 다만 이것만으로는 부족하다 — 죽는 중인 ServiceRecord에 얹힌 START은 여기서 아무리
+    //     일찍 불러도 못 살린다. 그래서 STOP은 stopSelfDeferred()로 미루고, 여기서 그 예약을
+    //     취소해 레코드를 살려둔다(2026-08-22, pendingStopRunnable 주석 참고).
+    cancelPendingStop()
     startForegroundSafely(buildNotification(remainingMinutes))
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
@@ -2356,7 +2400,7 @@ class PaceOverlayService : Service() {
         PaceAccessibilityService.stopPlaybackTracking()
         infraReady = false
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        stopSelfDeferred()
         return START_NOT_STICKY
       }
     }

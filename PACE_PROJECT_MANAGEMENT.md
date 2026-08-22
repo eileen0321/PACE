@@ -10209,3 +10209,57 @@ iOS 손짓은 맥이 관리하는 `modules/pace-gesture/ios/PaceGestureModule.sw
 - **아이콘**: 사장님 "패딩 너무 줄였어" → 콘텐츠 66%→84%, 테두리 페더링으로 이음새 제거(assets/icon-phone11.png + iOS 카탈로그 동기). ⚠️ Windows: Android 쪽도 같은 원본(_icon-originals)에서 84% 기준으로 맞출 것.
 - **위젯 체크리스트 ① 종결**: 기기가 1.0.4(8) 구빌드였던 게 "사라짐" 관찰의 원인. 1.0.5(13) 설치 후 "잠금화면에 아무것도 안나와" → 사장님 "안보여도 되"로 확정. 현 설계: 피드 FOCUS는 8/15 결정으로 LA 미생성이고, 잠금=백그라운드=차감 정지라 잠금화면 카운트다운은 실차감과 어긋나 오히려 오표시임(사장님도 동의). LA는 홈 카드 세션 경로만 생성.
 - 잔여: ASC에서 1.0.5 버전 생성 → 빌드 13 선택 → 출시노트 → 심사 제출(사장님 수동).
+
+### 2026-08-22 (오후) — Windows 세션 (Play 리젝 대응 데모 영상 촬영 + 촬영 중 발견한 크래시 2건)
+
+**목적**: 2026-08-21 Play 리젝(AccessibilityService 미고지)에 붙일 데모 영상 촬영. 촬영 도중
+실기기에서 버그 2건이 드러나 먼저 고치고 재촬영했다.
+
+**🔴 버그 ① — "유투브 누르니 죽잖아": FGS 5초 데드라인 위반으로 프로세스 사망**
+```
+17:12:08.638 onStartCommand action=STOP  overlayView=exists
+17:12:08.653 ActivityManager: Bringing down service while still waiting for start foreground
+17:12:08.663 onStartCommand action=START remaining=60
+17:12:08.691 FATAL ForegroundServiceDidNotStartInTimeException
+```
+JS는 새 세션을 시작할 때 기존 세션을 먼저 끈다 → STOP 25ms 뒤 START. ACTION_STOP이 `stopSelf()`를
+**즉시** 부르면 시스템이 그 ServiceRecord를 내려보내기 시작하고, 그 와중에 도착한
+`startForegroundService()`가 **내려가는 중인 같은 레코드**에 얹힌다. 그 레코드엔
+`startForeground()`가 먹지 않아 5초 데드라인을 놓치고 프로세스가 통째로 죽는다(같은 프로세스인
+접근성 서비스까지 함께).
+
+⚠️ **2026-08-21에 넣은 "onStartCommand 맨 앞에서 승격" 수정으로는 못 막는 종류였다** — 늦게 부른
+게 아니라 **대상 레코드가 이미 죽은 레코드**였던 것. 그 주석("여기가 늦어지면 크래시 재현")은
+여전히 유효하지만 충분조건이 아니다.
+
+→ `stopSelfDeferred()`: STOP의 `stopSelf()`를 700ms 미루고, 그 사이 START이 오면
+  `cancelPendingStop()`으로 취소한다(onStartCommand 최상단). 레코드가 살아있는 채로 재사용되므로
+  레이스 자체가 성립하지 않는다. **다시 즉시 stopSelf()로 되돌리지 말 것.**
+  실기기 검증: 세션 중 카드 재탭 → pid 유지, FATAL 0건.
+
+**🔴 버그 ② — "나중에 누르니까 배너 안떠": 고지 거부 시 재요청 경로 소실**
+`acceptAccessibilityPrompt`가 시트를 열면서 `setShowAccessibilityPrompt(false)`로 배너까지
+내려버렸다. 시트에서 "나중에"를 누르면 **접근성을 다시 켤 진입점이 아예 사라진다.** Play 정책이
+요구하는 "거부 후 재요청" 경로가 막히고, 실사용자도 마음이 바뀌었을 때 되돌아올 길이 없었다.
+→ 배너를 내리지 않는다. 시트는 배너 위 모달이고, 권한이 켜지면 AppState 재검사가 알아서 걷어간다.
+  실기기 검증: 나중에 → 배너 유지 → 재탭 → 시트 재등장.
+
+**데모 영상 (완료)** — `~/Desktop/PACE_accessibility_demo.mp4` (84초, 720x1544, 영어 자막 번인).
+Play 권한 선언 데모 영상 5개 요건 전부 포함:
+① 앱 실행 ② 권한 요청 **전** 앱 내 고지 시트 ③ 동의 → 안드로이드 접근성 설정에서 실제 허용
+④ **거부("나중에") 후 배너로 재요청** ⑤ 접근성 기반 핵심 기능(유튜브 재생 감지 → 알약 60m→59m 차감)
+- 자동넘김 **0건** 확인(녹화 구간 logcat에 WAVE/triggerNext 없음). 손짓 장면은 의도적으로 뺐다 —
+  사용자 조작 없이 영상이 넘어가는 장면이 들어가면 그 자체가 리젝 사유.
+- ⚠️ 업로드는 **YouTube Unlisted**로. Private은 심사자가 못 본다.
+- FOCUS ON 표시는 데모가 켠 게 아니라 `bt_auto_mode`(사용자 토글)가 이전 테스트에서 켜진 채로
+  영속돼 있던 것. 정책상 문제 없음.
+
+**빌드**: `~/Desktop/PACE-v1.0.5-vc16.aab` (versionCode 16 / versionName 1.0.5 / runtimeVersion 1.0.5,
+build.gradle·app.json·strings.xml 3곳 정합 확인). 위 수정 2건 포함.
+
+**다음 세션(Windows) 최우선**
+1. Play Console 업로드 — AAB + 스토어 설명(`store_description_draft.md`) + 데모 영상(Unlisted URL).
+2. Notion 개인정보처리방침의 별표 오타(`**기기 내부에만**`, `저장되며**,**`) 정리.
+3. **손짓 오탐 미해결** — "가만히 든 손" 라벨링 데이터 없이 임계값 다시 만지지 말 것
+   (2026-08-20에 그렇게 했다가 전부 되돌림).
+4. MediaPipe 모델 로딩을 메인 스레드 밖으로(별건이지만 여전히 남아 있는 부하 요인).

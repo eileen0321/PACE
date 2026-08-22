@@ -10263,3 +10263,41 @@ build.gradle·app.json·strings.xml 3곳 정합 확인). 위 수정 2건 포함.
 3. **손짓 오탐 미해결** — "가만히 든 손" 라벨링 데이터 없이 임계값 다시 만지지 말 것
    (2026-08-20에 그렇게 했다가 전부 되돌림).
 4. MediaPipe 모델 로딩을 메인 스레드 밖으로(별건이지만 여전히 남아 있는 부하 요인).
+
+### 2026-08-22 (오후, 이어서) — Windows 세션 (FGS 데드라인 위험 전수 점검)
+
+사장님 "1번이슈 심각한데 다른데 전수 확인안해?" — 앞 항목의 STOP→START 수정이 ACTION_STOP
+한 곳만 막은 반쪽짜리였다. 전수 점검 결과 같은 레이스 경로가 셋 더 있었다.
+
+**전수 범위 확정(중요)**: 병합 매니페스트 전체에서 `foregroundServiceType`을 가진 서비스는
+`PaceOverlayService` **하나뿐**이다. 나머지 9개 `<service>`는 Firebase/RevenueCat 등 일반
+서비스라 5초 데드라인이 없고, `PaceAccessibilityService`는 시스템 바인딩 서비스라 무관하다.
+→ **이 파일만 막으면 이 클래스의 버그는 닫힌다.** 다음에 또 의심되면 매니페스트의
+`foregroundServiceType` 개수부터 세면 된다.
+
+추가로 고친 것:
+1. `ACTION_TICK`: `restoreIfNeeded()==false` → stopSelf. 낡은 틱으로 내려가는 순간 카드를
+   누르면 동일 레이스.
+2. `null` 분기(시스템 START_STICKY 재시작): 같은 이유.
+3. `endFromBlockOverlay()`: **가장 위험한 경로**. `openPaceApp()`으로 앱을 띄운 **직후**
+   stopSelf()다. 그 화면에서 사용자의 첫 행동이 보통 새 세션 시작이라 교과서적 재현 경로였다.
+   → 셋 다 `stopSelfDeferred()`. 즉시 `stopSelf()`는 이제 그 함수 내부 1곳뿐(grep으로 확인 가능).
+4. `startForegroundSafely()`가 예외를 **삼키고** 있었다. startForegroundService()로 시작된
+   서비스에서 승격이 실패하면 5초 뒤 시스템이 프로세스를 죽이므로, 삼키는 건 잡을 수 있는
+   예외를 프로세스 사망으로 바꾸는 짓이었다. 이 기기 로그에 조건이 실제로 찍힌다:
+   `W ActivityManager: Foreground service started from background can not have
+   location/camera/microphone access: service PaceOverlayService`
+   → ①camera 타입 시도 → ②실패 시 specialUse만으로 재시도(손짓만 포기, 세션은 산다)
+     → ③둘 다 실패 + obligated면 `stopSelfDeferred()`로 의무 해제.
+   `obligated`는 startForegroundService()로 들어온 `ACTION_START`에만 준다 — 평범한
+   `startService()`(TICK 등)는 데드라인이 없어 세션을 죽일 이유가 없다.
+5. `onDestroy()`에 `cancelPendingStop()`.
+
+**검증 한계(정직하게 기록)**: 실기기에서 세션 중 카드 재탭 3회 → FATAL 0건, pid 유지까지는
+확인했다. 그러나 위 1~3 경로는 **앱 UI에 세션 종료 버튼이 없고 FGS 알림에도 액션이 없어**
+개별 재현은 못 했다. 셋 다 검증된 것과 동일한 헬퍼를 타는 동일 메커니즘이다. 프로덕션에서
+`예약된 stopSelf 취소` 로그가 찍히면 실제로 레이스를 막은 것.
+
+AAB 재생성: `~/Desktop/PACE-v1.0.5-vc16.aab` (위 수정 포함). 앞 항목의 AAB는 폐기할 것.
+데모 영상 게시됨: https://youtube.com/shorts/C-rsBtP0osg — ⚠️ Play Console에 넣기 전
+**공개범위가 "일부 공개(Unlisted)"인지** 반드시 확인(비공개면 심사자가 못 본다).

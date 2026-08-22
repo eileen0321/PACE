@@ -161,5 +161,28 @@
         android:name="android.support.FILE_PROVIDER_PATHS"
         android:resource="@xml/pace_thumb_paths" />
     </provider>
+
+    <!-- 🔴 2026-08-22 사장님 지적("로그인 누르면 하단이 흰키") — 구글 로그인 껍데기 액티비티 두 개.
+         play-services-auth / play-services-base가 자기 AAR 매니페스트에서 이들을
+         @android:style/Theme.Translucent.NoTitleBar로 선언하고, 그게 **우리 앱 매니페스트에 병합돼
+         우리 패키지에서 실행된다**(병합 결과 확인함). 그 테마는 시스템 바 색을 지정하지 않으므로
+         OEM 기본값이 그대로 나오고, 삼성 One UI에서는 그게 **흰 내비게이션 키**다.
+         이건 이 파일 옆 styles.xml에 이미 기록된 것과 **완전히 같은 함정**이다 — 보상형 광고 껍데기
+         (PaceRewardedAdActivity)와 공유 껍데기(PaceShareCaptureActivity)에서 두 번 겪고 고쳤는데,
+         구글 로그인 경로만 빠져 있었다. 첫 프레임은 onCreate 코드가 아니라 테마가 그리므로,
+         코드가 아니라 테마로 고쳐야 한다.
+         → 화면을 안 그리는 투명 껍데기 공용 테마(Theme.Pace.TransparentShell)로 교체.
+           투명도(windowIsTranslucent/transparent background)는 그대로 유지되므로 트램폴린 동작은
+           변하지 않고, 시스템 바만 앱과 같은 #060709로 첫 프레임부터 고정된다.
+         ⚠️ 그 다음 단계인 계정 선택 시트(com.google.android.gms/.common.account.AccountPickerActivity)는
+           **GMS 패키지 소유**라 여기서 못 건드린다(dumpsys로 확인). 그건 기기 시스템 테마를 따른다. -->
+    <activity
+      android:name="com.google.android.gms.auth.api.signin.internal.SignInHubActivity"
+      android:theme="@style/Theme.Pace.TransparentShell"
+      tools:replace="android:theme" />
+    <activity
+      android:name="com.google.android.gms.common.api.GoogleApiActivity"
+      android:theme="@style/Theme.Pace.TransparentShell"
+      tools:replace="android:theme" />
   </application>
 </manifest>

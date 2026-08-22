@@ -1107,22 +1107,51 @@ class PaceOverlayService : Service() {
    * → 타입을 **명시**하고, camera는 권한이 실제로 있을 때만 붙인다. 권한이 없으면 손짓만 못 쓸 뿐
    *   세션(알약/카운트다운/자동넘김)은 정상 동작해야 한다.
    */
-  private fun startForegroundSafely(notification: android.app.Notification) {
-    try {
+  /**
+   * 🔴 2026-08-22 (전수 점검) — 예전엔 예외를 그냥 삼키고 "승격 없이 계속한다"였다. 그런데
+   *   startForegroundService()로 시작된 서비스에서 승격이 실패하면 **5초 뒤 시스템이 프로세스를
+   *   죽인다**(ForegroundServiceDidNotStartInTimeException). 즉 삼키는 건 잡을 수 있는 예외를
+   *   못 잡는 프로세스 사망으로 바꾸는 것이었다. 실제로 이 기기 로그에도 승격을 못 하게 만드는
+   *   조건이 찍힌다:
+   *   `W ActivityManager: Foreground service started from background can not have
+   *    location/camera/microphone access: service PaceOverlayService`
+   *   (백그라운드에서 시작된 FGS는 camera 타입을 못 붙인다 — 위 ONE_TIME 권한 회수와는 별개 경로)
+   *
+   *   → ① camera 타입으로 시도 → 실패하면 ② specialUse만으로 재시도(손짓만 못 쓰고 세션은 산다)
+   *     → 둘 다 실패하고 **승격 의무가 있는 호출(obligated)** 이면 stopSelfDeferred()로 의무를
+   *     해제한다. 안 그러면 5초 뒤 확정 사망이다. 지연 취소 로직을 타므로, 곧바로 새 START이
+   *     오면 그쪽이 다시 승격을 시도하고 예약은 취소된다(자가 복구).
+   *   ⚠️ obligated=true는 startForegroundService()로 들어온 경로(ACTION_START)에만 준다 —
+   *     평범한 startService()(TICK 등)는 데드라인이 없어서 세션을 죽일 이유가 없다.
+   */
+  private fun tryStartForeground(notification: android.app.Notification, withCamera: Boolean): Boolean {
+    return try {
       if (Build.VERSION.SDK_INT >= 34) {
         var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
           this, android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (hasCamera) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        if (withCamera && hasCamera) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         startForeground(NOTIFICATION_ID, notification, type)
       } else {
         startForeground(NOTIFICATION_ID, notification)
       }
+      true
     } catch (e: Exception) {
-      // 여기서 죽으면 세션 추적이 통째로 사라지므로, 실패해도 프로세스는 살린다.
-      Log.e("PaceOverlay", "startForeground 실패 — 포그라운드 승격 없이 계속한다", e)
+      Log.w("PaceOverlay", "startForeground 실패(camera=$withCamera)", e)
+      false
     }
+  }
+
+  private fun startForegroundSafely(notification: android.app.Notification, obligated: Boolean = false) {
+    if (tryStartForeground(notification, withCamera = true)) return
+    if (tryStartForeground(notification, withCamera = false)) {
+      Log.w("PaceOverlay", "camera 타입 없이 승격 성공 — 손짓은 이번 세션에서 못 쓴다")
+      return
+    }
+    Log.e("PaceOverlay", "startForeground 완전 실패 — obligated=$obligated")
+    // 승격 의무가 있는데 못 지켰다 → 5초 데드라인 전에 스스로 내려가 의무를 해제한다.
+    if (obligated) stopSelfDeferred()
   }
 
   private fun ensureInfraReady() {
@@ -2288,7 +2317,8 @@ class PaceOverlayService : Service() {
     //     일찍 불러도 못 살린다. 그래서 STOP은 stopSelfDeferred()로 미루고, 여기서 그 예약을
     //     취소해 레코드를 살려둔다(2026-08-22, pendingStopRunnable 주석 참고).
     cancelPendingStop()
-    startForegroundSafely(buildNotification(remainingMinutes))
+    // obligated: startForegroundService()로 들어온 경로만 5초 데드라인을 진다(START 진입점 참고).
+    startForegroundSafely(buildNotification(remainingMinutes), obligated = intent?.action == ACTION_START)
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
       ACTION_START -> {
@@ -2353,7 +2383,9 @@ class PaceOverlayService : Service() {
       // 다음 인프라를 다시 세팅한다 — 정상적으로 계속 돌던 중이었다면(같은 프로세스) 이 복구 분기는
       // session_active가 이미 true+필드도 최신이라 그대로 통과, 중복 세팅 없이 틱 계산만 수행.
       ACTION_TICK -> {
-        if (!restoreIfNeeded()) { stopSelf(); return START_NOT_STICKY }
+        // stopSelfDeferred: 낡은 틱으로 내려가는 순간 사용자가 카드를 눌러 새 세션을 시작하면
+        // STOP→START과 똑같은 레이스가 된다(2026-08-22 전수 점검).
+        if (!restoreIfNeeded()) { stopSelfDeferred(); return START_NOT_STICKY }
         performTick()
       }
       // ⚠️ 2026-07-19 실기기 검증 중 실제로 발견한 버그: 이 null 분기가 원래 없었다 — 프로세스가
@@ -2367,7 +2399,7 @@ class PaceOverlayService : Service() {
         if (restoreIfNeeded()) {
           scheduleNextTick(this)
         } else {
-          stopSelf()
+          stopSelfDeferred() // 위 ACTION_TICK과 동일한 이유
           return START_NOT_STICKY
         }
       }
@@ -5608,7 +5640,10 @@ class PaceOverlayService : Service() {
     stopMinuteTicker()
     infraReady = false
     stopForeground(STOP_FOREGROUND_REMOVE)
-    stopSelf()
+    // 🔴 2026-08-22 전수 점검 — 여기가 STOP→START 레이스의 **가장 위험한** 경로다: 바로 위에서
+    //   openPaceApp()으로 앱을 띄워놓고 곧바로 내려간다. 사용자가 그 화면에서 하는 첫 행동이
+    //   보통 새 세션 시작이라, 즉시 stopSelf()면 죽는 중인 레코드에 START이 얹힌다.
+    stopSelfDeferred()
   }
 
   private fun openPaceApp() {
@@ -5745,6 +5780,7 @@ class PaceOverlayService : Service() {
   }
 
   override fun onDestroy() {
+    cancelPendingStop() // 예약된 지연 stopSelf가 죽은 서비스를 참조한 채 남지 않게
     stopMinuteTicker()
     stopForegroundAppPolling()
     removeOverlay()

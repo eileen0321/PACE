@@ -1,3 +1,8 @@
+> ⚠️ 2026-08-22 — 아래 **공용 초안(1~57행)** 의 "이어폰 볼륨 버튼" 문구는 Android에서는
+> 사실이 아니다(에어팟/버즈 등 오디오 출력 기기는 `isBluetoothAudioOutputConnected()`에서
+> 걸러진다). Play용 문구는 §"Google Play 전용 설명"에서 이미 수정했다. **iOS도 실제로
+> 되는지 Mac 세션이 확인하고, 안 되면 이 공용 초안도 고칠 것.**
+
 PACE는 무의식적으로 흘려보내는 스크롤 시간을 줄이고, 원래 하려던 일에 더 집중하도록 돕습니다.
 
 집중 세션
@@ -94,7 +99,7 @@ PACE는 무의식적으로 흘려보내는 스크롤 시간을 줄이고, 원래
 폰을 엎어두면 화면 없는 휴식이 시작됩니다. PACE가 조용히 그 시간을 재고, 쉼을 보상합니다.
 
 핸즈프리
-집중 세션 중에는 화면에 손대지 않아도 돼요 — 전면 카메라 위 손짓 또는 블루투스 리모컨/이어폰 볼륨 버튼으로 흐름을 유지하세요. 카메라 영상은 전부 기기 안에서만 처리되며 절대 녹화·업로드되지 않습니다.
+집중 세션 중에는 화면에 손대지 않아도 돼요 — 전면 카메라 위 손짓 또는 블루투스 리모컨의 볼륨 버튼으로 흐름을 유지하세요. 카메라 영상은 전부 기기 안에서만 처리되며 절대 녹화·업로드되지 않습니다.
 
 ■ 접근성 서비스(AccessibilityService) 사용 안내
 
@@ -102,7 +107,7 @@ PACE는 Android 접근성 서비스를 사용합니다. 사용 목적은 다음�
 
 1) 지원하는 영상 앱이 지금 화면에 떠 있는지, 영상이 재생 중인지 확인합니다 — 시청 시간을 기록하고 설정하신 하루 한도와 휴식 시점을 알려드리기 위해서입니다.
 2) 집중 세션 중 "다음 영상으로 넘기기"를 대신 수행합니다(화면 쓸어올리기). 손짓·블루투스 리모컨·자동 넘김이 모두 이 동작을 사용합니다.
-3) 블루투스 리모컨이나 이어폰의 볼륨 버튼 입력을 받아 다음/이전 영상 넘김 신호로 사용합니다.
+3) 블루투스 리모컨의 볼륨 버튼 입력을 받아 다음/이전 영상 넘김 신호로 사용합니다.
 4) 사용자가 직접 "즐겨찾기 추가"를 누른 경우에만, 현재 영상의 제목·채널명·링크를 읽어 기기에 저장합니다.
 
 접근성 서비스는 사용자가 시스템 설정에서 직접 켜야 하며, 언제든 끌 수 있습니다. PACE는 이 기능으로 화면 내용을 촬영·녹화하지 않고, 위 4번의 즐겨찾기 정보를 제외한 어떤 화면 정보도 저장하거나 외부로 전송하지 않습니다. 즐겨찾기 정보도 기기 안에만 저장됩니다. 자세한 내용은 개인정보처리방침을 확인해 주세요.
@@ -130,7 +135,7 @@ Flip Mode
 Turn your phone face down to start a screen-free break. Pace quietly times it — and rewards the rest.
 
 Hands-Free
-Keep your hands off the screen during a Focus Session — advance with a hand wave over the front camera, or a Bluetooth remote/headphone volume button. Camera frames are processed entirely on-device and are never recorded or uploaded.
+Keep your hands off the screen during a Focus Session — advance with a hand wave over the front camera, or the volume buttons on a Bluetooth remote. Camera frames are processed entirely on-device and are never recorded or uploaded.
 
 ■ Accessibility Service disclosure
 
@@ -138,7 +143,7 @@ PACE uses the Android AccessibilityService API. It is used only for the followin
 
 1) To detect whether a supported video app is currently on screen and whether a video is playing — so PACE can log your watch time and tell you when you have reached your daily limit or a break point.
 2) To perform the "go to next video" action for you during a Focus Session (a swipe-up gesture). Hand-wave, Bluetooth remote, and auto-advance all rely on this.
-3) To receive volume-button input from a Bluetooth remote or headphones and use it as a next/previous signal.
+3) To receive volume-button input from a Bluetooth remote and use it as a next/previous signal.
 4) Only when you explicitly tap "Add to favorites", to read the current video's title, channel name, and link and save them on your device.
 
 You must turn the accessibility service on yourself in system settings, and you can turn it off at any time. PACE does not capture or record screen content with this API, and does not store or transmit any screen information other than the favorites data described in (4) — which stays on your device. See our Privacy Policy for details.

@@ -162,20 +162,26 @@
         android:resource="@xml/pace_thumb_paths" />
     </provider>
 
-    <!-- 🔴 2026-08-22 사장님 지적("로그인 누르면 하단이 흰키") — 구글 로그인 껍데기 액티비티 두 개.
-         play-services-auth / play-services-base가 자기 AAR 매니페스트에서 이들을
-         @android:style/Theme.Translucent.NoTitleBar로 선언하고, 그게 **우리 앱 매니페스트에 병합돼
-         우리 패키지에서 실행된다**(병합 결과 확인함). 그 테마는 시스템 바 색을 지정하지 않으므로
-         OEM 기본값이 그대로 나오고, 삼성 One UI에서는 그게 **흰 내비게이션 키**다.
-         이건 이 파일 옆 styles.xml에 이미 기록된 것과 **완전히 같은 함정**이다 — 보상형 광고 껍데기
-         (PaceRewardedAdActivity)와 공유 껍데기(PaceShareCaptureActivity)에서 두 번 겪고 고쳤는데,
-         구글 로그인 경로만 빠져 있었다. 첫 프레임은 onCreate 코드가 아니라 테마가 그리므로,
-         코드가 아니라 테마로 고쳐야 한다.
-         → 화면을 안 그리는 투명 껍데기 공용 테마(Theme.Pace.TransparentShell)로 교체.
-           투명도(windowIsTranslucent/transparent background)는 그대로 유지되므로 트램폴린 동작은
-           변하지 않고, 시스템 바만 앱과 같은 #060709로 첫 프레임부터 고정된다.
-         ⚠️ 그 다음 단계인 계정 선택 시트(com.google.android.gms/.common.account.AccountPickerActivity)는
-           **GMS 패키지 소유**라 여기서 못 건드린다(dumpsys로 확인). 그건 기기 시스템 테마를 따른다. -->
+    <!-- 2026-08-22 — 구글 로그인 트램폴린 두 개. play-services-auth / play-services-base가 자기 AAR
+         매니페스트에서 @android:style/Theme.Translucent.NoTitleBar로 선언하고, 그게 우리 앱
+         매니페스트에 병합된다. 그 테마는 시스템 바 색을 지정하지 않아 OEM 기본값(삼성 One UI에서는
+         흰 내비게이션 키)이 그대로 노출되는데, 이건 옆 styles.xml에 이미 두 번 기록된 함정이다
+         (PaceRewardedAdActivity 2026-08-02, PaceShareCaptureActivity 2026-08-05).
+         → 같은 처치(Theme.Pace.TransparentShell)를 예방적으로 적용해둔다. 투명도는 유지되므로
+           트램폴린 동작은 변하지 않는다.
+
+         ⚠️⚠️ **이 수정은 사장님이 보고하신 "로그인 누르면 하단이 흰키"를 고치지 못했다.**
+           실기기(SM-N986N, 라이트 모드)에서 수정 전/후 프레임을 10fps로 비교했는데 흰색 구간
+           길이가 그대로였고, 그 구간의 topResumedActivity를 조밀하게 폴링한 결과:
+             com.google.android.gms/.signin.activity.SignInActivity          ← 흰색
+             com.google.android.gms/.common.account.AccountPickerActivity    ← 회색
+           **둘 다 GMS 패키지 소유**다. 여기서 테마를 씌운 SignInHubActivity/GoogleApiActivity는
+           그 흐름에서 아예 최상단에 뜨지 않는다(폴링에 한 번도 안 잡힘).
+           → 남의 패키지 액티비티라 앱에서 테마를 못 씌운다. 기기 시스템 다크모드를 켜면 둘 다
+             다크로 나오는 것으로 원인 확정(라이트 모드 폰이면 흰 시트/회색 바가 정상 동작).
+           **다시 이 각도로 시도하지 말 것.** 유일하게 안 해본 경로는 라이브러리의
+           "Universal sign in"(Credential Manager) 마이그레이션인데, 그 시트도 시스템 UI라
+           같을 가능성이 높고 검증 안 됐다. -->
     <activity
       android:name="com.google.android.gms.auth.api.signin.internal.SignInHubActivity"
       android:theme="@style/Theme.Pace.TransparentShell"

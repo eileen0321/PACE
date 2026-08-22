@@ -50,17 +50,23 @@ object PaceGoogleSignIn {
   private val executor = Executors.newSingleThreadExecutor()
 
   /**
-   * mode
+   * mode (JS가 이 순서로 시도한다 — 앞이 실패하면 다음으로)
    *  - "authorized" : GetGoogleIdOption(filter=true). 이 앱에 로그인한 적 있는 계정만.
-   *                   틱톡이 보여준 "다시 로그인" 시트로, 탭 한 번이면 끝난다.
-   *  - "button"     : GetSignInWithGoogleOption. **"Sign in with Google 버튼을 눌렀을 때"** 쓰라고
-   *                   구글이 지정한 옵션으로, 계정 선택 바텀시트를 **항상** 띄운다.
+   *                   **바텀시트**로 뜨고 탭 한 번이면 끝난다. 가장 매끄러운 경로.
+   *  - "all"        : GetGoogleIdOption(filter=false). 기기의 모든 구글 계정. 역시 바텀시트.
+   *  - "button"     : GetSignInWithGoogleOption. 위 둘이 다 안 될 때의 최후 수단.
+   *                   이 기기(Android 13)에서는 **가운데 카드**로 떴다.
    *
-   * 🔴 2026-08-22 실기기에서 확인한 것 — 처음엔 GetGoogleIdOption(filter=false)로 "기기의 모든 계정"을
-   *   띄우려 했는데, 계정이 3개나 있는 기기에서도 NoCredentialException("No credentials available")이
-   *   났다. GetGoogleIdOption은 **자동/원탭용**이라 조건이 안 맞으면 그냥 없다고 답한다.
-   *   버튼을 눌러 들어온 첫 로그인에는 GetSignInWithGoogleOption을 써야 한다.
-   *   → JS는 "authorized"로 먼저 시도하고, NO_CREDENTIAL이면 "button"으로 넘어간다.
+   * 🔴 2026-08-23 — 한 번 "all"을 뺐다가 되살렸다. 뺀 이유는 실기기에서 계정이 3개인데도
+   *   NoCredentialException("No credentials available")이 났기 때문인데, 같은 시각 로그에
+   *   기기 자체의 구글 인증이 깨져 있는 흔적이 있었다:
+   *     E AuthPII: [RequestTokenManager] getToken() -> BAD_AUTHENTICATION. App: com.android.vending
+   *     W Auth   : [ChimeraGetToken] exception ... app=com.google.android.gsf
+   *   (알림에도 "s7.reviewer@gmail.com 계정을 계속 사용하려면 로그인하세요"가 떠 있었다)
+   *   즉 NO_CREDENTIAL이 API의 정상 동작이 아니라 **그 기기의 일시적 인증 불량**일 수 있다.
+   *   한 번의 실패로 경로를 없애면 정상 기기에서 더 나은 UI(바텀시트)를 영영 못 쓰게 되므로,
+   *   비용이 없는 중간 단계로 남긴다 — 실패해도 다음 단계로 흘러갈 뿐이다.
+   *   ⚠️ 기기 인증이 정상인 상태에서 "all"이 바텀시트를 띄우는지 아직 재확인 못 했다.
    */
   fun signIn(activity: Activity, serverClientId: String, mode: String, promise: Promise) {
     if (serverClientId.isBlank()) {
@@ -68,12 +74,12 @@ object PaceGoogleSignIn {
       return
     }
     try {
-      val option: CredentialOption = if (mode == "button") {
-        GetSignInWithGoogleOption.Builder(serverClientId).build()
-      } else {
-        GetGoogleIdOption.Builder()
+      val option: CredentialOption = when (mode) {
+        "button" -> GetSignInWithGoogleOption.Builder(serverClientId).build()
+        else -> GetGoogleIdOption.Builder()
           .setServerClientId(serverClientId)
-          .setFilterByAuthorizedAccounts(true)
+          // "authorized" = 이 앱에 로그인한 적 있는 계정만, "all" = 기기의 모든 구글 계정.
+          .setFilterByAuthorizedAccounts(mode == "authorized")
           // 자동 선택은 끈다 — 사용자가 계정을 눈으로 확인하고 누르게 한다(계정 오선택 방지).
           .setAutoSelectEnabled(false)
           .build()

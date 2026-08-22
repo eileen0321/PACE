@@ -47,11 +47,13 @@ async function signInWithCredentialManager(): Promise<SignInOk | SignInCancelled
   const fn = paceOverlayNative?.googleSignInWithCredentialManager;
   if (typeof fn !== 'function') return null; // 이 빌드엔 아직 없는 함수 — 폴백.
 
-  // 1단계 'authorized': 이 앱에 로그인한 적 있는 계정만 — 틱톡식 "다시 로그인" 시트로, 탭 한 번에 끝난다.
-  // 2단계 'button'    : 그런 계정이 없으면(첫 로그인) 계정 선택 바텀시트를 항상 띄우는 옵션으로 넘어간다.
-  //   ⚠️ 2단계를 GetGoogleIdOption(filter=false)로 하면 안 된다 — 계정이 3개 있는 실기기에서도
-  //     NoCredentialException이 났다(자세한 근거는 PaceGoogleSignIn.kt 주석).
-  for (const mode of ['authorized', 'button'] as const) {
+  // 1단계 'authorized': 이 앱에 로그인한 적 있는 계정만 — 바텀시트, 탭 한 번에 끝난다.
+  // 2단계 'all'       : 기기의 모든 구글 계정 — 역시 바텀시트. 첫 로그인은 보통 여기서 끝나야 한다.
+  // 3단계 'button'    : 위 둘이 다 NO_CREDENTIAL일 때만. 이 기기에선 가운데 카드로 떴다.
+  //   ⚠️ 'all'이 NO_CREDENTIAL을 낸 적이 있는데, 그때 기기의 구글 인증 자체가 깨져 있었다
+  //     (BAD_AUTHENTICATION 로그) — API 한계가 아닐 수 있어 단계로 남겨둔다. PaceGoogleSignIn.kt 주석 참고.
+  const MODES = ['authorized', 'all', 'button'] as const;
+  for (const mode of MODES) {
     try {
       const idToken = await fn(WEB_CLIENT_ID, mode);
       if (typeof idToken === 'string' && idToken.length > 0) return { idToken };
@@ -59,7 +61,7 @@ async function signInWithCredentialManager(): Promise<SignInOk | SignInCancelled
     } catch (e: any) {
       const code = e?.code ?? '';
       if (code === 'CANCELLED') return { cancelled: true };
-      if (code === 'NO_CREDENTIAL' && mode === 'authorized') continue; // 2단계로.
+      if (code === 'NO_CREDENTIAL' && mode !== 'button') continue; // 다음 단계로.
       // 2단계까지 실패 = 기기에 구글 계정 자체가 없거나 Play 서비스 문제 → 계정 추가를 안내할 수
       // 있는 레거시 경로가 낫다. 그 외 모든 실패도 동일하게 폴백.
       console.warn('[auth/google] Credential Manager 실패 — 레거시 경로로 폴백:', code || e?.message);

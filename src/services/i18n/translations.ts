@@ -194,13 +194,19 @@ export const translations = {
       //   정책 원문 요구: Why(왜 필요한지·핵심 목적) / What(관련된 모든 데이터 유형) / How(핵심 기능
       //   맥락에서 어떻게 쓰이는지), 그리고 "13세가 이해할 수준의 쉬운 말".
       //   버튼 문구도 정책이 'Allow access' 같은 표현 대신 'Agree' 류를 쓰라고 명시해서 바꿨다.
-      a11ySheetTitle: 'PACE needs the Accessibility service',
-      a11ySheetBody: 'To do its job, PACE needs Android’s Accessibility service. Here is exactly what it does — and what it never does.',
-      a11ySheetUse1: 'Sees which video app is on screen and whether a video is playing, so PACE can count your watch time and tell you when you reach your daily limit or a break.',
-      a11ySheetUse2: 'Performs the “go to next video” swipe for you during a Focus Session — this is what a hand wave or a Bluetooth remote triggers.',
-      a11ySheetUse3: 'Receives volume-button presses from a Bluetooth remote or headphones and uses them as next / previous.',
-      a11ySheetUse4: 'Only when you tap “Add to favorites”, reads that video’s title, channel and link and saves them on your phone.',
-      a11ySheetPrivacy: 'PACE never records or screenshots your screen, and nothing it reads leaves your phone. You can turn the service off in Android Settings at any time.',
+      // ⚠️ 짧게 다듬되 **항목은 절대 합치거나 빼지 말 것**(사장님 지시로 2026-08-22 축약).
+      //   4개 항목과 "안 하는 것" 문장이 정책의 What/How를 채우는 실체다 — 하나라도 뭉치면
+      //   2026-08-21 리젝 사유(What 누락)로 그대로 되돌아간다.
+      a11ySheetTitle: 'Just turn on Accessibility',
+      a11ySheetBody: 'Here’s what it’s used for.',
+      a11ySheetUse1: 'Checks only if a video app is playing — to count watch time',
+      a11ySheetUse2: 'Moves to the next video during a Focus Session',
+      // ⚠️ '이어폰'을 쓰면 안 된다 — PaceAccessibilityService.onKeyEvent가 BT 오디오 출력(에어팟/버즈)이
+      //   연결돼 있으면 볼륨키를 **일부러 통과**시킨다(소리 듣는 중엔 볼륨 조절이 우선). 순수 HID
+      //   리모컨만 넘김으로 동작한다. 고지 화면에 사실과 다른 내용이 들어가면 허위 고지가 된다.
+      a11ySheetUse3: 'Volume buttons on a Bluetooth remote, to skip',
+      a11ySheetUse4: 'Saves title, channel and link when you tap Add to favorites',
+      a11ySheetPrivacy: 'No recording or screenshots. Screen content is never stored — only your watch-time habits are saved to your account. Turn it off anytime.',
       a11ySheetPathLabel: 'On the next screen',
       a11ySheetPathText: 'Installed apps → PACE → Use (ON)',
       a11ySheetEnable: 'Agree and open Settings',
@@ -732,13 +738,20 @@ export const translations = {
       connected: '연결됨',
       notConnected: '미연결',
       // 위 영어 블록과 같은 근거(Play 정책 Prominent disclosure 3요소 + 쉬운 말).
-      a11ySheetTitle: 'PACE에 접근성 서비스가 필요해요',
-      a11ySheetBody: 'PACE가 제 역할을 하려면 안드로이드 접근성 서비스가 필요합니다. 무엇을 하고 무엇은 하지 않는지 그대로 알려드릴게요.',
-      a11ySheetUse1: '어떤 영상 앱이 화면에 떠 있는지, 영상이 재생 중인지 확인합니다. 시청 시간을 세고 하루 한도와 휴식 시점을 알려드리기 위해서예요.',
-      a11ySheetUse2: '포커스 세션 중 “다음 영상으로 넘기기”를 대신 해줍니다. 손짓이나 블루투스 리모컨이 바로 이 동작을 씁니다.',
-      a11ySheetUse3: '블루투스 리모컨이나 이어폰의 볼륨 버튼 입력을 받아 다음 / 이전 넘김으로 씁니다.',
-      a11ySheetUse4: '“즐겨찾기 추가”를 누르셨을 때만, 그 영상의 제목·채널·링크를 읽어 휴대폰에 저장합니다.',
-      a11ySheetPrivacy: 'PACE는 화면을 녹화하거나 캡처하지 않고, 읽은 내용은 휴대폰 밖으로 나가지 않습니다. 안드로이드 설정에서 언제든 끌 수 있어요.',
+      // 위 영어 블록과 동일한 원칙. ⚠️ 항목을 합치거나 빼지 말 것.
+      //   제목을 "권한이 필요해요"가 아니라 **효용 먼저**로 쓴 이유(사장님 지적):
+      //   "뭔가 대단한 건가 싶어서 안 하고 앱을 이탈"하는 걸 막으려면, 무거운 권한 요구가 아니라
+      //   "시청 시간을 세기 위한 것"이라는 목적이 먼저 보여야 한다.
+      a11ySheetTitle: '접근성 하나만 켜주세요',
+      a11ySheetBody: '이런 데 씁니다.',
+      a11ySheetUse1: '영상 앱이 재생 중인지만 확인 — 시청 시간 계산',
+      a11ySheetUse2: '포커스 세션 중 다음 영상으로 넘기기',
+      a11ySheetUse3: '블루투스 리모컨 볼륨 버튼으로 넘기기',
+      a11ySheetUse4: '즐겨찾기 누를 때 제목·채널·링크 저장',
+      // ⚠️ '로그인 시에만'이라고 쓰면 안 된다 — useUserStore.loginAsGuest가 게스트에게도 deviceId 기반
+      //   서버 계정과 토큰을 자동 발급하므로(backendSync의 if(!token) return은 백엔드 미연결일 때만 걸림)
+      //   **게스트도 세션 기록이 서버로 동기화된다.** APP_STORE_LISTING.md의 2026-07-31 정정과 같은 내용.
+      a11ySheetPrivacy: '녹화·캡처는 안 해요. 화면 내용은 저장하지 않고, 시청 시간 습관 기록만 사용자님 계정에 저장돼요. 언제든 끌 수 있어요.',
       a11ySheetPathLabel: '다음 화면에서',
       a11ySheetPathText: '설치된 앱 → PACE → 사용함(ON)',
       a11ySheetEnable: '동의하고 설정 열기',

@@ -27,4 +27,15 @@ dependencies {
   // 바로 띄워라") — 보상형 광고를 오버레이에서 직접 띄우려면 이 모듈이 GMA SDK를 알아야 한다.
   // 이미 react-native-google-mobile-ads가 앱에 포함시키는 것과 같은 아티팩트라 새 의존성이 아니다.
   implementation "com.google.android.gms:play-services-ads:24.9.0"
+  // 2026-08-22 사장님 지적("틱톡처럼 바텀시트로 띄우던가") — 기존 @react-native-google-signin의
+  // 무료(Original) 경로는 play-services-auth의 **레거시 전체화면 다이얼로그**
+  // (com.google.android.gms/.common.account.AccountPickerActivity)를 띄운다. 라이트 모드 기기에서
+  // 그 다이얼로그는 흰 카드 + 회색 하단 띠로 나와, 다크 고정인 우리 앱에서 유독 깨져 보였다.
+  // 틱톡 등이 쓰는 바텀시트는 Credential Manager(androidx.credentials) 경로인데, 그 API는
+  // 라이브러리의 **유료 Universal Sign In 모듈**에만 있고 우리가 설치한 무료 패키지는
+  // GoogleSignin(레거시) 하나만 export한다(node_modules에서 확인). 그래서 같은 일을 이 모듈에서
+  // 직접 한다 — 유료 모듈이 감싸는 것과 동일한 공식 API다.
+  implementation "androidx.credentials:credentials:1.6.0"
+  implementation "androidx.credentials:credentials-play-services-auth:1.6.0"
+  implementation "com.google.android.libraries.identity.googleid:googleid:1.2.0"
 }

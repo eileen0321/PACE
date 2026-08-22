@@ -23,6 +23,13 @@ type PaceOverlayNativeModule = {
   }): Promise<void>;
   updateRemaining(remainingMinutes: number): Promise<void>;
   stop(): Promise<void>;
+  // 2026-08-22 — Credential Manager 기반 구글 로그인(바텀시트). 성공 시 idToken을 resolve.
+  // mode='authorized'면 이 앱에 로그인한 적 있는 계정만(원탭 재로그인 시트), 'button'이면 계정 선택 시트를 항상 띄운다.
+  // 실패 코드: CANCELLED / NO_CREDENTIAL / CREDENTIAL_MANAGER_FAILED /
+  //           CREDENTIAL_MANAGER_UNAVAILABLE / NO_ACTIVITY / NO_ID_TOKEN
+  // ⚠️ 호출부(services/auth/google.ts)는 CANCELLED를 제외한 모든 실패에서 기존 레거시
+  //   GoogleSignin 경로로 폴백한다 — 이 함수가 로그인을 막는 일은 없어야 한다.
+  googleSignInWithCredentialManager(serverClientId: string, mode: 'authorized' | 'button'): Promise<string>;
   // 네이티브가 백그라운드에서 스스로 카운트다운해 만료되면(Daily Limit 또는 Sleep Timer) 오버레이/
   // 서비스를 직접 정리하고 사유만 남긴다(PaceOverlayService.kt 상단 주석 참고) — JS는 포그라운드
   // 복귀 시 1회 소비. 만료 안 됐으면 null, 만료됐으면 'daily_limit_reached'/'sleep_timer_expired'.

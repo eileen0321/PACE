@@ -24,6 +24,7 @@ import { RemoteClickIllustration } from '../../components/home/RemoteClickIllust
 import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
+import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 
 // getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
 // Date.getDay()와 동일)를 실제 번역 키로 매핑 — settings.tsx에서 그대로 가져옴(2026-07-27, Weekly
@@ -48,6 +49,8 @@ export default function FocusScreen() {
   const adBannerHeight = useAdBannerStore((s) => s.height);
   const tabBarHeight = useAdBannerStore((s) => s.tabBarHeight);
   const { settings, update } = useSettingsStore();
+  // Play 정책 고지·동의 시트(권한 요청 직전 인앱 고지) — 아래 liveTag onPress 주석 참고.
+  const [showAccessibilityDisclosure, setShowAccessibilityDisclosure] = useState(false);
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const attendanceHistory = useAttendanceStore((s) => s.history);
@@ -357,11 +360,12 @@ export default function FocusScreen() {
         {/* 1. Session Control Hero */}
         <LinearGradient colors={['#1A1D26', colors.cardDeep]} style={styles.heroCard}>
           {/* 접근성이 꺼져 있으면 "추적 중"이라고 하면 안 된다 — 위 trackingLive 주석 참고.
-              탭하면 홈 배너와 동일하게 접근성 설정으로 보낸다(막다른 경고를 만들지 않는다). */}
+              🔴 2026-08-22 Play 정책 — 예전엔 여기서 설명 없이 바로 설정으로 튕겼다. 홈 배너와
+              동일하게 고지·동의 시트를 먼저 띄운다(정책: 권한 요청 **직전** 인앱 고지 필수). */}
           <Pressable
             style={[styles.liveTag, !trackingLive && styles.liveTagWarning]}
             disabled={trackingLive}
-            onPress={() => overlayService.requestAccessibilityPermission?.()}
+            onPress={() => setShowAccessibilityDisclosure(true)}
           >
             <View style={[styles.liveDot, !trackingLive && styles.liveDotWarning]} />
             <Text style={[styles.liveTagText, !trackingLive && styles.liveTagTextWarning]}>
@@ -633,6 +637,16 @@ export default function FocusScreen() {
           </GlassSurface>
         </View>
       </ScrollView>
+
+      {/* Play 정책 고지·동의 시트 — "동의하고 설정 열기"를 눌렀을 때만 설정이 열린다. */}
+      <AccessibilityOnboardingSheet
+        visible={showAccessibilityDisclosure}
+        onEnable={() => {
+          setShowAccessibilityDisclosure(false);
+          overlayService.requestAccessibilityPermission?.();
+        }}
+        onDismiss={() => setShowAccessibilityDisclosure(false)}
+      />
     </SafeAreaView>
   );
 }

@@ -188,14 +188,23 @@ export const translations = {
       notConnected: 'Not Connected',
       // 2026-07-21 감사 발견 — AccessibilityOnboardingSheet.tsx가 useTranslation을 아예 안 써서
       // 언어 설정과 무관하게 영어/한국어가 섞인 채 항상 똑같이 떴다. 이 시트 전용 키.
-      a11ySheetTitle: 'Hands-Free Shorts',
-      a11ySheetBody: 'PACE uses Accessibility permission to advance Shorts for you during a Focus Session.',
-      a11ySheetBenefitAutoNext: 'Focus Session',
-      a11ySheetBenefitHandsFree: 'Hands-Free Mode',
+      // 🔴 2026-08-22 — Play 정책(Prominent disclosure and consent) 요건에 맞춰 전면 교체.
+      //   기존 문구는 "핸즈프리로 Shorts를 넘겨준다" 한 줄뿐이라 정책의 3요소 중 **What(어떤 데이터를
+      //   다루는가)** 이 통째로 빠져 있었고, 실제 주용도인 시청시간 추적도 언급이 없었다.
+      //   정책 원문 요구: Why(왜 필요한지·핵심 목적) / What(관련된 모든 데이터 유형) / How(핵심 기능
+      //   맥락에서 어떻게 쓰이는지), 그리고 "13세가 이해할 수준의 쉬운 말".
+      //   버튼 문구도 정책이 'Allow access' 같은 표현 대신 'Agree' 류를 쓰라고 명시해서 바꿨다.
+      a11ySheetTitle: 'PACE needs the Accessibility service',
+      a11ySheetBody: 'To do its job, PACE needs Android’s Accessibility service. Here is exactly what it does — and what it never does.',
+      a11ySheetUse1: 'Sees which video app is on screen and whether a video is playing, so PACE can count your watch time and tell you when you reach your daily limit or a break.',
+      a11ySheetUse2: 'Performs the “go to next video” swipe for you during a Focus Session — this is what a hand wave or a Bluetooth remote triggers.',
+      a11ySheetUse3: 'Receives volume-button presses from a Bluetooth remote or headphones and uses them as next / previous.',
+      a11ySheetUse4: 'Only when you tap “Add to favorites”, reads that video’s title, channel and link and saves them on your phone.',
+      a11ySheetPrivacy: 'PACE never records or screenshots your screen, and nothing it reads leaves your phone. You can turn the service off in Android Settings at any time.',
       a11ySheetPathLabel: 'On the next screen',
       a11ySheetPathText: 'Installed apps → PACE → Use (ON)',
-      a11ySheetEnable: 'Enable Access',
-      a11ySheetNotNow: 'Not Now',
+      a11ySheetEnable: 'Agree and open Settings',
+      a11ySheetNotNow: 'Not now',
       running: 'Running',
       permissionNeeded: 'Permission Needed',
       // 2026-07-28 사장님 지시 — 권한 없이 눌리는 것처럼 보이던 손짓/블루투스 토글에 disable
@@ -722,13 +731,17 @@ export const translations = {
       accessibilityPromptBanner: '지금 사용시간 추적이 꺼져 있어요 — 탭해서 접근성을 다시 켜주세요',
       connected: '연결됨',
       notConnected: '미연결',
-      a11ySheetTitle: '핸즈프리 Shorts',
-      a11ySheetBody: 'PACE는 접근성 권한으로 포커스 세션 중 Shorts를 넘겨드립니다.',
-      a11ySheetBenefitAutoNext: '포커스 세션',
-      a11ySheetBenefitHandsFree: '핸즈프리 모드',
+      // 위 영어 블록과 같은 근거(Play 정책 Prominent disclosure 3요소 + 쉬운 말).
+      a11ySheetTitle: 'PACE에 접근성 서비스가 필요해요',
+      a11ySheetBody: 'PACE가 제 역할을 하려면 안드로이드 접근성 서비스가 필요합니다. 무엇을 하고 무엇은 하지 않는지 그대로 알려드릴게요.',
+      a11ySheetUse1: '어떤 영상 앱이 화면에 떠 있는지, 영상이 재생 중인지 확인합니다. 시청 시간을 세고 하루 한도와 휴식 시점을 알려드리기 위해서예요.',
+      a11ySheetUse2: '포커스 세션 중 “다음 영상으로 넘기기”를 대신 해줍니다. 손짓이나 블루투스 리모컨이 바로 이 동작을 씁니다.',
+      a11ySheetUse3: '블루투스 리모컨이나 이어폰의 볼륨 버튼 입력을 받아 다음 / 이전 넘김으로 씁니다.',
+      a11ySheetUse4: '“즐겨찾기 추가”를 누르셨을 때만, 그 영상의 제목·채널·링크를 읽어 휴대폰에 저장합니다.',
+      a11ySheetPrivacy: 'PACE는 화면을 녹화하거나 캡처하지 않고, 읽은 내용은 휴대폰 밖으로 나가지 않습니다. 안드로이드 설정에서 언제든 끌 수 있어요.',
       a11ySheetPathLabel: '다음 화면에서',
       a11ySheetPathText: '설치된 앱 → PACE → 사용함(ON)',
-      a11ySheetEnable: '권한 켜기',
+      a11ySheetEnable: '동의하고 설정 열기',
       a11ySheetNotNow: '나중에',
       running: '실행 중',
       permissionNeeded: '권한 필요',

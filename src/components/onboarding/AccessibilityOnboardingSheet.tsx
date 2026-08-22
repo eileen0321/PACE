@@ -38,14 +38,19 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
         <Text style={styles.title}>{t('focus.a11ySheetTitle')}</Text>
         <Text style={styles.body}>{t('focus.a11ySheetBody')}</Text>
 
-        <View style={styles.benefitRow}>
-          <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitAutoNext')}</Text>
-        </View>
-        <View style={styles.benefitRow}>
-          <Feather name="check" size={14} color={colors.successLight} />
-          <Text style={styles.benefitLabel}>{t('focus.a11ySheetBenefitHandsFree')}</Text>
-        </View>
+        {/* 🔴 2026-08-22 — Play 정책(Prominent disclosure)의 What/How를 채우는 부분.
+            기존엔 "포커스 세션 / 핸즈프리 모드" 두 단어만 있어서 **무엇을 읽고 무엇을 하는지**가
+            전혀 없었다. 정책은 "관련된 모든 데이터 유형"과 "핵심 기능 맥락에서의 사용 방식"을
+            요구한다 — 접근성 서비스가 실제로 하는 네 가지를 그대로 적는다(코드 기준, 추측 아님). */}
+        {(['a11ySheetUse1', 'a11ySheetUse2', 'a11ySheetUse3', 'a11ySheetUse4'] as const).map((key) => (
+          <View key={key} style={styles.useRow}>
+            <Feather name="check" size={14} color={colors.successLight} style={styles.useIcon} />
+            <Text style={styles.useText}>{t(`focus.${key}`)}</Text>
+          </View>
+        ))}
+
+        {/* 정책이 요구하는 "하지 않는 것"과 철회 방법 — 동의 판단에 필요한 정보다. */}
+        <Text style={styles.privacy}>{t('focus.a11ySheetPrivacy')}</Text>
 
         <View style={styles.pathBox}>
           <Text style={styles.pathLabel}>{t('focus.a11ySheetPathLabel')}</Text>
@@ -70,8 +75,11 @@ const styles = StyleSheet.create({
   iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: `${colors.primary}1A`, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
   title: { fontSize: 17, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, marginBottom: spacing.xs },
   body: { fontSize: 13, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 19, marginBottom: spacing.md },
-  benefitRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 5 },
-  benefitLabel: { fontSize: 13, fontFamily: typography.bodyFontFamilyBold, color: colors.textPrimary },
+  // 설명이 한 줄로 안 끝나므로 아이콘을 위로 정렬하고(alignItems: 'flex-start') 텍스트는 줄바꿈시킨다.
+  useRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: 4 },
+  useIcon: { marginTop: 3 },
+  useText: { flex: 1, fontSize: 12.5, fontFamily: typography.bodyFontFamilyMedium, color: colors.textPrimary, lineHeight: 18 },
+  privacy: { fontSize: 12, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 17, marginTop: spacing.sm },
   pathBox: { backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.chip, padding: spacing.sm, marginTop: spacing.sm },
   pathLabel: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 },
   pathText: { fontSize: 12, fontFamily: typography.monoFontFamilyBold, color: colors.primary },

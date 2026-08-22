@@ -1053,9 +1053,44 @@ class PaceOverlayService : Service() {
   // 오버레이 창/포그라운드 알림/포그라운드 폴링/미디어세션 세팅 — ACTION_START(정상 시작)와
   // ACTION_TICK(프로세스가 죽었다 알람으로 되살아난 경우, infraReady==false)이 공유하는 초기화
   // 경로. 이미 세팅돼 있으면(같은 프로세스에서 이미 돌고 있던 정상 틱) 아무 것도 안 한다.
+  /**
+   * 🔴 2026-08-22 실기기/에뮬 크래시 — `startForeground()`를 타입 없이 부르면 안드로이드가
+   * **매니페스트에 선언된 모든 타입**(`specialUse|camera`)을 적용하고, Android 14+/targetSdk 34+
+   * 에서는 camera 타입에 **CAMERA 런타임 권한**을 강제한다. 권한이 없으면 SecurityException으로
+   * **프로세스가 통째로 죽는다**:
+   * ```
+   * SecurityException: Starting FGS with type camera ... requires permissions:
+   *   allOf=[FOREGROUND_SERVICE_CAMERA] anyOf=[CAMERA, SYSTEM_CAMERA]
+   *   at PaceOverlayService.ensureInfraReady(PaceOverlayService.kt:1058)
+   * ```
+   * ⚠️ 이건 이론적 위험이 아니다 — 실기기에서 카메라 권한이 **"이번만 허용"(ONE_TIME)** 으로
+   *   잡혀 있는 것을 2026-08-20에 확인했다. 안드로이드가 그 권한을 회수한 뒤 세션을 시작하면
+   *   사용자 앱이 그냥 죽는다. 손짓을 안 쓰는 사용자(카메라 권한 거부)도 똑같이 죽는다.
+   *
+   * → 타입을 **명시**하고, camera는 권한이 실제로 있을 때만 붙인다. 권한이 없으면 손짓만 못 쓸 뿐
+   *   세션(알약/카운트다운/자동넘김)은 정상 동작해야 한다.
+   */
+  private fun startForegroundSafely(notification: android.app.Notification) {
+    try {
+      if (Build.VERSION.SDK_INT >= 34) {
+        var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        val hasCamera = androidx.core.content.ContextCompat.checkSelfPermission(
+          this, android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasCamera) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        startForeground(NOTIFICATION_ID, notification, type)
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+    } catch (e: Exception) {
+      // 여기서 죽으면 세션 추적이 통째로 사라지므로, 실패해도 프로세스는 살린다.
+      Log.e("PaceOverlay", "startForeground 실패 — 포그라운드 승격 없이 계속한다", e)
+    }
+  }
+
   private fun ensureInfraReady() {
     if (infraReady) return
-    startForeground(NOTIFICATION_ID, buildNotification(remainingMinutes))
+    startForegroundSafely(buildNotification(remainingMinutes))
     showOverlay(remainingMinutes)
     startForegroundAppPolling()
     setupMediaSession()
@@ -2209,11 +2244,7 @@ class PaceOverlayService : Service() {
     //   ensureInfraReady()의 startForeground 호출은 그대로 둔다 — 같은 알림 ID로 다시 부르는 것은
     //   내용 갱신일 뿐이라 무해하고, 그쪽은 remainingMinutes가 확정된 뒤라 표시가 정확하다.
     //   ⚠️ 이 줄을 다시 아래로 내리지 말 것. 여기가 늦어지는 순간 위 크래시가 그대로 재현된다.
-    try {
-      startForeground(NOTIFICATION_ID, buildNotification(remainingMinutes))
-    } catch (e: Exception) {
-      Log.w("PaceOverlay", "선제 startForeground 실패 — ensureInfraReady에서 재시도된다", e)
-    }
+    startForegroundSafely(buildNotification(remainingMinutes))
     Log.d("PaceOverlay", "onStartCommand action=${intent?.action} remaining=${intent?.getIntExtra(EXTRA_REMAINING, -1)} overlayView=${if (overlayView != null) "exists" else "null"}")
     when (intent?.action) {
       ACTION_START -> {

@@ -28,6 +28,7 @@ import { QuickControlsGrid } from '../../components/home/QuickControlsGrid';
 // 매일 KST 09:00에 하루가 넘어가 버린다. 같은 실수로 출석 보상이 하루 두 번 지급됐다(utils/date.ts 주석).
 import { toLocalDateStr } from '../../utils/date';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
+import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { STORAGE_KEYS } from '../../services/storage/keys';
@@ -118,6 +119,8 @@ export default function HomeScreen() {
   // 배너와 달리 "평생 1회만" 안내하면 안 된다 — 이건 기능이 통째로 죽는 하드 블로커라 꺼져 있는 한
   // 계속 다시 보여야 한다(AsyncStorage seen-flag 없이 매 확인마다 실제 상태를 그대로 반영).
   const [showAccessibilityPrompt, setShowAccessibilityPrompt] = useState(false);
+  // Play 정책 고지·동의 시트(아래 acceptAccessibilityPrompt 주석 참고).
+  const [showAccessibilityDisclosure, setShowAccessibilityDisclosure] = useState(false);
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
   // 2026-08-02 사장님 지시("한도 차면 뜨는 팝업만 지워") — 하루 한도 도달 팝업(LimitReachedOverlay)
   // 과 그에 딸린 광고/크레딧 연장 모달은 제거됐다. 하루 한도는 이제 차단/팝업 없이 추적·표시만 하고,
@@ -336,9 +339,15 @@ export default function HomeScreen() {
   const dismissAccessibilityPrompt = useCallback(() => {
     setShowAccessibilityPrompt(false);
   }, []);
+  // 🔴 2026-08-22 Play 정책 대응 — 예전엔 배너를 누르면 **아무 설명 없이 바로** 안드로이드 접근성
+  //   설정으로 튕겼다. Play 정책(Prominent disclosure and consent)은 "권한을 요청하기 **직전에**
+  //   앱 안에서" 용도를 고지하라고 요구하고, "앱 설명이나 웹사이트에 있는 것으로는 안 된다"고
+  //   명시한다. 즉 이 경로는 그 자체로 정책 위반이었다(2026-08-21 접근성 미고지 리젝과 같은 계열).
+  //   → 설정으로 보내기 전에 AccessibilityOnboardingSheet(고지·동의 시트)를 먼저 띄운다.
+  //     실제 설정 이동은 시트의 "동의하고 설정 열기"를 눌렀을 때만 일어난다.
   const acceptAccessibilityPrompt = useCallback(() => {
-    overlayService.requestAccessibilityPermission();
     setShowAccessibilityPrompt(false);
+    setShowAccessibilityDisclosure(true);
   }, []);
 
   // 2026-07-29 사장님 지시("가끔 연속으로 오면 크레딧도 선물박스 누르면 주고") — 인사이트 배너를
@@ -809,6 +818,18 @@ export default function HomeScreen() {
           </View>
         </View>
       )}
+
+      {/* 🔴 2026-08-22 Play 정책 — 접근성 설정으로 보내기 **직전**에 뜨는 고지·동의 시트.
+          "동의하고 설정 열기"를 눌렀을 때만 실제로 설정이 열린다("나중에"면 아무 일도 안 일어난다).
+          정책이 요구하는 거부 경로가 이 "나중에"이고, 재요청 경로는 홈의 접근성 배너다. */}
+      <AccessibilityOnboardingSheet
+        visible={showAccessibilityDisclosure}
+        onEnable={() => {
+          setShowAccessibilityDisclosure(false);
+          overlayService.requestAccessibilityPermission();
+        }}
+        onDismiss={() => setShowAccessibilityDisclosure(false)}
+      />
     </SafeAreaView>
   );
 }

@@ -117,6 +117,22 @@ object PaceGoogleSignIn {
    *   비용이 없는 중간 단계로 남긴다 — 실패해도 다음 단계로 흘러갈 뿐이다.
    *   ⚠️ 기기 인증이 정상인 상태에서 "all"이 바텀시트를 띄우는지 아직 재확인 못 했다.
    */
+  /**
+   * 🔴 2026-08-23 "시트 색과 하단키 색이 안 맞는다" — **실험으로 종결. 다시 시도하지 말 것.**
+   *   픽셀 실측: 시트 본문 rgb(246,250,255) / 하단바 rgb(254,255,255). 이음매는 실재한다.
+   *   그 하단바가 우리 창인지 확인하려고, 시트를 띄우기 직전에 우리 Activity의
+   *   navigationBarColor를 시트 본문 색(#F6FAFF)으로 칠하고 WindowInsetsControllerCompat으로
+   *   light nav bar까지 켜본 뒤 재측정했다 → **하단바는 rgb(254,255,255) 그대로였다.**
+   *   즉 그 영역은 우리 창이 아니라 GMS 시트 창(SignInCredentialChooserActivity)이 그린다.
+   *   시트 배경도 같은 창이라 마찬가지로 못 바꾼다. 효과 없던 틴트 코드는 제거했다.
+   *
+   *   비교(같은 폰, 같은 라이트 모드):
+   *     틱톡 시트 rgb(245,250,255) / 하단바 rgb(254,255,255)
+   *     PACE 시트 rgb(246,250,255) / 하단바 rgb(254,255,255)
+   *   → 틱톡도 동일한 이음매를 갖는다. 앱이 손댈 수 있는 차이가 아니다.
+   *   (#F6FAFF의 푸른 기는 Material You가 기기 배경화면에서 뽑는 surface 색이라 기기마다 다르다)
+   */
+
   fun signIn(activity: Activity, serverClientId: String, mode: String, promise: Promise) {
     if (serverClientId.isBlank()) {
       promise.reject("NO_CLIENT_ID", "serverClientId가 비어 있다", null)

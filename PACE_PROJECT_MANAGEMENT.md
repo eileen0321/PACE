@@ -10301,3 +10301,69 @@ build.gradle·app.json·strings.xml 3곳 정합 확인). 위 수정 2건 포함.
 AAB 재생성: `~/Desktop/PACE-v1.0.5-vc16.aab` (위 수정 포함). 앞 항목의 AAB는 폐기할 것.
 데모 영상 게시됨: https://youtube.com/shorts/C-rsBtP0osg — ⚠️ Play Console에 넣기 전
 **공개범위가 "일부 공개(Unlisted)"인지** 반드시 확인(비공개면 심사자가 못 본다).
+
+### 2026-08-23 (새벽) — Windows 세션 (🔴🔴 구글 로그인이 아예 안 되고 있었다 — DEVELOPER_ERROR)
+
+바텀시트 작업을 하다 **훨씬 큰 걸 발견했다: 구글 로그인 자체가 실패한다.**
+
+에뮬레이터(pace_test, Android 14, 구글 계정 정상)에서 로그인을 끝까지 눌러보니:
+```
+Sign-in Failed
+DEVELOPER_ERROR: Follow troubleshooting instructions at
+https://react-native-google-signin.github.io/docs/troubleshooting
+```
+DEVELOPER_ERROR는 원인이 사실상 하나다 — **`com.strides7.pace` + 서명 SHA-1 조합이 Google
+Cloud에 Android OAuth 클라이언트로 등록돼 있지 않다**(또는 webClientId가 다른 프로젝트 것).
+
+이게 그동안의 증상 전부를 설명한다:
+ · Credential Manager 세 모드(authorized/all/button)가 **실기기·에뮬 양쪽에서** 전부
+   NoCredentialException("No credentials available") — 앱이 등록 안 됐으니 자격증명이 없다.
+ · 그래서 바텀시트도 안 뜬다. 바텀시트가 안 되는 게 아니라 로그인이 안 되는 것이었다.
+ · 핸드오프 §5의 **D7(Google OAuth 클라이언트 발급)이 미해결**로 남아 있던 것과 같은 건이다.
+
+⚠️ 이건 내 이번 변경 때문이 아니다. DEVELOPER_ERROR는 손대지 않은 레거시
+   GoogleSignin.signIn() 경로에서 나온다(내 변경은 실패 시 그 경로로 폴백만 한다).
+
+**사장님이 콘솔에서 해야 할 일**
+ 1. Google Cloud Console > APIs & Services > 사용자 인증 정보 — `.env`의
+    EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID와 **같은 프로젝트**인지 먼저 확인.
+ 2. OAuth 클라이언트 ID 만들기 > **Android**, 패키지명 `com.strides7.pace`, SHA-1 등록:
+    · 로컬 릴리스(업로드) 키: `B8:FC:9F:58:CC:F8:21:F8:3E:A2:56:07:C5:F9:8D:43:C5:22:F4:C7`
+      (apksigner로 app-release.apk에서 직접 추출)
+    · **Play 앱 서명 키 SHA-1** — Play Console > 테스트 및 출시 > 앱 무결성 > 앱 서명 키 인증서.
+      ⚠️ 이걸 빼먹으면 **스토어에서 받은 사용자만** 로그인이 안 된다(가장 놓치기 쉬운 함정).
+ 3. 등록 후 재확인하면 레거시·Credential Manager 둘 다 살아나고, 그때 바텀시트도 뜬다.
+
+**부수 발견** — 로그인 체인의 실제 액티비티 순서(에뮬 logcat):
+```
+com.strides7.pace/com.google.android.gms.auth.api.signin.internal.SignInHubActivity  ← 우리 패키지
+com.google.android.gms/.auth.api.signin.ui.SignInActivity
+com.google.android.gms/.signin.activity.SignInActivity
+```
+SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여기에 Theme.Pace.TransparentShell을
+씌워둔 것은 유효한 조치다(다만 실기기에서 흰 구간을 없애진 못했다. 그 구간은 GMS 소유 화면).
+
+**에뮬레이터 주의** — pace_test AVD의 Play 서비스가 23.18.18(구버전)이다. Credential Manager
+동작 검증에는 부적합할 수 있으니, SHA-1 등록 후에는 실기기로 재확인할 것.
+
+#### (이어서) 🔴🔴 출시 블로커 확정 — 등록된 SHA-1이 우리 키 어느 것도 아니었다
+
+사장님이 콘솔 값을 확인해준 결과, 세 지문이 전부 다르다:
+
+| 용도 | SHA-1 |
+|---|---|
+| Play **앱 서명 키**(사용자 배포용) | `33:5A:14:ED:26:A8:41:F0:E9:11:D8:8B:E8:A1:8E:6A:C6:9F:C4:CC` |
+| **업로드 키**(로컬 빌드 서명) | `B8:FC:9F:58:CC:F8:21:F8:3E:A2:56:07:C5:F9:8D:43:C5:22:F4:C7` |
+| Google Cloud에 등록된 값 | `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25` ← **어느 쪽도 아님** |
+
+→ **지금 프로덕션(15/1.0.4)을 설치한 사용자도 구글 로그인이 안 된다.** 로컬만의 문제가 아니었다.
+  (업로드 키 지문은 Play Console > 앱 서명 > "업로드 키 인증서"의 SHA-1과 apksigner로 뽑은
+   app-release.apk 지문이 정확히 일치하는 것으로 교차 확인함)
+
+**해야 할 일** — Google Cloud > 클라이언트 만들기 > Android 를 **2개** 추가(클라이언트당 SHA-1 1개):
+ ① `Android - Play 앱 서명 키` / `com.strides7.pace` / `33:5A:...:C4:CC`  ← 프로덕션 필수
+ ② `Android - 업로드 키`      / `com.strides7.pace` / `B8:FC:...:F4:C7`  ← 로컬 검증용
+ 기존 `Android 클라이언트 1`(5E:8F...)은 정체 불명이므로 일단 두되, 나중에 출처 확인 후 정리.
+
+②가 반영되면 그때서야 로그인/Credential Manager 바텀시트 검증이 가능해진다 —
+그 전까지 이 두 항목은 **검증 불가**다.

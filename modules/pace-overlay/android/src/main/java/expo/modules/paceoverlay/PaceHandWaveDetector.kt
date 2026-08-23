@@ -633,12 +633,18 @@ object PaceHandWaveDetector {
   // (timestamp, 8x8 격자 평균밝기) — 큰 손짓 축(gross-motion)용. 64개 Int라 메모리도 무시할 만하다.
   private val gridHistory = ArrayDeque<Pair<Long, IntArray>>()
 
-  // 2026-07-24: 프로젝트에 트랜지티브로 딸려온 androidx.lifecycle 버전이 LifecycleOwner를 순수 Java
-  // 인터페이스(getLifecycle())로 노출해 Kotlin `override val lifecycle` 프로퍼티 오버라이드 문법이
-  // 안 먹혔다(컴파일 에러로 실기기에서 직접 확인) — 함수 형태로 명시적 오버라이드해 버전 무관하게 컴파일되게 한다.
+  // 2026-07-24: 트랜지티브로 딸려온 androidx.lifecycle이 LifecycleOwner를 순수 Java
+  // 인터페이스(getLifecycle())로 노출하던 시절엔 `override val lifecycle` 프로퍼티 문법이 안 먹혀서
+  // 함수 형태로 오버라이드했었다.
+  // 🔴 2026-08-22 정정 — Credential Manager 의존성(androidx.credentials)을 추가하면서 이 모듈의
+  //   androidx.lifecycle 해석이 2.6.2로 올라갔다. 2.6부터 LifecycleOwner는 **Kotlin 프로퍼티**
+  //   (`val lifecycle`)라 함수 오버라이드가 "overrides nothing"으로 컴파일 에러가 난다.
+  //   → 프로퍼티 형태로 되돌린다. 이제 dependencies 리포트상 lifecycle이 `strictly 2.6.2`로
+  //     고정돼 있어 예전처럼 버전이 왔다갔다하며 이 줄이 다시 깨질 일은 없다.
+  //   ⚠️ 이 클래스는 CameraX 바인딩 전용 내부 클래스라, 바꿔도 동작은 동일하다(레지스트리 그대로).
   private class FakeLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
-    override fun getLifecycle(): Lifecycle = registry
+    override val lifecycle: Lifecycle get() = registry
   }
 
   fun hasPermission(context: Context): Boolean =

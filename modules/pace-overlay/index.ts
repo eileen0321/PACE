@@ -30,6 +30,8 @@ type PaceOverlayNativeModule = {
   // ⚠️ 호출부(services/auth/google.ts)는 CANCELLED를 제외한 모든 실패에서 기존 레거시
   //   GoogleSignin 경로로 폴백한다 — 이 함수가 로그인을 막는 일은 없어야 한다.
   googleSignInWithCredentialManager(serverClientId: string, mode: 'authorized' | 'all' | 'button'): Promise<string>;
+  // 로그인 화면 진입 시 미리 호출 — 자격증명 조회를 데워 시트가 빨리 뜨게 한다(실패해도 무해).
+  prepareGoogleSignIn(serverClientId: string, mode: 'authorized' | 'all' | 'button'): void;
   // 네이티브가 백그라운드에서 스스로 카운트다운해 만료되면(Daily Limit 또는 Sleep Timer) 오버레이/
   // 서비스를 직접 정리하고 사유만 남긴다(PaceOverlayService.kt 상단 주석 참고) — JS는 포그라운드
   // 복귀 시 1회 소비. 만료 안 됐으면 null, 만료됐으면 'daily_limit_reached'/'sleep_timer_expired'.

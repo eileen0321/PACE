@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View, Pressable, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +25,11 @@ export default function AuthScreen() {
   const signInWithGoogle = useUserStore((s) => s.signInWithGoogle);
   const signInWithApple = useUserStore((s) => s.signInWithApple);
   const [busy, setBusy] = useState(false);
+
+  // 2026-08-23 — 이 화면이 뜨는 즉시 구글 자격증명 조회를 데워둔다. 사장님 지적("바텀시트 뜨기 전에
+  // 흰색 하단키가 잠깐 보였음") 대응으로, 시트가 그려지기까지의 공백(실측 ~0.8초)을 줄인다.
+  // 실패해도 아무 영향 없다(services/auth/google.ts warmUp 주석 참고). Android 전용, 내부에서 가드.
+  useEffect(() => { googleAuth.warmUp(); }, []);
 
   // 2026-07-27 사용자 지적 — "/auth"는 콜드 스타트 경로가 아니라 항상 Settings(로그아웃 행) 또는
   // Paywall("로그인 필요" 안내)에서 push로 들어온다(src/app/index.tsx 콜드 스타트는 onboarding/home만

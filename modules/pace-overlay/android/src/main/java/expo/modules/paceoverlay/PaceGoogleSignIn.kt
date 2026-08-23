@@ -7,6 +7,7 @@ import androidx.credentials.CredentialManagerCallback
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
+import androidx.credentials.PrepareGetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
@@ -50,6 +51,54 @@ object PaceGoogleSignIn {
   private val executor = Executors.newSingleThreadExecutor()
 
   /**
+   * 🔴 2026-08-23 사장님 지적("바텀시트 뜨기 전에 흰색 하단키가 잠깐 보였음") — 실측했다.
+   *   탭 후 0.35초 시점의 topResumedActivity가 이미
+   *   `com.google.android.gms/.identitycredentials.ui.SignInCredentialChooserActivity`이고
+   *   하단바는 96% 흰색이다. 즉 **시트 창은 떴는데 내용이 아직 안 그려진** 구간이고, 30fps
+   *   프레임 계수로 약 0.8초였다. 그 창은 GMS 소유라 테마를 못 씌운다.
+   *   → 줄이는 유일한 방법은 **미리 준비**다. Credential Manager의 prepareGetCredential은
+   *     자격증명 조회를 미리 끝내두는 공식 API로, UI가 뜨는 지연을 줄이는 것이 목적이다.
+   *     로그인 화면이 뜰 때 준비를 걸어두고, 사용자가 버튼을 누르면 그 핸들로 바로 UI를 연다.
+   *   ⚠️ 준비가 실패하거나 아직 안 끝났으면 그냥 평소 경로로 간다 — 최적화일 뿐 필수 경로가 아니다.
+   */
+  @Volatile private var preparedHandle: PrepareGetCredentialResponse.PendingGetCredentialHandle? = null
+  @Volatile private var preparedForMode: String? = null
+
+  fun prepare(activity: Activity, serverClientId: String, mode: String) {
+    if (serverClientId.isBlank()) return
+    try {
+      val request = GetCredentialRequest.Builder().addCredentialOption(buildOption(serverClientId, mode)).build()
+      CredentialManager.create(activity).prepareGetCredentialAsync(
+        request,
+        null,
+        executor,
+        object : CredentialManagerCallback<PrepareGetCredentialResponse, GetCredentialException> {
+          override fun onResult(result: PrepareGetCredentialResponse) {
+            preparedHandle = result.pendingGetCredentialHandle
+            preparedForMode = mode
+            Log.i(TAG, "prepareGetCredential 완료 mode=$mode")
+          }
+          override fun onError(e: GetCredentialException) {
+            preparedHandle = null; preparedForMode = null
+            Log.i(TAG, "prepareGetCredential 실패(무시하고 평소 경로) mode=$mode: ${e.message}")
+          }
+        }
+      )
+    } catch (e: Exception) {
+      Log.w(TAG, "prepareGetCredential 시작 실패(무시)", e)
+    }
+  }
+
+  private fun buildOption(serverClientId: String, mode: String): CredentialOption = when (mode) {
+    "button" -> GetSignInWithGoogleOption.Builder(serverClientId).build()
+    else -> GetGoogleIdOption.Builder()
+      .setServerClientId(serverClientId)
+      .setFilterByAuthorizedAccounts(mode == "authorized")
+      .setAutoSelectEnabled(false)
+      .build()
+  }
+
+  /**
    * mode (JS가 이 순서로 시도한다 — 앞이 실패하면 다음으로)
    *  - "authorized" : GetGoogleIdOption(filter=true). 이 앱에 로그인한 적 있는 계정만.
    *                   **바텀시트**로 뜨고 탭 한 번이면 끝난다. 가장 매끄러운 경로.
@@ -74,25 +123,10 @@ object PaceGoogleSignIn {
       return
     }
     try {
-      val option: CredentialOption = when (mode) {
-        "button" -> GetSignInWithGoogleOption.Builder(serverClientId).build()
-        else -> GetGoogleIdOption.Builder()
-          .setServerClientId(serverClientId)
-          // "authorized" = 이 앱에 로그인한 적 있는 계정만, "all" = 기기의 모든 구글 계정.
-          .setFilterByAuthorizedAccounts(mode == "authorized")
-          // 자동 선택은 끈다 — 사용자가 계정을 눈으로 확인하고 누르게 한다(계정 오선택 방지).
-          .setAutoSelectEnabled(false)
-          .build()
-      }
+      val request = GetCredentialRequest.Builder().addCredentialOption(buildOption(serverClientId, mode)).build()
+      val cm = CredentialManager.create(activity)
 
-      val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-
-      CredentialManager.create(activity).getCredentialAsync(
-        activity,
-        request,
-        null,
-        executor,
-        object : CredentialManagerCallback<GetCredentialResponse, GetCredentialException> {
+      val callback = object : CredentialManagerCallback<GetCredentialResponse, GetCredentialException> {
           override fun onResult(result: GetCredentialResponse) {
             try {
               val credential = result.credential
@@ -130,8 +164,18 @@ object PaceGoogleSignIn {
             Log.i(TAG, "getCredential 실패 code=$code mode=$mode: ${e.message}")
             promise.reject(code, e.message ?: code, e)
           }
-        }
-      )
+      }
+
+      // 미리 준비된 핸들이 이 mode 것이면 그걸로 연다 — 시트가 훨씬 빨리 그려져 흰 하단바 구간이 줄어든다.
+      // 핸들은 1회용이므로 쓰고 나면 비운다.
+      val handle = if (preparedForMode == mode) preparedHandle else null
+      preparedHandle = null; preparedForMode = null
+      if (handle != null) {
+        Log.i(TAG, "준비된 핸들로 UI 오픈 mode=$mode")
+        cm.getCredentialAsync(activity, handle, null, executor, callback)
+      } else {
+        cm.getCredentialAsync(activity, request, null, executor, callback)
+      }
     } catch (e: Exception) {
       // CredentialManager.create()나 요청 빌드 단계에서의 실패(구버전 기기, GMS 미설치 등).
       Log.w(TAG, "Credential Manager 시작 실패", e)

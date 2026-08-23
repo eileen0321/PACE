@@ -74,6 +74,20 @@ async function signInWithCredentialManager(): Promise<SignInOk | SignInCancelled
 export const googleAuth = {
   isAvailable: () => loadOk && !!WEB_CLIENT_ID,
 
+  /**
+   * 로그인 화면이 뜰 때 호출한다(auth/index.tsx의 mount effect).
+   * 사장님 지적("바텀시트 뜨기 전에 흰색 하단키가 잠깐 보였음") 대응 — 시트 창은 즉시 뜨는데
+   * 내용이 그려지기까지 실측 ~0.8초가 걸렸고, 그 사이 흰 하단바만 보였다. 그 창은 GMS 소유라
+   * 테마를 못 씌우므로, 조회를 미리 끝내 **그리는 시간 자체를 줄이는** 것이 유일한 수단이다.
+   * 실패해도 아무 영향 없다 — 준비가 없으면 평소 경로로 연다.
+   */
+  warmUp() {
+    if (Platform.OS !== 'android' || !WEB_CLIENT_ID) return;
+    try {
+      paceOverlayNative?.prepareGoogleSignIn?.(WEB_CLIENT_ID, 'authorized');
+    } catch { /* 최적화일 뿐이므로 무시 */ }
+  },
+
   configure() {
     if (!loadOk || !WEB_CLIENT_ID) return;
     // iOS는 iosClientId 없이 configure()를 부르면 네이티브 예외로 앱이 크래시한다(JS try/catch로 못 잡음) — 가드.

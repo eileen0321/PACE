@@ -51,15 +51,23 @@ object PaceGoogleSignIn {
   private val executor = Executors.newSingleThreadExecutor()
 
   /**
-   * 🔴 2026-08-23 사장님 지적("바텀시트 뜨기 전에 흰색 하단키가 잠깐 보였음") — 실측했다.
-   *   탭 후 0.35초 시점의 topResumedActivity가 이미
-   *   `com.google.android.gms/.identitycredentials.ui.SignInCredentialChooserActivity`이고
-   *   하단바는 96% 흰색이다. 즉 **시트 창은 떴는데 내용이 아직 안 그려진** 구간이고, 30fps
-   *   프레임 계수로 약 0.8초였다. 그 창은 GMS 소유라 테마를 못 씌운다.
-   *   → 줄이는 유일한 방법은 **미리 준비**다. Credential Manager의 prepareGetCredential은
-   *     자격증명 조회를 미리 끝내두는 공식 API로, UI가 뜨는 지연을 줄이는 것이 목적이다.
-   *     로그인 화면이 뜰 때 준비를 걸어두고, 사용자가 버튼을 누르면 그 핸들로 바로 UI를 연다.
-   *   ⚠️ 준비가 실패하거나 아직 안 끝났으면 그냥 평소 경로로 간다 — 최적화일 뿐 필수 경로가 아니다.
+   * 2026-08-23 "바텀시트 뜨기 전에 흰색 하단키가 잠깐 보였음" 대응으로 넣었다.
+   *   Credential Manager의 prepareGetCredential은 자격증명 조회를 미리 끝내 UI 지연을 줄이는
+   *   공식 API다. 로그인 화면 mount 때 걸어두고, 버튼을 누르면 그 핸들로 UI를 연다.
+   *
+   * ⚠️⚠️ **이 기기(Android 13, API 33)에서는 효과가 없었다.** 로그를 넣어 확인한 결과
+   *   prepare() 진입은 찍히는데 onResult/onError **어느 쪽도 호출되지 않는다**(무응답).
+   *   prepareGetCredential은 사실상 API 34+ 프레임워크 경로라 그 아래에서는 콜백이 안 온다.
+   *   → 준비 핸들이 없으면 평소 경로로 그냥 가므로 **무해**하고, API 34+ 기기에서는 의도대로
+   *     동작할 것으로 기대해 남겨둔다. 다만 "이걸로 고쳐졌다"고 착각하지 말 것.
+   *
+   * ⚠️ 흰 하단바 구간 자체는 **고치지 않기로 사장님이 결정**(2026-08-23, "그냥 둬").
+   *   실측: PACE 하단바 1.10초 → 시트 2.10초 = 약 1.0초 어긋남.
+   *   원인은 우리 로그인 화면이 다크(rgb 7,8,10)라 GMS 시트 창의 흰 하단바가 대비되는 것.
+   *   같은 폰 비교 —
+   *     틱톡  : 자기 로그인 화면이 밝아서(딤 씌워 rgb 173) 하단바와 동시에 전환, 안 튄다.
+   *     Wavve : 다크 화면(rgb 27,27,27) + 흰 하단바(rgb 244)를 자기 화면에서 그냥 방치한다.
+   *   해결하려면 /auth 화면만 밝게 만드는 방법뿐인데(틱톡 방식), 다크 앱 정체성을 깨므로 보류.
    */
   @Volatile private var preparedHandle: PrepareGetCredentialResponse.PendingGetCredentialHandle? = null
   @Volatile private var preparedForMode: String? = null

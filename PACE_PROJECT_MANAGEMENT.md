@@ -10209,3 +10209,8 @@ iOS 손짓은 맥이 관리하는 `modules/pace-gesture/ios/PaceGestureModule.sw
 - **아이콘**: 사장님 "패딩 너무 줄였어" → 콘텐츠 66%→84%, 테두리 페더링으로 이음새 제거(assets/icon-phone11.png + iOS 카탈로그 동기). ⚠️ Windows: Android 쪽도 같은 원본(_icon-originals)에서 84% 기준으로 맞출 것.
 - **위젯 체크리스트 ① 종결**: 기기가 1.0.4(8) 구빌드였던 게 "사라짐" 관찰의 원인. 1.0.5(13) 설치 후 "잠금화면에 아무것도 안나와" → 사장님 "안보여도 되"로 확정. 현 설계: 피드 FOCUS는 8/15 결정으로 LA 미생성이고, 잠금=백그라운드=차감 정지라 잠금화면 카운트다운은 실차감과 어긋나 오히려 오표시임(사장님도 동의). LA는 홈 카드 세션 경로만 생성.
 - 잔여: ASC에서 1.0.5 버전 생성 → 빌드 13 선택 → 출시노트 → 심사 제출(사장님 수동).
+
+### 2026-08-24(Mac/iOS) — 🟢 홍보 쇼츠 2종(한/영) 제작 완료
+- 시뮬레이터(iPhone 17, 스토어와 동일 코드 Debug+Metro)에서 3장면 녹화: FOCUS ON 자동재생 / 쇼츠 검색→결과 재생 / Shorts HOT 리스트→재생. 터치 주입이 없어 DEV 전용 debugAction 시나리오(promoAuto/promoSearch/promoHot)로 스크립트(__DEV__ 게이트, 출시 빌드 미포함).
+- ffmpeg 부재 → AVFoundation 스위프트 합성기(scratchpad/compositor.swift)로 점프컷(로딩 블랙 제거)+1080×1920 크롭(상태바만 컷, FOCUS ON 필 보존)+자막 페이드/라이즈+브랜드 엔드카드(아이콘 84%+태그라인). 프레임 밝기 분석(frametool.swift)으로 컷 포인트 산출.
+- 산출물: **~/Desktop/PACE_promo/pace_promo_ko.mp4 / pace_promo_en.mp4** (34초, 무음 — 업로드 시 음악 추가 권장). 카피: "쇼츠, 이제 손대지 말고 보세요"/"Watch Shorts hands-free" 등.

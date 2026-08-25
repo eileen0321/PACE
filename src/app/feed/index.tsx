@@ -81,6 +81,29 @@ function SessionRemaining({ endsAt }: { endsAt: number }) {
   return <Text style={styles.sessionRemainingText}>{min}m</Text>;
 }
 
+// 🔴 2026-08-25 사장님 확진("헬스장에서 기기에 폰을 거치해놓고 손을 젓는데 각도가 이것 아닐까") —
+// 물증 로그로 확정한 그 문제: 거치 각도에 따라 손이 전면카메라 화각 밖으로 빠져 2분 30초간
+// no-hand 150연속(22:01~22:04 실측). 카메라가 손을 "보고 있는지"를 FOCUS 필 안의 점으로 즉시
+// 보여줘 사용자가 거치 각도를 화면 보면서 맞출 수 있게 한다: 초록 = 최근 1.5초 내 손 잡힘.
+// ref 폴링 구조인 이유 — onDiag는 초당 ~3회라 이벤트마다 setState하면 리렌더 폭탄(성능 감사 C1,
+// onDiag를 no-op으로 비웠던 그 이유). SessionRemaining과 같은 격리 컴포넌트 + 상태 전이 때만 렌더.
+// 3색(2026-08-25 실측 "같은 각도라도 되다 안 되다" — 손 크기 0.129 vs 0.135 경계에 걸친 게 원인):
+// 회색=카메라에 손 없음 / 노랑=잡히지만 far 판정(0.135 미만, 문턱 1.8배·3연속 요구로 둔감 — 조금만
+// 가까이) / 초록=mid 이상(즉발 잘 됨). 0.135는 네이티브 bandOf의 mid 경계와 같은 값이어야 한다.
+function HandSeenDot({ seenRef }: { seenRef: React.MutableRefObject<{ at: number; size: number }> }) {
+  const [level, setLevel] = useState<0 | 1 | 2>(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { at, size } = seenRef.current;
+      const next: 0 | 1 | 2 = Date.now() - at >= 1500 ? 0 : size >= 0.135 ? 2 : 1;
+      setLevel((prev) => (prev === next ? prev : next));
+    }, 400);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <View style={[styles.handDot, level === 1 && styles.handDotFar, level === 2 && styles.handDotOn]} />;
+}
+
 // 2026-08-02 사장님 지적("한도 시간은 표시 안 하잖아") — Android 배지는 "40m left"로 하루 한도
 // 남은 시간을 보여주는데 iOS 피드엔 Focus Session 남은시간만 있고 하루 한도 잔여가 없었다. 하루
 // 한도(설정+보너스) − 오늘 사용 = 남은 분을 상단에 항상 표시한다. 스토어를 이 컴포넌트가 직접
@@ -577,6 +600,8 @@ export default function PaceFeedScreen() {
   const playerRef = useRef<ShortsPlayerHandle>(null);
   // __DEV__ 홍보 녹화(promoSearch)에서만 채워짐 — 검색 오버레이가 이 검색어로 스스로 검색한다.
   const promoSearchQueryRef = useRef<string | null>(null);
+  // 손-보임 점(HandSeenDot)용 — onDiag가 마지막으로 손을 본 시각·크기. ref인 이유는 컴포넌트 주석 참고.
+  const handSeenRef = useRef({ at: 0, size: 0 });
   // 2026-08-15 — "현재 영상 즐겨찾기 추가"를 버튼(onAddCurrent)과 아래 디버그 자동트리거 둘 다에서
   // 쓰도록 뽑았다. 실기기 재보고("눌러도 리스트에 안 뜬다")를 잡으려고 시뮬레이터로 재현하려 했는데
   // WKWebView 콘텐츠 위 좌표 클릭(AppleScript/CGEvent 둘 다)이 못 미더워서(정확한 좌표에도 반응
@@ -1062,7 +1087,14 @@ export default function PaceFeedScreen() {
     // diag state를 매번 새 객체로 갱신 → PaceFeedScreen(웹뷰 서브트리 포함) 전체가 초당 수회 리렌더 →
     // 예전에 setProgress 제거로 고쳤던 영상 "씹힘/히치"·손짓 카메라 불안정이 그대로 재발하는 회귀 벡터.
     // 릴리즈에선 완전히 끄고(__DEV__ false), dev에서만 진단 유지. 손짓 발화는 onHandWave라 이와 무관.
-    onDiag: () => {}, // diag 상태 제거(성능) — 진단은 네이티브 로그가 담당
+    onDiag: (_kind, text) => {
+      // 손-보임 판정만 ref에 기록(리렌더 없음, HandSeenDot이 400ms 폴링) — "T0 hand=…"/"👋 WAVE!"가
+      // 손이 프레임에 잡혔다는 뜻이고 "no hand"/"cam …"은 아님. 그 외 diag 표시는 성능상 계속 없음(C1).
+      if (!text) return;
+      const m = text.match(/hand=([\d.]+)/);
+      if (m) handSeenRef.current = { at: Date.now(), size: parseFloat(m[1]) };
+      else if (text.includes('WAVE')) handSeenRef.current = { at: Date.now(), size: Math.max(0.135, handSeenRef.current.size) };
+    },
   });
   // 전환 정지 함수를 goNext가 쓰는 ref에 연결(iOS=실제 정지, Android=no-op).
   pauseWaveRef.current = feedRemote?.pauseWaveForTransition ?? null;
@@ -1222,6 +1254,13 @@ export default function PaceFeedScreen() {
               <>
                 <View style={styles.sessionDivider} />
                 <SessionRemaining endsAt={sessionEndsAt} />
+              </>
+            )}
+            {/* 손-보임 점(2026-08-25) — 거치 각도 맞추기용: 초록이면 카메라가 손을 보고 있다 */}
+            {handsFreeDetectActive && (
+              <>
+                <View style={styles.sessionDivider} />
+                <HandSeenDot seenRef={handSeenRef} />
               </>
             )}
           </Pressable>
@@ -1485,6 +1524,10 @@ const styles = StyleSheet.create({
   sessionPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 12, borderRadius: radius.pill, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.28)' },
   sessionPillOn: { borderColor: colors.success },
   sessionOnDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
+  // 손-보임 점(HandSeenDot) — 꺼짐: 희미한 회색(카메라에 손 없음), 켜짐: 초록(손 잡히는 중).
+  handDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.28)' },
+  handDotFar: { backgroundColor: '#FFD60A' }, // 잡히지만 far 판정 — 조금만 가까이
+  handDotOn: { backgroundColor: colors.success },
   sessionOnText: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.8 },
   sessionDivider: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: 'rgba(255,255,255,0.3)', marginHorizontal: 2 },
   sessionRemainingText: { color: colors.success, fontSize: 11, fontFamily: typography.bodyFontFamilyExtrabold, letterSpacing: 0.4, fontVariant: ['tabular-nums'] },

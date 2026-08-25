@@ -57,6 +57,31 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
                // 중복 발화는 네이티브 불응(1.2s)+JS 쿨다운(1.5s)이 계속 막는다.
     } catch {}
   };
+  // 🔴 2026-08-25 사장님("왜 손짓이 안 됐는지 확인했어?") — 인식 실패의 물증이 없었다. 네이티브
+  // onDiag는 Release에서도 오고 있었는데(모듈 sendEvent 비게이트) 아무도 저장을 안 했다. 여기서
+  // 30초 창으로 집계해 pace_diag.log에 남긴다: 손이 잡힌 틱 수/no-hand 틱 수/최대 hand·growth·sweep/
+  // 카메라 중단/발화 수 — "손은 잡혔는데 문턱 미달"과 "아예 안 잡힘"을 사후에 구분하는 근거.
+  const diagAggRef = useRef({ handTicks: 0, noHandTicks: 0, maxHand: 0, maxGrowth: 0, maxSweep: 0, camInt: 0, waves: 0, since: Date.now() });
+  const noteDiagForEvidence = (text: string) => {
+    const a = diagAggRef.current;
+    if (text.startsWith('no hand')) a.noHandTicks += 1;
+    else if (text.includes('cam interrupted')) a.camInt += 1;
+    else if (text.includes('WAVE')) a.waves += 1;
+    else {
+      const m = text.match(/hand=([\d.]+) growth=([\d.]+) sweep=([\d.]+)/);
+      if (m) {
+        a.handTicks += 1;
+        a.maxHand = Math.max(a.maxHand, parseFloat(m[1]));
+        a.maxGrowth = Math.max(a.maxGrowth, parseFloat(m[2]));
+        a.maxSweep = Math.max(a.maxSweep, parseFloat(m[3]));
+      }
+    }
+    if (Date.now() - a.since >= 30000) {
+      diagLog('wave_summary', `hand=${a.handTicks} nohand=${a.noHandTicks} maxHand=${a.maxHand.toFixed(3)} maxGrowth=${a.maxGrowth.toFixed(2)} maxSweep=${a.maxSweep.toFixed(2)} camInt=${a.camInt} waves=${a.waves}`);
+      diagAggRef.current = { handTicks: 0, noHandTicks: 0, maxHand: 0, maxGrowth: 0, maxSweep: 0, camInt: 0, waves: 0, since: Date.now() };
+    }
+  };
+
   const fireNext = () => {
     const nowMs = Date.now();
     // 2026-08-18 실기기 로그로 확정 — 사장님 손짓 리듬(1.3~1.6s 간격)의 절반이 이 1500ms에 삼켜져
@@ -84,7 +109,10 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
       mod.addListener('onHeadNod', () => fireNext()),
       mod.addListener('onSnap', () => fireNext()),
       mod.addListener('onHandWave', () => fireNext()),
-      mod.addListener('onDiag', (p) => cbRef.current.onDiag?.(p?.kind ?? '', p?.text ?? '')),
+      mod.addListener('onDiag', (p) => {
+        noteDiagForEvidence(String(p?.text ?? ''));
+        cbRef.current.onDiag?.(p?.kind ?? '', p?.text ?? '');
+      }),
       mod.addListener('onError', (p) => console.warn('[pace-gesture]', p?.kind, p?.message)),
     ];
     return () => {

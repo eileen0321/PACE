@@ -812,9 +812,35 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // "볼륨 조절 의도의 가림"으로 보고 넘김을 취소한다. 가림만 하고 안 누르면 기존대로 넘김.
   private var pendingOcclusionWork: DispatchWorkItem? = nil
   private var lastLensCoveredPostMs: Double = 0
+  // 🔴 2026-08-25 사장님("50cm까지 가까울 때 멀 때 다 되게", "가까이에서는 손 아니어도 넘어가게") —
+  // 초근접(<15cm)은 손이 프레임을 넘쳐 랜드마커가 원리적으로 실명(실측 22:20 hand=0/61). 이 구간은
+  // 손 모양 확인 없이 **밝기 dip**으로 본다: 뭔가 렌즈 앞을 스치면 밝기가 짧고 깊게 꺼졌다 돌아온다.
+  // 지속 가림(0.9s+)은 기존 occlusion/볼륨 프로토콜 경로 그대로, 짧은 dip(80~800ms)+회복(80%)만
+  // "근접 스침"으로 즉시 발화. 깊이 50%+회복 요구로 램프 점멸/그림자 오탐을 줄인다. 크기·사람 무관.
+  // ⚠️ 기존 lumaHistory(400ms, 안드 파리티)는 안 건드리고 dip 전용 기록을 따로 쓴다.
+  private let dipWindowMs: Double = 1200
+  private var dipHistory: [(t: Double, luma: Double)] = []
   private func checkOcclusion(_ luma: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
+    // 근접 스침(dip) — 상단 dipWindowMs 주석 참고.
+    dipHistory.append((nowMs, luma))
+    while let f = dipHistory.first, nowMs - f.t > dipWindowMs { dipHistory.removeFirst() }
+    if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 5,
+       let first = dipHistory.first, nowMs - first.t >= 600 {
+      let bright = dipHistory.map { $0.luma }.max() ?? 0
+      if bright > 40 {
+        let dipCandidates = dipHistory.filter { nowMs - $0.t >= 80 && nowMs - $0.t <= 800 }
+        if let dip = dipCandidates.min(by: { $0.luma < $1.luma }),
+           dip.luma <= bright * 0.5, luma >= bright * 0.8 {
+          pendingOcclusionWork?.cancel()
+          pendingOcclusionWork = nil
+          dipHistory.removeAll()
+          fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f", dip.luma, bright), nowMs)
+          return
+        }
+      }
+    }
     guard let brightest = lumaHistory.map({ $0.luma }).max(), brightest > 0 else { return }
     // 2026-08-21 안드 이식(1899cf3 §1) — NEAR 밴드 손을 1.2초 안에 본 경우에만 문턱 완화
     // (0.45→0.68 / 70→130): "손이 렌즈 코앞"이라는 독립 증거가 있을 때만이라 조명 오탐은 안 는다.

@@ -446,7 +446,21 @@ object PaceHandWaveDetector {
   /** 가로지르기를 재는 시간창. 가까이서 지나가면 짧게 끝나므로 sweep(700ms)보다 넉넉히 잡는다. */
   private const val TRAVERSE_WINDOW_MS = 900L
   /** 정규화 좌표(0~1) 기준 최소 순이동. 화면 폭의 1/3 이상을 한 방향으로 지나가야 한다. */
-  private const val TRAVERSE_MIN_NET_X = 0.33
+  // 🔴 2026-08-26 — 원래 0.33 고정이었다. **내가 맥을 지적했던 그 결함을 그대로 저질렀다.**
+  // iOS에서 실측한 사장님 실제 통과 이동폭은 **0.12~0.13**이다(맥의 23:02 실측, 이후 시뮬로 재현).
+  // 0.33은 그 2.5배라 채울 수가 없고, 특히 가까이서는 손이 프레임을 금방 벗어나 관측 가능한
+  // 이동폭 자체가 더 작다 — 사장님 "가까운데 손짓 안 되는데"가 이것이다.
+  // → iOS 크로싱과 같은 규칙으로 맞춘다: 비례 하한 + 절대 상한.
+  //   비례가 있어야 먼 거리 잔떨림이 안 뚫리고, 상한이 있어야 근거리가 원리적으로 불가능해지지 않는다.
+  //   (iOS PaceGestureModule.swift의 crossNeedMin/Max/K와 같은 값 — 두 플랫폼을 갈라두면 반드시 어긋난다.)
+  private const val TRAVERSE_NEED_MIN = 0.07
+  private const val TRAVERSE_NEED_MAX = 0.10
+  private const val TRAVERSE_NEED_K = 0.5
+  // 제자리 떨림 차단(사장님 "가만있는 흔들기는 미발화") — 이동폭만으로는 **느린 표류**를 못 거른다.
+  // 표류 0.11/초 vs 느린 통과 0.29/초 vs 손목 플릭 0.43/초(iOS 합성 시나리오 실측) → 0.20/초로 가른다.
+  // 추적이 성겨 구간 시간이 부풀면 속도가 과소평가되므로, 이동폭이 충분히 크면 속도 무관 통과.
+  private const val TRAVERSE_MIN_SPEED = 0.20
+  private const val TRAVERSE_BIG_NET = 0.30
   /** 한 방향 일관성 — 되돌아오는 흔들림(sweep)과 가르는 기준. 8할 이상이 같은 방향이어야 한다. */
   private const val TRAVERSE_MONOTONIC_RATIO = 0.8
   /** 이 축이 인정하는 거리 범위의 하한(= 약 50cm). 그보다 멀면 기존 축들이 담당한다. */
@@ -1430,24 +1444,39 @@ object PaceHandWaveDetector {
       var gross = 0.0
       var fwd = 0
       var steps = 0
+      // 속도를 창 전체 길이로 재면 안 된다 — 900ms 창 안에서 300ms 만에 지나간 손도 1/3로 과소평가돼
+      // 게이트에 걸린다. **실제로 움직인 구간**의 시간만 쓴다.
+      var tMoveFirst = 0L
+      var tMoveLast = 0L
       for (k in 1 until tWin.size) {
         val dx = tWin[k].second - tWin[k - 1].second
         if (kotlin.math.abs(dx) < 1e-6) continue // 정지 프레임은 방향 판정에서 제외
         gross += kotlin.math.abs(dx)
         steps++
         if ((dx > 0) == (netX > 0)) fwd++
+        if (kotlin.math.abs(dx) >= 0.005) {
+          if (tMoveFirst == 0L) tMoveFirst = tWin[k - 1].first
+          tMoveLast = tWin[k].first
+        }
       }
       val monotonic = if (steps > 0) fwd.toDouble() / steps else 0.0
       // 왕복 억제 — 순이동이 총이동의 대부분이어야 "지나갔다"고 본다(흔들림은 net≪gross).
       val straightness = if (gross > 1e-6) kotlin.math.abs(netX) / gross else 0.0
       traverseDir = if (netX > 0) 1 else -1
       val dirOk = TRAVERSE_DIRECTION == 0 || traverseDir == TRAVERSE_DIRECTION
-      traversed = kotlin.math.abs(netX) >= TRAVERSE_MIN_NET_X &&
+      val needNet = kotlin.math.min(TRAVERSE_NEED_MAX, kotlin.math.max(TRAVERSE_NEED_MIN, handSize * TRAVERSE_NEED_K))
+      val moveMs = tMoveLast - tMoveFirst
+      val tSpeed = if (moveMs > 0) kotlin.math.abs(netX) / (moveMs / 1000.0) else Double.MAX_VALUE
+      val speedOk = tSpeed >= TRAVERSE_MIN_SPEED || kotlin.math.abs(netX) >= TRAVERSE_BIG_NET
+      traversed = kotlin.math.abs(netX) >= needNet &&
         monotonic >= TRAVERSE_MONOTONIC_RATIO &&
         straightness >= TRAVERSE_MONOTONIC_RATIO &&
+        speedOk &&
         dirOk
-      if (traversed) {
-        Log.i(TAG, "TRAVERSE net=$netX gross=$gross mono=$monotonic straight=$straightness dir=$traverseDir handSize=$handSize n=${tWin.size}")
+      // 통과든 아니든 남긴다 — 왜 안 됐는지를 수치로 봐야 다음에 추측으로 문턱을 만지지 않는다.
+      if (kotlin.math.abs(netX) >= TRAVERSE_NEED_MIN) {
+        val tag = if (traversed) "TRAVERSE" else "TRAVERSE-miss"
+        Log.i(TAG, "$tag net=$netX need=$needNet mono=$monotonic straight=$straightness spd=$tSpeed dir=$traverseDir handSize=$handSize n=${tWin.size}")
       }
     }
 

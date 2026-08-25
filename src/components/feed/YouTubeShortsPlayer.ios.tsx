@@ -384,7 +384,7 @@ const INJECTED_JS_SWIPE = `
   // 붕괴시킨다 — 정상 리듬의 연속 손짓(≥1.2s 간격)은 실행도 그 간격으로 흩어지므로 걸리지 않는다.
   function advGate() {
     var now = Date.now();
-    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'advdrop' }); return false; }
+    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 450) { send({ type: 'advdrop' }); return false; }
     window.__paceAdvGateT = now;
     return true;
   }

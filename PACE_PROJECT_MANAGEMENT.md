@@ -10383,3 +10383,10 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 - 시뮬 테스트: ① advanceLoop(600ms×10, 밀림 재현) → 버스트 게이트가 5건 드롭(adv_drop_burst ×5, 교대 패턴 예측 일치) ② promoAuto(12s 정상 페이스 45s) → 드롭 0·데드맨 오발동 0. 테스트 중 diagLog "파일 없으면 append 조용히 실패" 버그 발견·수정(create() 보강) — 안 돌렸으면 기기에서 로그가 영영 안 남았음.
 - **물증 로그 운영법**: 재발 신고 시 `xcrun devicectl device copy from … --domain-type appDataContainer --domain-identifier com.strides7.pace --source Documents/pace_diag.log`로 꺼내 해당 시각의 gesture_next/gesture_drop_cooldown/adv_drop_burst/deadman_reload 유무로 "인식 실패 vs 실행 밀림" 판정. 이벤트 4종·개인정보 없음·256KB 캡.
 - 출시 프로세스 교훈(사장님 질책 반영): 기기 설치 전 시뮬 테스트 2종(버스트 재현 + 정상 페이스 오탐) 기본 실행. ASC 재업로드(빌드 14)는 사장님 실사용 확인 후.
+
+### 2026-08-25(Mac/iOS, 3차) — 🟢 피드 개인화 2건(사장님 지시) + 손짓 차단 전수조사 결과(기기 설치 완료)
+- **손짓 차단 전수조사**: 10초급 차단 없음. 전체 목록 = 불응 1.2s / 재무장 shrink∥1.5s / JS 쿨다운 0.8s / 전환정지 0.5s(자동복귀) / 볼륨잠금 0.5s / 버스트게이트 1s(밀린 묶음 전용). stuck 경로 없음.
+- **시작 영상 최근 검색 기반**(useShortsQueueStore.loadInitial): 최근 7일 검색어 결과(부팅 워밍, _layout) 중 안 본 것 우선 → 없으면 기존 serverPool. recordSearch는 사용자 행동 시점만(부팅 워밍이 TTL 갱신하지 않게 분리 — useShortsSearchStore 주석).
+- **검색 픽 후 검색 결과 이어재생 복원**(ShortsSearchOverlay): 8/11 "고른 것만"(359ce1f)은 안드 CHAIN 조기발화에 대한 조치였고 오늘 지시("검색 기준으로 계속")가 최신 — playlist 재전달. iOS forcedList는 자연종료/손짓에만 전진이라 당시 순삭 증상 없음.
+- 시뮬 검증: 검색픽→리스트 재생 ✅ / 콜드재시작→검색 기반 시드 ✅ (스크린샷 확인).
+- ⚠️ **Windows 할 일**: 안드로이드도 동일 2건 반영 필요 — ① 시작 시드 최근검색 우선(현재 serverPool→userSaved) ② 검색 결과 탭 핸들러 playlist 복원(단, CHAIN 조기발화 수정은 유지). ③ ASC 빌드13엔 8/25 수정 전부 미포함 — 심사 제출 보류 중(사장님 확인 후 빌드 14).

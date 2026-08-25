@@ -20,7 +20,7 @@ const LOCALE_SHORTS_WORD: Record<string, string> = { ko: '쇼츠', ja: 'ショ�
 // IME가 떴다 — 실기기에서 확인, 그쪽 주석 참고).
 export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
   onClose: () => void;
-  onOpenVideo?: (videoId: string, playlist?: string[], query?: string) => void;
+  onOpenVideo?: (videoId: string, playlist?: string[]) => void;
   /** __DEV__ 홍보 녹화(feed promoSearch) 전용 — 마운트 즉시 이 검색어로 검색해 결과를 보여준다. */
   initialQuery?: string;
 }) {
@@ -88,7 +88,7 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
       const ids = items.map((i) => i.videoId);
       const at = ids.indexOf(item.videoId);
       const rotated = at > 0 ? [...ids.slice(at), ...ids.slice(0, at)] : ids;
-      onOpenVideo(item.videoId, rotated, activeQuery ?? undefined);
+      onOpenVideo(item.videoId, rotated);
       onClose();
     }
     else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});

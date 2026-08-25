@@ -359,7 +359,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
   private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
   private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
-  private let crossMinSegSpeed: Double = 0.20   // 화면폭/초 — 느린 표류 차단
+  // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해
+  // 진짜 스트로크(속도 0.7~1.4 실측)를 죽였다. 큰 이동(crossBigNetX)의 느린 통과는 별도 통과 유지.
+  private let crossMinSegSpeed: Double = 0.40   // 화면폭/초 — 표류·잔움직임 차단
   private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가

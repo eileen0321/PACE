@@ -9,7 +9,7 @@ let crossWindowMs = 2500.0
 let crossNeedMin = 0.07
 let crossNeedMax = 0.10
 let crossNeedK = 0.5
-let crossMinSegSpeed = 0.20
+let crossMinSegSpeed = 0.40
 let crossBigNetX = 0.30
 let crossRearmReturnX = 0.08
 let crossRearmAbsentMs = 600.0
@@ -277,8 +277,8 @@ var t18 = 400.0, x18 = 0.30
 for _ in 0..<30 { x18 += 0.015; s18.feedHand(t: t18, x: x18, size: 0.15); t18 += 60 }
 s18.feedHand(t: t18, x: 0.75, size: 0.15); t18 += 150
 s18.feedHand(t: t18, x: 0.25, size: 0.15)
-// 라치 자가복구(1회 소비) 도입으로 느린 다구간 복귀의 둘째 구간은 발화 허용(방향무관 원칙) — 기대 3
-check("느린 복귀 후 재발화(데드락)", s18.events, fires: 3)
+// 속도 문턱 0.40으로 느린 복귀 잔구간 발화도 소멸 — 원래 의도(2발화) 복원
+check("느린 복귀 후 재발화(데드락)", s18.events, fires: 2)
 
 // 20. 손을 완전히 내렸다가(900ms 공백) 다시 올려 긋기 — 소실 경로 재무장
 var s19 = Sim()

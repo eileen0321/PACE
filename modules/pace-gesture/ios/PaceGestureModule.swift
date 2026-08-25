@@ -737,27 +737,34 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.crossHistory.append((nowMs, c.x))
         while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
         if self.crossHistory.count >= 2, nowMs - self.lastTriggerMs > self.refractoryMs {
-          let xs = self.crossHistory.map { $0.x }
-          // 2026-08-25 사장님("왼쪽에서 오른쪽으로만일 때 넘어가는 건?") — 부호 있는 순이동으로 방향 한정.
-          // 전면카메라는 미러 고정(setupCamera)이라 사용자 기준 왼→오 = 이미지 x 증가(+)로 가정 —
-          // 실기기에서 반대로 나오면 이 부호만 뒤집으면 된다(무시된 방향은 crossskip으로 채증).
-          let signedNet = xs.last! - xs.first!
-          var path = 0.0
-          for i in 1..<xs.count { path += abs(xs[i] - xs[i - 1]) }
-          if abs(signedNet) >= self.crossMinRangeX, path > 0, abs(signedNet) / path >= self.crossMinDirectness {
+          // 🔴 2026-08-25 22:52 확진(hand=15·sweep=3.63인데 발화 0) — 2.5s 창 **전체** 순이동은 연속
+          // 시도에 오염된다: 스침→복귀→스침이 서로 상쇄돼 net≈0, 패스 사이 점프가 path만 키워
+          // directness도 죽는다. → **마지막 단조 구간**(끝에서부터 같은 방향으로 이어진 스트로크)만
+          // 평가한다. 단조 구간은 왕복·연속 시도와 무관하고, 방향은 구간 부호가 곧 방향이다.
+          // 부호 실기기 확정: 사용자 왼→오 = 이미지 x 감소(음수).
+          let xs = self.crossHistory
+          var segStart = xs.count - 1
+          var dirSign = 0.0
+          var i = xs.count - 1
+          while i > 0 {
+            let dx = xs[i].x - xs[i - 1].x
+            if abs(dx) < 0.01 { i -= 1; segStart = i; continue }
+            let s: Double = dx > 0 ? 1 : -1
+            if dirSign == 0 { dirSign = s } else if s != dirSign { break }
+            i -= 1
+            segStart = i
+          }
+          let segNet = xs.last!.x - xs[segStart].x
+          if abs(segNet) >= self.crossMinRangeX {
             self.crossHistory.removeAll()
-            // 🔴 부호 실기기 확정(2026-08-25 사장님 "왼오는 안 되고 오왼이 되잖아") — 사용자 왼→오 =
-            // 이미지 x **감소**(음수). 처음 가정(+)이 반대였다. 사용자 기준이 진실이므로 음수가 "다음".
-            if signedNet < 0 {
-              self.fireTrigger(String(format: "T%d cross net=%+.2f dir=%.2f size=%.2f", ti, signedNet, abs(signedNet) / path, handSize), nowMs, handSize: handSize, trackIdx: ti)
+            if segNet < 0 {
+              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }
-            // 반대 방향(사용자 오→왼) — 무시하되 채증(향후 "이전 영상" 매핑 후보).
-            // 🔴 22:42 실측("차단 0.1초 뒤 glide가 대신 발화") — 차단 직후 잔움직임(거둬들이는 손)을
-            // 속도 축이 잡아 오→왼이 결국 넘어갔다. 차단 시점부터 0.8s 속도축 발화를 잠근다.
+            // 반대 방향(사용자 오→왼) — 무시하되 채증. 차단 직후 잔움직임 누수 방지 잠금(22:42 실측).
             self.speedSuppressUntilMs = nowMs + 800
-            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", signedNet, handSize)
-            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", signedNet, handSize))
+            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", segNet, handSize)
+            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", segNet, handSize))
           }
         }
       }
@@ -851,25 +858,36 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 왼쪽 반이 먼저 어두워지면 왼→오(발화), 오른쪽이 먼저면 오→왼(무시). 30ms 이내 동시는 모호 → 발화(관대).
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
+  // 🔴 22:52 확진 — dip의 "밝음" 기준을 1.2s 창 최대로 잡으면 연속 스침 중엔 기준 자체가 어두워져
+  // dip이 영영 성립 안 한다. 천천히 감쇠하는 기준(프레임당 ×0.995 ≈ 수 초 유지)으로 교체 — 한 번
+  // 밝았던 장면을 기억해 연속 시도 중에도 "지금 어두워졌다"를 판정할 수 있다.
+  private var brightRefAll: Double = 0
+  private var brightRefL: Double = 0
+  private var brightRefM: Double = 0
+  private var brightRefR: Double = 0
   private func checkOcclusion(_ luma: Double, _ lumaL: Double, _ lumaM: Double, _ lumaR: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
     // 근접 스침(dip) — 상단 dipWindowMs 주석 참고.
     dipHistory.append((nowMs, luma, lumaL, lumaM, lumaR))
     while let f = dipHistory.first, nowMs - f.t > dipWindowMs { dipHistory.removeFirst() }
+    brightRefAll = max(luma, brightRefAll * 0.995)
+    brightRefL = max(lumaL, brightRefL * 0.995)
+    brightRefM = max(lumaM, brightRefM * 0.995)
+    brightRefR = max(lumaR, brightRefR * 0.995)
     // 🔴 2026-08-25 22:47 확진("왼오가 안 넘어간다", 중거리) — 움직이는 손은 랜드마크가 27틱 중 2틱만
     // 잡혀 크로싱(2회 포착 필요)이 성립 불가. **lumapass**: 세로 3분할 밝기가 순차로 얕게(15%) 꺼지는
     // 패턴 = 중거리 통과. 손 모양 인식 불요·추적 끊김 무관. 사용자 왼→오 = 이미지 오른쪽→가운데→왼쪽
     // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
     if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 6,
        let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
-      func onset(_ vals: [(t: Double, v: Double)]) -> Double? {
-        guard let mx = vals.map({ $0.v }).max(), mx > 40 else { return nil }
-        return vals.first(where: { $0.v <= mx * 0.85 })?.t
+      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> Double? {
+        guard ref > 40 else { return nil }
+        return vals.first(where: { $0.v <= ref * 0.85 })?.t
       }
-      let tLo = onset(dipHistory.map { (t: $0.t, v: $0.l) })
-      let tMo = onset(dipHistory.map { (t: $0.t, v: $0.m) })
-      let tRo = onset(dipHistory.map { (t: $0.t, v: $0.r) })
+      let tLo = onset(dipHistory.map { (t: $0.t, v: $0.l) }, brightRefL)
+      let tMo = onset(dipHistory.map { (t: $0.t, v: $0.m) }, brightRefM)
+      let tRo = onset(dipHistory.map { (t: $0.t, v: $0.r) }, brightRefR)
       if let tR3 = tRo, let tM3 = tMo, let tL3 = tLo {
         if tR3 < tM3, tM3 < tL3, tL3 - tR3 >= 80, tL3 - tR3 <= 900 {
           dipHistory.removeAll()
@@ -886,17 +904,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 5,
        let first = dipHistory.first, nowMs - first.t >= 600 {
-      let bright = dipHistory.map { $0.luma }.max() ?? 0
+      let bright = max(dipHistory.map { $0.luma }.max() ?? 0, brightRefAll)
       if bright > 40 {
         let dipCandidates = dipHistory.filter { nowMs - $0.t >= 80 && nowMs - $0.t <= 800 }
         if let dip = dipCandidates.min(by: { $0.luma < $1.luma }),
-           dip.luma <= bright * 0.5, luma >= bright * 0.8 {
+           dip.luma <= bright * 0.5, luma >= brightRefAll * 0.7 {
           // 방향 판정(2026-08-25 사장님 "가까이서 왼→오 안 넘어가는 게 문제") — "가장 어두운 시점"은
           // 가까우면 양쪽이 동시에 포화돼 항상 모호(dtLR=0)했다. **어두워지기 시작한 시점(onset)**이
           // 방향을 훨씬 잘 가른다: 손이 먼저 덮는 쪽이 먼저 떨어진다. 부호 실기기 확정 — 사용자
           // 왼→오 = 이미지 오른쪽 반 onset이 먼저(tR<tL). 우선순위는 왼→오 성공이 1순위이므로
           // **확실한 오→왼(이미지 왼쪽 onset이 40ms+ 먼저)만 차단**, 모호하면 발화.
-          let onsetTh = bright * 0.55
+          let onsetTh = brightRefAll * 0.55
           let tL = dipCandidates.first(where: { $0.l <= onsetTh })?.t ?? dip.t
           let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()

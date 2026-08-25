@@ -248,6 +248,9 @@ export default function PaceFeedScreen() {
   // 리로드=리마운트라 전환에 로딩 커버가 잠깐 뜨지만, "카테고리만 보고 싶다"는 의도가 매끈함보다 우선.)
   const forcedListRef = useRef<string[] | null>(null);
   const forcedIndexRef = useRef(0);
+  /** 리스트 이탈 되돌리기를 항목당 1회로 제한 — 되돌린 자리에서 유튜브가 또 튕겨내면(비-쇼츠 리다이렉트
+   *  등) 리마운트가 무한히 돌 수 있다. 한 번 되돌려도 안 되면 유튜브에 맡기고 흐름을 막지 않는다. */
+  const listDriftFixedAtRef = useRef(-1);
   // 2026-08-05 — 위 ref를 그대로 플레이어에 내려줄 수 없어(ref 변경은 리렌더를 안 일으킴) 같은 값을 state로
   // 미러링한다. 이 값이 WebView의 window.__paceListMode가 되어, 손가락 스와이프를 WebView가 직접 처리할지
   // (유튜브 피드) 부모에 위임할지(리스트 다음 항목 리마운트) 가른다. ⚠️ forcedListRef를 바꾸는 곳은
@@ -1185,6 +1188,29 @@ export default function PaceFeedScreen() {
               // 물증(2026-08-25): 발화(wave_fire)와 실제 전환의 매칭용 — "발화는 찍히는데 안 넘어감"을 가른다.
               if (currentVideoIdRef.current !== id) diagLog('video_changed', id);
               currentVideoIdRef.current = id;
+              // 🔴 2026-08-25 사장님("검색 결과 처음 거 누르고 몇 개 보면 딴 걸로 바뀐다") — 둘째 겹.
+              //   리스트 모드에서 유튜브가 **자기 힘으로** 다른 쇼츠로 이동해버릴 수 있다(플레이어의
+              //   터치 리스너는 passive+touchend라 유튜브 이동을 막지 못하고 리마운트로 덮어쓸 뿐이다).
+              //   그 통보가 한 번이라도 유실되면 유튜브 일반 피드에 눌러앉아 **다시는 리스트로 돌아오지
+              //   못했다.** 첫째 겹(플레이어의 합치기 가드 순서 교정)으로 알려진 유실 경로는 막았지만,
+              //   유실 원인을 전부 안다고 가정하지 않는다 — 어긋난 것이 보이면 그 자리에서 되돌린다.
+              const list = forcedListRef.current;
+              if (list && id) {
+                const at = list.indexOf(id);
+                if (at >= 0) {
+                  forcedIndexRef.current = at; // 리스트 안의 항목이면 인덱스만 맞춘다(정상 이동)
+                  listDriftFixedAtRef.current = -1; // 정상 복귀 — 되돌리기 예산도 회복
+                } else if (
+                  list[forcedIndexRef.current] &&
+                  list[forcedIndexRef.current] !== id &&
+                  listDriftFixedAtRef.current !== forcedIndexRef.current
+                ) {
+                  // 리스트에 없는 영상 = 유튜브가 제멋대로 옮긴 것. 있어야 할 자리로 되돌린다.
+                  listDriftFixedAtRef.current = forcedIndexRef.current;
+                  diagLog('list_drift', id);
+                  jumpToVideo(list[forcedIndexRef.current]);
+                }
+              }
             }}
             onUserSwipe={(dir, moved) => {
               // iOS 유저 손가락 스와이프(위=다음/아래=이전).

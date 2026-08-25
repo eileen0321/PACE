@@ -495,11 +495,22 @@ const INJECTED_JS_SWIPE = `
       if (dt > 1500) { unmuteOnce(); return; }         // 정말 느린 드래그(스크롤 의도) — 탭으로 취급
       if (Math.abs(dy) < 60) { unmuteOnce(); return; }                    // 탭/미세 이동 — 재생·음소거 탭 보존
       if (Math.abs(dy) < Math.abs(dx) * 1.3) { unmuteOnce(); return; }   // 수평 우세 — 탭으로 취급
-      var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지(스와이프 자체를 버림 — unmuteOnce도 안 부름)
       var dir = dy < 0 ? 1 : -1;                                           // 위로(dy<0)=다음, 아래로=이전
-      // ⚠️ 리스트 모드(HOT/즐겨찾기 순서 재생)에선 이동을 하면 안 된다 — 그건 유튜브 피드가 아니라
-      //   우리 리스트의 다음 항목으로 리마운트해야 하므로 RN이 처리한다(moved=false로 위임).
+      // ⚠️ 리스트 모드(HOT/즐겨찾기/검색 순서 재생)에선 이동을 하면 안 된다 — 그건 유튜브 피드가
+      //   아니라 우리 리스트의 다음 항목으로 리마운트해야 하므로 RN이 처리한다(moved=false로 위임).
+      //
+      // 🔴 2026-08-25 사장님("검색 결과 처음 거 누르고 몇 개 보면 딴 걸로 바뀐다") — 이 검사가
+      //   원래 아래 500ms 합치기 가드 **뒤에** 있었다. 그런데 이 리스너는 passive + touchend라
+      //   preventDefault를 못 한다 — **유튜브 페이지는 이미 자기 방식대로 넘어간 뒤**이고, 리스트가
+      //   유지되는 건 RN이 리마운트로 그걸 덮어쓰기 때문이다. 가드에 걸려 메시지를 통째로 버리면
+      //   유튜브만 넘어가고 RN은 모른 채 남아 리마운트가 일어나지 않는다. 그 순간부터 유튜브 일반
+      //   피드에 눌러앉고 이후 스와이프도 전부 유튜브가 처리한다 — 검색과 무관한 영상이 계속 나오고
+      //   리스트로 돌아오지도 않는다.
+      //   → 리스트 모드에서는 **버리지 않는다.** 알리는 것 자체엔 부작용이 없고(이동은 RN이 한다),
+      //     오히려 안 알리는 쪽이 상태를 어긋나게 한다. swLast도 여기선 건드리지 않는다 — 이 가드는
+      //     "우리가 doSwipe로 직접 넘기는" 경로의 이중 이동을 막으려던 것이고 리스트 모드엔 무관하다.
       if (window.__paceListMode) { send({ type: 'userswipe', dir: dir, moved: false }); return; }
+      var now = Date.now(); if (now - swLast < 500) return; swLast = now;  // 연속 오발화 방지(스와이프 자체를 버림 — unmuteOnce도 안 부름)
       // ⚡ 이동은 여기서 즉시 실행하고(브릿지 왕복 없음), RN에는 기록용으로만 알린다. scrollFallback=false —
       //   키 이벤트만으로 넘긴다(scrollBy는 WKWebView 재생을 멈춘다, 2026-08-05 웹서치로 확정된 진짜 원인).
       doSwipe(dir, false);

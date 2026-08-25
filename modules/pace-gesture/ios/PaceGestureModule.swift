@@ -299,6 +299,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0
   }
   private var tracks = [HandTrack(), HandTrack()]
+
+  // 🔴 2026-08-25 사장님 사양 2건 — ① "멀어도 카메라를 손이 스쳐 지나가는 것" = 크로싱 축:
+  //   트랙 생멸(250ms 소멸)과 무관한 **전역** 목격 기록으로, 1초 창 안에서 손 x의 순이동이 화면 폭
+  //   45% 이상이면 발화. 거치(헬스장) 실측(22:06)에서 손이 3/33 틱만 잡혀 "연속 프레임 확정"이
+  //   원리적으로 불가능했던 문제의 대응 — 크로싱은 창 안에 양끝 2번만 잡혀도 성립한다.
+  //   ② "50센티까지만 본다" = 손 크기 하한 0.10으로 근사(실측: 거치 거리 손 0.10~0.19, 배경 타인 미달).
+  //   순방향 비율(net/path ≥ 0.6): 왼손·오른손이 번갈아 잡혀 가짜 가로지름(L,R,L,R)이 되는 것 차단 —
+  //   진짜 스침은 한 방향 이동이라 net≈path다.
+  //   ⚠️ iOS 선행 구현(사장님 실기기 검증용) — 사양 확정되면 안드 동일 이식(PM MD 기록).
+  private let crossWindowMs: Double = 1000
+  private let crossMinRangeX: Double = 0.45
+  private let crossMinHandSize: Double = 0.10
+  private let crossMinDirectness: Double = 0.6
+  private var crossHistory: [(t: Double, x: Double)] = []
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
@@ -671,6 +685,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
       let glideRel = handSize > 0 ? glideAbs / handSize : 0
+      // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
+      if handSize >= self.crossMinHandSize {
+        self.crossHistory.append((nowMs, c.x))
+        while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
+        if self.crossHistory.count >= 2, nowMs - self.lastTriggerMs > self.refractoryMs {
+          let xs = self.crossHistory.map { $0.x }
+          let net = abs(xs.last! - xs.first!)
+          var path = 0.0
+          for i in 1..<xs.count { path += abs(xs[i] - xs[i - 1]) }
+          if net >= self.crossMinRangeX, path > 0, net / path >= self.crossMinDirectness {
+            self.crossHistory.removeAll()
+            self.fireTrigger(String(format: "T%d cross net=%.2f dir=%.2f size=%.2f", ti, net, path > 0 ? net / path : 1, handSize), nowMs, handSize: handSize, trackIdx: ti)
+            return glideAbs
+          }
+        }
+      }
       var sweep = 0.0
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize

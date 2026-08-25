@@ -251,20 +251,26 @@ export default function PaceFeedScreen() {
   /** 리스트 이탈 되돌리기를 항목당 1회로 제한 — 되돌린 자리에서 유튜브가 또 튕겨내면(비-쇼츠 리다이렉트
    *  등) 리마운트가 무한히 돌 수 있다. 한 번 되돌려도 안 되면 유튜브에 맡기고 흐름을 막지 않는다. */
   const listDriftFixedAtRef = useRef(-1);
+  /** 현재 리스트가 나온 검색어(검색에서 연 경우만). 소진 시 다음 페이지를 이어붙이는 근거. */
+  const forcedQueryRef = useRef<string | null>(null);
   // 2026-08-05 — 위 ref를 그대로 플레이어에 내려줄 수 없어(ref 변경은 리렌더를 안 일으킴) 같은 값을 state로
   // 미러링한다. 이 값이 WebView의 window.__paceListMode가 되어, 손가락 스와이프를 WebView가 직접 처리할지
   // (유튜브 피드) 부모에 위임할지(리스트 다음 항목 리마운트) 가른다. ⚠️ forcedListRef를 바꾸는 곳은
   // 반드시 이 setter도 같이 호출해야 한다(현재 4곳: playInFeed 2분기, goNext 리스트소진, onNotShorts).
   const [listMode, setListMode] = useState(false);
-  const playInFeed = (videoId: string, playlist?: string[]) => {
+  const playInFeed = (videoId: string, playlist?: string[], query?: string) => {
     markUserInput();
     if (playlist && playlist.length > 0) {
       forcedListRef.current = playlist;
       forcedIndexRef.current = Math.max(0, playlist.indexOf(videoId));
+      // 🔴 2026-08-25 — 이 리스트가 어느 검색어에서 왔는지 기억한다. 소진 시 유튜브에 넘기지 않고
+      //   같은 검색어의 다음 페이지를 이어붙이기 위해서다(goNext 소진 분기 주석 참고).
+      forcedQueryRef.current = query ?? null;
       setListMode(true);
     } else {
       forcedListRef.current = null;
       forcedIndexRef.current = 0;
+      forcedQueryRef.current = null;
       setListMode(false);
     }
     jumpToVideo(videoId);
@@ -937,12 +943,25 @@ export default function PaceFeedScreen() {
       const ni = forcedIndexRef.current + 1;
       if (ni < list.length) {
         forcedIndexRef.current = ni;
+        prefetchMoreSearch(list, ni);
         jumpToVideo(list[ni]);
         return;
       }
       // 리스트 소진 → 유튜브 자동으로 전환. forcedListRef만 비우고(다음부턴 스와이프 경로), 마지막 영상
       // 페이지에서 그대로 스와이프를 주입해 유튜브 네이티브 피드로 이어간다(forcedVideoId는 유지 = 리마운트 없음).
+      // 🔴 2026-08-25 사장님("야구로 검색해서 야구 리스트를 보면 이후 유튜브가 야구 관련된 걸
+      //   트는 거 아냐?") — 기대는 그게 맞지만 유튜브가 그렇게 해주지 않는다. 이 WebView는
+      //   **로그인되지 않은 익명 세션**이고(주입 쿠키는 CONSENT/PREF뿐), 유튜브는 로그아웃
+      //   사용자에게 추천을 개인화해주지 않는다. 게다가 리스트 모드는 항목마다 페이지를 새로
+      //   로드해 시청 맥락 자체가 안 쌓인다. 그래서 우리 리스트가 끝나는 순간 야구와 무관한
+      //   일반 인기 영상으로 흐른다.
+      //   → 유튜브에 넘기기 전에 **같은 검색어의 다음 페이지를 먼저 이어붙인다.** 검색에서 온
+      //     리스트라면 야구는 유튜브가 아니라 우리가 계속 준다. 정말 더 없을 때만 넘어간다.
+      //   ⚠️ 여기서 받아오면 늦다 — 비동기가 도착하기 전에 이미 유튜브로 넘어가 무관한 영상이
+      //     한 번 보이고, 그 뒤 사용자를 도로 끌어오게 된다. 그래서 **소진 3개 전에 미리** 받아
+      //     붙인다(아래 prefetchMoreSearch). 여기 도달했다는 건 그것도 실패했거나 정말 끝났다는 뜻.
       forcedListRef.current = null;
+      forcedQueryRef.current = null;
       setListMode(false); // WebView가 이제부터 손가락 스와이프를 직접 처리(유튜브 피드)
       useToastStore.getState().show(t('feed.listEndYoutubeToast'));
       // 아래 스와이프 경로로 진행.
@@ -951,6 +970,28 @@ export default function PaceFeedScreen() {
     // 첫 영상에 마운트된 채 유지, YouTube가 다음 쇼츠를 이어줌). reload 모드: 기존대로 큐 advance(videoId 변경).
     if (SWIPE_NAV) { playerRef.current?.advance(); }
     else { advance(); } // 스킵도 시청 완료로 간주 → watched+history로 이동(리스트에서 삭제)
+  };
+  // 🔴 2026-08-25 사장님("야구로 검색해서 야구 리스트를 보면 이후 유튜브가 야구 관련된 걸 트는 거
+  //   아냐?") — 기대는 그게 맞지만 유튜브가 그렇게 해주지 않는다. 이 WebView는 **로그인되지 않은
+  //   익명 세션**이고(주입 쿠키는 CONSENT/PREF뿐, 로그인 쿠키 없음), 유튜브는 로그아웃 사용자에게
+  //   추천을 개인화해주지 않는다. 게다가 리스트 모드는 항목마다 페이지를 새로 로드해 시청 맥락이
+  //   쌓이지도 않는다. 그래서 우리 리스트가 끝나는 순간 야구와 무관한 일반 인기 영상으로 흐른다.
+  //   → 야구를 계속 주는 건 유튜브가 아니라 **우리 몫**이다. 같은 검색어의 다음 페이지를 소진
+  //     **3개 전에 미리** 받아 리스트에 이어붙인다(소진 시점에 받으면 비동기가 늦어 무관한 영상이
+  //     한 번 보이고 사용자를 도로 끌어오게 된다). 중복 호출은 스토어의 resultsLoading이 막는다.
+  const SEARCH_PREFETCH_LEFT = 3;
+  const prefetchMoreSearch = (list: string[], index: number) => {
+    const q = forcedQueryRef.current;
+    if (!q || list.length - index > SEARCH_PREFETCH_LEFT) return;
+    useShortsSearchStore
+      .getState()
+      .searchMore(q)
+      .then((more) => {
+        // 그 사이 사용자가 리스트를 떠났거나 다른 검색으로 옮겼으면 붙이지 않는다.
+        if (more.length === 0 || forcedQueryRef.current !== q || forcedListRef.current !== list) return;
+        forcedListRef.current = [...list, ...more.map((m) => m.videoId)];
+      })
+      .catch(() => {});
   };
   // 이전 — 리스트 재생 중이면 리스트 이전 항목, 아니면 스와이프 모드=위로 스와이프 주입/reload=큐 goToPrevious.
   // moved 반환(토스트 표시 판단용).

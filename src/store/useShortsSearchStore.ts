@@ -115,9 +115,18 @@ type ShortsSearchState = {
   presetsFetchedAt: number;
   presetsLoading: boolean;
   results: Record<string, YouTubeShort[]>; // query별 결과 캐시(패널 열려 있는 동안만 의미 있음)
+  /** 🔴 2026-08-25 — query별 다음 페이지 토큰. 예전엔 page.token을 그냥 버렸다.
+   *  사장님("야구로 검색해서 야구 리스트를 보면 이후 유튜브가 야구 관련된 걸 트는 거 아냐?") —
+   *  기대는 그게 맞지만 **유튜브는 그렇게 동작하지 않는다.** /shorts/<ID>로 직접 연 뒤 스와이프하면
+   *  그 영상의 관련 영상이 아니라 계정 기준 **일반 쇼츠 피드**로 이어간다. 그래서 우리 검색 결과
+   *  25개가 끝나는 순간 야구와 무관한 게 나온다. → 유튜브에 넘기지 말고 **우리가 다음 페이지를
+   *  이어붙인다.** 그 토큰을 쓰려면 버리지 않고 들고 있어야 한다. */
+  tokens: Record<string, string | null>;
   resultsLoading: Record<string, boolean>;
   loadPresets: () => Promise<void>;
   search: (query: string) => Promise<void>;
+  /** 같은 검색어의 다음 페이지를 이어붙인다. 더 없으면 빈 배열을 준다(호출부가 그때 유튜브로 넘긴다). */
+  searchMore: (query: string) => Promise<YouTubeShort[]>;
 };
 
 export const useShortsSearchStore = create<ShortsSearchState>((set, get) => ({
@@ -125,6 +134,7 @@ export const useShortsSearchStore = create<ShortsSearchState>((set, get) => ({
   presetsFetchedAt: 0,
   presetsLoading: false,
   results: {},
+  tokens: {},
   resultsLoading: {},
 
   loadPresets: async () => {
@@ -146,10 +156,33 @@ export const useShortsSearchStore = create<ShortsSearchState>((set, get) => ({
     set((s) => ({ resultsLoading: { ...s.resultsLoading, [query]: true } }));
     try {
       const page = await fetchShortsPage({ query });
-      set((s) => ({ results: { ...s.results, [query]: page.shorts } }));
+      set((s) => ({
+        results: { ...s.results, [query]: page.shorts },
+        tokens: { ...s.tokens, [query]: page.nextPageToken ?? null },
+      }));
       persistRecentResults(query, page.shorts); // 콜드 스타트 시드용(위 RECENT_RESULTS_KEY 주석)
     } catch {
       set((s) => ({ results: { ...s.results, [query]: s.results[query] ?? [] } }));
+    } finally {
+      set((s) => ({ resultsLoading: { ...s.resultsLoading, [query]: false } }));
+    }
+  },
+
+  searchMore: async (query) => {
+    const token = get().tokens[query];
+    if (!token || get().resultsLoading[query]) return [];
+    set((s) => ({ resultsLoading: { ...s.resultsLoading, [query]: true } }));
+    try {
+      const page = await fetchShortsPage({ query, pageToken: token });
+      const known = new Set((get().results[query] ?? []).map((r) => r.videoId));
+      const fresh = page.shorts.filter((r) => !known.has(r.videoId)); // 페이지 경계 중복 제거
+      set((s) => ({
+        results: { ...s.results, [query]: [...(s.results[query] ?? []), ...fresh] },
+        tokens: { ...s.tokens, [query]: page.nextPageToken ?? null },
+      }));
+      return fresh;
+    } catch {
+      return []; // 네트워크 실패 — 호출부가 유튜브 피드로 넘긴다(막지 않는다)
     } finally {
       set((s) => ({ resultsLoading: { ...s.resultsLoading, [query]: false } }));
     }

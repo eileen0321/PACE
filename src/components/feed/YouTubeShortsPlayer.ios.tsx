@@ -377,8 +377,18 @@ const INJECTED_JS_SWIPE = `
       if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry2 dir=' + dir }); scheduleFastPoll(); }
     }, 1100);
   }
-  window.paceAdvance = function () { swipe(1); };
-  window.pacePrevious = function () { swipe(-1); };
+  // 🔴 2026-08-25 사장님 헬스장 실사용("거의 안 먹다가 한번에 5개씩") — 페이지가 로딩/스로틀로 버벅이는
+  // 동안 RN의 injectJavaScript 호출이 WebView 큐에 쌓였다가 페이지가 살아나는 순간 몰아서 실행됐다.
+  // 발화 시점(네이티브 불응 1.2s + JS 쿨다운 0.8s)이 아니라 **실행 시점** 기준 게이트로 묶음을 1회로
+  // 붕괴시킨다 — 정상 리듬의 연속 손짓(≥1.2s 간격)은 실행도 그 간격으로 흩어지므로 걸리지 않는다.
+  function advGate() {
+    var now = Date.now();
+    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'domlog', text: 'ADV-drop burst gate' }); return false; }
+    window.__paceAdvGateT = now;
+    return true;
+  }
+  window.paceAdvance = function () { if (advGate()) swipe(1); };
+  window.pacePrevious = function () { if (advGate()) swipe(-1); };
 
   // 2026-08-05(2차) — 전환(스와이프/doSwipe) 직후 새 영상 재부착(음소거 해제·ended 리셋)이 500ms 고정
   // 폴링을 기다려야 했던 것도 "전환 후 한 박자 있다 소리/재생이 맞아떨어지는" 잔여 버벅임의 한 축이었다.
@@ -733,6 +743,25 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
   // reload 모드에서만: videoId가 바뀌면 새 페이지 로드 → ready 리셋. (스와이프 모드는 리로드가 없어 불필요.)
   useEffect(() => { if (NAV_MODE === 'reload') { setReady(false); wasPreloadRef.current = !!preload; } }, [videoId]);
 
+  // 🔴 2026-08-25 사장님 헬스장 실사용("안 될 때 계속 안 됨") — 페이지 JS가 통째로 얼면(느린 네트워크
+  // + 유튜브 스로틀) 페이지 안에 심어둔 15초 스톨 워치독조차 못 돈다. 페이지가 살아있으면 pollTick이
+  // 최소 500ms 간격으로 뭐든 postMessage하므로, **RN쪽에서** 10초 무소식이면 죽은 페이지로 보고
+  // 강제 리로드한다(세션당 3회 상한 — 무한 리로드 방지). preload/초기 로드는 원래 조용하니 제외.
+  const lastWebMsgAtRef = useRef(Date.now());
+  const deadmanReloadsRef = useRef(0);
+  useEffect(() => {
+    if (preload || !ready) { lastWebMsgAtRef.current = Date.now(); return; }
+    const t = setInterval(() => {
+      if (Date.now() - lastWebMsgAtRef.current > 10000 && deadmanReloadsRef.current < 3) {
+        deadmanReloadsRef.current += 1;
+        lastWebMsgAtRef.current = Date.now();
+        try { if (__DEV__) PaceGestureLog?.nativeLog?.('DEADMAN reload #' + deadmanReloadsRef.current); } catch {}
+        webRef.current?.reload();
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [preload, ready]);
+
   // 스피너 지연: 활성 로드가 450ms 넘게 걸릴 때만 스피너를 보인다(빠른 로드는 커버만·스피너 없음).
   useEffect(() => {
     if (ready || preload) { setShowSpinner(false); return; }
@@ -795,6 +824,7 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
         onHttpError={(e) => console.warn('[WV] httpError', e.nativeEvent?.statusCode)}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
+          lastWebMsgAtRef.current = Date.now();
           let msg: { type?: string; code?: number; value?: number } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);

@@ -64,9 +64,13 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
   const diagAggRef = useRef({ handTicks: 0, noHandTicks: 0, maxHand: 0, maxGrowth: 0, maxSweep: 0, camInt: 0, waves: 0, since: Date.now() });
   const noteDiagForEvidence = (text: string) => {
     const a = diagAggRef.current;
+    if (text.startsWith('crossskip')) { diagLog('cross_skip', text); return; } // 방향 한정으로 무시된 크로싱 — 부호 검증용
+    if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
+    if (text.startsWith('lumaskip')) { diagLog('lumapass_skip', text); return; } // 중거리 밝기 통과 오→왼 무시
+    if (text.startsWith('crossdrop')) { diagLog('cross_drop_refractory', text); return; } // 불응 중 스트로크 폐기
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
-    else if (text.includes('WAVE')) a.waves += 1;
+    else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에
     else {
       const m = text.match(/hand=([\d.]+) growth=([\d.]+) sweep=([\d.]+)/);
       if (m) {
@@ -87,7 +91,9 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     // 2026-08-18 실기기 로그로 확정 — 사장님 손짓 리듬(1.3~1.6s 간격)의 절반이 이 1500ms에 삼켜져
     // "한 번 걸러 한 번" 패턴을 만들었다(WAVE 발화 로그는 있는데 SWIPE가 없는 교대 패턴). 중복
     // 발화는 네이티브 불응(1200ms)이 이미 막으므로 JS 쿨다운은 이벤트 폭주 대비 최소값만 남긴다.
-    if (nowMs - lastNextRef.current < 800) { diagLog('gesture_drop_cooldown'); return; }
+    // 800→400(2026-08-25) — 통과 전용 모드의 네이티브 불응이 0.5s로 내려가(사장님 "왜 그 시간을 막냐")
+    // JS 쿨다운이 더 길면 여기서 삼킨다. 폭주 방지 최소값만 남긴다.
+    if (nowMs - lastNextRef.current < 400) { diagLog('gesture_drop_cooldown'); return; }
     lastNextRef.current = nowMs;
     diagLog('gesture_next'); // 2026-08-25 재발 검증용 — Release에서도 남는 물증(services/diagLog.ts)
     cbRef.current.onNext(); // onNext(=피드 goNext)가 pauseWaveForTransition을 부른다 — 중복 방지 위해 여기선 안 부름

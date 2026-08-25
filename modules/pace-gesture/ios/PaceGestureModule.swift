@@ -299,6 +299,42 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0
   }
   private var tracks = [HandTrack(), HandTrack()]
+
+  // 🔴 2026-08-25 사장님 사양 2건 — ① "멀어도 카메라를 손이 스쳐 지나가는 것" = 크로싱 축:
+  //   트랙 생멸(250ms 소멸)과 무관한 **전역** 목격 기록으로, 1초 창 안에서 손 x의 순이동이 화면 폭
+  //   45% 이상이면 발화. 거치(헬스장) 실측(22:06)에서 손이 3/33 틱만 잡혀 "연속 프레임 확정"이
+  //   원리적으로 불가능했던 문제의 대응 — 크로싱은 창 안에 양끝 2번만 잡혀도 성립한다.
+  //   ② "50센티까지만 본다" = 손 크기 하한 0.10으로 근사(실측: 거치 거리 손 0.10~0.19, 배경 타인 미달).
+  //   순방향 비율(net/path ≥ 0.6): 왼손·오른손이 번갈아 잡혀 가짜 가로지름(L,R,L,R)이 되는 것 차단 —
+  //   진짜 스침은 한 방향 이동이라 net≈path다.
+  //   ⚠️ iOS 선행 구현(사장님 실기기 검증용) — 사양 확정되면 안드 동일 이식(PM MD 기록).
+  // 창 2500ms(2026-08-25 사장님 "천천히 젓는 사람, 빨리 젓는 사람 다 다를 거 아냐 — 그래도 지나갔으면
+  // 넘어가야") — 크로싱은 **속도 무관**이 원칙이다. 1초 창은 느린 스침(2초짜리 통과)을 놓쳤다.
+  // 빠른 스침은 짧은 창에서도 성립하므로 창 확대는 느린 쪽만 살리고, 가짜 가로지름(양손 교차)은
+  // 창 길이가 아니라 순방향비(directness)가 거른다.
+  // 🔴 2026-08-25 사장님 최종 확정("흔들기는 넘어가면 안 되지 — 그럼 손이 움직일 때 다 넘어간다는 거") —
+  // **통과 전용 모드**: 넘김 = 왼→오 통과(크로싱·근접 dip)뿐. 흔들기·빠른 움직임(속도 축)은 발화 안 함
+  // (계산·로그는 유지 — 복원은 이 플래그만 false). 오→왼 차단 직후 잠금(speedSuppressUntilMs)은
+  // 플래그를 끄더라도 유효한 별도 방어라 남겨둔다. ⚠️ 안드는 아직 흔들기 방식 — 사양 검증 후 동일 이식.
+  private let passOnlyMode = true
+  // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
+  // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
+  private let passRefractoryMs: Double = 500
+  private var speedSuppressUntilMs: Double = 0
+  private let crossWindowMs: Double = 2500
+  // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.
+  private let crossMinRangeX: Double = 0.38
+  // 0.10→0.08(2026-08-25 실측): 사장님 실사용 거리에서 손이 0.095로 찍혀 0.005 차이로 컷됐다
+  // ("계속 안 됐어" 구간, diag 22:18:22). 0.08은 감지기 자체 하한(minHandSize)과 같아 사실상
+  // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
+  private let crossMinHandSize: Double = 0.08
+  private let crossMinDirectness: Double = 0.6
+  private var crossHistory: [(t: Double, x: Double)] = []
+  // 스트로크당 1발화(시뮬 s4가 잡은 이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화
+  // 금지, 손이 사라지거나(400ms 공백) 방향이 되돌아오면 재무장.
+  private var crossArmed = true
+  private var crossLastSampleT: Double = 0
+  private var crossLastSampleX: Double = 0
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
@@ -434,6 +470,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     session.addInput(input)
 
+    // 🔴 2026-08-25 사장님("1번은 수정 안 해 그럼?") — 모션 블러 대응. 실측(22:11): 가까운 손(0.217)도
+    // 흔드는 동안 추적이 절반씩 끊김 = 실내 조명의 긴 노출로 빠른 손이 뭉개져 랜드마커가 놓침.
+    // 자동노출은 유지하되 **노출 시간 상한만 1/180초**로 캡 — 어두우면 ISO가 대신 올라간다(밝기 자동 보정).
+    // setExposureModeCustom(고정 노출)이 아니라 activeMaxExposureDuration인 이유: 조명이 변하는 실사용에서
+    // 고정값은 과노출/암전을 만든다 — 상한 캡은 AE를 살려둔 채 블러만 막는 안전한 형태다.
+    // 🔴 2026-08-25 23:00 롤백 — 위 1/180s 상한이 밤 실내(어두움)에서 화면을 어둡게 만들어 손 인식
+    // 자체를 실명시켰다(죽은 구간들의 hand=0/30 패턴과 시간 일치). 통과 전용 모드에선 속도 축이
+    // 꺼져 있어 블러 대책의 이득도 없다 — 상한을 걸지 않는다(AE 원래대로).
+
     // 프레임레이트는 캡하지 않는다(안드로이드와 동일: 네이티브 ~30fps).
     // 15fps로 캡했더니 alwaysDiscardsLateVideoFrames와 겹쳐 부하 시 실효 fps가 더 떨어져,
     // 손이 접근하는 "초반의 작은 프레임"을 놓쳐 growth 기준점이 커지고 → 감지가 5번에 1번으로 들쭉날쭉했다.
@@ -541,8 +586,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard let lm = landmarker else { return }
     // occlusion 안전망 — Y(루마) 평면 평균 밝기(전부 camera queue라 상태 접근 안전)
     if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
-      let luma = avgLuma(pb)
-      if luma >= 0 { checkOcclusion(luma, nowMs) }
+      let thirds = avgLumaThirds(pb)
+      if thirds.l >= 0, thirds.m >= 0, thirds.r >= 0 {
+        checkOcclusion((thirds.l + thirds.m + thirds.r) / 3, thirds.l, thirds.m, thirds.r, nowMs)
+      }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
     }
     // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
@@ -671,6 +718,78 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
       let glideRel = handSize > 0 ? glideAbs / handSize : 0
+      // 2026-08-25 방향 일관성(사장님 "반대 방향은 또 되고 — 방향 정한 거 아냐?") — 크로싱만 방향을
+      // 알고 속도 축(glide/sweep/growth)은 방향 무관이라, 오→왼 스침을 속도 축이 대신 잡아버렸다
+      // (22:20:06 cross_skip 직후 glide 발화 실측). 왼쪽으로 확실히 이동 중(700ms 순이동 ≤ -0.30)이면
+      // 속도 축 발화를 막는다 — 왕복 흔들기는 순이동≈0이라 안 걸린다.
+      // 부호 실기기 확정(위 크로싱 주석) — 사용자 오→왼 = 이미지 x **증가**. 그쪽 이동 중이면 속도 축 억제.
+      // 0.30→0.12(2026-08-25 "개판" 라운드 실측) — 빠른 오→왼 휙은 샘플이 성겨 700ms 순이동이 0.30을
+      // 못 채운 채 glide가 먼저 발화했다(38:16 rel=14.8). 문턱을 낮춰 역방향 기미만 있어도 속도 축을 막는다.
+      // 왕복 흔들기는 순이동≈0이라 여전히 안 걸린다.
+      var reversePass = false
+      var netDx700 = 0.0
+      if let firstX = self.tracks[ti].xHistory.first(where: { nowMs - $0.t <= 700 }),
+         let lastX = self.tracks[ti].xHistory.last {
+        netDx700 = lastX.x - firstX.x
+        if netDx700 >= 0.12 { reversePass = true }
+      }
+      // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
+      if handSize >= self.crossMinHandSize {
+        // 재무장 판정(스트로크당 1발화): **오른쪽 복귀(+0.02)만** — 시간 공백 기준은 느린/성긴 추적의
+        // 스트로크 중간 공백(500ms+)에 오발동해 이중발화를 되살렸다(시뮬 s4가 잡음). 다음 스트로크는
+        // 오른쪽에서 다시 시작하므로 그 진입 샘플이 재무장시킨다.
+        if !self.crossArmed, c.x - self.crossLastSampleX >= 0.02 {
+          self.crossArmed = true
+        }
+        self.crossLastSampleT = nowMs
+        self.crossLastSampleX = c.x
+        self.crossHistory.append((nowMs, c.x))
+        while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
+        if self.crossHistory.count >= 2 {
+          // 🔴 2026-08-25 22:52 확진(hand=15·sweep=3.63인데 발화 0) — 2.5s 창 **전체** 순이동은 연속
+          // 시도에 오염된다: 스침→복귀→스침이 서로 상쇄돼 net≈0, 패스 사이 점프가 path만 키워
+          // directness도 죽는다. → **마지막 단조 구간**(끝에서부터 같은 방향으로 이어진 스트로크)만
+          // 평가한다. 단조 구간은 왕복·연속 시도와 무관하고, 방향은 구간 부호가 곧 방향이다.
+          // 부호 실기기 확정: 사용자 왼→오 = 이미지 x 감소(음수).
+          let xs = self.crossHistory
+          var segStart = xs.count - 1
+          var dirSign = 0.0
+          var i = xs.count - 1
+          while i > 0 {
+            let dx = xs[i].x - xs[i - 1].x
+            if abs(dx) < 0.01 { i -= 1; segStart = i; continue }
+            let s: Double = dx > 0 ? 1 : -1
+            if dirSign == 0 { dirSign = s } else if s != dirSign { break }
+            i -= 1
+            segStart = i
+          }
+          let segNet = xs.last!.x - xs[segStart].x
+          // 🔴 2026-08-25 23:02 실측(hand 49/61 추적인데 발화 0 — 이동폭 화면 12% vs 기준 38%) —
+          // 사장님 실제 동작은 손목 플릭. 고정 화면비 기준은 중간 거리에서 원리적으로 미달한다.
+          // 기준을 손 크기 비례(자기 손폭 0.85배 이동, 최소 0.12)로 — 거리 무관 동일 판정.
+          let needRange = max(0.12, handSize * 0.85)
+          if abs(segNet) >= needRange, self.crossArmed || segNet > 0 {
+            self.crossHistory.removeAll()
+            // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
+            // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
+            // 불응 중 스트로크는 여기서 소비-폐기한다. 1.2s당 1회 상한은 유지, 타이밍 착시 제거.
+            if nowMs - self.lastTriggerMs <= self.passRefractoryMs {
+              paceGLog("[pace-wave] crossdrop refractory net=%+.2f", segNet)
+              self.onDiag(String(format: "crossdrop net=%+.2f", segNet))
+              return glideAbs
+            }
+            if segNet < 0 {
+              self.crossArmed = false // 스트로크당 1발화 — 재무장은 공백/역방향에서
+              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
+              return glideAbs
+            }
+            // 반대 방향(사용자 오→왼) — 무시하되 채증. 차단 직후 잔움직임 누수 방지 잠금(22:42 실측).
+            self.speedSuppressUntilMs = nowMs + 800
+            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", segNet, handSize)
+            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", segNet, handSize))
+          }
+        }
+      }
       var sweep = 0.0
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
@@ -702,9 +821,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glideOverwhelming = glidedNow &&
         glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
-      if glided && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if glided && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
-        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
@@ -731,12 +850,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
-        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
@@ -751,9 +870,89 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // "볼륨 조절 의도의 가림"으로 보고 넘김을 취소한다. 가림만 하고 안 누르면 기존대로 넘김.
   private var pendingOcclusionWork: DispatchWorkItem? = nil
   private var lastLensCoveredPostMs: Double = 0
-  private func checkOcclusion(_ luma: Double, _ nowMs: Double) {
+  // 🔴 2026-08-25 사장님("50cm까지 가까울 때 멀 때 다 되게", "가까이에서는 손 아니어도 넘어가게") —
+  // 초근접(<15cm)은 손이 프레임을 넘쳐 랜드마커가 원리적으로 실명(실측 22:20 hand=0/61). 이 구간은
+  // 손 모양 확인 없이 **밝기 dip**으로 본다: 뭔가 렌즈 앞을 스치면 밝기가 짧고 깊게 꺼졌다 돌아온다.
+  // 지속 가림(0.9s+)은 기존 occlusion/볼륨 프로토콜 경로 그대로, 짧은 dip(80~800ms)+회복(80%)만
+  // "근접 스침"으로 즉시 발화. 깊이 50%+회복 요구로 램프 점멸/그림자 오탐을 줄인다. 크기·사람 무관.
+  // ⚠️ 기존 lumaHistory(400ms, 안드 파리티)는 안 건드리고 dip 전용 기록을 따로 쓴다.
+  // 좌/우 반쪽 루마(2026-08-25 사장님 "반대 방향은 또 되고 — 방향 정한 거 아냐?") — dip에도 방향을 준다:
+  // 왼쪽 반이 먼저 어두워지면 왼→오(발화), 오른쪽이 먼저면 오→왼(무시). 30ms 이내 동시는 모호 → 발화(관대).
+  private let dipWindowMs: Double = 1200
+  private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
+  // 🔴 22:52 확진 — dip의 "밝음" 기준을 1.2s 창 최대로 잡으면 연속 스침 중엔 기준 자체가 어두워져
+  // dip이 영영 성립 안 한다. 천천히 감쇠하는 기준(프레임당 ×0.995 ≈ 수 초 유지)으로 교체 — 한 번
+  // 밝았던 장면을 기억해 연속 시도 중에도 "지금 어두워졌다"를 판정할 수 있다.
+  private var brightRefAll: Double = 0
+  private var brightRefL: Double = 0
+  private var brightRefM: Double = 0
+  private var brightRefR: Double = 0
+  private func checkOcclusion(_ luma: Double, _ lumaL: Double, _ lumaM: Double, _ lumaR: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
+    // 근접 스침(dip) — 상단 dipWindowMs 주석 참고.
+    dipHistory.append((nowMs, luma, lumaL, lumaM, lumaR))
+    while let f = dipHistory.first, nowMs - f.t > dipWindowMs { dipHistory.removeFirst() }
+    brightRefAll = max(luma, brightRefAll * 0.995)
+    brightRefL = max(lumaL, brightRefL * 0.995)
+    brightRefM = max(lumaM, brightRefM * 0.995)
+    brightRefR = max(lumaR, brightRefR * 0.995)
+    // 🔴 2026-08-25 22:47 확진("왼오가 안 넘어간다", 중거리) — 움직이는 손은 랜드마크가 27틱 중 2틱만
+    // 잡혀 크로싱(2회 포착 필요)이 성립 불가. **lumapass**: 세로 3분할 밝기가 순차로 얕게(15%) 꺼지는
+    // 패턴 = 중거리 통과. 손 모양 인식 불요·추적 끊김 무관. 사용자 왼→오 = 이미지 오른쪽→가운데→왼쪽
+    // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
+    if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6,
+       let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
+      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> Double? {
+        guard ref > 40 else { return nil }
+        return vals.first(where: { $0.v <= ref * 0.85 })?.t
+      }
+      let tLo = onset(dipHistory.map { (t: $0.t, v: $0.l) }, brightRefL)
+      let tMo = onset(dipHistory.map { (t: $0.t, v: $0.m) }, brightRefM)
+      let tRo = onset(dipHistory.map { (t: $0.t, v: $0.r) }, brightRefR)
+      if let tR3 = tRo, let tM3 = tMo, let tL3 = tLo {
+        if tR3 < tM3, tM3 < tL3, tL3 - tR3 >= 80, tL3 - tR3 <= 900 {
+          dipHistory.removeAll()
+          fireTrigger(String(format: "lumapass span=%.0f", tL3 - tR3), nowMs)
+          return
+        }
+        if tL3 < tM3, tM3 < tR3, tR3 - tL3 >= 80, tR3 - tL3 <= 900 {
+          dipHistory.removeAll()
+          speedSuppressUntilMs = nowMs + 800
+          paceGLog("[pace-wave] lumaskip R->L span=%.0f", tR3 - tL3)
+          onDiag(String(format: "lumaskip span=%.0f", tR3 - tL3))
+        }
+      }
+    }
+    if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 5,
+       let first = dipHistory.first, nowMs - first.t >= 600 {
+      let bright = max(dipHistory.map { $0.luma }.max() ?? 0, brightRefAll)
+      if bright > 40 {
+        let dipCandidates = dipHistory.filter { nowMs - $0.t >= 80 && nowMs - $0.t <= 800 }
+        if let dip = dipCandidates.min(by: { $0.luma < $1.luma }),
+           dip.luma <= bright * 0.5, luma >= brightRefAll * 0.7 {
+          // 방향 판정(2026-08-25 사장님 "가까이서 왼→오 안 넘어가는 게 문제") — "가장 어두운 시점"은
+          // 가까우면 양쪽이 동시에 포화돼 항상 모호(dtLR=0)했다. **어두워지기 시작한 시점(onset)**이
+          // 방향을 훨씬 잘 가른다: 손이 먼저 덮는 쪽이 먼저 떨어진다. 부호 실기기 확정 — 사용자
+          // 왼→오 = 이미지 오른쪽 반 onset이 먼저(tR<tL). 우선순위는 왼→오 성공이 1순위이므로
+          // **확실한 오→왼(이미지 왼쪽 onset이 40ms+ 먼저)만 차단**, 모호하면 발화.
+          let onsetTh = brightRefAll * 0.55
+          let tL = dipCandidates.first(where: { $0.l <= onsetTh })?.t ?? dip.t
+          let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
+          dipHistory.removeAll()
+          if tR - tL >= 40 {
+            speedSuppressUntilMs = nowMs + 800 // 근접 오→왼 차단 직후 잔움직임 누수도 동일하게 잠금
+            paceGLog("[pace-wave] nearskip R->L dt=%.0f", tR - tL)
+            onDiag(String(format: "nearskip dt=%+.0f", tL - tR))
+          } else {
+            pendingOcclusionWork?.cancel()
+            pendingOcclusionWork = nil
+            fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+            return
+          }
+        }
+      }
+    }
     guard let brightest = lumaHistory.map({ $0.luma }).max(), brightest > 0 else { return }
     // 2026-08-21 안드 이식(1899cf3 §1) — NEAR 밴드 손을 1.2초 안에 본 경우에만 문턱 완화
     // (0.45→0.68 / 70→130): "손이 렌즈 코앞"이라는 독립 증거가 있을 때만이라 조명 오탐은 안 는다.
@@ -827,34 +1026,42 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     DispatchQueue.main.async { self.onWave() }
   }
 
-  // Y(루마) 평면 평균 밝기(0~255) — occlusion 판정용(ML 안 거치고 싸게 계산). 2026-07-28 리서치(#1) —
+  // Y(루마) 평면 평균 밝기(0~255) — occlusion/dip 판정용(ML 안 거치고 싸게 계산). 2026-07-28 리서치(#1) —
   // 420f YUV의 plane 0이 곧 루마라 바이트 평균만 하면 된다(예전 BGRA 가중합보다 싸고 정확). BGRA 폴백도 유지.
-  private func avgLuma(_ pb: CVPixelBuffer) -> Double {
+  // 2026-08-25 — 좌/우 반쪽을 따로 평균한다(dip 방향 판정, checkOcclusion 주석). 버퍼는 connection에서
+  // 세로+미러 고정이라(setupCamera) 버퍼 x축 = 화면 x축 = 랜드마크 x축.
+  private func avgLumaThirds(_ pb: CVPixelBuffer) -> (l: Double, m: Double, r: Double) {
     CVPixelBufferLockBaseAddress(pb, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
     let fmt = CVPixelBufferGetPixelFormatType(pb)
     let isYUV = (fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || fmt == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     if isYUV && CVPixelBufferGetPlaneCount(pb) > 0 {
-      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return -1 }
+      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return (-1, -1, -1) }
       let w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0)
       let bpr = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
       let ptr = base.assumingMemoryBound(to: UInt8.self)
-      var sum = 0, cnt = 0
+      var sumL = 0, cntL = 0, sumM = 0, cntM = 0, sumR = 0, cntR = 0
+      let t1 = w / 3, t2 = 2 * w / 3
       let sx = max(1, w / 24), sy = max(1, h / 24)
       var y = 0
       while y < h {
         var x = 0
-        while x < w { sum += Int(ptr[y * bpr + x]); cnt += 1; x += sx }
+        while x < w {
+          let v = Int(ptr[y * bpr + x])
+          if x < t1 { sumL += v; cntL += 1 } else if x < t2 { sumM += v; cntM += 1 } else { sumR += v; cntR += 1 }
+          x += sx
+        }
         y += sy
       }
-      return cnt > 0 ? Double(sum) / Double(cnt) : -1
+      return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntM > 0 ? Double(sumM) / Double(cntM) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
     }
     // BGRA 폴백(포맷이 YUV가 아닐 때)
-    guard let base = CVPixelBufferGetBaseAddress(pb) else { return -1 }
+    guard let base = CVPixelBufferGetBaseAddress(pb) else { return (-1, -1, -1) }
     let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
     let bpr = CVPixelBufferGetBytesPerRow(pb)
     let ptr = base.assumingMemoryBound(to: UInt8.self)
-    var sum = 0, cnt = 0
+    var sumL = 0, cntL = 0, sumM = 0, cntM = 0, sumR = 0, cntR = 0
+    let t1 = w / 3, t2 = 2 * w / 3
     let sx = max(1, w / 24), sy = max(1, h / 24)
     var y = 0
     while y < h {
@@ -862,11 +1069,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       while x < w {
         let o = y * bpr + x * 4
         let b = Int(ptr[o]), g = Int(ptr[o + 1]), r = Int(ptr[o + 2])
-        sum += (r * 299 + g * 587 + b * 114) / 1000; cnt += 1
+        let v = (r * 299 + g * 587 + b * 114) / 1000
+        if x < t1 { sumL += v; cntL += 1 } else if x < t2 { sumM += v; cntM += 1 } else { sumR += v; cntR += 1 }
         x += sx
       }
       y += sy
     }
-    return cnt > 0 ? Double(sum) / Double(cnt) : -1
+    return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntM > 0 ? Double(sumM) / Double(cntM) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
   }
 }

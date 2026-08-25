@@ -1577,11 +1577,26 @@ object PaceHandWaveDetector {
       Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) streak=$glideStreak speed=$peakSpeed handSize=$handSize")
     }
 
+    // 🔴 2026-08-25 사장님("흔들기에서 **가만있는 흔들기**는 미발화가 맞고 **이전 손짓은 남겨두고**")
+    // 흔들기 축 셋 중 glide만 **순수 속도**라 진폭 조건이 없었다. 제자리 떨림은 이동폭이 작아도
+    // 순간속도가 높다 — 진폭 0.02·5Hz면 최대속도 2πfA ≈ 0.63/초로 문턱(0.45)을 넘는다. 그래서
+    // 손이 제자리에 있어도 glide 하나로 뚫렸다. sweep은 원래 이동폭 조건이 있어 무고하다.
+    // → glide에도 **좌우 이동폭**을 요구한다. 새 숫자를 지어내지 않고 sweep 축이 이미 쓰는 실측
+    //   문턱을 밴드 배수까지 그대로 재사용한다(발화 실측 sweep 0.20~0.60, 제자리 떨림은 그 아래).
+    //   ⚠️ 여기서 거른다 — glided는 1415행에서 sweepRatio보다 먼저 계산돼 그 자리에선 못 쓴다.
+    //   ⚠️ 기존 축을 조이는 게 아니다: swept/grew/grewFast/traversed는 손대지 않았고, glide만
+    //      "속도는 충분한데 제자리"인 경우를 뺀다. 사장님 지시가 정확히 그 경우다.
+    val glideSpanOk = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult
+    if (glided && !glideSpanOk) {
+      Log.i(TAG, "glide 차단(제자리) sweep=$sweepRatio need=${SWEEP_RATIO_THRESHOLD * bandMult} glideR=$glideRelPerSec handSize=$handSize")
+    }
+    val glideFires = glided && glideSpanOk
+
     // 접근(밀기)·스윕(좌우)·glide(어떤 방향이든)는 OR — 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept || grewFast || glided || traversed) && pastRefractory) {
+    if ((grew || swept || grewFast || glideFires || traversed) && pastRefractory) {
       val by = when {
         traversed -> "traverse(dir=$traverseDir)"
-        glided -> "glide"
+        glideFires -> "glide"
         swept -> "sweep"
         grew -> "growth"
         else -> "growth+speed"

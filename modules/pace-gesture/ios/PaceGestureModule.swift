@@ -327,7 +327,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // **통과 전용 모드**: 넘김 = 왼→오 통과(크로싱·근접 dip)뿐. 흔들기·빠른 움직임(속도 축)은 발화 안 함
   // (계산·로그는 유지 — 복원은 이 플래그만 false). 오→왼 차단 직후 잠금(speedSuppressUntilMs)은
   // 플래그를 끄더라도 유효한 별도 방어라 남겨둔다. ⚠️ 안드는 아직 흔들기 방식 — 사양 검증 후 동일 이식.
-  private let passOnlyMode = true
+  // 🔴 2026-08-25 사장님 재확정("흔들기에서 **가만있는 흔들기**는 미발화가 맞고 **이전 손짓은 남겨두고**")
+  // — 통과 전용(속도 축 전면 미발화)은 지시를 넓게 잡은 것이었다. 껐어야 할 건 흔들기 축 전체가
+  // 아니라 **제자리 떨림**이다. 그래서 false로 되돌리고, 떨림은 아래 glide 진폭 게이트로 거른다.
+  private let passOnlyMode = false
   // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
   // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
   private let passRefractoryMs: Double = 500
@@ -873,7 +876,19 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glideOverwhelming = glidedNow &&
         glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
-      if glided && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      // 🔴 "가만있는 흔들기 미발화" — 흔들기 축 셋 중 glide만 **순수 속도**라 진폭 조건이 없었다.
+      // 제자리 떨림은 진폭이 작아도 순간속도가 높다: 진폭 0.02·5Hz면 최대속도 2πfA ≈ 0.63/초로
+      // 문턱(0.45~0.47/초)을 넘는다. 그래서 손이 제자리에 있어도 glide가 뚫렸다.
+      // → glide에도 **좌우 이동폭**을 요구한다. 새 숫자를 지어내지 않고 sweep 축이 이미 쓰는
+      //   실측 문턱을 그대로 재사용한다(실기기 발화 시 sweep 0.20~0.60, 제자리 떨림은 그 아래).
+      //   glide는 2D(hypot)라 세로 흔들기도 잡았지만, 사양이 "왼→오 스쳐 지나감"이므로 가로 이동폭을
+      //   요구하는 편이 사양에 맞다.
+      let glideSpanOk = sweep > self.sweepRatioThreshold * band.mul
+      if glided && !glideSpanOk {
+        paceGLog("[pace-wave] glidedrop span T%d sweep=%.2f need=%.2f rel=%.2f size=%.2f",
+                 ti, sweep, self.sweepRatioThreshold * band.mul, glideRel, handSize)
+      }
+      if glided && glideSpanOk && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs

@@ -1273,9 +1273,6 @@ class PaceOverlayService : Service() {
     private const val PREF_AD_EXTEND_DATE = "ad_extend_date"
     private const val PREF_AD_EXTEND_COUNT = "ad_extend_count"
 
-    private fun todayKey(): String =
-      java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-
     /** 오늘 보상광고로 연장한 횟수. 날짜가 바뀌면 자동으로 0부터 다시 센다. */
     fun adExtendCountToday(context: Context): Int {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -1636,12 +1633,35 @@ class PaceOverlayService : Service() {
     //     src/store/useFocusSessionStore.ts로 같이 영속화했다. 규칙이 두 플랫폼에 흩어져 있어
     //     한쪽만 고치면 반드시 어긋난다.
     const val PREF_FOCUS_TIMED_OUT_PENDING = "focus_session_timed_out_pending"
+    /**
+     * 🔴 2026-08-25 사장님 제보 — "며칠 앱 안 썼는데 앱 시작하자마자 포커스온 다 썼다고 광고 보라고".
+     *
+     * 위 플래그에 **날짜가 없던 것**이 원인이다. 세션이 만료되면 true가 되는데, 지우는 곳은 JS가
+     * 앱을 포그라운드로 올렸을 때 부르는 consumeFocusSessionTimedOut() **하나뿐**이다. 2026-08-01
+     * 사양이 "만료돼도 쇼츠에 그대로 머문다"로 바뀌면서 사용자가 앱을 안 열고 유튜브에 계속 있을 수
+     * 있게 됐고, 그러면 이 플래그는 **며칠이고 살아남았다가** 다음에 앱을 여는 순간 소비된다.
+     * 오랜만에 앱을 연 사용자가 첫 화면에서 광고를 요구받는다 — 이탈 직결 경로다.
+     *
+     * ⚠️ iOS는 2026-08-20에 같은 버그를 고쳤다(useFocusSessionStore의 PersistedFocusSession.date).
+     *   그때 JS 스토어만 고치고 **이 네이티브 쌍둥이를 못 봤다.** 규칙이 두 플랫폼에 흩어져 있으면
+     *   한쪽만 고치고 끝났다고 믿게 된다는 걸 이 파일이 1638행 주석에서 이미 경고하고 있었다.
+     *
+     * → 세운 날짜를 같이 적고, 오늘이 아니면 없는 것으로 본다(그 자리에서 지운다). 같은 날 안에서는
+     *   예전과 완전히 동일하게 동작하므로 남용 차단(배지 탭 → 광고 게이트)은 그대로다.
+     */
+    private const val PREF_FOCUS_TIMED_OUT_DATE = "focus_session_timed_out_date"
     private var focusSessionTimedOutPending = false
+
+    private fun todayKey(): String =
+      java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
 
     private fun setFocusSessionTimedOutPending(context: Context, pending: Boolean) {
       focusSessionTimedOutPending = pending
-      context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-        .putBoolean(PREF_FOCUS_TIMED_OUT_PENDING, pending).apply()
+      val e = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putBoolean(PREF_FOCUS_TIMED_OUT_PENDING, pending)
+      if (pending) e.putString(PREF_FOCUS_TIMED_OUT_DATE, todayKey())
+      else e.remove(PREF_FOCUS_TIMED_OUT_DATE)
+      e.apply()
     }
 
     private val focusSessionAutoStop = Runnable {
@@ -1669,10 +1689,17 @@ class PaceOverlayService : Service() {
     // (실제 소비는 JS의 checkTimedOut()이 앱 포그라운드 시 그대로 담당 — 여기서 먼저 소비해버리면
     // 앱을 열어도 JS가 이미 늦어 광고 모달을 못 띄운다).
     // 메모리 값이 살아 있으면 그걸 쓰고, 프로세스가 죽었다 살아난 뒤에는 prefs가 답한다.
-    fun hasPendingFocusSessionTimeout(context: Context): Boolean =
-      focusSessionTimedOutPending ||
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-          .getBoolean(PREF_FOCUS_TIMED_OUT_PENDING, false)
+    fun hasPendingFocusSessionTimeout(context: Context): Boolean {
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      val pending = focusSessionTimedOutPending || prefs.getBoolean(PREF_FOCUS_TIMED_OUT_PENDING, false)
+      if (!pending) return false
+      // 날짜가 없으면 구버전이 남긴 값이다 — 그 값들이 정확히 이 버그의 피해자이므로 버리는 게 맞다.
+      val day = prefs.getString(PREF_FOCUS_TIMED_OUT_DATE, null)
+      if (day == todayKey()) return true
+      Log.i("PaceOverlay", "포커스 타임아웃 플래그가 오늘 것이 아님($day) — 폐기 (며칠 만에 연 사용자에게 광고를 요구하지 않는다)")
+      setFocusSessionTimedOutPending(context, false)
+      return false
+    }
 
     // 2026-08-01 실기기 감사 발견(위 PREF_FOCUS_SESSION_DEADLINE_AT_MS 선언부 참고) — 서비스
     // 프로세스가 죽었다 살아날 때(ensureInfraReady, ACTION_TICK/START_STICKY 복구 경로) 호출한다.
@@ -1685,6 +1712,20 @@ class PaceOverlayService : Service() {
       focusSessionHandler.removeCallbacks(focusSessionAutoStop)
       val deadlineAtMs = prefs.getLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, 0L)
       val remainingMs = deadlineAtMs - System.currentTimeMillis()
+      // 🔴 위 PREF_FOCUS_TIMED_OUT_DATE 주석과 같은 건 — 며칠 전 마감시각이 남아 있으면 여기서
+      // focusSessionAutoStop.run()이 돌아 **오늘 날짜로** 타임아웃을 새로 세운다. 그러면 날짜
+      // 게이트를 통과해버려 며칠 만에 연 사용자가 다시 광고를 요구받는다. 지난 날짜의 마감은
+      // 소진이 아니라 **버려진 세션**이다 — 조용히 지우고 아무것도 청구하지 않는다.
+      if (deadlineAtMs > 0L) {
+        val deadlineDay = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+          .format(java.util.Date(deadlineAtMs))
+        if (deadlineDay != todayKey()) {
+          Log.i("PaceOverlay", "지난 날짜($deadlineDay) 포커스 마감시각 폐기 — 타임아웃으로 치지 않는다")
+          prefs.edit().remove(PREF_FOCUS_SESSION_DEADLINE_AT_MS).apply()
+          setFocusSessionTimedOutPending(context, false)
+          return
+        }
+      }
       if (deadlineAtMs <= 0L || remainingMs <= 0L) {
         focusSessionAutoStop.run()
         return

@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { YouTubeShort } from '../types/models';
 import { fetchShortsPage } from '../services/api/youtube';
 import { getShortsSeedVideoId } from '../services/shortsEntry';
-import { getRecentSearchQuery, useShortsSearchStore } from './useShortsSearchStore';
+import { getRecentSearchQuery, getRecentSearchResults, pickUnusedSeed, useShortsSearchStore } from './useShortsSearchStore';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생" 큐(2026-07-18 사용자 지시).
 // PACE_ARCHITECTURE.md "iOS Pace Feed 재정의" 참고.
@@ -109,13 +109,27 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       //   seedPool 무작위라 개인 관심사와 무관했다. 최근 7일 내 검색어가 있으면 그 검색 결과에서
       //   안 본 것을 시드로 우선 쓴다. 결과 캐시는 부팅 때 _layout이 워밍해두므로(네트워크 대기
       //   없음 원칙 유지) 여기선 캐시만 본다 — 캐시가 비어 있으면 기존 seedPool 경로로 폴백.
+      // 🔴 2026-08-25 사장님("왜 쇼츠 시작할 때 최근 검색 단어를 확인해서 시작해야지 정해진 것만
+      //   하냐") — 이 경로에 결함 두 개가 있었다.
+      //   ① 메모리 캐시(useShortsSearchStore.results)만 봤다. 그 캐시는 AsyncStorage에 저장되지
+      //      않아 콜드 스타트마다 비어 있고, 부팅 워밍은 네트워크라 여기 도착 시점엔 대개 아직
+      //      안 끝나 있다 → 그대로 아래 공용 seedPool로 떨어졌다("정해진 것만"의 절반).
+      //      → 검색 결과를 저장해 두고 그걸 먼저 본다(useShortsSearchStore의 RECENT_RESULTS_KEY).
+      //   ② 고르는 식이 find(watchedIds에 없는 것) ?? [0]이었는데, **iOS 스와이프 모드에서는
+      //      이 스토어의 advance()가 한 번도 안 불린다**(feed/index.tsx의 SWIPE_NAV 분기).
+      //      watchedIds를 늘리는 곳이 advance()뿐이라 그 목록은 영원히 비어 있고, 결과적으로
+      //      **항상 results[0]** — 나머지 절반이 이것이다.
+      //      → 시드 선택은 watchedIds에 기대지 않고 자기 기록으로 한 바퀴씩 돈다(pickUnusedSeed).
       try {
         const recentQuery = await getRecentSearchQuery();
-        const searchResults = recentQuery ? useShortsSearchStore.getState().results[recentQuery] ?? [] : [];
-        const fresh = searchResults.find((s) => !watchedIds.includes(s.videoId)) ?? searchResults[0];
-        if (fresh) {
-          set({ queue: [fresh], watchedIds, nextPageToken: null, hasMore: false, isLoading: false });
-          return;
+        if (recentQuery) {
+          const memory = useShortsSearchStore.getState().results[recentQuery] ?? [];
+          const searchResults = memory.length > 0 ? memory : await getRecentSearchResults();
+          const fresh = await pickUnusedSeed(searchResults);
+          if (fresh) {
+            set({ queue: [fresh], watchedIds, nextPageToken: null, hasMore: false, isLoading: false });
+            return;
+          }
         }
       } catch {
         /* 최근 검색 시드 실패 → 기존 경로 */

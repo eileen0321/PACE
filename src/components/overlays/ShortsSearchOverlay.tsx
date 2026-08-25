@@ -78,7 +78,19 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
     //   playlist 자체가 아니다. iOS forcedList는 자연 종료/손짓에만 넘어가므로 순삭이 없다 —
     //   "검색 맥락 유지 + 내 페이스로 넘김"이 두 지시를 모두 만족하는 형태다. (안드 쪽도 동일하게
     //   되돌리되 CHAIN 조기 발화 수정은 유지해야 한다 — PM MD에 기록.)
-    if (onOpenVideo) { onOpenVideo(item.videoId, items.map((i) => i.videoId)); onClose(); }
+    if (onOpenVideo) {
+      // 🔴 2026-08-25 사장님("검색어로 영상이 나오다 자꾸 다른 이상한 걸로 바뀐다") —
+      //   피드는 playlist에서 **누른 항목의 인덱스부터** 재생한다(feed/index.tsx의 forcedIndexRef).
+      //   그래서 목록 끝쪽 결과를 누르면 남은 항목이 한두 개뿐이고, 금방 소진돼 유튜브 일반 피드로
+      //   넘어간다 — 검색과 무관한 영상이 바로 나오는 게 그 경로다. 25개를 받아놓고 몇 개만 쓰고 있었다.
+      //   → 누른 항목이 맨 앞에 오도록 **회전**시켜 넘긴다. 검색 결과 전체를 다 쓴 뒤에 유튜브로
+      //     넘어가므로 "관련 영상이 계속 나온다". 순서만 바뀔 뿐 목록 자체는 그대로다.
+      const ids = items.map((i) => i.videoId);
+      const at = ids.indexOf(item.videoId);
+      const rotated = at > 0 ? [...ids.slice(at), ...ids.slice(0, at)] : ids;
+      onOpenVideo(item.videoId, rotated);
+      onClose();
+    }
     else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 

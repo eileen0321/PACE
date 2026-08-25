@@ -473,14 +473,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func configureAndRun() {
     session.beginConfiguration()
-    // 🔴 2026-08-26 안드 실측 이식(f57afbc 검토 요청) — VGA(640×480)는 "저해상도로 충분"의 근거 실측이
-    // 없었고, 반대 실측만 있다: 안드는 320×240에서 팜 48px → nohand 84.5%였고, 실제로는 1080×1440로
-    // 돌고 있어서 인식률이 좋았다. iOS의 만성 no-hand(3/33·19/41 추적)도 해상도 부족이 유력하다.
-    // → 4:3 유지(16:9는 위아래 화각이 잘림 — 안드에서 실측된 함정) + 1440×1080 우선, 1280×960 폴백,
-    //   없으면 VGA. MediaPipe는 내부 리사이즈라 추론 비용 동일, 팜 검출 입력 픽셀만 늘어난다.
-    session.sessionPreset = .inputPriority
-    // ⚠️ 2026-07-28 롤백 이력 — CIF(352×288)+YUV가 실기기에서 손짓을 깨뜨렸던 것과 같은 방향의 교훈:
-    // 해상도는 낮출수록 위험했다. BGRA 포맷은 유지.
+    session.sessionPreset = .vga640x480 // 손 모션 감지엔 저해상도로 충분(배터리/발열 절감)
+    // ⚠️ 2026-07-28 롤백 — CIF(352×288)+YUV 최적화가 실기기에서 손짓을 깨뜨림(어젯밤 되던 게 안 됨). 어젯밤
+    // 검증된 VGA+BGRA로 복구. 리서치상 정확도 무손실이라 했지만 실기기 미검증 상태로 넣은 게 원인. 재도입은 기기 A/B로.
     guard
       let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
       let input = try? AVCaptureDeviceInput(device: device),
@@ -491,30 +486,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       return
     }
     session.addInput(input)
-
-    // 4:3 고해상도 포맷 선택(상단 .inputPriority 주석) — 1440×1080 → 1280×960 → (없으면) 기본 포맷.
-    do {
-      try device.lockForConfiguration()
-      let wanted: [(Int32, Int32)] = [(1440, 1080), (1080, 1440), (1280, 960), (960, 1280)]
-      var picked: AVCaptureDevice.Format? = nil
-      outer: for (w, h) in wanted {
-        for f in device.formats {
-          let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-          if (d.width == w && d.height == h) || (d.width == h && d.height == w) {
-            picked = f
-            break outer
-          }
-        }
-      }
-      if let f = picked {
-        device.activeFormat = f
-        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
-        paceGLog("[pace-wave] camera format %dx%d", d.width, d.height)
-      }
-      device.unlockForConfiguration()
-    } catch {
-      // 포맷 설정 실패 — 기본 포맷으로 계속(치명적 아님).
-    }
 
     // 🔴 2026-08-25 사장님("1번은 수정 안 해 그럼?") — 모션 블러 대응. 실측(22:11): 가까운 손(0.217)도
     // 흔드는 동안 추적이 절반씩 끊김 = 실내 조명의 긴 노출로 빠른 손이 뭉개져 랜드마커가 놓침.

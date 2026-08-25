@@ -10367,3 +10367,7 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 
 ②가 반영되면 그때서야 로그인/Credential Manager 바텀시트 검증이 가능해진다 —
 그 전까지 이 두 항목은 **검증 불가**다.
+### 2026-08-24(Mac/iOS) — 🟢 홍보 쇼츠 2종(한/영) 제작 완료
+- 시뮬레이터(iPhone 17, 스토어와 동일 코드 Debug+Metro)에서 3장면 녹화: FOCUS ON 자동재생 / 쇼츠 검색→결과 재생 / Shorts HOT 리스트→재생. 터치 주입이 없어 DEV 전용 debugAction 시나리오(promoAuto/promoSearch/promoHot)로 스크립트(__DEV__ 게이트, 출시 빌드 미포함).
+- ffmpeg 부재 → AVFoundation 스위프트 합성기(scratchpad/compositor.swift)로 점프컷(로딩 블랙 제거)+1080×1920 크롭(상태바만 컷, FOCUS ON 필 보존)+자막 페이드/라이즈+브랜드 엔드카드(아이콘 84%+태그라인). 프레임 밝기 분석(frametool.swift)으로 컷 포인트 산출.
+- 산출물: **~/Desktop/PACE_promo/pace_promo_ko.mp4 / pace_promo_en.mp4** (34초, 무음 — 업로드 시 음악 추가 권장). 카피: "쇼츠, 이제 손대지 말고 보세요"/"Watch Shorts hands-free" 등.

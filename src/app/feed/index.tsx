@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, LogBox, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -33,6 +33,8 @@ import { PaceMenu } from '../../components/overlays/PaceMenu';
 import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListOverlay';
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverlay';
+import { useShortsHotStore } from '../../store/useShortsHotStore';
+import { useShortsSearchStore } from '../../store/useShortsSearchStore';
 import { TikTokSearchOverlay } from '../../components/overlays/TikTokSearchOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { SleepPromptModal } from '../../components/feed/SleepPromptModal';
@@ -573,6 +575,8 @@ export default function PaceFeedScreen() {
   // goNext를 거치므로 여기 한 곳에서 부른다. ref는 아래 useFeedRemoteControl 반환으로 채워짐(안드는 no-op).
   const pauseWaveRef = useRef<(() => void) | null>(null);
   const playerRef = useRef<ShortsPlayerHandle>(null);
+  // __DEV__ 홍보 녹화(promoSearch)에서만 채워짐 — 검색 오버레이가 이 검색어로 스스로 검색한다.
+  const promoSearchQueryRef = useRef<string | null>(null);
   // 2026-08-15 — "현재 영상 즐겨찾기 추가"를 버튼(onAddCurrent)과 아래 디버그 자동트리거 둘 다에서
   // 쓰도록 뽑았다. 실기기 재보고("눌러도 리스트에 안 뜬다")를 잡으려고 시뮬레이터로 재현하려 했는데
   // WKWebView 콘텐츠 위 좌표 클릭(AppleScript/CGEvent 둘 다)이 못 미더워서(정확한 좌표에도 반응
@@ -674,6 +678,39 @@ export default function PaceFeedScreen() {
     const timers: ReturnType<typeof setTimeout>[] = [];
     for (let i = 0; i < rounds; i++) {
       timers.push(setTimeout(() => { playerRef.current?.advance(); }, startDelay + i * interval));
+    }
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugAction]);
+
+  // __DEV__ 전용 — 홍보 쇼츠 녹화 시나리오(pace://feed?platform=youtube&debugAction=promoAuto|promoSearch|promoHot).
+  // 2026-08-24 사장님 지시("녹화해서 쇼츠 만들어", "광고처럼") — 시뮬레이터는 터치 주입이 없어
+  // (위 advanceLoop 주석) 광고 영상용 장면도 딥링크로 스크립트한다. 실사용엔 없는 경로(__DEV__ 게이트).
+  //  · promoAuto: FOCUS ON 상태로 12초 간격 자동 전환 — 핸즈프리 자동재생 장면
+  //  · promoSearch: 검색 오버레이가 initialQuery로 스스로 검색 → 결과 잠시 노출 → 첫 항목 재생
+  //  · promoHot: HOT 리스트 노출 → 첫 항목 재생
+  useEffect(() => {
+    if (!__DEV__ || !debugAction?.startsWith('promo')) return;
+    LogBox.ignoreAllLogs(true);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (debugAction === 'promoAuto') {
+      setIsAutoMode(true);
+      timers.push(setTimeout(() => { playerRef.current?.advance(); }, 12000));
+      timers.push(setTimeout(() => { playerRef.current?.advance(); }, 24000));
+    } else if (debugAction === 'promoSearch') {
+      promoSearchQueryRef.current = 'cat shorts';
+      timers.push(setTimeout(() => { setShowShortsSearch(true); }, 6000));
+      timers.push(setTimeout(() => {
+        const q = promoSearchQueryRef.current;
+        const items = (q && useShortsSearchStore.getState().results[q]) || [];
+        if (items[0]) { playInFeed(items[0].videoId, items.map((i) => i.videoId)); setShowShortsSearch(false); }
+      }, 15000));
+    } else if (debugAction === 'promoHot') {
+      timers.push(setTimeout(() => { setShowShortsHot(true); }, 6000));
+      timers.push(setTimeout(() => {
+        const items = useShortsHotStore.getState().cache['all'] ?? [];
+        if (items[0]) { playInFeed(items[0].videoId, items.map((i) => i.videoId)); setShowShortsHot(false); }
+      }, 14000));
     }
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1260,7 +1297,7 @@ export default function PaceFeedScreen() {
               onSubmit={(query) => { playerRef.current?.search?.(query); }}
             />
           ) : (
-            <ShortsSearchOverlay onClose={() => setShowShortsSearch(false)} onOpenVideo={playInFeed} />
+            <ShortsSearchOverlay onClose={() => setShowShortsSearch(false)} onOpenVideo={playInFeed} initialQuery={promoSearchQueryRef.current ?? undefined} />
           )
         )}
 

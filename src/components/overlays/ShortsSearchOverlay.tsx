@@ -18,9 +18,11 @@ const LOCALE_SHORTS_WORD: Record<string, string> = { ko: '쇼츠', ja: 'ショ�
 // 했는데 너 뭐 했어?"). 위 주석은 "안드도 아직 없다"였는데 그건 이제 사실이 아니다 — 안드는
 // PaceOverlayService.showSearchPanel에 EditText가 들어갔다(그 창의 FLAG_NOT_FOCUSABLE을 빼야
 // IME가 떴다 — 실기기에서 확인, 그쪽 주석 참고).
-export function ShortsSearchOverlay({ onClose, onOpenVideo }: {
+export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
   onClose: () => void;
   onOpenVideo?: (videoId: string, playlist?: string[]) => void;
+  /** __DEV__ 홍보 녹화(feed promoSearch) 전용 — 마운트 즉시 이 검색어로 검색해 결과를 보여준다. */
+  initialQuery?: string;
 }) {
   const { t } = useTranslation();
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
@@ -32,6 +34,14 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo }: {
 
   useEffect(() => {
     useShortsSearchStore.getState().loadPresets();
+  }, []);
+
+  useEffect(() => {
+    if (!initialQuery) return;
+    setDraft(initialQuery);
+    setActiveQuery(initialQuery);
+    useShortsSearchStore.getState().search(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onPickPreset = (query: string) => {

@@ -712,11 +712,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // 알고 속도 축(glide/sweep/growth)은 방향 무관이라, 오→왼 스침을 속도 축이 대신 잡아버렸다
       // (22:20:06 cross_skip 직후 glide 발화 실측). 왼쪽으로 확실히 이동 중(700ms 순이동 ≤ -0.30)이면
       // 속도 축 발화를 막는다 — 왕복 흔들기는 순이동≈0이라 안 걸린다.
-      var leftwardPass = false
+      // 부호 실기기 확정(위 크로싱 주석) — 사용자 오→왼 = 이미지 x **증가**. 그쪽 이동 중이면 속도 축 억제.
+      var reversePass = false
       if let firstX = self.tracks[ti].xHistory.first(where: { nowMs - $0.t <= 700 }),
          let lastX = self.tracks[ti].xHistory.last,
-         lastX.x - firstX.x <= -0.30 {
-        leftwardPass = true
+         lastX.x - firstX.x >= 0.30 {
+        reversePass = true
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
@@ -732,11 +733,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           for i in 1..<xs.count { path += abs(xs[i] - xs[i - 1]) }
           if abs(signedNet) >= self.crossMinRangeX, path > 0, abs(signedNet) / path >= self.crossMinDirectness {
             self.crossHistory.removeAll()
-            if signedNet > 0 {
+            // 🔴 부호 실기기 확정(2026-08-25 사장님 "왼오는 안 되고 오왼이 되잖아") — 사용자 왼→오 =
+            // 이미지 x **감소**(음수). 처음 가정(+)이 반대였다. 사용자 기준이 진실이므로 음수가 "다음".
+            if signedNet < 0 {
               self.fireTrigger(String(format: "T%d cross net=%+.2f dir=%.2f size=%.2f", ti, signedNet, abs(signedNet) / path, handSize), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }
-            // 반대 방향(오→왼) — 무시하되 채증(향후 "이전 영상" 매핑 후보).
+            // 반대 방향(사용자 오→왼) — 무시하되 채증(향후 "이전 영상" 매핑 후보).
             paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", signedNet, handSize)
             self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", signedNet, handSize))
           }
@@ -773,7 +776,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glideOverwhelming = glidedNow &&
         glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
-      if glided && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if glided && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
@@ -802,12 +805,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
@@ -849,10 +852,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let tL = dipCandidates.min(by: { $0.l < $1.l })?.t ?? dip.t
           let tR = dipCandidates.min(by: { $0.r < $1.r })?.t ?? dip.t
           dipHistory.removeAll()
-          if tL - tR >= 30 {
-            // 오른쪽이 먼저 어두워짐 = 오→왼 — 무시(채증만).
-            paceGLog("[pace-wave] nearskip R->L dtLR=%.0f", tL - tR)
-            onDiag(String(format: "nearskip dtLR=%.0f", tL - tR))
+          // 부호 실기기 확정(크로싱 주석과 동일) — 사용자 왼→오 = 이미지 오른쪽 반이 먼저 어두워짐(tR<tL).
+          // 이미지 왼쪽이 먼저(tL<tR)면 사용자 오→왼 = 무시(채증만).
+          if tR - tL >= 30 {
+            paceGLog("[pace-wave] nearskip 사용자R->L dtRL=%.0f", tR - tL)
+            onDiag(String(format: "nearskip dtRL=%.0f", tR - tL))
           } else {
             pendingOcclusionWork?.cancel()
             pendingOcclusionWork = nil

@@ -959,7 +959,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f straight=%.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      // 🔴 2026-08-26 06:50 실측(사장님 "왼오 안 되고 오왼에서 되는 게 많은데") — 30초 창 발화 11건 중
+      // growth 3건. 접근(growth) 축은 방향을 원리적으로 모르는데, 오→왼 근접 통과에서 위치 샘플이
+      // 성겨 oneWayReverse 방향 게이트가 성립 불가한 순간에 크기 팽창만으로 발화했다(로그: growth
+      // 발화 직후 진짜 왼→오가 불응에 먹히는 패턴). 흔들기(glide/sweep)는 유지 — 끄는 건 접근 축 하나.
+      let growthAxisEnabled = false
+      if growthAxisEnabled && growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)

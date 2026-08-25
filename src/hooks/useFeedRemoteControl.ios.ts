@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { requireNativeModule } from 'expo-modules-core';
+import { diagLog } from '../services/diagLog';
 
 // iOS 전용 핸즈프리 "다음 영상" 트리거 (2026-07-20).
 // modules/pace-gesture(Expo Modules API 로컬 모듈, Swift)를 감싼다.
@@ -61,8 +62,9 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     // 2026-08-18 실기기 로그로 확정 — 사장님 손짓 리듬(1.3~1.6s 간격)의 절반이 이 1500ms에 삼켜져
     // "한 번 걸러 한 번" 패턴을 만들었다(WAVE 발화 로그는 있는데 SWIPE가 없는 교대 패턴). 중복
     // 발화는 네이티브 불응(1200ms)이 이미 막으므로 JS 쿨다운은 이벤트 폭주 대비 최소값만 남긴다.
-    if (nowMs - lastNextRef.current < 800) return;
+    if (nowMs - lastNextRef.current < 800) { diagLog('gesture_drop_cooldown'); return; }
     lastNextRef.current = nowMs;
+    diagLog('gesture_next'); // 2026-08-25 재발 검증용 — Release에서도 남는 물증(services/diagLog.ts)
     cbRef.current.onNext(); // onNext(=피드 goNext)가 pauseWaveForTransition을 부른다 — 중복 방지 위해 여기선 안 부름
   };
 

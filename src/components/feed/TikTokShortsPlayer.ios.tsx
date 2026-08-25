@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import { diagLog } from '../../services/diagLog';
 import {
   isAllowedNavigation,
   sharedShortsPlayerStyles as styles,
@@ -1674,7 +1675,7 @@ const INJECTED_JS_BEFORE_LOAD = `
     // 2026-08-25 — 유튜브 플레이어와 동일한 실행시점 게이트(헬스장 "밀렸다 한번에 5개" 방지).
     // markAdvancingOnce는 같은 video 기준이라 전환이 완료된 뒤 flush되는 두 번째 묶음을 못 막는다.
     var now = Date.now();
-    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) return;
+    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'advdrop' }); return; }
     window.__paceAdvGateT = now;
     var v = getActiveVideo();
     if (v && markAdvancingOnce(v)) tryAdvance(v);
@@ -2084,6 +2085,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'advdrop') {
+            // 실행시점 게이트가 밀린 advance 묶음을 버렸다 — 재발 검증 물증(Release에서도 남음).
+            diagLog('adv_drop_burst');
             return;
           }
           if (msg.type === 'domlog') {

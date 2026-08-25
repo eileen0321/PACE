@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { ActivityIndicator, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Localization from 'expo-localization';
+import { diagLog } from '../../services/diagLog';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import {
   isAllowedNavigation,
@@ -383,7 +384,7 @@ const INJECTED_JS_SWIPE = `
   // 붕괴시킨다 — 정상 리듬의 연속 손짓(≥1.2s 간격)은 실행도 그 간격으로 흩어지므로 걸리지 않는다.
   function advGate() {
     var now = Date.now();
-    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'domlog', text: 'ADV-drop burst gate' }); return false; }
+    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'advdrop' }); return false; }
     window.__paceAdvGateT = now;
     return true;
   }
@@ -755,6 +756,7 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
       if (Date.now() - lastWebMsgAtRef.current > 10000 && deadmanReloadsRef.current < 3) {
         deadmanReloadsRef.current += 1;
         lastWebMsgAtRef.current = Date.now();
+        diagLog('deadman_reload', '#' + deadmanReloadsRef.current);
         try { if (__DEV__) PaceGestureLog?.nativeLog?.('DEADMAN reload #' + deadmanReloadsRef.current); } catch {}
         webRef.current?.reload();
       }
@@ -829,6 +831,11 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'advdrop') {
+            // 실행시점 게이트가 밀린 advance 묶음을 버렸다 — 재발 검증 물증(Release에서도 남음).
+            diagLog('adv_drop_burst');
             return;
           }
           if (msg.type === 'domlog') {

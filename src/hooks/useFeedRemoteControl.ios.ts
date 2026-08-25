@@ -68,7 +68,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
-    else if (text.includes('WAVE')) a.waves += 1;
+    else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에
     else {
       const m = text.match(/hand=([\d.]+) growth=([\d.]+) sweep=([\d.]+)/);
       if (m) {

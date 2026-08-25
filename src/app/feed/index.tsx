@@ -34,6 +34,7 @@ import { SavedVideoListOverlay } from '../../components/overlays/SavedVideoListO
 import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverlay';
 import { useShortsHotStore } from '../../store/useShortsHotStore';
+import { diagLog } from '../../services/diagLog';
 import { useShortsSearchStore } from '../../store/useShortsSearchStore';
 import { TikTokSearchOverlay } from '../../components/overlays/TikTokSearchOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
@@ -1180,7 +1181,11 @@ export default function PaceFeedScreen() {
             playing={playing}
             initialMuted={getUserSoundOn() ? false : (getLastKnownSilent() ?? false)}
             onProgress={handleProgress}
-            onVideoChange={(id) => { currentVideoIdRef.current = id; }}
+            onVideoChange={(id) => {
+              // 물증(2026-08-25): 발화(wave_fire)와 실제 전환의 매칭용 — "발화는 찍히는데 안 넘어감"을 가른다.
+              if (currentVideoIdRef.current !== id) diagLog('video_changed', id);
+              currentVideoIdRef.current = id;
+            }}
             onUserSwipe={(dir, moved) => {
               // iOS 유저 손가락 스와이프(위=다음/아래=이전).
               markUserInput();

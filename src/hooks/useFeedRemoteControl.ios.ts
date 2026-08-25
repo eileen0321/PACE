@@ -139,6 +139,11 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
+      // 실명 채증(테스트 빌드 전용, 2026-08-26) — "됐다/실명" 반복의 원인을 프레임 사진으로 확정하기 위해
+      // 감지기 가동 중 3초마다 1장 저장(Documents/wave_diag_frames). 출시 빌드에선 이 플래그가 false라 안 켜짐.
+      if (process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true') {
+        try { (mod as unknown as { setDiagCapture?: (on: boolean) => void }).setDiagCapture?.(true); } catch {}
+      }
       mod.start('wave').catch((err) => {
         runningRef.current = false;
         console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);

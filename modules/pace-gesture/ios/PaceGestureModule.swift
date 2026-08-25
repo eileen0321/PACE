@@ -86,6 +86,11 @@ public class PaceGestureModule: Module {
       self.waveDetector?.setPaused(paused)
     }
 
+    // 실명 채증(테스트 빌드 전용) — WaveDetector.diagCaptureEnabled 주석 참고. JS가 test 플래그일 때만 켠다.
+    Function("setDiagCapture") { (on: Bool) in
+      self.waveDetector?.setDiagCapture(on)
+    }
+
     // 고개짓 지원 기기인지(TrueDepth). JS가 UI 노출 여부 판단에 사용.
     Function("isHeadGestureSupported") { () -> Bool in
       if #available(iOS 11.0, *) { return ARFaceTrackingConfiguration.isSupported }
@@ -389,6 +394,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // Documents/wave_debug/에 JPEG로 남긴다(발화 시에만, 최근 30장 유지). MediaPipe가 무엇을 score
   // 0.99짜리 "손"으로 보는지 눈으로 확정한 뒤 제거할 임시 진단 코드.
   private var lastPixelBuffer: CVPixelBuffer?
+  // 🔴 2026-08-26 07:05 — "됐다/실명" 반복(같은 자리에서 0/59 무감지 ↔ 11/31 정상)의 최종 채증:
+  // 테스트 빌드에서만(JS가 setDiagCapture(true) — EXPO_PUBLIC_AD_TEST_DEVICES 게이트) 감지기 가동 중
+  // 3초마다 프레임을 저장한다. 실명 순간 카메라가 실제로 뭘 보는지 눈으로 확정하기 위함.
+  // ⚠️ 출시 빌드에는 JS 게이트가 꺼져 있어 절대 저장되지 않는다(프레임 저장 금지 원칙 유지).
+  private var diagCaptureEnabled = false
+  private var lastDiagCaptureMs: Double = 0
   private let ciContext = CIContext(options: nil)
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
@@ -468,6 +479,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   // 영상 전환 중 추론 일시정지/재개. 재개 시 히스토리를 비워 전환 전의 낡은 손 크기 baseline이
   // 남아 growth를 오염시키지 않게 한다(재개 직후 새 접근을 깨끗한 기준으로 판정).
+  func setDiagCapture(_ on: Bool) {
+    queue.async { self.diagCaptureEnabled = on }
+  }
+
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
@@ -612,6 +627,25 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         checkOcclusion((thirds.l + thirds.m + thirds.r) / 3, thirds.l, thirds.m, thirds.r, nowMs)
       }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
+      // 실명 채증(상단 diagCaptureEnabled 주석) — 3초마다 1장, 최근 30장 유지.
+      if diagCaptureEnabled {
+        let nowCap = CFAbsoluteTimeGetCurrent() * 1000
+        if nowCap - lastDiagCaptureMs >= 3000 {
+          lastDiagCaptureMs = nowCap
+          let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("wave_diag_frames", isDirectory: true)
+          try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+          let ci = CIImage(cvPixelBuffer: pb)
+          if let data = ciContext.jpegRepresentation(of: ci, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]) {
+            try? data.write(to: dir.appendingPathComponent(String(format: "f_%.0f.jpg", nowCap)))
+            if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil), files.count > 30 {
+              for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(files.count - 30) {
+                try? FileManager.default.removeItem(at: f)
+              }
+            }
+          }
+        }
+      }
     }
     // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
     // CMSampleBuffer→MPImage 래핑이 오토릴리즈 객체를 쌓아 장시간 세션에서 메모리 증가 보고가 있다(값싼 보험).

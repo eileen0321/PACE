@@ -711,13 +711,21 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
         if self.crossHistory.count >= 2, nowMs - self.lastTriggerMs > self.refractoryMs {
           let xs = self.crossHistory.map { $0.x }
-          let net = abs(xs.last! - xs.first!)
+          // 2026-08-25 사장님("왼쪽에서 오른쪽으로만일 때 넘어가는 건?") — 부호 있는 순이동으로 방향 한정.
+          // 전면카메라는 미러 고정(setupCamera)이라 사용자 기준 왼→오 = 이미지 x 증가(+)로 가정 —
+          // 실기기에서 반대로 나오면 이 부호만 뒤집으면 된다(무시된 방향은 crossskip으로 채증).
+          let signedNet = xs.last! - xs.first!
           var path = 0.0
           for i in 1..<xs.count { path += abs(xs[i] - xs[i - 1]) }
-          if net >= self.crossMinRangeX, path > 0, net / path >= self.crossMinDirectness {
+          if abs(signedNet) >= self.crossMinRangeX, path > 0, abs(signedNet) / path >= self.crossMinDirectness {
             self.crossHistory.removeAll()
-            self.fireTrigger(String(format: "T%d cross net=%.2f dir=%.2f size=%.2f", ti, net, path > 0 ? net / path : 1, handSize), nowMs, handSize: handSize, trackIdx: ti)
-            return glideAbs
+            if signedNet > 0 {
+              self.fireTrigger(String(format: "T%d cross net=%+.2f dir=%.2f size=%.2f", ti, signedNet, abs(signedNet) / path, handSize), nowMs, handSize: handSize, trackIdx: ti)
+              return glideAbs
+            }
+            // 반대 방향(오→왼) — 무시하되 채증(향후 "이전 영상" 매핑 후보).
+            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", signedNet, handSize)
+            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", signedNet, handSize))
           }
         }
       }

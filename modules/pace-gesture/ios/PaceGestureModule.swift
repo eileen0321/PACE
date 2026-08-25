@@ -297,6 +297,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var awaitingRearm = false
     var rearmBelowSize: Double = 0
     var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0
+    // 🔴 2026-08-25 23:08 실측(skip 14연발/1.4s) — 크로싱 기록이 전역이라 두 트랙이 번갈아 기록되며
+    // 가짜 ±0.2 스트로크(유령)를 만들었다. 트랙별 분리로 원천 차단.
+    var crossHistory: [(t: Double, x: Double)] = []
+    var crossArmed = true
+    var crossLastX: Double = 0
+    // 🔴 재무장 기준(2026-08-25 안드 세션). 구 기준 "직전 프레임 대비 x +0.02"는 손을 **든 채
+    // 천천히** 되돌리면 프레임당 증가분이 0.02를 못 넘어 영영 안 풀렸다 — 크로싱이 1회 발화 뒤
+    // 세션 내내 죽는다. 추적이 촘촘할수록 프레임당 증가분이 작아져 기기가 좋을수록 잘 죽었다.
+    // → 발화 지점 기준 **누적** 복귀 / 손 소실. (시뮬 18·19)
+    var crossFireX: Double = 0
+    var crossLastT: Double = 0
   }
   private var tracks = [HandTrack(), HandTrack()]
 
@@ -322,36 +333,21 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let passRefractoryMs: Double = 500
   private var speedSuppressUntilMs: Double = 0
   private let crossWindowMs: Double = 2500
-  // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.
-  private let crossMinRangeX: Double = 0.38
+  // (crossMinRangeX(0.38 고정 화면비)는 needRange = min/max/비례로 대체돼 제거 — 남겨두면 어느 쪽이
+  //  실제 문턱인지 헷갈린다. 이력은 아래 needRange 주석에 있다.)
   // 0.10→0.08(2026-08-25 실측): 사장님 실사용 거리에서 손이 0.095로 찍혀 0.005 차이로 컷됐다
   // ("계속 안 됐어" 구간, diag 22:18:22). 0.08은 감지기 자체 하한(minHandSize)과 같아 사실상
   // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
   private let crossMinHandSize: Double = 0.08
   // (crossMinDirectness는 "마지막 단조 구간"만 평가하는 방식으로 대체돼 어디서도 쓰이지 않았다.
-  //  남겨두면 방향 일관성 게이트가 있는 것처럼 오독된다. 흔들림 방어는 단조 구간 + needRange + segSteps.)
-  private var crossHistory: [(t: Double, x: Double)] = []
-  // 스트로크당 1발화(이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화 금지.
-  private var crossArmed = true
-  private var crossLastSampleT: Double = 0
-  private var crossLastSampleX: Double = 0
-  // 🔴 2026-08-25 사장님("맥이 만든 건 가까운 손 중간 손 다 인식 안 돼") 원인 두 번째 —
-  // 재무장 기준이 **직전 프레임 대비 +0.02**였다. 그러면 크로싱은 한 번 발화한 뒤 영구히 죽는다.
-  // 죽는 경로는 **손을 든 채 되돌릴 때**다(시뮬 N3로 재현). 프레임당 증가분이 0.02를 못 넘으면
-  // 재무장 조건을 영영 못 만난다. 추적이 촘촘할수록 프레임당 증가분이 작아지므로 **기기가 좋을수록
-  // 더 잘 죽는** 고약한 형태다. 게다가 되돌리는 동안 증가 스트로크가 crossskip으로 소비되며
-  // crossHistory를 계속 비워, 정작 다음 진짜 스트로크가 쌓일 틈도 뺏는다.
-  // (손을 완전히 내렸다 올리는 경우는 재진입 x 점프가 커서 구 로직도 재무장됐다 — 그쪽은 무고했다.)
-  // → 기준을 **발화 지점 기준 누적 복귀**로 바꾼다. 스트로크 진행 중에는 x가 계속 감소해 누적값이
-  //   음수이므로, 시간 공백 기준에서 났던 스트로크 중간 재무장(=이중발화)은 원리적으로 없다.
-  //   손 소실은 별도 경로로 — 아예 안 보였으면 그 스트로크는 끝난 것이다.
-  private var crossFireX: Double = 0
-  private let crossRearmReturnX: Double = 0.08
-  private let crossRearmAbsentMs: Double = 600
+  //  남겨두면 방향 일관성 게이트가 있는 것처럼 오독된다. 흔들림 방어는 단조 구간 + needRange + segSteps + 속도.)
+  // (크로싱 기록/재무장 상태는 HandTrack 안으로 이동 — 맥 6b5c668, 두 트랙 교대가 만들던 유령 스트로크 차단)
+  private let crossRearmReturnX: Double = 0.08  // 발화 지점 기준 **누적** 복귀(아래 재무장 주석)
+  private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
   private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
   private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
   private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
-  private let crossMinSegSpeed: Double = 0.20   // 화면폭/초 — 표류 차단(아래 needRange 주석)
+  private let crossMinSegSpeed: Double = 0.20   // 화면폭/초 — 느린 표류 차단
   private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
@@ -753,28 +749,32 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
-        // 재무장 판정(스트로크당 1발화) — 위 crossFireX 주석의 두 경로. 둘 다 "스트로크가 끝났다"는
-        // 증거이고, 스트로크 진행 중에는 어느 쪽도 성립하지 않는다(x 감소 중 + 손 계속 보임).
-        if !self.crossArmed {
-          let returned = c.x - self.crossFireX >= self.crossRearmReturnX
-          let reappeared = nowMs - self.crossLastSampleT >= self.crossRearmAbsentMs
+        // 재무장 판정(스트로크당 1발화) — HandTrack.crossFireX 주석의 두 경로. 둘 다 "스트로크가
+        // 끝났다"는 증거이고, 스트로크 진행 중에는 어느 쪽도 성립하지 않는다(x 감소 중 + 손 계속 보임).
+        // 그래서 시뮬 s4가 잡았던 "스트로크 중간 공백에 재무장 → 이중발화"는 원리적으로 재발하지 않는다.
+        // ⚠️ 여기서 tracks[ti].lastSeenMs를 쓰면 안 된다 — 이 블록 위(709행)에서 이미 nowMs로
+        //    갱신돼 공백이 항상 0이다. 크로싱 전용 시각(crossLastT)을 따로 둔다.
+        if !self.tracks[ti].crossArmed {
+          let returned = c.x - self.tracks[ti].crossFireX >= self.crossRearmReturnX
+          let reappeared = nowMs - self.tracks[ti].crossLastT >= self.crossRearmAbsentMs
           if returned || reappeared {
-            self.crossArmed = true
-            paceGLog("[pace-wave] crossrearm by=%@ x=%.2f fireX=%.2f gap=%.0fms",
-                     returned ? "return" : "reappear", c.x, self.crossFireX, nowMs - self.crossLastSampleT)
+            self.tracks[ti].crossArmed = true
+            paceGLog("[pace-wave] crossrearm T%d by=%@ x=%.2f fireX=%.2f gap=%.0fms", ti,
+                     returned ? "return" : "reappear", c.x, self.tracks[ti].crossFireX,
+                     nowMs - self.tracks[ti].crossLastT)
           }
         }
-        self.crossLastSampleT = nowMs
-        self.crossLastSampleX = c.x
-        self.crossHistory.append((nowMs, c.x))
-        while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
-        if self.crossHistory.count >= 2 {
+        self.tracks[ti].crossLastX = c.x
+        self.tracks[ti].crossLastT = nowMs
+        self.tracks[ti].crossHistory.append((nowMs, c.x))
+        while let f = self.tracks[ti].crossHistory.first, nowMs - f.t > self.crossWindowMs { self.tracks[ti].crossHistory.removeFirst() }
+        if self.tracks[ti].crossHistory.count >= 2 {
           // 🔴 2026-08-25 22:52 확진(hand=15·sweep=3.63인데 발화 0) — 2.5s 창 **전체** 순이동은 연속
           // 시도에 오염된다: 스침→복귀→스침이 서로 상쇄돼 net≈0, 패스 사이 점프가 path만 키워
           // directness도 죽는다. → **마지막 단조 구간**(끝에서부터 같은 방향으로 이어진 스트로크)만
           // 평가한다. 단조 구간은 왕복·연속 시도와 무관하고, 방향은 구간 부호가 곧 방향이다.
           // 부호 실기기 확정: 사용자 왼→오 = 이미지 x 감소(음수).
-          let xs = self.crossHistory
+          let xs = self.tracks[ti].crossHistory
           var segStart = xs.count - 1
           var dirSign = 0.0
           var i = xs.count - 1
@@ -819,8 +819,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           // 충분히 크면(0.30) 속도 무관하게 통과시킨다 — 그 크기는 표류로 설명되지 않는다.
           let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
           let speedOk = segSpeed >= self.crossMinSegSpeed || abs(segNet) >= self.crossBigNetX
-          if rangeOk, speedOk, self.crossArmed || segNet > 0 {
-            self.crossHistory.removeAll()
+          if rangeOk, speedOk, self.tracks[ti].crossArmed || segNet > 0 {
+            self.tracks[ti].crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
             // 불응 중 스트로크는 여기서 소비-폐기한다. 1.2s당 1회 상한은 유지, 타이밍 착시 제거.
@@ -830,8 +830,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               return glideAbs
             }
             if segNet < 0 {
-              self.crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
-              self.crossFireX = c.x
+              self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
+              self.tracks[ti].crossFireX = c.x
               self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }

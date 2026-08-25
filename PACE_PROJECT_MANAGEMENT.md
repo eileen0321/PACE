@@ -10443,3 +10443,10 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 ⚠️ **미검증**: 안드 환경(Windows)이라 Swift 컴파일도 `wave_sim.swift` 실행도 못 했다. 판정 로직은
 동일 알고리즘 JS 포팅으로 22/22 확인했지만 **Swift 문법·빌드는 맥이 확인해야 한다.**
 맥: `swift scripts/wave_sim.swift`로 22/22 확인 후 실기기 로그(`crossrearm` / `cross ... need= spd=`)로 마무리할 것.
+
+**병합 메모** — 맥의 `6b5c668`(크로싱 상태 **트랙별 분리**)은 옳은 수정이라 그대로 채택하고, 위 3건을
+그 위에 얹었다(`HandTrack.crossFireX` / `crossLastT` 추가). 주의: 재무장의 "손 소실" 판정에
+`tracks[ti].lastSeenMs`를 쓰면 안 된다 — 크로싱 블록 **위쪽 709행**에서 이미 `nowMs`로 갱신돼
+공백이 항상 0이다. 그래서 크로싱 전용 `crossLastT`를 따로 뒀다.
+맥의 "두 트랙 교대 무발화" 시나리오 2종도 수정된 판정에서 무발화·무skip 확인.
+`crossMinRangeX`(0.38 고정 화면비)는 needRange로 대체돼 제거.

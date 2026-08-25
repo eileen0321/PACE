@@ -1675,7 +1675,7 @@ const INJECTED_JS_BEFORE_LOAD = `
     // 2026-08-25 — 유튜브 플레이어와 동일한 실행시점 게이트(헬스장 "밀렸다 한번에 5개" 방지).
     // markAdvancingOnce는 같은 video 기준이라 전환이 완료된 뒤 flush되는 두 번째 묶음을 못 막는다.
     var now = Date.now();
-    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 1000) { send({ type: 'advdrop' }); return; }
+    if (window.__paceAdvGateT && now - window.__paceAdvGateT < 450) { send({ type: 'advdrop' }); return; }
     window.__paceAdvGateT = now;
     var v = getActiveVideo();
     if (v && markAdvancingOnce(v)) tryAdvance(v);

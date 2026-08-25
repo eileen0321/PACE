@@ -888,7 +888,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       //     세므로 같은 성질이다 — 그 조건은 거의 성립하지 않아 아무것도 못 막았을 것이다.
       //     직진성은 문턱에 민감한 카운터가 아니라 비율이라 그 문제가 없다.
       //   ⚠️ 아직 실기기 미검증이다. 발화 로그의 netDx=/straight= 값으로 문턱(0.06/0.7)을 확정할 것.
-      let oneWayReverse = netDx700 >= 0.06 && straight700 >= 0.7
+      // 🔴 2026-08-26 — **차단을 끈다(부호 미확정).** 같은 로직을 안드에 넣었다가 실기기에서
+      //   되어야 할 방향을 막아 손짓이 통째로 죽었다(00:35:40 net=+0.0655를 차단했는데 그 순간
+      //   사장님은 왼→오를 하고 계셨다).
+      //   iOS는 부호가 더 의심스럽다 — 이 파일 516~527행이 카메라 연결에 isVideoMirrored = true
+      //   (셀피 반전)를 걸고 있다. 반전된 버퍼에서는 사용자 왼→오가 이미지 x **증가**여야 하는데,
+      //   크로싱 축은 x **감소**에 발화하면서 주석은 그것을 "사용자 왼→오"라고 적어놨다 — 둘이
+      //   반대다. 사장님이 겪으신 "왼오는 안 되고 오왼은 되는" 증상과도 맞는다.
+      //   → 확정 전까지 끈다. 판정 재료(netDx/straight)는 계속 로그에 남으므로 방향을 지정해
+      //     한 번만 해보면 부호가 확정된다. 그 전에 켜면 또 되던 방향을 막는다.
+      let reverseBlockEnabled = false
+      let oneWayReverse = reverseBlockEnabled && netDx700 >= 0.06 && straight700 >= 0.7
       if oneWayReverse {
         paceGLog("[pace-wave] 속도축 차단(오→왼 통과) T%d netDx=%+.2f straight=%.2f rev=%d", ti, netDx700, straight700, reversals)
       }

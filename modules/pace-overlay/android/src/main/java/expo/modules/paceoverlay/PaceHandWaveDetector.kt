@@ -576,6 +576,8 @@ object PaceHandWaveDetector {
   //     조명 변화가 아니라 그 손이 지나간 것으로 보는 게 맞다.
   private const val LUMA_DROP_RATIO_NEAR = 0.68
   private const val LUMA_DARK_ABS_MAX_NEAR = 130.0
+  /** 가림이 끝나고 밝기가 이 비율 이상으로 돌아와야 지나간 것으로 본다(위 오탐 주석 참고). */
+  private const val LUMA_RECOVER_RATIO = 0.7
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
   // 🟢 2026-08-21 신규 축: gross-motion(격자 밝기 변화) — **큰 손짓 전용**.
@@ -1427,11 +1429,25 @@ object PaceHandWaveDetector {
     val nearHandRecent = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= NEAR_HAND_RECENT_MS
     val dropTh = if (nearHandRecent) LUMA_DROP_RATIO_NEAR else LUMA_DROP_RATIO
     val darkTh = if (nearHandRecent) LUMA_DARK_ABS_MAX_NEAR else LUMA_DARK_ABS_MAX
-    if (dropRatio <= dropTh && luma <= darkTh) {
+    // 🔴 2026-08-26 밤샘 검증에서 잡은 오탐 — **불을 끄자 "다음 영상"이 발화했다.**
+    //     01:21:01 WAVE detected (occlusion luma=7.2 brightestInWindow=33.1 dropRatio=0.217)
+    //   이 축은 밝기가 떨어지기만 하면 발화하고 **회복을 요구하지 않았다.** 그런데 손이 렌즈를
+    //   가리는 것은 **지나가는** 사건이라 곧 밝기가 돌아오고, 소등·이불 덮임·주머니는 계속 어둡다.
+    //   회복 여부가 그 둘을 가르는 유일한 신호다. 맥은 iOS에서 이미 같은 조건을 걸어뒀다
+    //   (nearpass의 luma >= brightRefAll * 0.7) — 안드에만 빠져 있었다.
+    //   → 창 안의 **최저점**이 충분히 어두웠고 **지금은 돌아와 있어야** 발화한다.
+    //   이 앱은 밤에 침대에서 쓰는 일이 흔하므로(소등이 일상) 그냥 둘 수 없는 오탐이다.
+    val dipMin = lumaHistory.minOfOrNull { it.second } ?: luma
+    val dipRatio = if (brightestInWindow > 0.0) dipMin / brightestInWindow else 1.0
+    val recovered = luma >= brightestInWindow * LUMA_RECOVER_RATIO
+    if (dipRatio <= dropTh && dipMin <= darkTh && recovered) {
       fireTrigger(
-        "occlusion near=$nearHandRecent luma=$luma brightestInWindow=$brightestInWindow dropRatio=$dropRatio(th=$dropTh)",
+        "occlusion near=$nearHandRecent dip=$dipMin now=$luma bright=$brightestInWindow dipRatio=$dipRatio(th=$dropTh)",
         onWave
       )
+    } else if (dipRatio <= dropTh && dipMin <= darkTh) {
+      // 어두워지긴 했는데 아직 안 돌아왔다 — 소등/이불/주머니는 여기서 끝난다(로그로 구분 가능).
+      Log.d(TAG, "occlusion 보류(회복 안 됨) dip=$dipMin now=$luma bright=$brightestInWindow")
     }
   }
 

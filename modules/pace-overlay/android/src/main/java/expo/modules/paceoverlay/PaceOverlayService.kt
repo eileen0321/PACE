@@ -2189,6 +2189,35 @@ class PaceOverlayService : Service() {
     /** 권한이 실제로 부여되면 다음 결핍 시 다시 안내할 수 있게 되돌린다. */
     fun resetCameraPermissionNotice() { cameraPermissionNoticeShown = false }
 
+    /**
+     * 🔴 2026-08-26 — 카메라는 켜져 있는데 **아무것도 안 보이는** 상태를 사용자에게 알린다.
+     *
+     * 오늘 밤 실기기에서 사장님이 한 시간 넘게 "손짓이 하나도 안 된다"를 겪었다. 진단 프레임을
+     * 저장해 보니 카메라가 **천장을 찍고 있었다** — 빨래 건조대 레일과 벽만 있고, 화면 맨 아래
+     * 가장자리에 머리카락 끝만 걸쳐 있었다. 손도 얼굴도 화각 밖이니 문턱을 아무리 만져도 안 된다.
+     * 그 사이 나는 임계값을 여섯 번 고쳤고 그중 하나는 방향 부호를 반대로 넣어 손짓을 더 죽였다.
+     *
+     * 바로 위 notifyCameraPermissionMissing의 주석이 이미 같은 교훈을 적어놨다 — "손짓 토글은 켜져
+     * 있는데 아무 반응이 없고, 사용자는 원인을 알 방법이 없다". 원인만 다를 뿐 같은 부류의 재발이다.
+     * 감지기가 조용히 실패하는 모든 경로는 화면에 이유가 떠야 한다.
+     */
+    @Volatile private var cameraBlindNoticeShown = false
+    fun notifyCameraSeesNothing(context: Context) {
+      if (cameraBlindNoticeShown) return
+      cameraBlindNoticeShown = true
+      val ko = context.resources.configuration.locales[0].language == "ko"
+      showToast(
+        context,
+        // ⚠️ "얼굴이 보이게"라고 쓰면 안 된다 — 사장님 실사용(헬스장 비스듬한 거치)에서는 얼굴이
+        //   안 보이는 것이 정상이고, 필요한 것은 **손이 카메라 앞을 지나가는 것**뿐이다.
+        if (ko) "손이 카메라에 안 잡혀요 — 손이 카메라 앞을 지나가도록 폰 각도를 조금만 바꿔주세요"
+        else "The camera isn't catching your hand — angle the phone so your hand passes in front of it"
+      )
+    }
+
+    /** 감지기가 다시 시작될 때 되돌린다(자세를 고치면 다음에 또 안내할 수 있어야 한다). */
+    fun resetCameraBlindNotice() { cameraBlindNoticeShown = false }
+
     private fun showToast(context: Context, text: String) {
       Handler(Looper.getMainLooper()).post {
         Toast.makeText(context.applicationContext, text, Toast.LENGTH_SHORT).show()

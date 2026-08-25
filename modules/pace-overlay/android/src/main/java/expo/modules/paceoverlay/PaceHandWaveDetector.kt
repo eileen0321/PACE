@@ -603,13 +603,50 @@ object PaceHandWaveDetector {
   private const val MOTION_GRID = 8
   /** 격자 평균을 낼 때의 픽셀 샘플링 간격 — 전 픽셀을 볼 필요가 없다(평균이라 4픽셀당 1개면 충분). */
   private const val MOTION_SAMPLE_STEP = 4
+  // ── 🟢 2026-08-26 신규: lumapass (iOS PaceGestureModule.swift의 같은 이름 축을 이식) ──
+  //
+  // 사장님 실사용은 **헬스장에서 폰을 비스듬히 거치**하는 자세다("그럼 얼굴 안 보인다고").
+  // 그러면 카메라는 천장 쪽을 보고 손만 화각을 스쳐 지나간다 — 실측(2026-08-26 00:56)에서
+  // 처리 1870프레임 중 손 랜드마크가 잡힌 건 11프레임(0.6%)뿐이었다. 손 모양을 요구하는 축은
+  // 이 자세에서 원리적으로 불리하다.
+  //
+  // 기존 격자 축(gross-motion)도 이 상황을 노렸지만 기준이 무디다 — 64칸 중 여러 칸이 **30단계**
+  // 밝기 변화를 내야 한다. 손이 화면 일부만 스치면 못 넘는다(실측 frac 0.234 vs 문턱 0.55).
+  //
+  // 맥이 iOS에서 쓴 방식이 이 자세에 훨씬 맞다:
+  //   · 세로 3분할(왼/가운데/오른쪽) 평균 밝기를 본다
+  //   · 각 구간이 **15%만** 어두워지면 "가려지기 시작한 시각(onset)"으로 인정한다(문턱이 낮다)
+  //   · **순서**가 판정 기준이다 — 한쪽 끝에서 반대쪽으로 순차로 꺼지면 통과
+  //   · 방향이 순서에서 공짜로 나온다
+  //   · 전역 조명 변화(영상 밝기·AE)는 세 구간이 **동시에** 변해 순서가 안 생기므로 자동 배제된다
+  //
+  // ⚠️ 안드에만 있는 문제: ImageProxy는 **회전 전** 이미지다(실측 rot=270). 그래서 "세로 3분할"을
+  //   proxy의 열(x)로 나누면 실제로는 위/아래로 나누는 것이 된다. 회전값에 따라 축을 골라야 한다.
+  private const val LUMAPASS_WINDOW_MS = 1200L
+  private const val LUMAPASS_DIP_RATIO = 0.85   // 기준 대비 15% 하락 = onset
+  private const val LUMAPASS_MIN_REF = 40.0     // 너무 어두우면 판정 불가(0~255)
+  private const val LUMAPASS_MIN_SAMPLES = 6
+  private const val LUMAPASS_MIN_SPAN_MS = 80.0
+  private const val LUMAPASS_MAX_SPAN_MS = 900.0
+  private const val LUMAPASS_REF_DECAY = 0.995
+
   private const val GROSS_MOTION_WINDOW_MS = 700L
   /** 이만큼 전 프레임과 비교한다 — 손짓 한 번의 시간 규모(80ms 간격 기준 2~3프레임). */
   private const val GROSS_MOTION_LAG_MS = 180L
   /** 칸 평균 밝기(0~255)가 이만큼 변해야 "변한 칸"으로 센다. */
   private const val GROSS_MOTION_CELL_DELTA = 30
   /** 전체 칸 중 이 비율 이상이 변해야 발동 — 손이 화면의 절반 이상을 지나갔다는 뜻. */
-  private const val GROSS_MOTION_CELL_FRACTION = 0.55
+  // 🔴 2026-08-26 실기기 실측으로 하향 — 사장님 실사용은 **헬스장에서 폰을 비스듬히 거치**하는
+  //   자세다("헬스장에서 폰을 비스듬히 거치해놓을 거 아냐, 그럼 얼굴 안 보인다고"). 그러면 카메라는
+  //   천장 쪽을 보고 손만 화각을 **스쳐 지나간다** — 화면 전체가 덮이지 않는다.
+  //   실측 near-miss 3건(th=0.55):
+  //       frac=0.234 darken=1.0    ← 변한 칸이 **전부** 어두워짐 = 손이 지나간 것
+  //       frac=0.297 darken=0.158  ← 밝아진 칸이 섞임 = 조명/장면 변화
+  //       frac=0.188 darken=0.083  ← 위와 같음
+  //   즉 진짜 손 통과가 0.234인데 문턱이 그 두 배가 넘었다. 0.20으로 내린다.
+  //   ⚠️ 오탐 방어는 문턱이 아니라 **darkenRatio(0.7)** 가 한다 — 위 실측에서 진짜 손만 1.0이고
+  //     나머지는 0.16/0.08로 확실히 갈린다. 이 비율을 함께 낮추면 안 된다.
+  private const val GROSS_MOTION_CELL_FRACTION = 0.20
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   private const val GROSS_MOTION_DARKEN_RATIO = 0.7
 
@@ -663,6 +700,28 @@ object PaceHandWaveDetector {
   @Volatile private var framesIn = 0
   /** 마지막 프레임 평균 밝기(0~255). HB에 실어 "카메라가 깜깜한가 / 밝은데 인식만 실패하나"를 가른다. */
   @Volatile private var lastLuma = -1.0
+  /** 진단용 프레임 저장 주기(ms). 0이면 끔. 위 "프레임 저장" 주석 참고. */
+  private val FRAME_DUMP_INTERVAL_MS = 10_000L
+  @Volatile private var lastFrameDumpAtMs = 0L
+  /** lumapass 기록: [시각, 왼, 가운데, 오른쪽] 평균 밝기. */
+  private val dipHistory = ArrayDeque<DoubleArray>()
+  private var brightRefL = 0.0
+  private var brightRefM = 0.0
+  private var brightRefR = 0.0
+  /** 감지 시작 시각 — "한참 돌았는데 아무것도 못 봤다"를 판정하는 기준(아래 BLIND_NOTICE_MS). */
+  @Volatile private var detectStartedAtMs = 0L
+  /**
+   * 이 시간 동안 손을 **한 번도** 못 봤으면 카메라 화각에 손이 안 들어오는 것이다.
+   *
+   * ⚠️ 얼굴은 조건에 넣지 않는다. 사장님 실사용(헬스장 비스듬한 거치)에서는 **얼굴이 안 보이는 것이
+   *   정상**이고, 필요한 것은 손이 화각을 지나가는 것뿐이다. 얼굴을 기준으로 삼으면 정상 자세를
+   *   문제로 오인해 잘못된 안내를 하게 된다 — 실제로 처음엔 그렇게 짜서 "얼굴이 보이게 하세요"라는
+   *   틀린 안내를 넣었다.
+   */
+  private val BLIND_NOTICE_MS = 45_000L
+  @Volatile private var blindNoticeDone = false
+  /** 프레임 저장 위치(filesDir)만 쓰는 앱 컨텍스트. start()에서 보관한다. */
+  @Volatile private var dumpContext: Context? = null
   @Volatile private var detectSent = 0
   @Volatile private var resultsIn = 0
   @Volatile private var lastHeartbeatAtMs = 0L
@@ -753,6 +812,10 @@ object PaceHandWaveDetector {
   }
 
   private fun startOnMainThread(context: Context, onWave: () -> Unit, myGeneration: Int) {
+    dumpContext = context.applicationContext // 진단 프레임 저장용(위 FRAME_DUMP_INTERVAL_MS 주석)
+    detectStartedAtMs = System.currentTimeMillis()
+    blindNoticeDone = false
+    PaceOverlayService.resetCameraBlindNotice()
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
     posHistory.clear()
@@ -858,6 +921,15 @@ object PaceHandWaveDetector {
           //     추론 시간 자체는 거의 안 변하고, 늘어나는 비용은 YUV→Bitmap 변환분뿐이다
           //     (실측 infer=50~150ms에 아직 여유가 있다 — 처리 간격이 아니라 이 값이 한계가 되면
           //     하트비트의 sent/in 비율이 즉시 떨어지므로 다음 로그에서 바로 확인된다).
+          // 🔬 2026-08-26 실측 — **이 요청은 그대로 반영되지 않는다.** 진단 프레임 로그가
+          //   "프레임 저장 1088x1088 rot=270"으로 찍혔다. 즉 실제로는 480x360이 아니라 1088 정사각형이
+          //   들어오고 있다(setTargetResolution은 CameraX 1.3+에서 deprecated이고 "가장 가까운 지원
+          //   해상도"를 고르는 힌트일 뿐이다).
+          //   ⚠️ 그렇다고 ResolutionSelector로 480x360을 **강제하지 말 것.** 위 주석의 실측이
+          //     "320x240에서는 팜 영역이 48px이라 못 찾는다(nohand 84.5%)"고 기록해 뒀다. 지금 실제
+          //     해상도가 1088이라는 것은 지금까지의 인식률이 **고해상도 기준**이라는 뜻이고, 강제로
+          //     낮추면 그 실패를 되살릴 위험이 있다. 비용은 YUV→Bitmap 변환분뿐이고 실측 infer는
+          //     1~89ms로 여유가 있다. 바꾸려면 반드시 실기기 인식률(HB의 nohand 비율)로 검증할 것.
           .setTargetResolution(Size(480, 360))
           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
           .also { builder ->
@@ -984,6 +1056,16 @@ object PaceHandWaveDetector {
       // 2026-08-15 — 얼굴 상태를 여기 얹는다. 얼굴 게이트는 "어두운 방에서 얼굴을 못 봐서 손짓이
       // 죽는가"를 실측해야 신뢰할 수 있는데, 그걸 볼 수 있는 주기적 신호가 이것뿐이다.
       val faceAge = if (faceEverSeen) "${now - lastFaceSeenAtMs}ms전" else "없음"
+      // 🔴 2026-08-26 — 카메라가 사람을 아예 못 보고 있으면 화면에 알린다(위 BLIND_NOTICE_MS 주석).
+      //   손이 한 번이라도 잡혔거나 얼굴을 한 번이라도 봤으면 안 뜬다.
+      if (!blindNoticeDone && running &&
+        detectStartedAtMs > 0L && now - detectStartedAtMs >= BLIND_NOTICE_MS &&
+        resultsIn > 0 && noHandResults == resultsIn
+      ) {
+        blindNoticeDone = true
+        Log.i(TAG, "카메라 무시야 안내 — ${now - detectStartedAtMs}ms 동안 손 0개 (out=$resultsIn, 얼굴은 조건 아님)")
+        dumpContext?.let { PaceOverlayService.notifyCameraSeesNothing(it) }
+      }
       // 🔴 2026-08-26 — luma를 같이 남긴다. 손 0개·얼굴 0개일 때 **카메라가 깜깜한 것**인지
       //   **밝은데 인식만 실패하는 것**인지 이 값 하나로 갈린다. 그게 없어서 원인을 기기 앞에
       //   앉은 사람에게 물어봐야 했다 — 진단 로그가 답해야 할 것을 사람에게 묻고 있었다.
@@ -1009,6 +1091,8 @@ object PaceHandWaveDetector {
       checkOcclusion(averageLuma(proxy), now, onWave)
       // 큰 손짓 축 — 손 랜드마크와 무관하게 Y평면만 보므로 여기서 같이 싸게 처리한다.
       checkGrossMotion(lumaGrid(proxy), now, onWave)
+      // lumapass(맥 iOS 이식) — 거치 자세에서 손만 스쳐 지나가는 경우를 잡는 축. 위 주석 참고.
+      checkLumaPass(lumaBands(proxy, proxy.imageInfo.rotationDegrees), now, onWave)
       // 2026-08-01 최적화(로그 실측 기반) — REFRACTORY_MS(1.2초) 안에서는 fireTrigger/onResult가
       // 어차피 새 트리거를 무시하는데(디바운스), 지금까진 그 1.2초 동안도(≈8프레임) 매번 YUV→Bitmap
       // 변환 + MediaPipe 손 랜드마크 추론(가장 비싼 연산, 화면전환 애니메이션 도중 손이 아직
@@ -1029,6 +1113,28 @@ object PaceHandWaveDetector {
       val bitmap = yuv420ToBitmap(proxy)
       if (bitmap != null) {
         val rotated = rotateBitmap(bitmap, proxy.imageInfo.rotationDegrees)
+        // 🔬 2026-08-26 진단 — 카메라가 **실제로 무엇을 보는지** 그림으로 확인한다.
+        //   손 0개·얼굴 0개인데 밝기는 129(정상)라는 상태를 로그만으로는 더 못 좁힌다.
+        //   한 장이면 ① 카메라가 사람을 보는가 ② 회전이 맞는가 ③ 좌우가 뒤집혀 있는가가 전부 확정된다.
+        //   ③은 가로지르기 방향 부호(왼→오가 x 증가인지 감소인지) 문제와 같은 질문이다 —
+        //   그걸 못 정해서 오늘 부호를 반대로 넣어 손짓을 통째로 죽였다.
+        //   비용: FRAME_DUMP_INTERVAL_MS마다 JPEG 1장. 끄려면 상수를 0으로.
+        if (FRAME_DUMP_INTERVAL_MS > 0 && now - lastFrameDumpAtMs >= FRAME_DUMP_INTERVAL_MS) {
+          lastFrameDumpAtMs = now
+          try {
+            // 릴리즈 빌드는 run-as가 안 되므로 filesDir를 adb로 못 읽는다 — 앱 전용 외부 폴더에 쓴다
+            // (/sdcard/Android/data/<pkg>/files, adb shell로 접근 가능). 앱 삭제 시 같이 지워진다.
+            val dir = dumpContext?.getExternalFilesDir(null) ?: dumpContext?.filesDir
+            if (dir != null) {
+              java.io.FileOutputStream(java.io.File(dir, "pace_frame.jpg")).use { out ->
+                rotated.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+              }
+              Log.i(TAG, "프레임 저장 ${rotated.width}x${rotated.height} rot=${proxy.imageInfo.rotationDegrees} luma=${"%.0f".format(lastLuma)}")
+            }
+          } catch (e: Exception) {
+            Log.w(TAG, "프레임 저장 실패", e)
+          }
+        }
         if (faceDue) {
           lastFaceCheckAtMs = now
           detectFace(rotated, now)
@@ -1113,6 +1219,84 @@ object PaceHandWaveDetector {
    * Y평면을 MOTION_GRID x MOTION_GRID 격자로 줄여 칸별 평균 밝기(0~255)를 낸다.
    * MediaPipe도 Bitmap 변환도 안 거치므로 사실상 공짜다 — 위 gross-motion 주석 참고.
    */
+  /**
+   * 세로 3분할(업라이트 기준 왼/가운데/오른쪽) 평균 밝기. 위 lumapass 주석 참고.
+   *
+   * ⚠️ proxy는 회전 전 이미지다. 업라이트에서의 "가로"가 회전값에 따라 proxy의 x일 수도 y일 수도
+   *   있다 — 90/270도면 proxy의 **행(y)** 이 업라이트의 가로가 된다. 축을 잘못 고르면 손이 좌우로
+   *   지나가는 것을 위아래로 보게 되어 순서가 영영 안 생긴다.
+   */
+  private fun lumaBands(proxy: ImageProxy, rotationDegrees: Int): DoubleArray {
+    val plane = proxy.planes[0]
+    val buf = plane.buffer.duplicate()
+    val rowStride = plane.rowStride
+    val pixelStride = plane.pixelStride
+    val w = proxy.width
+    val h = proxy.height
+    val useRowAxis = rotationDegrees == 90 || rotationDegrees == 270
+    val sums = DoubleArray(3)
+    val counts = IntArray(3)
+    var y = 0
+    while (y < h) {
+      var x = 0
+      while (x < w) {
+        val pos = y * rowStride + x * pixelStride
+        if (pos < buf.limit()) {
+          val band = if (useRowAxis) (y * 3) / h else (x * 3) / w
+          val bi = if (band > 2) 2 else band
+          sums[bi] += (buf.get(pos).toInt() and 0xFF)
+          counts[bi]++
+        }
+        x += MOTION_SAMPLE_STEP
+      }
+      y += MOTION_SAMPLE_STEP
+    }
+    for (i in 0..2) if (counts[i] > 0) sums[i] /= counts[i]
+    return sums
+  }
+
+  /**
+   * lumapass — 세로 3분할 밝기가 **순차로** 얕게 꺼지면 "손이 카메라 앞을 지나갔다"로 본다.
+   * 손 모양 인식이 필요 없어 거치 자세(손만 화각을 스침)에 강하다. 위 상수 주석이 설계 근거다.
+   */
+  private fun checkLumaPass(bands: DoubleArray, now: Long, onWave: () -> Unit) {
+    dipHistory.addLast(doubleArrayOf(now.toDouble(), bands[0], bands[1], bands[2]))
+    while (dipHistory.isNotEmpty() && now - dipHistory.first()[0] > LUMAPASS_WINDOW_MS) {
+      dipHistory.removeFirst()
+    }
+    // 감쇠 기준값 — 최근 최댓값을 천천히 잊는다. 고정 최댓값을 쓰면 연속 시도로 기준이 오염된다
+    // (맥이 fd42db4에서 같은 이유로 감쇠 기준으로 바꿨다).
+    brightRefL = kotlin.math.max(bands[0], brightRefL * LUMAPASS_REF_DECAY)
+    brightRefM = kotlin.math.max(bands[1], brightRefM * LUMAPASS_REF_DECAY)
+    brightRefR = kotlin.math.max(bands[2], brightRefR * LUMAPASS_REF_DECAY)
+    if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
+    if (now - lastTriggerAtMs <= REFRACTORY_MS) return
+
+    fun onset(idx: Int, ref: Double): Double? {
+      if (ref <= LUMAPASS_MIN_REF) return null
+      val th = ref * LUMAPASS_DIP_RATIO
+      return dipHistory.firstOrNull { it[idx] <= th }?.get(0)
+    }
+    val tL = onset(1, brightRefL) ?: return
+    val tM = onset(2, brightRefM) ?: return
+    val tR = onset(3, brightRefR) ?: return
+
+    // 한쪽 끝 → 가운데 → 반대쪽 끝 순서여야 한다. 전역 조명 변화는 세 구간이 동시라 여기서 걸린다.
+    val fwd = tR < tM && tM < tL   // 오른쪽부터 꺼짐
+    val bwd = tL < tM && tM < tR   // 왼쪽부터 꺼짐
+    if (!fwd && !bwd) return
+    val span = if (fwd) tL - tR else tR - tL
+    if (span < LUMAPASS_MIN_SPAN_MS || span > LUMAPASS_MAX_SPAN_MS) return
+
+    // ⚠️ 방향으로 거르지 않는다 — 안드에서 "사용자 왼→오"가 이미지의 어느 쪽인지 아직 실측으로
+    //   확정되지 않았다(2026-08-26에 부호를 반대로 넣어 손짓을 통째로 죽인 적이 있다).
+    //   지금은 양쪽 다 발화시키고 순서를 로그에 남긴다. 사장님이 방향을 지정해 해주시면 그 로그로
+    //   확정한 뒤 한쪽만 남긴다.
+    dipHistory.clear()
+    Log.i(TAG, "LUMAPASS 순서=${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms refLMR=${brightRefL.toInt()}/${brightRefM.toInt()}/${brightRefR.toInt()} rot축")
+    fireTrigger("lumapass ${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms", onWave)
+  }
+
   private fun lumaGrid(proxy: ImageProxy): IntArray {
     val plane = proxy.planes[0]
     val buf = plane.buffer.duplicate()
@@ -1185,7 +1369,7 @@ object PaceHandWaveDetector {
         "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio lag=${now - ref.first}ms",
         onWave
       )
-    } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.3) {
+    } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
       // 튜닝 근거 확보 — 아깝게 못 넘긴 경우만 남긴다(이 파일의 near-miss와 같은 원칙).
       Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio(th=$GROSS_MOTION_DARKEN_RATIO) changed=$changed/${grid.size}")
     }

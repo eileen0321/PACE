@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { YouTubeShort } from '../types/models';
 import { fetchShortsPage } from '../services/api/youtube';
 import { getShortsSeedVideoId } from '../services/shortsEntry';
+import { getRecentSearchQuery, useShortsSearchStore } from './useShortsSearchStore';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생" 큐(2026-07-18 사용자 지시).
 // PACE_ARCHITECTURE.md "iOS Pace Feed 재정의" 참고.
@@ -103,6 +104,23 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
       // ⚠️ watched 제외를 하지 않는다(2026-08-04 사장님 "왜 영어지") — 제외하면 한국 시드 12개를 다 본
       // 뒤 seedId가 null이 되고, 아래 공유 큐(Vercel, 영어) 폴백으로 떨어져 "한국이었다가 영어"가 된다.
       // SWIPE 모드는 어차피 유튜브가 다음을 이어주므로 시드가 가끔 겹쳐도 무방하다(영어로 떨어지는 것보다 낫다).
+      // 🔴 2026-08-25 사장님 지시("유튜브 시작 영상은 그 사람이 최근 검색한 거 기반으로 시작해야
+      //   하는 거 아냐? 일률적으로 하고 있는 거 아냐?") — 맞는 지적이었다. 기존 시드는 서버 공용
+      //   seedPool 무작위라 개인 관심사와 무관했다. 최근 7일 내 검색어가 있으면 그 검색 결과에서
+      //   안 본 것을 시드로 우선 쓴다. 결과 캐시는 부팅 때 _layout이 워밍해두므로(네트워크 대기
+      //   없음 원칙 유지) 여기선 캐시만 본다 — 캐시가 비어 있으면 기존 seedPool 경로로 폴백.
+      try {
+        const recentQuery = await getRecentSearchQuery();
+        const searchResults = recentQuery ? useShortsSearchStore.getState().results[recentQuery] ?? [] : [];
+        const fresh = searchResults.find((s) => !watchedIds.includes(s.videoId)) ?? searchResults[0];
+        if (fresh) {
+          set({ queue: [fresh], watchedIds, nextPageToken: null, hasMore: false, isLoading: false });
+          return;
+        }
+      } catch {
+        /* 최근 검색 시드 실패 → 기존 경로 */
+      }
+
       const seedId = await getShortsSeedVideoId().catch(() => null);
       if (seedId) {
         set({

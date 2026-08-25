@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { GlassSurface } from '../ui/GlassSurface';
 import { useTranslation } from '../../services/i18n';
 import { radius, spacing, typography } from '../../constants/theme';
-import { useShortsSearchStore } from '../../store/useShortsSearchStore';
+import { recordSearch, useShortsSearchStore } from '../../store/useShortsSearchStore';
 import * as Localization from 'expo-localization';
 import type { YouTubeShort } from '../../types/models';
 
@@ -40,12 +40,14 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
     if (!initialQuery) return;
     setDraft(initialQuery);
     setActiveQuery(initialQuery);
+    recordSearch(initialQuery); // 검색 실행은 실행 — 최근검색 시드의 E2E 검증도 이 경로로 한다
     useShortsSearchStore.getState().search(initialQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onPickPreset = (query: string) => {
     setActiveQuery(query);
+    recordSearch(query); // 2026-08-25 — 최근 검색 기반 피드 시작 시드의 근거(스토어 주석 참고)
     useShortsSearchStore.getState().search(query);
   };
 
@@ -64,18 +66,19 @@ export function ShortsSearchOverlay({ onClose, onOpenVideo, initialQuery }: {
     const suffix = LOCALE_SHORTS_WORD[Localization.getLocales()[0]?.languageCode ?? 'en'] ?? 'shorts';
     const expanded = q.toLowerCase().includes(suffix.toLowerCase()) ? q : `${q} ${suffix}`;
     setActiveQuery(expanded);
+    recordSearch(expanded); // 2026-08-25 — 최근 검색 기반 피드 시작 시드의 근거(스토어 주석 참고)
     useShortsSearchStore.getState().search(expanded);
   };
 
   const onOpen = (item: YouTubeShort) => {
-    // 🔴 2026-08-11 사장님 지적("양다일 검색하고 선택해서 보면 쇼츠가 맘대로 지나가버리던데") —
-    //   안드 실기기 logcat으로 재현 확정(14초·2초 만에 다음 영상으로 넘어가고 광고까지 큐를 탔다).
-    //   예전엔 HOT과 같은 규칙으로 검색 결과 전체를 이어서재생 큐(playlist 인자)로 넘겼는데,
-    //   검색은 성격이 다르다 — 특정 영상을 고른 건 **그걸 보겠다**는 뜻이지 결과를 쭉 틀어달라는
-    //   뜻이 아니다. 즐겨찾기에서 이미 같은 판단을 했다("HOT은 이어서재생이 맞지만 즐겨찾기는
-    //   그것만 재생", 2026-08-09 지시). 검색도 그쪽이다 — playlist를 넘기지 않는다.
-    //   (안드도 같은 날 동일하게 고쳤다: PaceOverlayService의 검색 결과 탭 핸들러.)
-    if (onOpenVideo) { onOpenVideo(item.videoId); onClose(); }
+    // 🔴 2026-08-25 사장님 지시 번복("쇼츠 검색하고 난 다음엔 검색이 기준으로 계속 플레이 되어야
+    //   하는데 왜 중간에 딴 거로 계속 바뀌는데") — playlist를 다시 넘긴다(검색 결과 순서 이어재생,
+    //   소진 시 유튜브 자동). 8/11의 "고른 것만 재생"(playlist 제거)은 당시 재생이 2~14초 만에
+    //   멋대로 순삭되던 것에 대한 조치였는데, 그 순삭의 진짜 원인은 안드 CHAIN 워처의 조기 발화였지
+    //   playlist 자체가 아니다. iOS forcedList는 자연 종료/손짓에만 넘어가므로 순삭이 없다 —
+    //   "검색 맥락 유지 + 내 페이스로 넘김"이 두 지시를 모두 만족하는 형태다. (안드 쪽도 동일하게
+    //   되돌리되 CHAIN 조기 발화 수정은 유지해야 한다 — PM MD에 기록.)
+    if (onOpenVideo) { onOpenVideo(item.videoId, items.map((i) => i.videoId)); onClose(); }
     else Linking.openURL(`https://www.youtube.com/shorts/${item.videoId}`).catch(() => {});
   };
 

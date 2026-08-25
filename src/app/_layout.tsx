@@ -44,6 +44,7 @@ import { checkAndForceUpdate, getUpdateDiagnostics, getUpdateNativeLog, type For
 import { checkVersionGate } from '../services/appVersionGate';
 import { configureAdsForTesting, USE_REAL_ADS } from '../services/ads/adsConfig';
 import { prefetchShortsEntryPolicy } from '../services/shortsEntry';
+import { getRecentSearchQuery, useShortsSearchStore } from '../store/useShortsSearchStore';
 import { ensureAdsConsent } from '../services/ads/adsConsent';
 import { useAdsConsentStore } from '../store/useAdsConsentStore';
 import { useTranslation } from '../services/i18n';
@@ -430,6 +431,12 @@ export default function RootLayout() {
     // §4-1(2026-08-04) — iOS Pace Feed도 이 정책의 seedPool로 시드(첫 영상)를 뽑으므로 iOS도 프리페치한다
     // (예전엔 iOS 미사용이라 Android 게이팅했었음 — 94a22de). 부팅 때 받아둬 피드 탭 순간엔 캐시만 쓴다.
     prefetchShortsEntryPolicy();
+    // 🔴 2026-08-25 사장님 지시("시작 영상은 최근 검색 기반") — 최근 7일 내 검색어가 있으면 그 결과를
+    // 부팅 때 미리 받아둔다. 피드 loadInitial은 "네트워크 대기 없음" 원칙이라 캐시만 보므로(위
+    // seedPool과 같은 구조), 이 워밍이 없으면 검색 기반 시드가 첫 진입에 한 번도 안 잡힌다.
+    getRecentSearchQuery()
+      .then((q) => { if (q) return useShortsSearchStore.getState().search(q); })
+      .catch(() => {});
     // 2026-08-03 출시 전 전수 검증에서 발견한 출시 차단 이슈 — 쇼츠 위 FOCUS 연장 보상광고는
     // 네이티브 액티비티(PaceRewardedAdActivity)가 띄우는데, 실광고 유닛/테스트 유닛 선택을 prefs의
     // use_real_ads로 하고 기본값이 false다. 그런데 그 값을 쓰는 코드가 앱 전체에 한 줄도 없어서,

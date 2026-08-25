@@ -10371,3 +10371,10 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 - 시뮬레이터(iPhone 17, 스토어와 동일 코드 Debug+Metro)에서 3장면 녹화: FOCUS ON 자동재생 / 쇼츠 검색→결과 재생 / Shorts HOT 리스트→재생. 터치 주입이 없어 DEV 전용 debugAction 시나리오(promoAuto/promoSearch/promoHot)로 스크립트(__DEV__ 게이트, 출시 빌드 미포함).
 - ffmpeg 부재 → AVFoundation 스위프트 합성기(scratchpad/compositor.swift)로 점프컷(로딩 블랙 제거)+1080×1920 크롭(상태바만 컷, FOCUS ON 필 보존)+자막 페이드/라이즈+브랜드 엔드카드(아이콘 84%+태그라인). 프레임 밝기 분석(frametool.swift)으로 컷 포인트 산출.
 - 산출물: **~/Desktop/PACE_promo/pace_promo_ko.mp4 / pace_promo_en.mp4** (34초, 무음 — 업로드 시 음악 추가 권장). 카피: "쇼츠, 이제 손대지 말고 보세요"/"Watch Shorts hands-free" 등.
+
+### 2026-08-25(Mac/iOS) — 🔴 헬스장 실사용 버그 일괄 수정(기기 설치 완료) + ⚠️ ASC 빌드13엔 미포함
+- ① 손짓 밀림 버스트("한번에 5개"): WebView 큐에 쌓인 advance 주입이 몰아 실행되던 것 — 페이지 내 실행시점 1초 게이트(advGate, 유튜브 paceAdvance/pacePrevious + 틱톡 paceForceAdvance).
+- ② "안 될 때 계속 안 됨": 페이지 JS가 얼면 페이지 내 15초 워치독도 같이 얾 — RN 데드맨(웹뷰 10초 무소식 → reload, 세션당 3회, DEADMAN 로그).
+- ③ 아침 광고 게이트("0분 봤는데 10분 소진"): 윈도우 08-20 날짜 스코프 수정 채택(맥 병렬 수정 파기, stash 충돌 → origin 버전). 이 게이트가 FOCUS를 막아 손짓 감지기 자체가 꺼져 있던 것이 ①·②의 공범.
+- 윈도우 커밋 전수 파리티 확인: 구글 로그인 Credential Manager/접근성 고지 시트/FGS 수정 = 전부 Android 게이트, iOS 이식 불요.
+- ⚠️ **ASC에 올라간 1.0.5(13)에는 위 수정 전부 미포함** — 심사 제출 전이면 빌드 14 재업로드 권장(사장님 결정 대기).

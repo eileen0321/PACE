@@ -317,6 +317,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // (계산·로그는 유지 — 복원은 이 플래그만 false). 오→왼 차단 직후 잠금(speedSuppressUntilMs)은
   // 플래그를 끄더라도 유효한 별도 방어라 남겨둔다. ⚠️ 안드는 아직 흔들기 방식 — 사양 검증 후 동일 이식.
   private let passOnlyMode = true
+  // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
+  // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
+  private let passRefractoryMs: Double = 500
   private var speedSuppressUntilMs: Double = 0
   private let crossWindowMs: Double = 2500
   // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.
@@ -467,16 +470,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 자동노출은 유지하되 **노출 시간 상한만 1/180초**로 캡 — 어두우면 ISO가 대신 올라간다(밝기 자동 보정).
     // setExposureModeCustom(고정 노출)이 아니라 activeMaxExposureDuration인 이유: 조명이 변하는 실사용에서
     // 고정값은 과노출/암전을 만든다 — 상한 캡은 AE를 살려둔 채 블러만 막는 안전한 형태다.
-    do {
-      try device.lockForConfiguration()
-      let cap = CMTime(value: 1, timescale: 180)
-      if device.activeFormat.maxExposureDuration > cap {
-        device.activeMaxExposureDuration = cap
-      }
-      device.unlockForConfiguration()
-    } catch {
-      // 설정 실패는 치명적이지 않다 — 기존(무캡) 동작으로 계속.
-    }
+    // 🔴 2026-08-25 23:00 롤백 — 위 1/180s 상한이 밤 실내(어두움)에서 화면을 어둡게 만들어 손 인식
+    // 자체를 실명시켰다(죽은 구간들의 hand=0/30 패턴과 시간 일치). 통과 전용 모드에선 속도 축이
+    // 꺼져 있어 블러 대책의 이득도 없다 — 상한을 걸지 않는다(AE 원래대로).
 
     // 프레임레이트는 캡하지 않는다(안드로이드와 동일: 네이티브 ~30fps).
     // 15fps로 캡했더니 alwaysDiscardsLateVideoFrames와 겹쳐 부하 시 실효 fps가 더 떨어져,
@@ -736,7 +732,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if handSize >= self.crossMinHandSize {
         self.crossHistory.append((nowMs, c.x))
         while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
-        if self.crossHistory.count >= 2, nowMs - self.lastTriggerMs > self.refractoryMs {
+        if self.crossHistory.count >= 2 {
           // 🔴 2026-08-25 22:52 확진(hand=15·sweep=3.63인데 발화 0) — 2.5s 창 **전체** 순이동은 연속
           // 시도에 오염된다: 스침→복귀→스침이 서로 상쇄돼 net≈0, 패스 사이 점프가 path만 키워
           // directness도 죽는다. → **마지막 단조 구간**(끝에서부터 같은 방향으로 이어진 스트로크)만
@@ -757,6 +753,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let segNet = xs.last!.x - xs[segStart].x
           if abs(segNet) >= self.crossMinRangeX {
             self.crossHistory.removeAll()
+            // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
+            // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
+            // 불응 중 스트로크는 여기서 소비-폐기한다. 1.2s당 1회 상한은 유지, 타이밍 착시 제거.
+            if nowMs - self.lastTriggerMs <= self.passRefractoryMs {
+              paceGLog("[pace-wave] crossdrop refractory net=%+.2f", segNet)
+              self.onDiag(String(format: "crossdrop net=%+.2f", segNet))
+              return glideAbs
+            }
             if segNet < 0 {
               self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
@@ -879,7 +883,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 잡혀 크로싱(2회 포착 필요)이 성립 불가. **lumapass**: 세로 3분할 밝기가 순차로 얕게(15%) 꺼지는
     // 패턴 = 중거리 통과. 손 모양 인식 불요·추적 끊김 무관. 사용자 왼→오 = 이미지 오른쪽→가운데→왼쪽
     // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
-    if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 6,
+    if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6,
        let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
       func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> Double? {
         guard ref > 40 else { return nil }
@@ -902,7 +906,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
     }
-    if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 5,
+    if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 5,
        let first = dipHistory.first, nowMs - first.t >= 600 {
       let bright = max(dipHistory.map { $0.luma }.max() ?? 0, brightRefAll)
       if bright > 40 {

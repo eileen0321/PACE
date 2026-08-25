@@ -312,6 +312,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 넘어가야") — 크로싱은 **속도 무관**이 원칙이다. 1초 창은 느린 스침(2초짜리 통과)을 놓쳤다.
   // 빠른 스침은 짧은 창에서도 성립하므로 창 확대는 느린 쪽만 살리고, 가짜 가로지름(양손 교차)은
   // 창 길이가 아니라 순방향비(directness)가 거른다.
+  // ⚠️ 2026-08-25 사장님 사양 확정: "흔들기 넘어감 / 왼→오 넘어감 / 오→왼 안 넘어감" — 흔들기는 유지.
+  // (통과 전용 모드는 내 오독으로 잠깐 켰다가 사장님 "미친거냐"로 즉시 원복 — false 고정.)
+  // 오→왼 누수는 아래 speedSuppressUntilMs(차단 직후 0.8s 속도축 잠금)로만 막는다.
+  private let passOnlyMode = false
+  private var speedSuppressUntilMs: Double = 0
   private let crossWindowMs: Double = 2500
   // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.
   private let crossMinRangeX: Double = 0.38
@@ -745,6 +750,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               return glideAbs
             }
             // 반대 방향(사용자 오→왼) — 무시하되 채증(향후 "이전 영상" 매핑 후보).
+            // 🔴 22:42 실측("차단 0.1초 뒤 glide가 대신 발화") — 차단 직후 잔움직임(거둬들이는 손)을
+            // 속도 축이 잡아 오→왼이 결국 넘어갔다. 차단 시점부터 0.8s 속도축 발화를 잠근다.
+            self.speedSuppressUntilMs = nowMs + 800
             paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", signedNet, handSize)
             self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", signedNet, handSize))
           }
@@ -781,7 +789,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glideOverwhelming = glidedNow &&
         glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
-      if glided && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if glided && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
@@ -810,12 +818,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
@@ -863,6 +871,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()
           if tR - tL >= 40 {
+            speedSuppressUntilMs = nowMs + 800 // 근접 오→왼 차단 직후 잔움직임 누수도 동일하게 잠금
             paceGLog("[pace-wave] nearskip R->L dt=%.0f", tR - tL)
             onDiag(String(format: "nearskip dt=%+.0f", tL - tR))
           } else {

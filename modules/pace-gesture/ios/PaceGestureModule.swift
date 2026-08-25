@@ -313,7 +313,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 빠른 스침은 짧은 창에서도 성립하므로 창 확대는 느린 쪽만 살리고, 가짜 가로지름(양손 교차)은
   // 창 길이가 아니라 순방향비(directness)가 거른다.
   private let crossWindowMs: Double = 2500
-  private let crossMinRangeX: Double = 0.45
+  // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.
+  private let crossMinRangeX: Double = 0.38
   // 0.10→0.08(2026-08-25 실측): 사장님 실사용 거리에서 손이 0.095로 찍혀 0.005 차이로 컷됐다
   // ("계속 안 됐어" 구간, diag 22:18:22). 0.08은 감지기 자체 하한(minHandSize)과 같아 사실상
   // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
@@ -713,11 +714,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // (22:20:06 cross_skip 직후 glide 발화 실측). 왼쪽으로 확실히 이동 중(700ms 순이동 ≤ -0.30)이면
       // 속도 축 발화를 막는다 — 왕복 흔들기는 순이동≈0이라 안 걸린다.
       // 부호 실기기 확정(위 크로싱 주석) — 사용자 오→왼 = 이미지 x **증가**. 그쪽 이동 중이면 속도 축 억제.
+      // 0.30→0.12(2026-08-25 "개판" 라운드 실측) — 빠른 오→왼 휙은 샘플이 성겨 700ms 순이동이 0.30을
+      // 못 채운 채 glide가 먼저 발화했다(38:16 rel=14.8). 문턱을 낮춰 역방향 기미만 있어도 속도 축을 막는다.
+      // 왕복 흔들기는 순이동≈0이라 여전히 안 걸린다.
       var reversePass = false
+      var netDx700 = 0.0
       if let firstX = self.tracks[ti].xHistory.first(where: { nowMs - $0.t <= 700 }),
-         let lastX = self.tracks[ti].xHistory.last,
-         lastX.x - firstX.x >= 0.30 {
-        reversePass = true
+         let lastX = self.tracks[ti].xHistory.last {
+        netDx700 = lastX.x - firstX.x
+        if netDx700 >= 0.12 { reversePass = true }
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
@@ -778,7 +783,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
       if glided && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
-        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
@@ -807,7 +812,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       if self.tracks[ti].sweepStreak >= band.confirm && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
-        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
       if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !reversePass && nowMs - self.lastTriggerMs > self.refractoryMs {
@@ -848,15 +853,18 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         let dipCandidates = dipHistory.filter { nowMs - $0.t >= 80 && nowMs - $0.t <= 800 }
         if let dip = dipCandidates.min(by: { $0.luma < $1.luma }),
            dip.luma <= bright * 0.5, luma >= bright * 0.8 {
-          // 방향 판정 — 좌/우 반쪽이 각각 가장 어두웠던 시각의 선후(상단 주석).
-          let tL = dipCandidates.min(by: { $0.l < $1.l })?.t ?? dip.t
-          let tR = dipCandidates.min(by: { $0.r < $1.r })?.t ?? dip.t
+          // 방향 판정(2026-08-25 사장님 "가까이서 왼→오 안 넘어가는 게 문제") — "가장 어두운 시점"은
+          // 가까우면 양쪽이 동시에 포화돼 항상 모호(dtLR=0)했다. **어두워지기 시작한 시점(onset)**이
+          // 방향을 훨씬 잘 가른다: 손이 먼저 덮는 쪽이 먼저 떨어진다. 부호 실기기 확정 — 사용자
+          // 왼→오 = 이미지 오른쪽 반 onset이 먼저(tR<tL). 우선순위는 왼→오 성공이 1순위이므로
+          // **확실한 오→왼(이미지 왼쪽 onset이 40ms+ 먼저)만 차단**, 모호하면 발화.
+          let onsetTh = bright * 0.55
+          let tL = dipCandidates.first(where: { $0.l <= onsetTh })?.t ?? dip.t
+          let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()
-          // 부호 실기기 확정(크로싱 주석과 동일) — 사용자 왼→오 = 이미지 오른쪽 반이 먼저 어두워짐(tR<tL).
-          // 이미지 왼쪽이 먼저(tL<tR)면 사용자 오→왼 = 무시(채증만).
-          if tR - tL >= 30 {
-            paceGLog("[pace-wave] nearskip 사용자R->L dtRL=%.0f", tR - tL)
-            onDiag(String(format: "nearskip dtRL=%.0f", tR - tL))
+          if tR - tL >= 40 {
+            paceGLog("[pace-wave] nearskip R->L dt=%.0f", tR - tL)
+            onDiag(String(format: "nearskip dt=%+.0f", tL - tR))
           } else {
             pendingOcclusionWork?.cancel()
             pendingOcclusionWork = nil

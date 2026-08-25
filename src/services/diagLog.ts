@@ -18,7 +18,9 @@ export function diagLog(event: string, detail?: string) {
     const f = new File(Paths.document, 'pace_diag.log');
     const line = `${new Date().toISOString()} ${event}${detail ? ' ' + detail : ''}\n`;
     // 상한 초과 시에만 전체를 읽어 반토막 — 평상시엔 append만이라 비용이 거의 없다.
-    if (f.exists && (f.size ?? 0) > MAX_BYTES) {
+    if (!f.exists) {
+      f.create(); // append 모드는 파일이 있어야 한다 — 최초 1회 생성
+    } else if ((f.size ?? 0) > MAX_BYTES) {
       const base = f.textSync();
       f.write(base.slice(Math.floor(base.length / 2)) + line);
       return;

@@ -15,6 +15,9 @@ import android.util.Log
 import android.util.Size
 import java.io.ByteArrayOutputStream
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -930,7 +933,30 @@ object PaceHandWaveDetector {
           //     해상도가 1088이라는 것은 지금까지의 인식률이 **고해상도 기준**이라는 뜻이고, 강제로
           //     낮추면 그 실패를 되살릴 위험이 있다. 비용은 YUV→Bitmap 변환분뿐이고 실측 infer는
           //     1~89ms로 여유가 있다. 바꾸려면 반드시 실기기 인식률(HB의 nohand 비율)로 검증할 것.
-          .setTargetResolution(Size(480, 360))
+          // 🔴 2026-08-26 진단 프레임으로 확인 — **화각이 잘려 있었다.**
+          //   저장된 프레임이 "1088x1088 rot=270", 즉 **정사각형**이다. 센서는 4:3인데 정사각형으로
+          //   크롭돼 나오고 있었다. proxy의 가로가 잘리는데, rot=270이라 그것이 업라이트 화면의
+          //   **위아래**다 — 사장님이 손을 흔드는 쪽(폰 앞/아래)이 정확히 잘려나간 부분이다.
+          //   실측 프레임에는 천장이 대부분이고 사장님 머리는 오른쪽 아래 **구석에 겨우 걸쳐** 있었다.
+          //   손은 프레임 밖이니 어떤 축도 잡을 수 없다. 문턱을 여섯 번 고쳐도 안 되던 이유다.
+          //
+          //   setTargetResolution은 CameraX 1.3+에서 deprecated이고 종횡비를 보장하지 않는 힌트일
+          //   뿐이다. ResolutionSelector로 **4:3을 명시**해 센서 화각을 되찾는다.
+          //   ⚠️ 해상도는 낮추지 않는다 — 이 파일이 "320x240에서 팜 48px, nohand 84.5%"를 기록해 뒀다.
+          //     640x480 이상에서 가장 가까운 것을 고른다(FALLBACK_RULE_CLOSEST_HIGHER).
+          //   ⚠️ setTargetResolution과 setResolutionSelector는 함께 쓸 수 없다(런타임 예외).
+          .setResolutionSelector(
+            ResolutionSelector.Builder()
+              .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+              // 실측 — 640x480을 요청했더니 정확히 그게 잡혀 프레임이 480x640(회전 후)이 됐다.
+              // 종횡비는 고쳐졌지만 픽셀이 1088² 대비 4분의 1로 줄어, 이 파일이 기록한
+              // "해상도가 낮으면 팜 영역이 작아 못 찾는다(320x240 → nohand 84.5%)"에 걸린다.
+              // 1280x960을 요청해 **종횡비(화각)와 해상도를 둘 다** 확보한다.
+              .setResolutionStrategy(
+                ResolutionStrategy(Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER)
+              )
+              .build()
+          )
           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
           .also { builder ->
             // 🔴 2026-08-21 사장님 "손을 크게 흔들면 안 되?????" — 실측으로 확인했고, **맞다.**
@@ -1439,20 +1465,76 @@ object PaceHandWaveDetector {
       Log.w(TAG, "unexpected image format=${proxy.format}")
       return null
     }
-    val yPlane = proxy.planes[0].buffer
-    val uPlane = proxy.planes[1].buffer
-    val vPlane = proxy.planes[2].buffer
-    val ySize = yPlane.remaining()
-    val uSize = uPlane.remaining()
-    val vSize = vPlane.remaining()
-    val nv21 = ByteArray(ySize + uSize + vSize)
-    yPlane.get(nv21, 0, ySize)
-    vPlane.get(nv21, ySize, vSize)
-    uPlane.get(nv21, ySize + vSize, uSize)
+    // 🔴 2026-08-26 실기기 확진 — 이 변환이 **rowStride/pixelStride를 무시하고 있었다.**
+    //   카메라는 행마다 패딩(rowStride > width)을 넣을 수 있는데, 그 패딩을 그대로 픽셀로 취급하면
+    //   행이 조금씩 밀려 이미지가 사선 줄무늬로 깨진다. 그 상태로 MediaPipe에 넣으면 손을 찾을 수 없다.
+    //   폭 1088에서는 stride == width라 우연히 멀쩡했고, 1080으로 바꾸자마자 프레임이 통째로 깨졌다
+    //   (진단 프레임 저장으로 눈으로 확인). 바로 아래 lumaGrid는 stride를 제대로 쓰고 있는데
+    //   여기만 빠져 있었다 — 해상도를 건드리는 순간 터지는 지뢰였다.
+    //   → 행 단위로 stride를 지켜 복사한다. stride == width인 흔한 경우는 기존과 동일한 한 번 복사.
+    val w = proxy.width
+    val h = proxy.height
+    val nv21 = ByteArray(w * h * 3 / 2)
+    var pos = 0
 
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, proxy.width, proxy.height, null)
+    val yP = proxy.planes[0]
+    val yBuf = yP.buffer.duplicate()
+    if (yP.pixelStride == 1 && yP.rowStride == w) {
+      yBuf.position(0)
+      yBuf.get(nv21, 0, w * h)
+      pos = w * h
+    } else {
+      val row = ByteArray(yP.rowStride)
+      for (r in 0 until h) {
+        val off = r * yP.rowStride
+        if (off >= yBuf.limit()) break
+        yBuf.position(off)
+        val len = kotlin.math.min(yP.rowStride, yBuf.remaining())
+        yBuf.get(row, 0, len)
+        if (yP.pixelStride == 1) {
+          System.arraycopy(row, 0, nv21, pos, kotlin.math.min(w, len))
+          pos += w
+        } else {
+          var c = 0
+          while (c < w) { nv21[pos++] = row[c * yP.pixelStride]; c++ }
+        }
+      }
+      pos = w * h
+    }
+
+    // NV21은 Y 뒤에 V,U가 번갈아 온다. 크로마 평면도 stride/pixelStride를 지켜야 한다
+    // (많은 기기가 pixelStride=2로 U와 V를 이미 인터리브해 준다).
+    val uP = proxy.planes[1]
+    val vP = proxy.planes[2]
+    val uBuf = uP.buffer.duplicate()
+    val vBuf = vP.buffer.duplicate()
+    val cw = w / 2
+    val ch = h / 2
+    val uRow = ByteArray(uP.rowStride)
+    val vRow = ByteArray(vP.rowStride)
+    for (r in 0 until ch) {
+      val uOff = r * uP.rowStride
+      val vOff = r * vP.rowStride
+      if (uOff >= uBuf.limit() || vOff >= vBuf.limit()) break
+      uBuf.position(uOff)
+      vBuf.position(vOff)
+      val ul = kotlin.math.min(uP.rowStride, uBuf.remaining())
+      val vl = kotlin.math.min(vP.rowStride, vBuf.remaining())
+      uBuf.get(uRow, 0, ul)
+      vBuf.get(vRow, 0, vl)
+      var c = 0
+      while (c < cw) {
+        val ui = c * uP.pixelStride
+        val vi = c * vP.pixelStride
+        if (vi < vl) nv21[pos++] = vRow[vi] else pos++
+        if (ui < ul) nv21[pos++] = uRow[ui] else pos++
+        c++
+      }
+    }
+
+    val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
     val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, proxy.width, proxy.height), 90, out)
+    yuvImage.compressToJpeg(Rect(0, 0, w, h), 90, out)
     val bytes = out.toByteArray()
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
   }

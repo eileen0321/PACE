@@ -230,5 +230,16 @@ for (dt, x) in [(0.0, 0.60), (400.0, 0.56), (800.0, 0.52), (1200.0, 0.48), (1500
 }
 check("느린 왼쪽 표류(알려진 한계: 1회 발화)", s15.events, fires: 1)
 
+// 16. 두 트랙 교대(23:08 유령 스트로크) — 트랙별 분리 후에는 각 트랙이 정지 상태라 아무 일도 없어야.
+//     (원본이 트랙별 crossHistory로 바뀌었으므로 시뮬에선 트랙=Sim 인스턴스로 모델링)
+var s16a = Sim(), s16b = Sim()
+var t16 = 0.0
+for _ in 0..<15 {
+  s16a.feedHand(t: t16, x: 0.30, size: 0.12); t16 += 50
+  s16b.feedHand(t: t16, x: 0.52, size: 0.13); t16 += 50
+}
+check("두 트랙 교대 무발화(A)", s16a.events, fires: 0, expectAbsent: ["crossskip"])
+check("두 트랙 교대 무발화(B)", s16b.events, fires: 0, expectAbsent: ["crossskip"])
+
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

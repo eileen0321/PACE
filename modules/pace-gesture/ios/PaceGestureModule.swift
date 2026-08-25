@@ -297,6 +297,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var awaitingRearm = false
     var rearmBelowSize: Double = 0
     var rearmAnchorX: Double = 0, rearmAnchorY: Double = 0
+    // 🔴 2026-08-25 23:08 실측(skip 14연발/1.4s) — 크로싱 기록이 전역이라 두 트랙이 번갈아 기록되며
+    // 가짜 ±0.2 스트로크(유령)를 만들었다. 트랙별 분리로 원천 차단.
+    var crossHistory: [(t: Double, x: Double)] = []
+    var crossArmed = true
+    var crossLastX: Double = 0
   }
   private var tracks = [HandTrack(), HandTrack()]
 
@@ -329,12 +334,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
   private let crossMinHandSize: Double = 0.08
   private let crossMinDirectness: Double = 0.6
-  private var crossHistory: [(t: Double, x: Double)] = []
-  // 스트로크당 1발화(시뮬 s4가 잡은 이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화
-  // 금지, 손이 사라지거나(400ms 공백) 방향이 되돌아오면 재무장.
-  private var crossArmed = true
-  private var crossLastSampleT: Double = 0
-  private var crossLastSampleX: Double = 0
+  // (크로싱 기록/재무장은 HandTrack 안으로 이동 — 트랙별 분리, 유령 스트로크 차단)
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
@@ -738,20 +738,19 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // 재무장 판정(스트로크당 1발화): **오른쪽 복귀(+0.02)만** — 시간 공백 기준은 느린/성긴 추적의
         // 스트로크 중간 공백(500ms+)에 오발동해 이중발화를 되살렸다(시뮬 s4가 잡음). 다음 스트로크는
         // 오른쪽에서 다시 시작하므로 그 진입 샘플이 재무장시킨다.
-        if !self.crossArmed, c.x - self.crossLastSampleX >= 0.02 {
-          self.crossArmed = true
+        if !self.tracks[ti].crossArmed, c.x - self.tracks[ti].crossLastX >= 0.02 {
+          self.tracks[ti].crossArmed = true
         }
-        self.crossLastSampleT = nowMs
-        self.crossLastSampleX = c.x
-        self.crossHistory.append((nowMs, c.x))
-        while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
-        if self.crossHistory.count >= 2 {
+        self.tracks[ti].crossLastX = c.x
+        self.tracks[ti].crossHistory.append((nowMs, c.x))
+        while let f = self.tracks[ti].crossHistory.first, nowMs - f.t > self.crossWindowMs { self.tracks[ti].crossHistory.removeFirst() }
+        if self.tracks[ti].crossHistory.count >= 2 {
           // 🔴 2026-08-25 22:52 확진(hand=15·sweep=3.63인데 발화 0) — 2.5s 창 **전체** 순이동은 연속
           // 시도에 오염된다: 스침→복귀→스침이 서로 상쇄돼 net≈0, 패스 사이 점프가 path만 키워
           // directness도 죽는다. → **마지막 단조 구간**(끝에서부터 같은 방향으로 이어진 스트로크)만
           // 평가한다. 단조 구간은 왕복·연속 시도와 무관하고, 방향은 구간 부호가 곧 방향이다.
           // 부호 실기기 확정: 사용자 왼→오 = 이미지 x 감소(음수).
-          let xs = self.crossHistory
+          let xs = self.tracks[ti].crossHistory
           var segStart = xs.count - 1
           var dirSign = 0.0
           var i = xs.count - 1
@@ -768,8 +767,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           // 사장님 실제 동작은 손목 플릭. 고정 화면비 기준은 중간 거리에서 원리적으로 미달한다.
           // 기준을 손 크기 비례(자기 손폭 0.85배 이동, 최소 0.12)로 — 거리 무관 동일 판정.
           let needRange = max(0.12, handSize * 0.85)
-          if abs(segNet) >= needRange, self.crossArmed || segNet > 0 {
-            self.crossHistory.removeAll()
+          if abs(segNet) >= needRange, self.tracks[ti].crossArmed || segNet > 0 {
+            self.tracks[ti].crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
             // 불응 중 스트로크는 여기서 소비-폐기한다. 1.2s당 1회 상한은 유지, 타이밍 착시 제거.
@@ -779,7 +778,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               return glideAbs
             }
             if segNet < 0 {
-              self.crossArmed = false // 스트로크당 1발화 — 재무장은 공백/역방향에서
+              self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 오른쪽 복귀에서
               self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }

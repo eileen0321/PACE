@@ -314,7 +314,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 창 길이가 아니라 순방향비(directness)가 거른다.
   private let crossWindowMs: Double = 2500
   private let crossMinRangeX: Double = 0.45
-  private let crossMinHandSize: Double = 0.10
+  // 0.10→0.08(2026-08-25 실측): 사장님 실사용 거리에서 손이 0.095로 찍혀 0.005 차이로 컷됐다
+  // ("계속 안 됐어" 구간, diag 22:18:22). 0.08은 감지기 자체 하한(minHandSize)과 같아 사실상
+  // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
+  private let crossMinHandSize: Double = 0.08
   private let crossMinDirectness: Double = 0.6
   private var crossHistory: [(t: Double, x: Double)] = []
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.

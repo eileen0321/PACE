@@ -578,8 +578,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard let lm = landmarker else { return }
     // occlusion 안전망 — Y(루마) 평면 평균 밝기(전부 camera queue라 상태 접근 안전)
     if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
-      let luma = avgLuma(pb)
-      if luma >= 0 { checkOcclusion(luma, nowMs) }
+      let halves = avgLumaHalves(pb)
+      if halves.l >= 0, halves.r >= 0 { checkOcclusion((halves.l + halves.r) / 2, halves.l, halves.r, nowMs) }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
     }
     // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
@@ -708,6 +708,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         }
       }
       let glideRel = handSize > 0 ? glideAbs / handSize : 0
+      // 2026-08-25 방향 일관성(사장님 "반대 방향은 또 되고 — 방향 정한 거 아냐?") — 크로싱만 방향을
+      // 알고 속도 축(glide/sweep/growth)은 방향 무관이라, 오→왼 스침을 속도 축이 대신 잡아버렸다
+      // (22:20:06 cross_skip 직후 glide 발화 실측). 왼쪽으로 확실히 이동 중(700ms 순이동 ≤ -0.30)이면
+      // 속도 축 발화를 막는다 — 왕복 흔들기는 순이동≈0이라 안 걸린다.
+      var leftwardPass = false
+      if let firstX = self.tracks[ti].xHistory.first(where: { nowMs - $0.t <= 700 }),
+         let lastX = self.tracks[ti].xHistory.last,
+         lastX.x - firstX.x <= -0.30 {
+        leftwardPass = true
+      }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
         self.crossHistory.append((nowMs, c.x))
@@ -763,7 +773,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       let glideOverwhelming = glidedNow &&
         glideAbs > absTh * self.glideInstantMargin && glideRel > relTh * self.glideInstantMargin
       let glided = self.tracks[ti].glideStreak >= band.confirm || glideOverwhelming
-      if glided && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if glided && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
         self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
@@ -792,12 +802,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f", ti, sweep, reversals, c.y, handSize, handScore), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !leftwardPass && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
@@ -818,13 +828,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 지속 가림(0.9s+)은 기존 occlusion/볼륨 프로토콜 경로 그대로, 짧은 dip(80~800ms)+회복(80%)만
   // "근접 스침"으로 즉시 발화. 깊이 50%+회복 요구로 램프 점멸/그림자 오탐을 줄인다. 크기·사람 무관.
   // ⚠️ 기존 lumaHistory(400ms, 안드 파리티)는 안 건드리고 dip 전용 기록을 따로 쓴다.
+  // 좌/우 반쪽 루마(2026-08-25 사장님 "반대 방향은 또 되고 — 방향 정한 거 아냐?") — dip에도 방향을 준다:
+  // 왼쪽 반이 먼저 어두워지면 왼→오(발화), 오른쪽이 먼저면 오→왼(무시). 30ms 이내 동시는 모호 → 발화(관대).
   private let dipWindowMs: Double = 1200
-  private var dipHistory: [(t: Double, luma: Double)] = []
-  private func checkOcclusion(_ luma: Double, _ nowMs: Double) {
+  private var dipHistory: [(t: Double, luma: Double, l: Double, r: Double)] = []
+  private func checkOcclusion(_ luma: Double, _ lumaL: Double, _ lumaR: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
     // 근접 스침(dip) — 상단 dipWindowMs 주석 참고.
-    dipHistory.append((nowMs, luma))
+    dipHistory.append((nowMs, luma, lumaL, lumaR))
     while let f = dipHistory.first, nowMs - f.t > dipWindowMs { dipHistory.removeFirst() }
     if nowMs - lastTriggerMs > refractoryMs, dipHistory.count >= 5,
        let first = dipHistory.first, nowMs - first.t >= 600 {
@@ -833,11 +845,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         let dipCandidates = dipHistory.filter { nowMs - $0.t >= 80 && nowMs - $0.t <= 800 }
         if let dip = dipCandidates.min(by: { $0.luma < $1.luma }),
            dip.luma <= bright * 0.5, luma >= bright * 0.8 {
-          pendingOcclusionWork?.cancel()
-          pendingOcclusionWork = nil
+          // 방향 판정 — 좌/우 반쪽이 각각 가장 어두웠던 시각의 선후(상단 주석).
+          let tL = dipCandidates.min(by: { $0.l < $1.l })?.t ?? dip.t
+          let tR = dipCandidates.min(by: { $0.r < $1.r })?.t ?? dip.t
           dipHistory.removeAll()
-          fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f", dip.luma, bright), nowMs)
-          return
+          if tL - tR >= 30 {
+            // 오른쪽이 먼저 어두워짐 = 오→왼 — 무시(채증만).
+            paceGLog("[pace-wave] nearskip R->L dtLR=%.0f", tL - tR)
+            onDiag(String(format: "nearskip dtLR=%.0f", tL - tR))
+          } else {
+            pendingOcclusionWork?.cancel()
+            pendingOcclusionWork = nil
+            fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+            return
+          }
         }
       }
     }
@@ -914,34 +935,42 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     DispatchQueue.main.async { self.onWave() }
   }
 
-  // Y(루마) 평면 평균 밝기(0~255) — occlusion 판정용(ML 안 거치고 싸게 계산). 2026-07-28 리서치(#1) —
+  // Y(루마) 평면 평균 밝기(0~255) — occlusion/dip 판정용(ML 안 거치고 싸게 계산). 2026-07-28 리서치(#1) —
   // 420f YUV의 plane 0이 곧 루마라 바이트 평균만 하면 된다(예전 BGRA 가중합보다 싸고 정확). BGRA 폴백도 유지.
-  private func avgLuma(_ pb: CVPixelBuffer) -> Double {
+  // 2026-08-25 — 좌/우 반쪽을 따로 평균한다(dip 방향 판정, checkOcclusion 주석). 버퍼는 connection에서
+  // 세로+미러 고정이라(setupCamera) 버퍼 x축 = 화면 x축 = 랜드마크 x축.
+  private func avgLumaHalves(_ pb: CVPixelBuffer) -> (l: Double, r: Double) {
     CVPixelBufferLockBaseAddress(pb, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
     let fmt = CVPixelBufferGetPixelFormatType(pb)
     let isYUV = (fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || fmt == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     if isYUV && CVPixelBufferGetPlaneCount(pb) > 0 {
-      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return -1 }
+      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return (-1, -1) }
       let w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0)
       let bpr = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
       let ptr = base.assumingMemoryBound(to: UInt8.self)
-      var sum = 0, cnt = 0
+      var sumL = 0, cntL = 0, sumR = 0, cntR = 0
+      let half = w / 2
       let sx = max(1, w / 24), sy = max(1, h / 24)
       var y = 0
       while y < h {
         var x = 0
-        while x < w { sum += Int(ptr[y * bpr + x]); cnt += 1; x += sx }
+        while x < w {
+          let v = Int(ptr[y * bpr + x])
+          if x < half { sumL += v; cntL += 1 } else { sumR += v; cntR += 1 }
+          x += sx
+        }
         y += sy
       }
-      return cnt > 0 ? Double(sum) / Double(cnt) : -1
+      return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
     }
     // BGRA 폴백(포맷이 YUV가 아닐 때)
-    guard let base = CVPixelBufferGetBaseAddress(pb) else { return -1 }
+    guard let base = CVPixelBufferGetBaseAddress(pb) else { return (-1, -1) }
     let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
     let bpr = CVPixelBufferGetBytesPerRow(pb)
     let ptr = base.assumingMemoryBound(to: UInt8.self)
-    var sum = 0, cnt = 0
+    var sumL = 0, cntL = 0, sumR = 0, cntR = 0
+    let half = w / 2
     let sx = max(1, w / 24), sy = max(1, h / 24)
     var y = 0
     while y < h {
@@ -949,11 +978,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       while x < w {
         let o = y * bpr + x * 4
         let b = Int(ptr[o]), g = Int(ptr[o + 1]), r = Int(ptr[o + 2])
-        sum += (r * 299 + g * 587 + b * 114) / 1000; cnt += 1
+        let v = (r * 299 + g * 587 + b * 114) / 1000
+        if x < half { sumL += v; cntL += 1 } else { sumR += v; cntR += 1 }
         x += sx
       }
       y += sy
     }
-    return cnt > 0 ? Double(sum) / Double(cnt) : -1
+    return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
   }
 }

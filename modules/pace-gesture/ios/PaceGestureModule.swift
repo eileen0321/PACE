@@ -308,7 +308,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   순방향 비율(net/path ≥ 0.6): 왼손·오른손이 번갈아 잡혀 가짜 가로지름(L,R,L,R)이 되는 것 차단 —
   //   진짜 스침은 한 방향 이동이라 net≈path다.
   //   ⚠️ iOS 선행 구현(사장님 실기기 검증용) — 사양 확정되면 안드 동일 이식(PM MD 기록).
-  private let crossWindowMs: Double = 1000
+  // 창 2500ms(2026-08-25 사장님 "천천히 젓는 사람, 빨리 젓는 사람 다 다를 거 아냐 — 그래도 지나갔으면
+  // 넘어가야") — 크로싱은 **속도 무관**이 원칙이다. 1초 창은 느린 스침(2초짜리 통과)을 놓쳤다.
+  // 빠른 스침은 짧은 창에서도 성립하므로 창 확대는 느린 쪽만 살리고, 가짜 가로지름(양손 교차)은
+  // 창 길이가 아니라 순방향비(directness)가 거른다.
+  private let crossWindowMs: Double = 2500
   private let crossMinRangeX: Double = 0.45
   private let crossMinHandSize: Double = 0.10
   private let crossMinDirectness: Double = 0.6

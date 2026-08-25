@@ -328,13 +328,31 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // ("계속 안 됐어" 구간, diag 22:18:22). 0.08은 감지기 자체 하한(minHandSize)과 같아 사실상
   // "감지되는 손은 모두 허용"이지만, 배경 타인(2m+, ~0.03)은 애초에 감지 하한 미달이라 차단 유지.
   private let crossMinHandSize: Double = 0.08
-  private let crossMinDirectness: Double = 0.6
+  // (crossMinDirectness는 "마지막 단조 구간"만 평가하는 방식으로 대체돼 어디서도 쓰이지 않았다.
+  //  남겨두면 방향 일관성 게이트가 있는 것처럼 오독된다. 흔들림 방어는 단조 구간 + needRange + segSteps.)
   private var crossHistory: [(t: Double, x: Double)] = []
-  // 스트로크당 1발화(시뮬 s4가 잡은 이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화
-  // 금지, 손이 사라지거나(400ms 공백) 방향이 되돌아오면 재무장.
+  // 스트로크당 1발화(이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화 금지.
   private var crossArmed = true
   private var crossLastSampleT: Double = 0
   private var crossLastSampleX: Double = 0
+  // 🔴 2026-08-25 사장님("맥이 만든 건 가까운 손 중간 손 다 인식 안 돼") 원인 두 번째 —
+  // 재무장 기준이 **직전 프레임 대비 +0.02**였다. 그러면 크로싱은 한 번 발화한 뒤 영구히 죽는다.
+  // 죽는 경로는 **손을 든 채 되돌릴 때**다(시뮬 N3로 재현). 프레임당 증가분이 0.02를 못 넘으면
+  // 재무장 조건을 영영 못 만난다. 추적이 촘촘할수록 프레임당 증가분이 작아지므로 **기기가 좋을수록
+  // 더 잘 죽는** 고약한 형태다. 게다가 되돌리는 동안 증가 스트로크가 crossskip으로 소비되며
+  // crossHistory를 계속 비워, 정작 다음 진짜 스트로크가 쌓일 틈도 뺏는다.
+  // (손을 완전히 내렸다 올리는 경우는 재진입 x 점프가 커서 구 로직도 재무장됐다 — 그쪽은 무고했다.)
+  // → 기준을 **발화 지점 기준 누적 복귀**로 바꾼다. 스트로크 진행 중에는 x가 계속 감소해 누적값이
+  //   음수이므로, 시간 공백 기준에서 났던 스트로크 중간 재무장(=이중발화)은 원리적으로 없다.
+  //   손 소실은 별도 경로로 — 아예 안 보였으면 그 스트로크는 끝난 것이다.
+  private var crossFireX: Double = 0
+  private let crossRearmReturnX: Double = 0.08
+  private let crossRearmAbsentMs: Double = 600
+  private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
+  private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
+  private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
+  private let crossMinSegSpeed: Double = 0.20   // 화면폭/초 — 표류 차단(아래 needRange 주석)
+  private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
@@ -735,11 +753,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
-        // 재무장 판정(스트로크당 1발화): **오른쪽 복귀(+0.02)만** — 시간 공백 기준은 느린/성긴 추적의
-        // 스트로크 중간 공백(500ms+)에 오발동해 이중발화를 되살렸다(시뮬 s4가 잡음). 다음 스트로크는
-        // 오른쪽에서 다시 시작하므로 그 진입 샘플이 재무장시킨다.
-        if !self.crossArmed, c.x - self.crossLastSampleX >= 0.02 {
-          self.crossArmed = true
+        // 재무장 판정(스트로크당 1발화) — 위 crossFireX 주석의 두 경로. 둘 다 "스트로크가 끝났다"는
+        // 증거이고, 스트로크 진행 중에는 어느 쪽도 성립하지 않는다(x 감소 중 + 손 계속 보임).
+        if !self.crossArmed {
+          let returned = c.x - self.crossFireX >= self.crossRearmReturnX
+          let reappeared = nowMs - self.crossLastSampleT >= self.crossRearmAbsentMs
+          if returned || reappeared {
+            self.crossArmed = true
+            paceGLog("[pace-wave] crossrearm by=%@ x=%.2f fireX=%.2f gap=%.0fms",
+                     returned ? "return" : "reappear", c.x, self.crossFireX, nowMs - self.crossLastSampleT)
+          }
         }
         self.crossLastSampleT = nowMs
         self.crossLastSampleX = c.x
@@ -764,11 +787,39 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             segStart = i
           }
           let segNet = xs.last!.x - xs[segStart].x
+          let segSteps = xs.count - 1 - segStart
+          let segMs = xs.last!.t - xs[segStart].t
           // 🔴 2026-08-25 23:02 실측(hand 49/61 추적인데 발화 0 — 이동폭 화면 12% vs 기준 38%) —
           // 사장님 실제 동작은 손목 플릭. 고정 화면비 기준은 중간 거리에서 원리적으로 미달한다.
-          // 기준을 손 크기 비례(자기 손폭 0.85배 이동, 최소 0.12)로 — 거리 무관 동일 판정.
-          let needRange = max(0.12, handSize * 0.85)
-          if abs(segNet) >= needRange, self.crossArmed || segNet > 0 {
+          //
+          // 🔴 그 뒤 max(0.12, handSize*0.85)로 고쳤더니 사장님: "가까운 손 중간 손 다 인식 안 돼".
+          // 계산이 그대로 맞는다 — 같은 실측(이동폭 0.12) 대비:
+          //     가까운 손 handSize 0.25  → 0.21 요구 = 실측의 **두 배**, 구조적으로 영영 미달
+          //     중간   손 handSize 0.135 → 0.12 요구 = 실측과 **동률**, 사실상 미달
+          // 상향 비례가 물리와 반대다: 가까울수록 손이 프레임을 크게 채워 **더 빨리 프레임 밖으로
+          // 나가므로 관측 가능한 이동폭은 오히려 줄어드는데**, 문턱만 올라간다.
+          //
+          // 다만 비례 자체를 버리면 안 된다 — 제자리 흔들림을 거르는 근거가 바로 비례이기 때문이다.
+          // 흔들림은 자기 손폭의 몇 분의 일을 오갈 뿐이고, 통과는 손폭의 몇 배를 지나간다.
+          // → 두 힘이 싸우므로 **비례 하한 + 절대 상한**으로 묶는다. 상한이 있어야 근거리가
+          //   원리적으로 불가능해지지 않고, 비례가 있어야 잔떨림이 안 뚫린다.
+          //   중간(0.135)→0.07 = 실측 0.12 대비 1.7배 여유, 가까움(0.20 이상)→0.10 고정.
+          let needRange = min(self.crossNeedMax, max(self.crossNeedMin, handSize * self.crossNeedK))
+          // 흔들림 방어 둘째 겹 — 통과는 여러 프레임에 걸쳐 찍힌다. 단 한 스텝짜리 점프는 추적
+          // 노이즈일 확률이 높다. 성긴 추적에서 빠른 플릭이 2점만 남는 경우가 있어 막지는 않되,
+          // 그때는 이동폭을 두 배 요구해 노이즈와 구별한다.
+          let rangeOk = segSteps >= 2 ? abs(segNet) >= needRange : abs(segNet) >= needRange * 2
+          // 사장님 "가만히 있으면서 흔들리는 건 안 넘어가게" — 이동폭만으로는 **느린 표류**를 못 거른다
+          // (구 시뮬 s15가 "알려진 한계: 1회 발화"로 기록해 둔 그것). 표류와 통과를 실제로 가르는 건
+          // 이동폭이 아니라 **속도**다. 합성 시나리오 실측:
+          //     느린 표류 0.16/1.5s = 0.11/초   ← 막아야 함
+          //     느린 통과 0.57/2.0s = 0.29/초   ← 살려야 함
+          //     손목 플릭 0.13/0.3s = 0.43/초
+          // 0.20/초를 가른다. 단, 추적이 성겨 구간 시간이 부풀면 속도가 과소평가되므로, 이동폭이
+          // 충분히 크면(0.30) 속도 무관하게 통과시킨다 — 그 크기는 표류로 설명되지 않는다.
+          let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
+          let speedOk = segSpeed >= self.crossMinSegSpeed || abs(segNet) >= self.crossBigNetX
+          if rangeOk, speedOk, self.crossArmed || segNet > 0 {
             self.crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
@@ -779,13 +830,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               return glideAbs
             }
             if segNet < 0 {
-              self.crossArmed = false // 스트로크당 1발화 — 재무장은 공백/역방향에서
-              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
+              self.crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
+              self.crossFireX = c.x
+              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }
             // 반대 방향(사용자 오→왼) — 무시하되 채증. 차단 직후 잔움직임 누수 방지 잠금(22:42 실측).
             self.speedSuppressUntilMs = nowMs + 800
-            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f", segNet, handSize)
+            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f need=%.2f steps=%d spd=%.2f", segNet, handSize, needRange, segSteps, segSpeed)
             self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", segNet, handSize))
           }
         }

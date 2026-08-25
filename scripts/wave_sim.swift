@@ -3,10 +3,16 @@
 // ⚠️ 원본과 로직이 갈라지면 무의미 — 원본 수정 시 이 파일도 같이 수정할 것.
 import Foundation
 
-// ── 원본 상수(2026-08-25 23:10 기준) ──
+// ── 원본 상수(2026-08-25 안드 세션 수정 반영) ──
 let passRefractoryMs = 500.0
 let crossWindowMs = 2500.0
-let crossMinRangeX = 0.38
+let crossNeedMin = 0.07
+let crossNeedMax = 0.10
+let crossNeedK = 0.5
+let crossMinSegSpeed = 0.20
+let crossBigNetX = 0.30
+let crossRearmReturnX = 0.08
+let crossRearmAbsentMs = 600.0
 let crossMinHandSize = 0.08
 let dipWindowMs = 1200.0
 
@@ -15,6 +21,7 @@ struct Sim {
   var crossArmed = true
   var crossLastSampleT = 0.0
   var crossLastSampleX = 0.0
+  var crossFireX = 0.0
   var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
   var brightRefAll = 0.0, brightRefL = 0.0, brightRefM = 0.0, brightRefR = 0.0
   var lastTriggerMs = -10000.0
@@ -23,7 +30,9 @@ struct Sim {
   // 크로싱 판정 — processTrack의 해당 블록 미러
   mutating func feedHand(t: Double, x: Double, size: Double) {
     guard size >= crossMinHandSize else { return }
-    if !crossArmed, x - crossLastSampleX >= 0.02 { crossArmed = true }
+    if !crossArmed, (x - crossFireX >= crossRearmReturnX) || (t - crossLastSampleT >= crossRearmAbsentMs) {
+      crossArmed = true
+    }
     crossLastSampleT = t
     crossLastSampleX = x
     crossHistory.append((t, x))
@@ -42,11 +51,16 @@ struct Sim {
       segStart = i
     }
     let segNet = xs.last!.x - xs[segStart].x
-    let needRange = max(0.12, size * 0.85)
-    if abs(segNet) >= needRange, crossArmed || segNet > 0 {
+    let segSteps = xs.count - 1 - segStart
+    let segMs = xs.last!.t - xs[segStart].t
+    let needRange = min(crossNeedMax, max(crossNeedMin, size * crossNeedK))
+    let rangeOk = segSteps >= 2 ? abs(segNet) >= needRange : abs(segNet) >= needRange * 2
+    let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
+    let speedOk = segSpeed >= crossMinSegSpeed || abs(segNet) >= crossBigNetX
+    if rangeOk, speedOk, crossArmed || segNet > 0 {
       crossHistory.removeAll()
       if t - lastTriggerMs <= passRefractoryMs { events.append("crossdrop"); return }
-      if segNet < 0 { crossArmed = false; lastTriggerMs = t; events.append("FIRE cross") }
+      if segNet < 0 { crossArmed = false; crossFireX = x; lastTriggerMs = t; events.append("FIRE cross") }
       else { events.append("crossskip") }
     }
   }
@@ -222,13 +236,72 @@ s14.feedHand(t: 0, x: 0.75, size: 0.24)
 s14.feedHand(t: 200, x: 0.45, size: 0.24)
 check("가까운 플릭", s14.events, fires: 1)
 
-// 15. 왼쪽 표류(정지 시청 중 손이 천천히 왼쪽으로 이동, 1.5s에 0.15) — size 0.13 기준 0.12 초과되므로
-//     위험 케이스: 스트로크당 1발화 재무장과 무관하게 1회는 발화한다 — 현 사양의 알려진 한계로 기록.
+// 15. 왼쪽 표류(정지 시청 중 손이 천천히 왼쪽으로 이동, 1.5s에 0.15) = 0.11/초.
+//     이전엔 "알려진 한계: 1회 발화"로 적어뒀지만 그건 한계가 아니라 결함이었다 —
+//     속도 게이트(0.20/초)로 차단된다. 무발화가 정답.
 var s15 = Sim()
 for (dt, x) in [(0.0, 0.60), (400.0, 0.56), (800.0, 0.52), (1200.0, 0.48), (1500.0, 0.44)] {
   s15.feedHand(t: dt, x: x, size: 0.13)
 }
-check("느린 왼쪽 표류(알려진 한계: 1회 발화)", s15.events, fires: 1)
+check("느린 왼쪽 표류 차단", s15.events, fires: 0)
+
+// ── 16~22 (2026-08-25 안드 세션 추가): 사장님 "가까운 손 중간 손 다 인식 안 돼"를 재현·고정 ──
+// ⚠️ 기존 14번("가까운 플릭")은 이동폭을 0.30으로 잡아 **문턱에 맞춰 쓴** 시나리오였다. 그래서
+//    실기기가 전멸하는 동안에도 이 시뮬은 초록이었다. 시나리오는 문턱이 아니라 실측에서 나와야 한다.
+//    아래 16·17은 사장님 실측 이동폭(0.12~0.13)을 쓴다.
+
+// 16. 가까운 손(0.25) 실측 이동 0.13 — 구 문턱이 0.21을 요구해 원리적으로 미달이던 케이스
+var s16 = Sim()
+s16.feedHand(t: 0, x: 0.60, size: 0.25)
+s16.feedHand(t: 120, x: 0.54, size: 0.25)
+s16.feedHand(t: 240, x: 0.47, size: 0.25)
+check("가까운 손 실측 이동0.13", s16.events, fires: 1)
+
+// 17. 중간 손(0.135) 실측 이동 0.12 — 구 문턱 0.12와 동률이라 사실상 미달이던 케이스
+var s17 = Sim()
+s17.feedHand(t: 0, x: 0.58, size: 0.135)
+s17.feedHand(t: 120, x: 0.52, size: 0.135)
+s17.feedHand(t: 250, x: 0.46, size: 0.135)
+check("중간 손 실측 이동0.12", s17.events, fires: 1)
+
+// 18. 재무장 데드락: 긋고 → **손을 든 채 천천히** 되돌리고(프레임당 +0.015) → 다시 긋기.
+//     구 재무장(직전 프레임 대비 +0.02)은 여기서 영영 안 풀려 크로싱이 세션 내내 죽었다.
+var s18 = Sim()
+s18.feedHand(t: 0, x: 0.80, size: 0.15)
+s18.feedHand(t: 200, x: 0.30, size: 0.15)
+var t18 = 400.0, x18 = 0.30
+for _ in 0..<30 { x18 += 0.015; s18.feedHand(t: t18, x: x18, size: 0.15); t18 += 60 }
+s18.feedHand(t: t18, x: 0.75, size: 0.15); t18 += 150
+s18.feedHand(t: t18, x: 0.25, size: 0.15)
+check("느린 복귀 후 재발화(데드락)", s18.events, fires: 2)
+
+// 19. 손을 완전히 내렸다가(900ms 공백) 다시 올려 긋기 — 소실 경로 재무장
+var s19 = Sim()
+s19.feedHand(t: 0, x: 0.80, size: 0.15)
+s19.feedHand(t: 200, x: 0.30, size: 0.15)
+s19.feedHand(t: 1100, x: 0.78, size: 0.15)
+s19.feedHand(t: 1300, x: 0.28, size: 0.15)
+check("손 내렸다 다시 긋기", s19.events, fires: 2)
+
+// 20. 제자리 흔들림(진폭 0.09, 손폭 0.13) — 사장님 "가만히 있으면서 흔들리는 건 안 넘어가게"
+var s20 = Sim()
+var t20 = 0.0
+for k in 0..<10 { s20.feedHand(t: t20, x: k % 2 == 0 ? 0.53 : 0.44, size: 0.13); t20 += 180 }
+check("제자리 흔들림 무발화", s20.events, fires: 0)
+
+// 21. 아주 느린 진짜 통과(0.45를 2.5초) — 속도 0.18/초로 게이트 미달이나 이동폭 0.30 이상이라 통과
+var s21 = Sim()
+for (dt, x) in [(0.0, 0.85), (600.0, 0.76), (1200.0, 0.66), (1800.0, 0.55), (2500.0, 0.40)] {
+  s21.feedHand(t: dt, x: x, size: 0.15)
+}
+check("아주 느린 큰 통과", s21.events, fires: 1)
+
+// 22. 턱 괸 손 미세 표류(1.2초에 0.06) — 무발화
+var s22 = Sim()
+for (dt, x) in [(0.0, 0.50), (300.0, 0.485), (600.0, 0.47), (900.0, 0.455), (1200.0, 0.44)] {
+  s22.feedHand(t: dt, x: x, size: 0.13)
+}
+check("턱 괸 손 미세 표류 무발화", s22.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

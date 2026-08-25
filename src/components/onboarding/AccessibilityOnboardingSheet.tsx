@@ -27,9 +27,17 @@ export function AccessibilityOnboardingSheet({ visible, onEnable, onDismiss }: {
 }) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
+  // 🔴 2026-08-20 Play 정책 반려(2차) — "명시적 공개 규정을 준수하지 않은 설계: 공개 대화상자에서
+  //   나가는 행위를 동의로 해석해서는 안 된다".
+  //   호출부는 onDismiss에서 권한을 요청하지 않으므로 "나감=동의"로 처리하지는 않았지만, 정책은
+  //   **나갈 수 있는 경로 자체를 허용하지 않는다.** 고지는 두 버튼(수락/거부) 중 하나를 반드시
+  //   고르게 해야 한다 — 뒤로가기·바깥 탭으로 빠져나가면 사용자가 고지를 읽고 판단했다는 근거가
+  //   남지 않기 때문이다.
+  //   → onRequestClose를 no-op으로 두어 뒤로가기를 무시하고, 배경은 탭을 받지 않는 View로 바꾼다.
+  //     닫는 길은 아래 "권한 켜기" / "나중에" 두 버튼뿐이다.
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onDismiss} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={() => {}} statusBarTranslucent navigationBarTranslucent>
+      <View style={styles.backdrop} />
       <View style={[styles.sheet, { paddingBottom: bottomSheetPadding(insets.bottom) }]}>
         <View style={styles.handle} />
         <View style={styles.iconWrap}>

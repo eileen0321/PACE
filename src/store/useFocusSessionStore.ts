@@ -22,7 +22,18 @@ import { focusAllowanceApi } from '../services/api/client';
 // 재설치 직후 서버 판단을 기다리는 최대 시간 — 위 load() 주석 참고(오프라인 fail-open).
 const FRESH_INSTALL_MERGE_TIMEOUT_MS = 3000;
 
-type PersistedFocusSession = { endsAt: number | null; timedOut: boolean };
+// 🔴 2026-08-20 사장님 제보(iOS) — "며칠 쇼츠도 안 봤는데 포커스 ON 누르니 다 소진했다고
+//   광고 보란 팝업이 뜬다". 저장값에 **날짜가 없던 것**이 원인이다.
+//   한 번 timedOut=true가 되면 자정이 지나도 안 풀리고, 아래 mergeServer가 서버값과 OR로
+//   합치므로(`state.timedOut || server.timedOut`) 서버가 오늘은 false라고 해도 로컬의 true가
+//   이긴다. 결과적으로 **한 번 만료되면 영원히 광고를 봐야 한다** — 오랜만에 앱을 연 사용자가
+//   첫 화면에서 광고를 요구받는, 이탈로 직결되는 경로였다.
+//   ⚠️ 내가 2026-08-13에 이 코드를 보고 "서버가 OR로 병합하니 게이트가 유지된다"며 정상으로
+//     판단하고 넘어갔다. 남용 차단 쪽만 보고 "안 쓴 사용자가 영구히 막힌다"는 반대편을 안 봤다.
+//   → 저장값에 날짜를 넣고, 날짜가 다르면 버린다. 서버가 이미 allowance_date로 날짜별 관리를
+//     하므로 그쪽 규칙에 맞추는 것이다. 같은 날 안에서는 예전과 완전히 동일하게 동작하므로
+//     남용 차단(하루 광고 3회 상한, timedOut 게이트)은 그대로다.
+type PersistedFocusSession = { date: string; endsAt: number | null; timedOut: boolean };
 
 type FocusSessionState = PersistedFocusSession & {
   /** load()가 끝났는지 — 끝나기 전에 화면이 세션 상태를 판단하면 "없음"으로 오인한다. */
@@ -93,8 +104,8 @@ async function mergeServer(): Promise<void> {
     //   예전엔 무조건 endsAt=null로 밀어서 연장이 통째로 사라질 수 있었다.
     if (endsAt != null && endsAt > Date.now()) timedOut = false;
     if (timedOut !== state.timedOut || endsAt !== state.endsAt) {
-      useFocusSessionStore.setState({ endsAt, timedOut });
-      AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify({ endsAt, timedOut })).catch(() => {});
+      useFocusSessionStore.setState({ date: todayKey(), endsAt, timedOut });
+      AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify({ date: todayKey(), endsAt, timedOut })).catch(() => {});
     }
   } catch {
     // 오프라인/미인증 — 로컬 값으로 계속 간다.
@@ -102,6 +113,7 @@ async function mergeServer(): Promise<void> {
 }
 
 export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
+  date: todayKey(),
   endsAt: null,
   timedOut: false,
   hydrated: false,
@@ -111,16 +123,25 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.focusSession);
       if (raw) {
         const saved = JSON.parse(raw) as Partial<PersistedFocusSession>;
+        // 🔴 2026-08-20 — 저장된 날짜가 오늘이 아니면 통째로 버린다(위 타입 주석 참고).
+        //   날짜가 없는 구버전 저장값도 여기서 함께 걸러진다 — 그 값들이 정확히 이 버그의
+        //   피해자이므로(영구 timedOut) 새 날짜로 초기화하는 것이 맞다.
+        if (saved.date !== todayKey()) {
+          set({ date: todayKey(), endsAt: null, timedOut: false, hydrated: true });
+          persist({ date: todayKey(), endsAt: null, timedOut: false });
+          await mergeServer();
+          return;
+        }
         const endsAt = typeof saved.endsAt === 'number' ? saved.endsAt : null;
         const timedOut = saved.timedOut === true;
         // 앱이 꺼져 있는 동안 마감시각이 지났으면, 그건 "시간이 다 된" 것이다 — 되살릴 세션은
         // 없지만 timedOut은 세워야 한다. 안 그러면 앱을 껐다 켜는 것만으로 광고 게이트를 피할 수 있다.
         if (endsAt != null && endsAt <= Date.now()) {
-          set({ endsAt: null, timedOut: true, hydrated: true });
-          persist({ endsAt: null, timedOut: true });
+          set({ date: todayKey(), endsAt: null, timedOut: true, hydrated: true });
+          persist({ date: todayKey(), endsAt: null, timedOut: true });
           return;
         }
-        set({ endsAt, timedOut, hydrated: true });
+        set({ date: todayKey(), endsAt, timedOut, hydrated: true });
         await mergeServer();
         return;
       }
@@ -135,7 +156,7 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
     //   → 로컬에 근거가 하나도 없는 이 경로에서만 **서버 답을 받은 뒤에** hydrated를 세운다.
     //   ⚠️ 오프라인에서 영원히 막히면 안 되므로(이 앱의 fail-open 원칙) 최대 3초만 기다린다.
     //     그 안에 못 받으면 일단 열어주고, 병합은 도착하는 대로 스토어에 반영된다.
-    set({ endsAt: null, timedOut: false });
+    set({ date: todayKey(), endsAt: null, timedOut: false });
     await Promise.race([
       mergeServer(),
       new Promise<void>((resolve) => setTimeout(resolve, FRESH_INSTALL_MERGE_TIMEOUT_MS)),
@@ -144,7 +165,7 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
   },
 
   start: (durationMinutes) => {
-    const next = { endsAt: Date.now() + durationMinutes * 60 * 1000, timedOut: false };
+    const next = { date: todayKey(), endsAt: Date.now() + durationMinutes * 60 * 1000, timedOut: false };
     set(next);
     persist(next);
   },
@@ -152,19 +173,19 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
   extend: (minutes) => {
     // 남은 시간이 있으면 거기에 더하고, 없으면(타임아웃 직후 연장) 지금부터 센다.
     const base = Math.max(get().endsAt ?? 0, Date.now());
-    const next = { endsAt: base + minutes * 60 * 1000, timedOut: false };
+    const next = { date: todayKey(), endsAt: base + minutes * 60 * 1000, timedOut: false };
     set(next);
     persist(next);
   },
 
   markTimedOut: () => {
-    const next = { endsAt: null, timedOut: true };
+    const next = { date: todayKey(), endsAt: null, timedOut: true };
     set(next);
     persist(next);
   },
 
   stop: () => {
-    const next = { endsAt: null, timedOut: false };
+    const next = { date: todayKey(), endsAt: null, timedOut: false };
     set(next);
     persist(next);
   },

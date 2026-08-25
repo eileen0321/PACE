@@ -210,7 +210,7 @@ export const translations = {
       a11ySheetPathLabel: 'On the next screen',
       a11ySheetPathText: 'Installed apps → PACE → Use (ON)',
       a11ySheetEnable: 'Agree and open Settings',
-      a11ySheetNotNow: 'Not now',
+      a11ySheetNotNow: "Don't Allow",
       running: 'Running',
       permissionNeeded: 'Permission Needed',
       // 2026-07-28 사장님 지시 — 권한 없이 눌리는 것처럼 보이던 손짓/블루투스 토글에 disable
@@ -755,7 +755,9 @@ export const translations = {
       a11ySheetPathLabel: '다음 화면에서',
       a11ySheetPathText: '설치된 앱 → PACE → 사용함(ON)',
       a11ySheetEnable: '동의하고 설정 열기',
-      a11ySheetNotNow: '나중에',
+      // 2026-08-20 Play 정책 반려(2차) — 거부 선택지가 "나중에"면 **미룸**으로 읽혀 수락/거부가
+      //   대등하게 제시되지 않는다. 정책은 두 선택지를 동등하게 제시할 것을 요구한다.
+      a11ySheetNotNow: '사용하지 않기',
       running: '실행 중',
       permissionNeeded: '권한 필요',
       accessibilityNeededToast: '핸즈프리가 실제로 동작하려면 접근성 권한이 필요해요',

@@ -1009,7 +1009,11 @@ export default function PaceFeedScreen() {
     // 2026-08-01 자율세션(Android 8468a82 matching) — 무료 사용자가 "타임아웃으로" 꺼진 세션을 다시
     // 켜려 하면 무료 재개 대신 보상광고/크레딧 연장 모달로 보낸다(무한 무료 재활성화 구멍 차단).
     // 프리미엄이거나 타임아웃 아닌(수동 off 후) 재개는 그대로 무료로 켠다.
-    if (next && useFocusSessionStore.getState().timedOut && !useSubscriptionStore.getState().isPremium) {
+    // 2026-08-25 사장님("광고 때문에 포커스온 테스트를 못 하잖아") — 테스트 빌드(EXPO_PUBLIC_AD_TEST_DEVICES,
+    // adsConfig와 동일 플래그·동일 의미)에선 광고 게이트를 통째로 건너뛴다. 이 플래그는 빌드 타임 상수라
+    // ASC 아카이브(플래그 미설정)에는 존재하지 않는다 — 출시 동작 불변.
+    const adTestBypass = process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true';
+    if (next && useFocusSessionStore.getState().timedOut && !useSubscriptionStore.getState().isPremium && !adTestBypass) {
       setShowExtendModal(true);
       return; // 아직 재활성화 안 함 — 광고 보상/크레딧 확정 시 onExtend가 켠다
     }

@@ -400,6 +400,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // ⚠️ 출시 빌드에는 JS 게이트가 꺼져 있어 절대 저장되지 않는다(프레임 저장 금지 원칙 유지).
   private var diagCaptureEnabled = false
   private var lastDiagCaptureMs: Double = 0
+  private var didLogPixelSize = false // 첫 프레임 버퍼 크기 1회 보고(campixel) — 회전 적용 여부의 원격 검증
   private let ciContext = CIContext(options: nil)
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
@@ -545,6 +546,57 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         conn.isVideoMirrored = true
       }
     }
+    // 🔴 2026-08-26 해상도 상향 2차(probe+자동 폴백) — 사장님 "너보다 안드가 더 잘돼": 안드는 1080×1440
+    // (VGA의 4.5배 픽셀)로 돌고 그게 인식률 격차의 최대 변수(f57afbc 실측). 1차 시도는 회전이 조용히
+    // 풀리며 실패 → 이번엔 포맷 변경 **후** 회전을 재적용·검증하고, 안 되면 그 자리에서 VGA로 복귀
+    // (지금보다 나빠질 수 없음). 실제 적용 결과는 camprobe/campixel로 물증 로그에 남는다.
+    var fmtDesc = "vga-default"
+    do {
+      try device.lockForConfiguration()
+      let wanted: [(Int32, Int32)] = [(1440, 1080), (1080, 1440), (1280, 960), (960, 1280)]
+      var picked: AVCaptureDevice.Format? = nil
+      outer: for (w, h) in wanted {
+        for f in device.formats {
+          let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+          if (d.width == w && d.height == h) || (d.width == h && d.height == w) {
+            picked = f
+            break outer
+          }
+        }
+      }
+      if let f = picked {
+        device.activeFormat = f
+        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+        fmtDesc = "\(d.width)x\(d.height)"
+      }
+      device.unlockForConfiguration()
+    } catch {
+      fmtDesc = "lockFail-vga"
+    }
+    if let conn = output.connection(with: .video) {
+      var rotOK = false
+      if #available(iOS 17.0, *) {
+        if conn.isVideoRotationAngleSupported(90) {
+          conn.videoRotationAngle = 90
+          rotOK = true
+        }
+      } else if conn.isVideoOrientationSupported {
+        conn.videoOrientation = .portrait
+        rotOK = true
+      }
+      if conn.isVideoMirroringSupported {
+        conn.automaticallyAdjustsVideoMirroring = false
+        conn.isVideoMirrored = true
+      }
+      if !rotOK {
+        // 이 포맷에선 세로 회전 불가(1차 실패의 정황) — 검증된 VGA로 복귀.
+        session.sessionPreset = .vga640x480
+        fmtDesc += " rotFail->vga"
+        if #available(iOS 17.0, *), conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }
+        else if conn.isVideoOrientationSupported { conn.videoOrientation = .portrait }
+      }
+    }
+    onDiag("camprobe \(fmtDesc)")
     session.commitConfiguration()
     // ⭐ 손짓이 "2번째 영상부터 안 되는" 원인: 새 영상 WebView가 재생을 시작하면 시스템 압력/미디어로
     //   AVCaptureSession이 interrupted 되는데, 관찰자가 없어 자동 복구가 안 돼 카메라가 죽은 채 남는다.
@@ -627,6 +679,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         checkOcclusion((thirds.l + thirds.m + thirds.r) / 3, thirds.l, thirds.m, thirds.r, nowMs)
       }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
+      if !didLogPixelSize {
+        didLogPixelSize = true
+        // 세로 정상이면 height > width — 이 한 줄이 회전 적용의 원격 물증(campixel).
+        onDiag("campixel \(CVPixelBufferGetWidth(pb))x\(CVPixelBufferGetHeight(pb))")
+      }
       // 실명 채증(상단 diagCaptureEnabled 주석) — 3초마다 1장, 최근 30장 유지.
       if diagCaptureEnabled {
         let nowCap = CFAbsoluteTimeGetCurrent() * 1000

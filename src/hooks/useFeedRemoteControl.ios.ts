@@ -68,6 +68,8 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
     if (text.startsWith('lumaskip')) { diagLog('lumapass_skip', text); return; } // 중거리 밝기 통과 오→왼 무시
     if (text.startsWith('crossdrop')) { diagLog('cross_drop_refractory', text); return; } // 불응 중 스트로크 폐기
+    if (text.startsWith('camprobe') || text.startsWith('campixel')) { diagLog('cam_probe', text); return; } // 해상도·회전 원격 검증
+    if (text.startsWith('returndrop')) { diagLog('return_drop', text); return; } // 복귀 스트로크 무시
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
     else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에

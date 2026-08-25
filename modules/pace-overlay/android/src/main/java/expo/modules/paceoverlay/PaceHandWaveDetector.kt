@@ -427,6 +427,40 @@ object PaceHandWaveDetector {
   //   확정 프레임까지 밴드별로 나누는 이유: 가까운 손은 화면을 금방 벗어나 샘플이 2~3개밖에
   //   안 남는다(MediaPipe가 프레임 가장자리에서 손을 놓친다). 거기에 연속 2프레임을 요구하면
   //   "카메라 앞을 스치듯 지나가는" 가장 확실한 손짓이 오히려 제일 안 잡힌다 — 실제로 지금이 그렇다.
+  // 🟢 2026-08-25 사장님 제안 — "카메라 가까이에서 50cm 정도까지, 손을 왼쪽에서 오른쪽으로
+  //   지나갈 때"를 다음 영상 신호로 추가. 기존 축(growth/sweep/glide)은 그대로 두고 OR로만 얹는다.
+  //
+  //   왜 별도 축이 필요한가 — 사장님 실기기 "가까이에서 왼쪽→오른쪽은 아예 인식을 못 해".
+  //   기존 두 축이 **handSize로 나눈 상대값**을 쓰는 것이 근거리를 구조적으로 불리하게 만든다:
+  //     sweepRatio     = (max x - min x) / handSize
+  //     glideRelPerSec = glideAbsPerSec  / handSize
+  //   가까울수록 handSize가 커져 같은 동작의 값이 작아진다. NEAR_BAND_MULT(0.7)로 보정했지만
+  //   실측 기준으로는 여전히 near가 더 빨라야 통과한다:
+  //     near(0.25):  3.5*0.7*0.25 = 0.61/초 필요
+  //     mid (0.135): 3.5*1.0*0.135 = 0.47/초 필요
+  //   게다가 가까이서 가로지르면 손이 금방 프레임 밖으로 나가 샘플이 2~3개뿐이다.
+  //
+  //   → 이 축은 **절대 이동량**만 본다(handSize로 나누지 않는다). 그러면 근거리가 불리해지지 않고,
+  //     오히려 화면을 크게 가로지르므로 자연히 유리하다. 정규화를 안 하는 대신 "근거리에서만"으로
+  //     범위를 좁혀 먼 거리의 작은 흔들림이 끼어들지 못하게 한다.
+  /** 가로지르기를 재는 시간창. 가까이서 지나가면 짧게 끝나므로 sweep(700ms)보다 넉넉히 잡는다. */
+  private const val TRAVERSE_WINDOW_MS = 900L
+  /** 정규화 좌표(0~1) 기준 최소 순이동. 화면 폭의 1/3 이상을 한 방향으로 지나가야 한다. */
+  private const val TRAVERSE_MIN_NET_X = 0.33
+  /** 한 방향 일관성 — 되돌아오는 흔들림(sweep)과 가르는 기준. 8할 이상이 같은 방향이어야 한다. */
+  private const val TRAVERSE_MONOTONIC_RATIO = 0.8
+  /** 이 축이 인정하는 거리 범위의 하한(= 약 50cm). 그보다 멀면 기존 축들이 담당한다. */
+  private const val TRAVERSE_MIN_HAND_SIZE = MID_BAND_HAND_SIZE
+  /** 최소 샘플 수. 근거리 통과는 프레임이 적게 잡히므로 3개로 낮게 잡는다. */
+  private const val TRAVERSE_MIN_SAMPLES = 3
+  /**
+   * 인정할 방향. +1 = 이미지 x가 커지는 쪽, -1 = 작아지는 쪽.
+   * ⚠️ 전면 카메라 원본 프레임은 거울상이 아니므로 **사용자 기준 왼→오른쪽이 이미지에서는 x 감소**로
+   *   찍힐 수 있다. 실기기 로그(by=traverse dir=)로 확인한 뒤 이 값만 뒤집으면 된다.
+   *   0으로 두면 방향을 가리지 않는다(양방향 모두 인정).
+   */
+  private const val TRAVERSE_DIRECTION = -1
+
   private const val NEAR_BAND_MULT = 0.7
   private const val MID_BAND_MULT = 1.0
   private const val FAR_BAND_MULT = 1.8
@@ -1380,6 +1414,43 @@ object PaceHandWaveDetector {
       glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult * GLIDE_INSTANT_MARGIN
     val glided = glideStreak >= bandConfirm || glideOverwhelming
 
+    // ── 🟢 2026-08-25 신규: 가로지르기(traverse) 축 — 사장님 제안 ──
+    //   "카메라 가까이에서 50cm 정도까지, 손을 한쪽에서 반대쪽으로 지나갈 때"만 넘긴다.
+    //   설계 근거(웹 조사 + 이 파일 실측):
+    //     · **절대 이동량**을 쓴다(handSize로 안 나눔) — 상수 주석의 근거. 근거리 불리함이 사라진다.
+    //     · **방향 일관성**을 본다 — 웹 조사가 말하는 "위치가 아니라 움직임의 동역학"이 이 축의 핵심이고,
+    //       가만히 있으면서 떨리는 것(jitter)과 실제 통과를 가르는 유일하게 신뢰할 만한 신호다.
+    //       떨림은 좌우로 오갈 뿐 **한 방향으로 누적되지 않는다** → 단조성 비율에서 걸러진다.
+    //     · 순이동(net)과 총이동(gross)을 함께 본다 — 왕복하면 gross는 커도 net이 작다.
+    val tWin = posHistory.filter { now - it.first <= TRAVERSE_WINDOW_MS }
+    var traversed = false
+    var traverseDir = 0
+    if (tWin.size >= TRAVERSE_MIN_SAMPLES && handSize >= TRAVERSE_MIN_HAND_SIZE) {
+      val netX = tWin.last().second - tWin.first().second
+      var gross = 0.0
+      var fwd = 0
+      var steps = 0
+      for (k in 1 until tWin.size) {
+        val dx = tWin[k].second - tWin[k - 1].second
+        if (kotlin.math.abs(dx) < 1e-6) continue // 정지 프레임은 방향 판정에서 제외
+        gross += kotlin.math.abs(dx)
+        steps++
+        if ((dx > 0) == (netX > 0)) fwd++
+      }
+      val monotonic = if (steps > 0) fwd.toDouble() / steps else 0.0
+      // 왕복 억제 — 순이동이 총이동의 대부분이어야 "지나갔다"고 본다(흔들림은 net≪gross).
+      val straightness = if (gross > 1e-6) kotlin.math.abs(netX) / gross else 0.0
+      traverseDir = if (netX > 0) 1 else -1
+      val dirOk = TRAVERSE_DIRECTION == 0 || traverseDir == TRAVERSE_DIRECTION
+      traversed = kotlin.math.abs(netX) >= TRAVERSE_MIN_NET_X &&
+        monotonic >= TRAVERSE_MONOTONIC_RATIO &&
+        straightness >= TRAVERSE_MONOTONIC_RATIO &&
+        dirOk
+      if (traversed) {
+        Log.i(TAG, "TRAVERSE net=$netX gross=$gross mono=$monotonic straight=$straightness dir=$traverseDir handSize=$handSize n=${tWin.size}")
+      }
+    }
+
     sizeHistory.addLast(now to handSize)
     while (sizeHistory.isNotEmpty() && now - sizeHistory.first().first > GROWTH_WINDOW_MS) {
       sizeHistory.removeFirst()
@@ -1507,8 +1578,9 @@ object PaceHandWaveDetector {
     }
 
     // 접근(밀기)·스윕(좌우)·glide(어떤 방향이든)는 OR — 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept || grewFast || glided) && pastRefractory) {
+    if ((grew || swept || grewFast || glided || traversed) && pastRefractory) {
       val by = when {
+        traversed -> "traverse(dir=$traverseDir)"
         glided -> "glide"
         swept -> "sweep"
         grew -> "growth"

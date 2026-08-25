@@ -86,6 +86,14 @@ class PaceAccessibilityService : AccessibilityService() {
   // 이 시각 안에 관측된 영상 전환은 "우리가 만든 전환"이라 사용자 활동으로 인정하지 않는다
   // (근거는 selfAdvanceAttributed() 주석).
   private var selfAdvanceArmedUntilMs = 0L
+  /**
+   * 🟢 2026-08-25 사장님 지시 — "여러 번 했을 때 큐에 쌓아놓지 않게".
+   *   dispatchGesture는 **큐잉된다.** 손짓을 연속으로 하면 제스처가 줄줄이 쌓여, 손을 멈춘 뒤에도
+   *   영상이 계속 넘어간다(예전부터 신고된 "두세 개씩 넘어감"의 한 갈래).
+   *   감지기의 REFRACTORY_MS(1.2초)는 **감지 축**만 막고, 축이 여럿이거나 다른 경로(자동넘김·
+   *   리모컨·볼륨키)와 겹치면 그대로 통과한다. 발사 지점에서 한 번 더 막는다.
+   */
+  @Volatile private var gestureInFlight = false
   private var lastVolumeKeySwipeAtMs = 0L
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
   // 재생 화면에 부하가 걸릴 수 있다는 지적 — 한 번 찾은 SeekBar 노드를 캐싱해서, 다음 폴링부터는
@@ -1695,6 +1703,12 @@ class PaceAccessibilityService : AccessibilityService() {
       Log.w("PaceAccessibility", "제스처 취소 — 광고 표시 중(오클릭 방지)")
       return
     }
+    // 앞선 제스처가 아직 안 끝났으면 버린다 — 쌓아두지 않는다(위 gestureInFlight 주석).
+    if (gestureInFlight) {
+      Log.i("PaceAccessibility", "제스처 무시 — 앞선 스와이프가 진행 중(큐잉 방지)")
+      return
+    }
+    gestureInFlight = true
     val dispatchedAtMs = SystemClock.elapsedRealtime()
     selfAdvanceArmedUntilMs = dispatchedAtMs + SELF_ADVANCE_ATTRIBUTION_MS
     // 🔴 2026-08-15 실기기 — 사장님이 오래 신고해오신 "안 눌렀는데 두세 개씩 넘어간다"의 정체.
@@ -1718,13 +1732,21 @@ class PaceAccessibilityService : AccessibilityService() {
     // 실제로 접수됐는지, 접수됐다면 끝까지 완료됐는지)를 실기기 로그로 직접 확인한다.
     val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
       override fun onCompleted(gestureDescription: GestureDescription?) {
+        gestureInFlight = false
         Log.i("PaceAccessibility", "gesture onCompleted")
       }
       override fun onCancelled(gestureDescription: GestureDescription?) {
+        gestureInFlight = false
         Log.w("PaceAccessibility", "gesture onCancelled")
       }
     }, null)
     Log.i("PaceAccessibility", "dispatchGesture accepted=$dispatched")
+    // 시스템이 접수 자체를 거부하면 콜백이 오지 않는다 — 그대로 두면 gestureInFlight가 영영 true로
+    // 잠겨 **손짓이 통째로 죽는다.** 접수 실패는 여기서 바로 해제한다.
+    if (!dispatched) gestureInFlight = false
+    // 콜백이 유실되는 기기가 있을 수 있어 상한도 둔다(제스처 길이 + 여유). 잠금이 안 풀리는 것이
+    // 중복 발사보다 훨씬 나쁜 고장이므로 안전한 쪽으로 만료시킨다.
+    Handler(Looper.getMainLooper()).postDelayed({ gestureInFlight = false }, durationMs + 600L)
   }
 
   // ── Favorite/Capture: 현재 영상 정보 캡처(2026-07-31) ──

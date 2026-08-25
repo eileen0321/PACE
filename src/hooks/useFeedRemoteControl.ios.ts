@@ -66,6 +66,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     const a = diagAggRef.current;
     if (text.startsWith('crossskip')) { diagLog('cross_skip', text); return; } // 방향 한정으로 무시된 크로싱 — 부호 검증용
     if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
+    if (text.startsWith('lumaskip')) { diagLog('lumapass_skip', text); return; } // 중거리 밝기 통과 오→왼 무시
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
     else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에

@@ -713,6 +713,7 @@ object PaceHandWaveDetector {
   private var brightRefL = 0.0
   private var brightRefM = 0.0
   private var brightRefR = 0.0
+  private var lastLumaPassDiagAtMs = 0L
   /** 감지 시작 시각 — "한참 돌았는데 아무것도 못 봤다"를 판정하는 기준(아래 BLIND_NOTICE_MS). */
   @Volatile private var detectStartedAtMs = 0L
   /**
@@ -1297,6 +1298,22 @@ object PaceHandWaveDetector {
     brightRefL = kotlin.math.max(bands[0], brightRefL * LUMAPASS_REF_DECAY)
     brightRefM = kotlin.math.max(bands[1], brightRefM * LUMAPASS_REF_DECAY)
     brightRefR = kotlin.math.max(bands[2], brightRefR * LUMAPASS_REF_DECAY)
+    // 🔬 튜닝 근거 확보 — 이 축이 왜 안 걸렸는지를 수치로 남긴다. 거치 자세(카메라가 천장을 보는
+    //   화각)에서는 손이 프레임의 작은 부분만 덮어 **구간 평균이 15%나 안 떨어질 수 있다.**
+    //   그 경우 문턱을 낮춰야 하는데, 실측 없이 낮추면 이 파일이 아홉 번 반복한 "검열된 데이터로
+    //   임계값 만지기"를 또 하게 된다. 한 구간이라도 5% 이상 꺼지면 세 구간 비율을 함께 남긴다
+    //   (완전히 정지한 장면에서는 안 찍히므로 스팸이 되지 않는다).
+    run {
+      val rl = if (brightRefL > 0) bands[0] / brightRefL else 1.0
+      val rm = if (brightRefM > 0) bands[1] / brightRefM else 1.0
+      val rr = if (brightRefR > 0) bands[2] / brightRefR else 1.0
+      val lowest = kotlin.math.min(rl, kotlin.math.min(rm, rr))
+      if (lowest <= 0.95 && now - lastLumaPassDiagAtMs >= 500L) {
+        lastLumaPassDiagAtMs = now
+        Log.i(TAG, "lumapass 관측 L=%.2f M=%.2f R=%.2f (문턱 %.2f) ref=%.0f/%.0f/%.0f n=%d"
+          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, brightRefL, brightRefM, brightRefR, dipHistory.size))
+      }
+    }
     if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
 

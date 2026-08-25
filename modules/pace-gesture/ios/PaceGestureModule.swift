@@ -330,6 +330,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossMinHandSize: Double = 0.08
   private let crossMinDirectness: Double = 0.6
   private var crossHistory: [(t: Double, x: Double)] = []
+  // 스트로크당 1발화(시뮬 s4가 잡은 이중발화 방지) — 발화 후 같은 방향으로 계속 가는 동안은 재발화
+  // 금지, 손이 사라지거나(400ms 공백) 방향이 되돌아오면 재무장.
+  private var crossArmed = true
+  private var crossLastSampleT: Double = 0
+  private var crossLastSampleX: Double = 0
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.
@@ -730,6 +735,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
+        // 재무장 판정(스트로크당 1발화): **오른쪽 복귀(+0.02)만** — 시간 공백 기준은 느린/성긴 추적의
+        // 스트로크 중간 공백(500ms+)에 오발동해 이중발화를 되살렸다(시뮬 s4가 잡음). 다음 스트로크는
+        // 오른쪽에서 다시 시작하므로 그 진입 샘플이 재무장시킨다.
+        if !self.crossArmed, c.x - self.crossLastSampleX >= 0.02 {
+          self.crossArmed = true
+        }
+        self.crossLastSampleT = nowMs
+        self.crossLastSampleX = c.x
         self.crossHistory.append((nowMs, c.x))
         while let f = self.crossHistory.first, nowMs - f.t > self.crossWindowMs { self.crossHistory.removeFirst() }
         if self.crossHistory.count >= 2 {
@@ -751,7 +764,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             segStart = i
           }
           let segNet = xs.last!.x - xs[segStart].x
-          if abs(segNet) >= self.crossMinRangeX {
+          // 🔴 2026-08-25 23:02 실측(hand 49/61 추적인데 발화 0 — 이동폭 화면 12% vs 기준 38%) —
+          // 사장님 실제 동작은 손목 플릭. 고정 화면비 기준은 중간 거리에서 원리적으로 미달한다.
+          // 기준을 손 크기 비례(자기 손폭 0.85배 이동, 최소 0.12)로 — 거리 무관 동일 판정.
+          let needRange = max(0.12, handSize * 0.85)
+          if abs(segNet) >= needRange, self.crossArmed || segNet > 0 {
             self.crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
@@ -762,6 +779,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               return glideAbs
             }
             if segNet < 0 {
+              self.crossArmed = false // 스트로크당 1발화 — 재무장은 공백/역방향에서
               self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f", ti, segNet, handSize), nowMs, handSize: handSize, trackIdx: ti)
               return glideAbs
             }

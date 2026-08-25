@@ -745,10 +745,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       // 왕복 흔들기는 순이동≈0이라 여전히 안 걸린다.
       var reversePass = false
       var netDx700 = 0.0
-      if let firstX = self.tracks[ti].xHistory.first(where: { nowMs - $0.t <= 700 }),
-         let lastX = self.tracks[ti].xHistory.last {
+      // 직진성(순이동/총이동) — 한 방향 통과와 왕복 흔들기를 가르는 측정치. 크로싱 축에서 이미 쓰고 있다.
+      var straight700 = 0.0
+      let win700 = self.tracks[ti].xHistory.filter { nowMs - $0.t <= 700 }
+      if let firstX = win700.first, let lastX = self.tracks[ti].xHistory.last {
         netDx700 = lastX.x - firstX.x
         if netDx700 >= 0.12 { reversePass = true }
+        var gross700 = 0.0
+        for i in 1..<max(1, win700.count) { gross700 += abs(win700[i].x - win700[i - 1].x) }
+        straight700 = gross700 > 1e-6 ? abs(netDx700) / gross700 : 0.0
       }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
@@ -865,6 +870,28 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           }
         }
       }
+      // 🔴 2026-08-26 사장님("맥으로 하는데 오른쪽에서 왼쪽으로 가도 영상이 바뀌는데") —
+      //   내가 오늘 passOnlyMode를 false로 되돌리면서(사장님 "이전 손짓은 남겨두고") 되살아난 누수다.
+      //   이전 손짓 축(glide/sweep/growth)은 **방향을 모른다** — 어느 쪽으로 움직이든 발화한다.
+      //   기존 방어 reversePass는 700ms 순이동 0.12를 요구하는데, **빠른 오→왼 휙은 샘플이 성겨
+      //   그 0.12를 못 채운 채 glide가 먼저 발화한다**(맥이 f26d3d2 주석에 이미 적어둔 현상).
+      //
+      //   가르는 기준은 이동량이 아니라 **한 방향으로 갔는가**다:
+      //     · 흔들기(= 이전 손짓)는 좌우로 오간다 → 총이동은 큰데 순이동이 작다 = 직진성 낮음
+      //     · 통과는 한 방향으로 지나간다        → 순이동 ≈ 총이동 = 직진성 높음
+      //   그래서 "직진성 높게 오른쪽(+x = 사용자 오→왼)으로 순이동"이면 속도 축을 막는다.
+      //   흔들기는 직진성이 낮아 안 걸리므로 사장님 지시("이전 손짓은 남겨두고")와 충돌하지 않는다.
+      //
+      //   ⚠️ 처음엔 reversals == 0으로 썼다가 되돌렸다. 안드 파일이 실측 1,134프레임으로
+      //     "reversals는 **평소에도 2가 나와** 오탐 축이었다"고 이미 기록해 뒀다(GROWTH 주석).
+      //     iOS도 minStroke = 0.12 × handSize라 중간 거리에서 화면의 1.6%만 움직여도 스트로크로
+      //     세므로 같은 성질이다 — 그 조건은 거의 성립하지 않아 아무것도 못 막았을 것이다.
+      //     직진성은 문턱에 민감한 카운터가 아니라 비율이라 그 문제가 없다.
+      //   ⚠️ 아직 실기기 미검증이다. 발화 로그의 netDx=/straight= 값으로 문턱(0.06/0.7)을 확정할 것.
+      let oneWayReverse = netDx700 >= 0.06 && straight700 >= 0.7
+      if oneWayReverse {
+        paceGLog("[pace-wave] 속도축 차단(오→왼 통과) T%d netDx=%+.2f straight=%.2f rev=%d", ti, netDx700, straight700, reversals)
+      }
       if sweep > self.sweepRatioThreshold * band.mul && reversals >= 1 { self.tracks[ti].sweepStreak += 1 } else { self.tracks[ti].sweepStreak = 0 }
       // glide 판정 — 두 문턱 AND(밴드 배수 적용). 문턱의 3배를 두 축 동시 초과하면 1프레임 확정.
       let relTh = self.glideRelMinPerSec * band.mul
@@ -888,9 +915,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         paceGLog("[pace-wave] glidedrop span T%d sweep=%.2f need=%.2f rel=%.2f size=%.2f",
                  ti, sweep, self.sweepRatioThreshold * band.mul, glideRel, handSize)
       }
-      if glided && glideSpanOk && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if glided && glideSpanOk && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
-        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f straight=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
@@ -917,12 +944,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
                  ti, band.name, glideRel, glideAbs, self.tracks[ti].glideStreak, sweep, reversals,
                  self.tracks[ti].sweepStreak, growth, handSize, nowMs - self.lastTriggerMs)
       }
-      if self.tracks[ti].sweepStreak >= band.confirm && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if self.tracks[ti].sweepStreak >= band.confirm && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
-        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700), nowMs, handSize: handSize, trackIdx: ti)
+        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f straight=%.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)

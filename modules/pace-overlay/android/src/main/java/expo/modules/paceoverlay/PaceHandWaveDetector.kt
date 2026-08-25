@@ -454,7 +454,9 @@ object PaceHandWaveDetector {
   //   비례가 있어야 먼 거리 잔떨림이 안 뚫리고, 상한이 있어야 근거리가 원리적으로 불가능해지지 않는다.
   //   (iOS PaceGestureModule.swift의 crossNeedMin/Max/K와 같은 값 — 두 플랫폼을 갈라두면 반드시 어긋난다.)
   private const val TRAVERSE_NEED_MIN = 0.07
-  private const val TRAVERSE_NEED_MAX = 0.10
+  // 실기기 실측(2026-08-26 00:23:33) — 사장님 왼→오 통과가 net=0.0996인데 need=0.10이라
+  // **0.4% 차이로 탈락**했다. 상한을 0.08로 내려 여유를 준다(그 실측 대비 1.25배 여유).
+  private const val TRAVERSE_NEED_MAX = 0.08
   private const val TRAVERSE_NEED_K = 0.5
   // 제자리 떨림 차단(사장님 "가만있는 흔들기는 미발화") — 이동폭만으로는 **느린 표류**를 못 거른다.
   // 표류 0.11/초 vs 느린 통과 0.29/초 vs 손목 플릭 0.43/초(iOS 합성 시나리오 실측) → 0.20/초로 가른다.
@@ -462,7 +464,14 @@ object PaceHandWaveDetector {
   private const val TRAVERSE_MIN_SPEED = 0.20
   private const val TRAVERSE_BIG_NET = 0.30
   /** 한 방향 일관성 — 되돌아오는 흔들림(sweep)과 가르는 기준. 8할 이상이 같은 방향이어야 한다. */
-  private const val TRAVERSE_MONOTONIC_RATIO = 0.8
+  // 🔴 실기기 실측(2026-08-26) — 0.8은 **성긴 추적에서 도달 불가능한 조건**이었다.
+  //   00:23:33 실제 통과: mono=0.667 straight=0.667 (n=4) → 탈락
+  //   00:26:42 실제 통과: mono=1.0   straight=1.0   (n=3) → 통과
+  //   샘플이 4개면 스텝이 3개라 가능한 값이 0 / 0.333 / 0.667 / 1.0뿐이다. 즉 0.8은 "3스텝이 전부
+  //   같은 방향"과 같은 말이고, 추적이 한 프레임만 흔들려도 0.667로 떨어져 영영 못 넘는다.
+  //   실측 0.667을 살리도록 0.6으로 내린다. 제자리 떨림은 왕복하므로 직진성이 0에 가까워
+  //   0.6에서도 확실히 갈린다(위 속도 게이트와 방향 게이트가 추가로 지킨다).
+  private const val TRAVERSE_MONOTONIC_RATIO = 0.6
   /** 이 축이 인정하는 거리 범위의 하한(= 약 50cm). 그보다 멀면 기존 축들이 담당한다. */
   private const val TRAVERSE_MIN_HAND_SIZE = MID_BAND_HAND_SIZE
   /** 최소 샘플 수. 근거리 통과는 프레임이 적게 잡히므로 3개로 낮게 잡는다. */
@@ -473,7 +482,15 @@ object PaceHandWaveDetector {
    *   찍힐 수 있다. 실기기 로그(by=traverse dir=)로 확인한 뒤 이 값만 뒤집으면 된다.
    *   0으로 두면 방향을 가리지 않는다(양방향 모두 인정).
    */
-  private const val TRAVERSE_DIRECTION = -1
+  // 🔴 2026-08-26 — 실측(00:35:40)에서 사용자 왼→오가 이미지 x **증가(+)** 로 나왔다. 그렇다면
+  //   이 값이 -1인 것이 가로지르기 축이 한 번도 발화하지 못한 이유다. 다만 같은 로그에 dir=+1과
+  //   dir=-1 통과가 둘 다 있었는데 그때의 실제 동작 방향이 기록되지 않아 확정할 수 없다.
+  //   **틀린 부호를 두 번 넣으면 손짓이 또 통째로 죽는다.** 확정 전까지 0(양방향 허용)으로 둔다 —
+  //   사장님 지시는 왼→오만이지만, 아예 안 되는 것보다 양방향이라도 되는 편이 낫다.
+  //   부호 확정 후 +1 또는 -1로 고정할 것.
+  private const val TRAVERSE_DIRECTION = 0
+  /** 속도 축의 역방향 차단 부호. 0 = 차단 끔(부호 미확정). 확정되면 오→왼 쪽 부호를 넣는다. */
+  private const val REVERSE_BLOCK_SIGN = 0
 
   private const val NEAR_BAND_MULT = 0.7
   private const val MID_BAND_MULT = 1.0
@@ -644,6 +661,8 @@ object PaceHandWaveDetector {
   @Volatile private var firstDetectionDone = false
   // 진단 카운터(2026-08-05) — analyzeFrame 진입 / detectAsync 호출 / onResult 수신.
   @Volatile private var framesIn = 0
+  /** 마지막 프레임 평균 밝기(0~255). HB에 실어 "카메라가 깜깜한가 / 밝은데 인식만 실패하나"를 가른다. */
+  @Volatile private var lastLuma = -1.0
   @Volatile private var detectSent = 0
   @Volatile private var resultsIn = 0
   @Volatile private var lastHeartbeatAtMs = 0L
@@ -965,7 +984,10 @@ object PaceHandWaveDetector {
       // 2026-08-15 — 얼굴 상태를 여기 얹는다. 얼굴 게이트는 "어두운 방에서 얼굴을 못 봐서 손짓이
       // 죽는가"를 실측해야 신뢰할 수 있는데, 그걸 볼 수 있는 주기적 신호가 이것뿐이다.
       val faceAge = if (faceEverSeen) "${now - lastFaceSeenAtMs}ms전" else "없음"
-      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn nohand=$noHandResults infer=${lastInferenceMs}ms running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
+      // 🔴 2026-08-26 — luma를 같이 남긴다. 손 0개·얼굴 0개일 때 **카메라가 깜깜한 것**인지
+      //   **밝은데 인식만 실패하는 것**인지 이 값 하나로 갈린다. 그게 없어서 원인을 기기 앞에
+      //   앉은 사람에게 물어봐야 했다 — 진단 로그가 답해야 할 것을 사람에게 묻고 있었다.
+      Log.i(TAG, "HB in=$framesIn sent=$detectSent out=$resultsIn nohand=$noHandResults infer=${lastInferenceMs}ms luma=${"%.0f".format(lastLuma)} running=$running face=$faceAge gate=${if (faceDetector != null && faceEverSeen) "on" else "off"}")
     }
     // 웜업 중(첫 인식 전, 최대 WARMUP_MAX_MS)에는 촘촘히 본다 — 위 WARMUP_* 주석 참고.
     val warmingUp = !firstDetectionDone && cameraBoundAtMs > 0L && now - cameraBoundAtMs < WARMUP_MAX_MS
@@ -1128,10 +1150,20 @@ object PaceHandWaveDetector {
     while (gridHistory.isNotEmpty() && now - gridHistory.first().first > GROSS_MOTION_WINDOW_MS) {
       gridHistory.removeFirst()
     }
-    // 오탐 방어 ① — 사람이 앞에 있을 때만. 얼굴을 한 번도 못 본 세션에서는 이 축을 아예 끈다
-    // (깜깜한 방에서 얼굴이 안 잡히는 경우까지 오탐 위험을 안고 갈 이유가 없다 — 그쪽은 손 랜드마크
-    //  경로가 그대로 담당한다).
-    if (!faceEverSeen || now - lastFaceSeenAtMs > FACE_PRESENCE_GRACE_MS) return
+    // 🔴 2026-08-26 실기기 실측 — **이 한 줄 때문에 이 축이 통째로 죽어 있었다.**
+    //   원래: if (!faceEverSeen || now - lastFaceSeenAtMs > FACE_PRESENCE_GRACE_MS) return
+    //   로그(00:27:20) face=343484ms전 = 5분 43초간 얼굴 0회 → 매 프레임 즉시 return.
+    //   near-miss 로그조차 한 줄도 안 남아 "왜 안 되는지"가 보이지도 않았다.
+    //
+    //   ⚠️ 사장님은 2026-08-18에 이미 지시하셨다 — "얼굴 인식 전제 조건을 빼야겠네, 옆에서 손짓만
+    //     할 수 있잖아." 그때 손 신호 쪽(shouldTrustHandSignal)은 return true로 철회했는데,
+    //     **이 축의 별도 게이트는 안 뺐다.** 같은 지시가 두 곳에 걸쳐 있는 걸 못 본 것이다.
+    //
+    //   하필 이 축이 **근거리 전용 대비책**이다. 손을 렌즈 가까이 대면 MediaPipe가 손 모양을 못
+    //   잡는데(실측: 처리 691프레임 중 손 5프레임), 그때 잡아줄 유일한 축이 이것이었다.
+    //   얼굴은 계속 보되(수면감지 personAbsentForMs는 그대로) 손짓을 막는 데에는 쓰지 않는다 —
+    //   shouldTrustHandSignal과 같은 결론이다. 오탐은 이 축 자체의 방어(변한 칸 비율 0.55 +
+    //   어두워진 비율 0.7 + 불응 1.2초)가 담당한다.
     // GROSS_MOTION_LAG_MS 이상 지난 프레임 중 **가장 최근** 것과 비교한다.
     val ref = gridHistory.lastOrNull { now - it.first >= GROSS_MOTION_LAG_MS } ?: return
     var changed = 0
@@ -1153,9 +1185,9 @@ object PaceHandWaveDetector {
         "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio lag=${now - ref.first}ms",
         onWave
       )
-    } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.6) {
+    } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.3) {
       // 튜닝 근거 확보 — 아깝게 못 넘긴 경우만 남긴다(이 파일의 near-miss와 같은 원칙).
-      Log.d(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio(th=$GROSS_MOTION_DARKEN_RATIO)")
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio(th=$GROSS_MOTION_DARKEN_RATIO) changed=$changed/${grid.size}")
     }
   }
 
@@ -1172,6 +1204,7 @@ object PaceHandWaveDetector {
   // 급격히+충분히 어두워지면(렌즈 앞을 뭔가로 가림) 트리거. sizeHistory/growthRatio와 완전히
   // 같은 원리(윈도우 안 최댓값 대비 현재 비율)를 밝기에 대해 적용.
   private fun checkOcclusion(luma: Double, now: Long, onWave: () -> Unit) {
+    lastLuma = luma // HB 진단용(위 lastLuma 주석)
     lumaHistory.addLast(now to luma)
     while (lumaHistory.isNotEmpty() && now - lumaHistory.first().first > LUMA_WINDOW_MS) {
       lumaHistory.removeFirst()
@@ -1615,6 +1648,47 @@ object PaceHandWaveDetector {
     //   ⚠️ 여기서 거른다 — glided는 1415행에서 sweepRatio보다 먼저 계산돼 그 자리에선 못 쓴다.
     //   ⚠️ 기존 축을 조이는 게 아니다: swept/grew/grewFast/traversed는 손대지 않았고, glide만
     //      "속도는 충분한데 제자리"인 경우를 뺀다. 사장님 지시가 정확히 그 경우다.
+    // 🔴 2026-08-26 사장님("오른쪽에서 왼쪽으로 가도 영상이 바뀌는데") — 실기기 로그가 그대로 잡았다:
+    //     00:26:42  TRAVERSE-miss net=+0.148 mono=1.0 straight=1.0 dir=1   ← 방향 틀렸다고 정확히 거름
+    //               WAVE detected by=glide                                  ← 그런데 glide가 대신 발화
+    //   속도 축(grew/swept/grewFast/glide)은 **방향을 모른다**. 가로지르기 축만 방향을 보므로,
+    //   오→왼 통과가 속도 축으로 그대로 샌다.
+    //
+    //   가르는 기준은 이동량이 아니라 **한 방향으로 갔는가**다:
+    //     · 흔들기(= 이전 손짓, 사장님 "남겨두고")는 좌우로 오간다 → 총이동은 큰데 순이동이 작다
+    //     · 통과는 한 방향으로 지나간다                          → 순이동 ≈ 총이동
+    //   그래서 "직진성 높게 +x(사용자 오→왼)로 순이동"이면 속도 축을 막는다. 흔들기는 직진성이
+    //   낮아 안 걸리므로 "이전 손짓은 남겨두고"와 충돌하지 않는다.
+    //   실측(위 00:26:42) net=+0.148, straight=1.0 → 0.06/0.7 문턱이면 확실히 막힌다.
+    //
+    //   ⚠️ reversals(반전 횟수)로 가르려다 뺐다 — 이 파일 GROWTH 주석의 실측 1,134프레임이
+    //     "reversals는 **평소에도 2가 나와** 오탐 축이었다"고 이미 기록해 뒀다. 직진성은 문턱에
+    //     민감한 카운터가 아니라 비율이라 그 문제가 없다.
+    var oneWayReverse = false
+    run {
+      val w = posHistory.filter { now - it.first <= 700L }
+      if (w.size >= 2) {
+        val net = w.last().second - w.first().second
+        var gross = 0.0
+        for (k in 1 until w.size) gross += kotlin.math.abs(w[k].second - w[k - 1].second)
+        val straight = if (gross > 1e-6) kotlin.math.abs(net) / gross else 0.0
+        // 🔴 2026-08-26 00:35:40 실측으로 **내가 부호를 반대로 잡은 것이 드러났다.**
+        //     속도축 차단(오→왼 통과) net=+0.0655 straight=1.0 handSize=0.275
+        //   그 순간 사장님은 가까이서 왼→오를 하고 계셨고, 이 차단이 그걸 막았다.
+        //   즉 안드에서는 사용자 왼→오가 이미지 x **증가(+)** 다 — iOS(감소)와 반대다.
+        //   CameraX 전면 ImageProxy와 AVCapture의 미러링이 다르기 때문으로 보인다.
+        //
+        //   ⚠️ 그렇다고 여기서 부호만 뒤집지 않는다. 00:26:42에는 dir=+1 통과가 발화했고
+        //     00:23:33에는 dir=-1 통과가 발화했는데, 그때 사장님이 어느 방향으로 하셨는지
+        //     기록이 없다. **한 번 더 반대 부호로 틀리면 또 손짓이 통째로 죽는다.**
+        //   → 차단은 꺼두고(REVERSE_BLOCK_SIGN = 0) 판정 재료만 남긴다. 사장님이 왼→오 / 오→왼을
+        //     각각 지정해서 해주시면 그 로그로 부호를 확정한 뒤 켠다.
+        oneWayReverse = REVERSE_BLOCK_SIGN != 0 &&
+          straight >= 0.7 &&
+          (if (REVERSE_BLOCK_SIGN > 0) net >= 0.06 else net <= -0.06)
+        Log.i(TAG, "방향관측 net=$net straight=$straight handSize=$handSize 차단=$oneWayReverse")
+      }
+    }
     val glideSpanOk = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult
     if (glided && !glideSpanOk) {
       Log.i(TAG, "glide 차단(제자리) sweep=$sweepRatio need=${SWEEP_RATIO_THRESHOLD * bandMult} glideR=$glideRelPerSec handSize=$handSize")
@@ -1622,7 +1696,9 @@ object PaceHandWaveDetector {
     val glideFires = glided && glideSpanOk
 
     // 접근(밀기)·스윕(좌우)·glide(어떤 방향이든)는 OR — 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
-    if ((grew || swept || grewFast || glideFires || traversed) && pastRefractory) {
+    // 가로지르기(traversed)는 자체 방향 게이트가 있으므로 oneWayReverse를 적용하지 않는다 —
+    // 그쪽은 애초에 왼→오만 통과시킨다. 방향을 모르는 속도 축에만 건다.
+    if ((((grew || swept || grewFast || glideFires) && !oneWayReverse) || traversed) && pastRefractory) {
       val by = when {
         traversed -> "traverse(dir=$traverseDir)"
         glideFires -> "glide"

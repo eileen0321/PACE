@@ -10450,3 +10450,7 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 공백이 항상 0이다. 그래서 크로싱 전용 `crossLastT`를 따로 뒀다.
 맥의 "두 트랙 교대 무발화" 시나리오 2종도 수정된 판정에서 무발화·무skip 확인.
 `crossMinRangeX`(0.38 고정 화면비)는 needRange로 대체돼 제거.
+
+### 2026-08-26(Mac/iOS) — 🟢 안드 세션의 크로싱 결함 3건 수정본 그대로 채택·기기 설치 (사장님 "손짓 그대로 가져와")
+- 맥 몫 검증 완료: `swift scripts/wave_sim.swift` **24/24 통과**, Swift 컴파일 정상, tsc·주입 JS 검증 통과, 수정 0건으로 기기 설치.
+- 실기기 확인 대기: 사장님 실사용에서 `cross ... need= spd=`/`crossrearm` 로그로 마무리 판정 예정.

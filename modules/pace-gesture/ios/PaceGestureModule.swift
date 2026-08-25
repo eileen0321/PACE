@@ -312,10 +312,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 넘어가야") — 크로싱은 **속도 무관**이 원칙이다. 1초 창은 느린 스침(2초짜리 통과)을 놓쳤다.
   // 빠른 스침은 짧은 창에서도 성립하므로 창 확대는 느린 쪽만 살리고, 가짜 가로지름(양손 교차)은
   // 창 길이가 아니라 순방향비(directness)가 거른다.
-  // ⚠️ 2026-08-25 사장님 사양 확정: "흔들기 넘어감 / 왼→오 넘어감 / 오→왼 안 넘어감" — 흔들기는 유지.
-  // (통과 전용 모드는 내 오독으로 잠깐 켰다가 사장님 "미친거냐"로 즉시 원복 — false 고정.)
-  // 오→왼 누수는 아래 speedSuppressUntilMs(차단 직후 0.8s 속도축 잠금)로만 막는다.
-  private let passOnlyMode = false
+  // 🔴 2026-08-25 사장님 최종 확정("흔들기는 넘어가면 안 되지 — 그럼 손이 움직일 때 다 넘어간다는 거") —
+  // **통과 전용 모드**: 넘김 = 왼→오 통과(크로싱·근접 dip)뿐. 흔들기·빠른 움직임(속도 축)은 발화 안 함
+  // (계산·로그는 유지 — 복원은 이 플래그만 false). 오→왼 차단 직후 잠금(speedSuppressUntilMs)은
+  // 플래그를 끄더라도 유효한 별도 방어라 남겨둔다. ⚠️ 안드는 아직 흔들기 방식 — 사양 검증 후 동일 이식.
+  private let passOnlyMode = true
   private var speedSuppressUntilMs: Double = 0
   private let crossWindowMs: Double = 2500
   // 0.45→0.38(2026-08-25 "왼오일 때 안 되는 경우") — 스침 궤적의 일부만 추적돼도 성립하게.

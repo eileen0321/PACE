@@ -448,6 +448,22 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
     session.addInput(input)
 
+    // 🔴 2026-08-25 사장님("1번은 수정 안 해 그럼?") — 모션 블러 대응. 실측(22:11): 가까운 손(0.217)도
+    // 흔드는 동안 추적이 절반씩 끊김 = 실내 조명의 긴 노출로 빠른 손이 뭉개져 랜드마커가 놓침.
+    // 자동노출은 유지하되 **노출 시간 상한만 1/180초**로 캡 — 어두우면 ISO가 대신 올라간다(밝기 자동 보정).
+    // setExposureModeCustom(고정 노출)이 아니라 activeMaxExposureDuration인 이유: 조명이 변하는 실사용에서
+    // 고정값은 과노출/암전을 만든다 — 상한 캡은 AE를 살려둔 채 블러만 막는 안전한 형태다.
+    do {
+      try device.lockForConfiguration()
+      let cap = CMTime(value: 1, timescale: 180)
+      if device.activeFormat.maxExposureDuration > cap {
+        device.activeMaxExposureDuration = cap
+      }
+      device.unlockForConfiguration()
+    } catch {
+      // 설정 실패는 치명적이지 않다 — 기존(무캡) 동작으로 계속.
+    }
+
     // 프레임레이트는 캡하지 않는다(안드로이드와 동일: 네이티브 ~30fps).
     // 15fps로 캡했더니 alwaysDiscardsLateVideoFrames와 겹쳐 부하 시 실효 fps가 더 떨어져,
     // 손이 접근하는 "초반의 작은 프레임"을 놓쳐 growth 기준점이 커지고 → 감지가 5번에 1번으로 들쭉날쭉했다.

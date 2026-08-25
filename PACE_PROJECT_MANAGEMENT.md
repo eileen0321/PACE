@@ -10378,3 +10378,8 @@ SignInHubActivity는 우리 패키지에서 돈다 — feat 브랜치에서 여�
 - ③ 아침 광고 게이트("0분 봤는데 10분 소진"): 윈도우 08-20 날짜 스코프 수정 채택(맥 병렬 수정 파기, stash 충돌 → origin 버전). 이 게이트가 FOCUS를 막아 손짓 감지기 자체가 꺼져 있던 것이 ①·②의 공범.
 - 윈도우 커밋 전수 파리티 확인: 구글 로그인 Credential Manager/접근성 고지 시트/FGS 수정 = 전부 Android 게이트, iOS 이식 불요.
 - ⚠️ **ASC에 올라간 1.0.5(13)에는 위 수정 전부 미포함** — 심사 제출 전이면 빌드 14 재업로드 권장(사장님 결정 대기).
+
+### 2026-08-25(Mac/iOS, 2차) — 🟢 헬스장 수정 시뮬 검증 통과 + 물증 로그 체계 도입(기기 재설치 완료)
+- 시뮬 테스트: ① advanceLoop(600ms×10, 밀림 재현) → 버스트 게이트가 5건 드롭(adv_drop_burst ×5, 교대 패턴 예측 일치) ② promoAuto(12s 정상 페이스 45s) → 드롭 0·데드맨 오발동 0. 테스트 중 diagLog "파일 없으면 append 조용히 실패" 버그 발견·수정(create() 보강) — 안 돌렸으면 기기에서 로그가 영영 안 남았음.
+- **물증 로그 운영법**: 재발 신고 시 `xcrun devicectl device copy from … --domain-type appDataContainer --domain-identifier com.strides7.pace --source Documents/pace_diag.log`로 꺼내 해당 시각의 gesture_next/gesture_drop_cooldown/adv_drop_burst/deadman_reload 유무로 "인식 실패 vs 실행 밀림" 판정. 이벤트 4종·개인정보 없음·256KB 캡.
+- 출시 프로세스 교훈(사장님 질책 반영): 기기 설치 전 시뮬 테스트 2종(버스트 재현 + 정상 페이스 오탐) 기본 실행. ASC 재업로드(빌드 14)는 사장님 실사용 확인 후.

@@ -331,6 +331,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // — 통과 전용(속도 축 전면 미발화)은 지시를 넓게 잡은 것이었다. 껐어야 할 건 흔들기 축 전체가
   // 아니라 **제자리 떨림**이다. 그래서 false로 되돌리고, 떨림은 아래 glide 진폭 게이트로 거른다.
   private let passOnlyMode = false
+  // 🔴 2026-08-26 — 방향 무관 발화로 열면서 "갔다 돌아오는 손이 2번 넘김"이 생긴다(시뮬이 잡음).
+  // 절대 부호는 자세에 따라 뒤집히므로(오늘 확진) **상대 방향**으로 막는다: 직전 발화와 반대 방향
+  // 스트로크가 2초 안에 오면 복귀로 보고 무시. 2초 지나 오는 역방향은 의도적 통과로 인정.
+  private var crossLastFireDir: Double = 0
   // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
   // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
   private let passRefractoryMs: Double = 500
@@ -763,7 +767,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // ⚠️ 여기서 tracks[ti].lastSeenMs를 쓰면 안 된다 — 이 블록 위(709행)에서 이미 nowMs로
         //    갱신돼 공백이 항상 0이다. 크로싱 전용 시각(crossLastT)을 따로 둔다.
         if !self.tracks[ti].crossArmed {
-          let returned = c.x - self.tracks[ti].crossFireX >= self.crossRearmReturnX
+          // 방향 무관(2026-08-26 부호 뒤집힘 확진) — 발화 지점에서 어느 쪽으로든 누적 이탈이면 복귀로 본다.
+          let returned = abs(c.x - self.tracks[ti].crossFireX) >= self.crossRearmReturnX
           let reappeared = nowMs - self.tracks[ti].crossLastT >= self.crossRearmAbsentMs
           if returned || reappeared {
             self.tracks[ti].crossArmed = true
@@ -827,7 +832,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           // 충분히 크면(0.30) 속도 무관하게 통과시킨다 — 그 크기는 표류로 설명되지 않는다.
           let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
           let speedOk = segSpeed >= self.crossMinSegSpeed || abs(segNet) >= self.crossBigNetX
-          if rangeOk, speedOk, self.tracks[ti].crossArmed || segNet > 0 {
+          if rangeOk, speedOk, self.tracks[ti].crossArmed {
             self.tracks[ti].crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
@@ -837,16 +842,23 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               self.onDiag(String(format: "crossdrop net=%+.2f", segNet))
               return glideAbs
             }
-            if segNet < 0 {
-              self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
-              self.tracks[ti].crossFireX = c.x
-              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            // 🔴 2026-08-26 07:00 확진 — 같은 왼→오가 어젯밤 net=-0.42, 오늘(케이블 거치) net=+0.17로
+            // **부호가 사용 자세에 따라 뒤집힌다.** 한쪽 부호 고정 규칙이 자세가 바뀔 때마다 정방향을
+            // 차단해온 것("왼오 안 되고 오왼이 됨" 반전 보고 전부와 일치). 자세 감지로 부호를 풀 때까지
+            // **통과는 방향 무관 발화**(사장님 원칙 "지나갔으면 넘어가야") — 오발화 방어(스트로크 단위·
+            // 속도 게이트·트랙 분리)는 그대로다.
+            let dir: Double = segNet > 0 ? 1 : -1
+            if dir == -self.crossLastFireDir && nowMs - self.lastTriggerMs < 2000 {
+              // 복귀 스트로크(직전 발화의 반대 방향, 2초 내) — 소비만 하고 발화 안 함.
+              paceGLog("[pace-wave] returndrop net=%+.2f", segNet)
+              self.onDiag(String(format: "returndrop net=%+.2f", segNet))
               return glideAbs
             }
-            // 반대 방향(사용자 오→왼) — 무시하되 채증. 차단 직후 잔움직임 누수 방지 잠금(22:42 실측).
-            self.speedSuppressUntilMs = nowMs + 800
-            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f need=%.2f steps=%d spd=%.2f", segNet, handSize, needRange, segSteps, segSpeed)
-            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", segNet, handSize))
+            self.crossLastFireDir = dir
+            self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
+            self.tracks[ti].crossFireX = c.x
+            self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            return glideAbs
           }
         }
       }
@@ -1026,10 +1038,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           return
         }
         if tL3 < tM3, tM3 < tR3, tR3 - tL3 >= 80, tR3 - tL3 <= 900 {
+          // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 역순도 통과로 인정.
           dipHistory.removeAll()
-          speedSuppressUntilMs = nowMs + 800
-          paceGLog("[pace-wave] lumaskip R->L span=%.0f", tR3 - tL3)
-          onDiag(String(format: "lumaskip span=%.0f", tR3 - tL3))
+          fireTrigger(String(format: "lumapass(rev) span=%.0f", tR3 - tL3), nowMs)
+          return
         }
       }
     }
@@ -1049,16 +1061,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let tL = dipCandidates.first(where: { $0.l <= onsetTh })?.t ?? dip.t
           let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()
-          if tR - tL >= 40 {
-            speedSuppressUntilMs = nowMs + 800 // 근접 오→왼 차단 직후 잔움직임 누수도 동일하게 잠금
-            paceGLog("[pace-wave] nearskip R->L dt=%.0f", tR - tL)
-            onDiag(String(format: "nearskip dt=%+.0f", tL - tR))
-          } else {
-            pendingOcclusionWork?.cancel()
-            pendingOcclusionWork = nil
-            fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
-            return
-          }
+          // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 어느 순서든 근접 통과로 인정.
+          pendingOcclusionWork?.cancel()
+          pendingOcclusionWork = nil
+          fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+          return
         }
       }
     }

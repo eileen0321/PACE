@@ -3125,6 +3125,38 @@ class PaceOverlayService : Service() {
       setPadding(0, (6 * d).toInt(), 0, (14 * d).toInt())
     })
 
+    // 🔴 2026-08-20 Play 정책 반려(2차) — 이 오버레이도 **접근성 설정을 여는 경로**이므로 명시적
+    //   공개(prominent disclosure) 요건을 그대로 충족해야 한다. 두 버튼(설정 열기/나중에)은 이미
+    //   있었지만 **무엇을 읽는지(What)가 빠져** 있었다 — 위 문구는 "없으면 안 된다"는 혜택 설명일 뿐이다.
+    //   앱 안 고지 시트(AccessibilityOnboardingSheet)와 **같은 내용**을 여기에도 적는다.
+    //   ⚠️ 두 곳의 문구가 어긋나면 심사에서 다시 걸린다 — 시트를 고치면 여기도 같이 고칠 것.
+    val a11yUses = if (ko) listOf(
+      "· 영상 앱이 재생 중인지만 확인 — 시청 시간 계산",
+      "· 포커스 세션 중 다음 영상으로 넘기기",
+      "· 블루투스 리모컨 볼륨 버튼으로 넘기기",
+      "· 즐겨찾기 누를 때 제목·채널·링크 저장"
+    ) else listOf(
+      "· Check only whether a video app is playing — to count watch time",
+      "· Advance to the next video during a Focus Session",
+      "· Advance using Bluetooth remote volume buttons",
+      "· Save title, channel and link when you tap Favorite"
+    )
+    a11yUses.forEach { line ->
+      card.addView(TextView(this).apply {
+        text = line
+        textSize = 12f
+        setTextColor(Color.parseColor("#CCFFFFFF"))
+        setPadding(0, 0, 0, (4 * d).toInt())
+      })
+    }
+    card.addView(TextView(this).apply {
+      text = if (ko) "녹화·캡처는 하지 않아요. 화면 내용은 저장하지 않고, 시청 시간 기록만 계정에 저장돼요. 언제든 설정에서 끌 수 있어요."
+             else "No recording or screenshots. Screen contents are never stored — only your watch-time history is saved to your account. You can turn this off anytime in Settings."
+      textSize = 11.5f
+      setTextColor(Color.parseColor("#99FFFFFF"))
+      setPadding(0, (6 * d).toInt(), 0, (14 * d).toInt())
+    })
+
     fun button(label: String, bgColor: String, textColor: Int, onTap: () -> Unit): TextView =
       TextView(this).apply {
         text = label
@@ -5728,13 +5760,15 @@ class PaceOverlayService : Service() {
       setOnClickListener(
         if (!accessibilityBroken) autoBadgeToggleListener
         else View.OnClickListener {
-          Log.i("PaceOverlay", "권한 필요 배지 탭 — 접근성 설정으로 이동")
+          // 🔴 2026-08-20 Play 정책 반려(2차) — 여기가 **고지 없이 접근성 설정을 열던 경로**다.
+          //   정책은 "권한 요청 직전에 앱 안에서" 고지를 띄우고 사용자가 명시적으로 동의를 표현할
+          //   것을 요구한다. 배지 탭 → 설정 직행은 그 사이에 아무것도 없다.
+          //   → 고지 내용과 두 버튼을 갖춘 showAccessibilityRequiredOverlay()를 거친다.
+          Log.i("PaceOverlay", "권한 필요 배지 탭 — 고지 오버레이 표시")
           try {
-            startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+            showAccessibilityRequiredOverlay()
           } catch (e: Exception) {
-            Log.w("PaceOverlay", "open accessibility settings failed", e)
+            Log.w("PaceOverlay", "show accessibility disclosure failed", e)
           }
         }
       )

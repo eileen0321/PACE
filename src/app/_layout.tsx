@@ -601,12 +601,12 @@ export default function RootLayout() {
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       if (response.notification.request.content.data?.action === 'open-accessibility-settings') {
-        // 2026-08-01 크래시 감사 F2 — New Arch/bridgeless에선 미처리 네이티브 reject가 하드 크래시로
-        // 이어질 수 있다. sync throw와 async reject 둘 다 방어(권한 요청 실패는 무해하게 무시).
-        try {
-          const p = autoNextService.requestPermission() as Promise<unknown> | void;
-          if (p && typeof (p as Promise<unknown>).catch === 'function') (p as Promise<unknown>).catch(() => {});
-        } catch { /* 무해 */ }
+        // 🔴 2026-08-20 Play 정책 반려(2차) — 여기서 곷장 requestPermission()을 부르면 **고지 없이
+        //   권한을 요청**하는 것이 된다. 정책은 "권한 요청 직전에 앱 안에서" 고지를 띄우고 사용자가
+        //   명시적으로 동의를 표현할 것을 요구하는데, 알림 탭은 그 어느 것도 아니다.
+        //   → 알림은 앱으로 데려오는 역할만 한다. 접근성이 꺼져 있으면 홈/집중 화면의 안내 배너가
+        //     이미 떠 있고, 그 배너를 누르면 AccessibilityOnboardingSheet(고지·동의)를 거친다.
+        //   ⚠️ 여기에 권한 요청을 다시 넣지 말 것 — 설정을 여는 경로는 전부 그 시트를 거쳐야 한다.
       }
     });
     return () => sub.remove();

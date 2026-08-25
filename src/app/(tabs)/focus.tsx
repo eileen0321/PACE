@@ -307,8 +307,13 @@ export default function FocusScreen() {
   }, []);
   const explainAndOpenSettings = async (reason: 'camera' | 'accessibility') => {
     if (reason === 'accessibility') {
-      useToastStore.getState().show(t('focus.accessibilityNeededToast'));
-      await autoNextService.requestPermission();
+      // 🔴 2026-08-20 Play 정책 반려(2차) — 여기가 **고지를 건너뛰고 권한을 요청하던 경로**다.
+      //   정책은 "권한을 요청하기 직전에, 앱 안에서" 고지 대화상자를 띄우고 사용자가 명시적으로
+      //   동의를 표현하게 할 것을 요구한다. 토스트 한 줄은 고지가 아니고 동의를 받지도 않는다.
+      //   → 다른 진입점과 동일하게 AccessibilityOnboardingSheet를 거치게 한다.
+      //   ⚠️ 접근성 설정을 여는 경로는 **전부** 이 시트를 거쳐야 한다. 1차 반려 때 시트 하나만
+      //     보고 "앱 쪽은 갖춰져 있다"고 판단해 우회 경로를 안 찾은 것이 2차 반려로 이어졌다.
+      setShowAccessibilityDisclosure(true);
       return;
     }
     useToastStore.getState().show(t('focus.cameraNeededToast'));

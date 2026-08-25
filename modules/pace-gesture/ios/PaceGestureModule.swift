@@ -940,7 +940,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             // 속도 게이트·트랙 분리)는 그대로다.
             let dir: Double = segNet > 0 ? 1 : -1
             if dir == -self.crossLastFireDir && nowMs - self.lastTriggerMs < 2000 {
-              // 복귀 스트로크(직전 발화의 반대 방향, 2초 내) — 소비만 하고 발화 안 함.
+              // 복귀 스트로크(직전 발화의 반대 방향, 2초 내) — **1회만** 무시하고 기억을 비운다.
+              // 🔴 2026-08-26 07:4x 사장님("왼오에서 안 되고 오→왼으로 손 돌릴 때 넘어간다") — 기억을
+              //   안 비우면 복귀 방향에 한 번 잘못 물렸을 때 진짜 스트로크가 전부 '복귀'로 오인돼
+              //   영구 반전 잠금이 된다. 1회 소비 후 초기화 → 다음 스트로크는 방향 불문 발화(자가 복구).
+              self.crossLastFireDir = 0
               paceGLog("[pace-wave] returndrop net=%+.2f", segNet)
               self.onDiag(String(format: "returndrop net=%+.2f", segNet))
               return glideAbs

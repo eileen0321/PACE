@@ -63,7 +63,7 @@ struct Sim {
       if t - lastTriggerMs <= passRefractoryMs { events.append("crossdrop"); return }
       // 방향 무관 + 상대방향 복귀 무시(직전 발화 반대 방향, 2초 내).
       let dir: Double = segNet > 0 ? 1 : -1
-      if dir == -crossLastFireDir && t - lastTriggerMs < 2000 { events.append("returndrop"); return }
+      if dir == -crossLastFireDir && t - lastTriggerMs < 2000 { crossLastFireDir = 0; events.append("returndrop"); return }
       crossLastFireDir = dir
       crossArmed = false; crossFireX = x; lastTriggerMs = t; events.append("FIRE cross")
     }
@@ -277,7 +277,8 @@ var t18 = 400.0, x18 = 0.30
 for _ in 0..<30 { x18 += 0.015; s18.feedHand(t: t18, x: x18, size: 0.15); t18 += 60 }
 s18.feedHand(t: t18, x: 0.75, size: 0.15); t18 += 150
 s18.feedHand(t: t18, x: 0.25, size: 0.15)
-check("느린 복귀 후 재발화(데드락)", s18.events, fires: 2)
+// 라치 자가복구(1회 소비) 도입으로 느린 다구간 복귀의 둘째 구간은 발화 허용(방향무관 원칙) — 기대 3
+check("느린 복귀 후 재발화(데드락)", s18.events, fires: 3)
 
 // 20. 손을 완전히 내렸다가(900ms 공백) 다시 올려 긋기 — 소실 경로 재무장
 var s19 = Sim()
@@ -317,6 +318,18 @@ for _ in 0..<15 {
 }
 check("두 트랙 교대 무발화(A)", s16a.events, fires: 0, expectAbsent: ["crossskip"])
 check("두 트랙 교대 무발화(B)", s16b.events, fires: 0, expectAbsent: ["crossskip"])
+
+// 25. 역방향 라치 자가복구 — F(발화) R(무시) F(발화) R(무시) F(발화): 정방향 전부 발화해야
+var s25 = Sim()
+var t25 = 0.0
+for k in 0..<5 {
+  let fwd = k % 2 == 0
+  let x0 = fwd ? 0.85 : 0.15, x1 = fwd ? 0.15 : 0.85
+  s25.feedHand(t: t25, x: x0, size: 0.15); t25 += 150
+  s25.feedHand(t: t25, x: (x0+x1)/2, size: 0.15); t25 += 150
+  s25.feedHand(t: t25, x: x1, size: 0.15); t25 += 700
+}
+check("역방향 라치 자가복구", s25.events, fires: 3, expectContains: ["returndrop"])
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

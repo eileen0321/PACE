@@ -929,6 +929,7 @@ export default function PaceFeedScreen() {
   const markUserInput = () => { idleMinRef.current = 0; markSleepActivity(); };
 
   const goNext = () => {
+    diagLog('go_next', platform); // 발화→실행 사슬 추적(플랫폼 구분) — 틱톡은 전환 신호가 없어 이 지점이 기준
     pauseWaveRef.current?.();
     setStatus('PLAYING');
     // 우리 리스트(HOT/Favorite) 순서 재생 중이면 유튜브 스와이프 대신 리스트의 다음 항목으로 리마운트한다.

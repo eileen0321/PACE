@@ -9,7 +9,7 @@ let crossWindowMs = 2500.0
 let crossNeedMin = 0.07
 let crossNeedMax = 0.10
 let crossNeedK = 0.5
-let crossMinSegSpeed = 0.20
+let crossMinSegSpeed = 0.40
 let crossBigNetX = 0.30
 let crossRearmReturnX = 0.08
 let crossRearmAbsentMs = 600.0
@@ -18,6 +18,7 @@ let dipWindowMs = 1200.0
 
 struct Sim {
   var crossHistory: [(t: Double, x: Double)] = []
+  var crossLastFireDir = 0.0
   var crossArmed = true
   var crossLastSampleT = 0.0
   var crossLastSampleX = 0.0
@@ -60,8 +61,11 @@ struct Sim {
     if rangeOk, speedOk, crossArmed || segNet > 0 {
       crossHistory.removeAll()
       if t - lastTriggerMs <= passRefractoryMs { events.append("crossdrop"); return }
-      if segNet < 0 { crossArmed = false; crossFireX = x; lastTriggerMs = t; events.append("FIRE cross") }
-      else { events.append("crossskip") }
+      // 방향 무관 + 상대방향 복귀 무시(직전 발화 반대 방향, 2초 내).
+      let dir: Double = segNet > 0 ? 1 : -1
+      if dir == -crossLastFireDir && t - lastTriggerMs < 2000 { crossLastFireDir = 0; events.append("returndrop"); return }
+      crossLastFireDir = dir
+      crossArmed = false; crossFireX = x; lastTriggerMs = t; events.append("FIRE cross")
     }
   }
 
@@ -88,7 +92,7 @@ struct Sim {
           dipHistory.removeAll(); lastTriggerMs = t; events.append("FIRE lumapass"); return
         }
         if tL3 < tM3, tM3 < tR3, tR3 - tL3 >= 80, tR3 - tL3 <= 900 {
-          dipHistory.removeAll(); events.append("lumaskip"); return
+          dipHistory.removeAll(); lastTriggerMs = t; events.append("FIRE lumapass"); return
         }
       }
     }
@@ -103,7 +107,7 @@ struct Sim {
           let tL = cands.first(where: { $0.l <= onsetTh })?.t ?? dip.t
           let tR = cands.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()
-          if tR - tL >= 40 { events.append("nearskip") } else { lastTriggerMs = t; events.append("FIRE nearpass") }
+          lastTriggerMs = t; events.append("FIRE nearpass")
         }
       }
     }
@@ -143,7 +147,7 @@ var s3 = Sim()
 s3.feedHand(t: 0, x: 0.15, size: 0.15)
 s3.feedHand(t: 250, x: 0.60, size: 0.15)
 s3.feedHand(t: 500, x: 0.90, size: 0.15)
-check("오→왼 차단", s3.events, fires: 0, expectContains: ["crossskip"])
+check("오→왼 통과(방향 무관)", s3.events, fires: 1)
 
 // 4. 느린 왼→오 (2초)
 var s4 = Sim()
@@ -186,7 +190,7 @@ s8.feedLuma(t: t8, l: 110, m: 150, r: 150); t8 += 100
 s8.feedLuma(t: t8, l: 130, m: 110, r: 150); t8 += 100
 s8.feedLuma(t: t8, l: 150, m: 130, r: 110); t8 += 100
 for _ in 0..<3 { s8.feedLuma(t: t8, l: 150, m: 150, r: 150); t8 += 80 }
-check("lumapass 오→왼 차단", s8.events, fires: 0, expectContains: ["lumaskip"])
+check("lumapass 역순 통과(방향 무관)", s8.events, fires: 1)
 
 // 9. 연속 근접 스침(기준 오염, 22:52): 깊은 dip 반복 — 감쇠 기준으로 2회 이상 발화해야
 var s9 = Sim()
@@ -273,6 +277,7 @@ var t18 = 400.0, x18 = 0.30
 for _ in 0..<30 { x18 += 0.015; s18.feedHand(t: t18, x: x18, size: 0.15); t18 += 60 }
 s18.feedHand(t: t18, x: 0.75, size: 0.15); t18 += 150
 s18.feedHand(t: t18, x: 0.25, size: 0.15)
+// 속도 문턱 0.40으로 느린 복귀 잔구간 발화도 소멸 — 원래 의도(2발화) 복원
 check("느린 복귀 후 재발화(데드락)", s18.events, fires: 2)
 
 // 20. 손을 완전히 내렸다가(900ms 공백) 다시 올려 긋기 — 소실 경로 재무장
@@ -313,6 +318,18 @@ for _ in 0..<15 {
 }
 check("두 트랙 교대 무발화(A)", s16a.events, fires: 0, expectAbsent: ["crossskip"])
 check("두 트랙 교대 무발화(B)", s16b.events, fires: 0, expectAbsent: ["crossskip"])
+
+// 25. 역방향 라치 자가복구 — F(발화) R(무시) F(발화) R(무시) F(발화): 정방향 전부 발화해야
+var s25 = Sim()
+var t25 = 0.0
+for k in 0..<5 {
+  let fwd = k % 2 == 0
+  let x0 = fwd ? 0.85 : 0.15, x1 = fwd ? 0.15 : 0.85
+  s25.feedHand(t: t25, x: x0, size: 0.15); t25 += 150
+  s25.feedHand(t: t25, x: (x0+x1)/2, size: 0.15); t25 += 150
+  s25.feedHand(t: t25, x: x1, size: 0.15); t25 += 700
+}
+check("역방향 라치 자가복구", s25.events, fires: 3, expectContains: ["returndrop"])
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

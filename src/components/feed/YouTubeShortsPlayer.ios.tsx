@@ -377,6 +377,18 @@ const INJECTED_JS_SWIPE = `
     setTimeout(function () {
       if (videoIdOf('' + location.href) === beforeVid) { doSwipe(dir, true); send({ type: 'domlog', text: 'SWIPE-retry2 dir=' + dir }); scheduleFastPoll(); }
     }, 1100);
+    // 🔴 2026-08-26 시각 검증 프로브 — "로그는 넘어갔다는데 눈엔 그대로" 수수께끼 판정용(Release에서도 전송).
+    // URL 변화 + 활성 비디오의 화면 위치/재생 상태를 보고한다: URL은 바뀌는데 비디오 rect가 그대로면
+    // 렌더/스크롤이 안 따라온 것.
+    setTimeout(function () {
+      try {
+        var v2 = document.querySelector('video');
+        var r = v2 ? v2.getBoundingClientRect() : null;
+        send({ type: 'swipestate', urlChanged: videoIdOf('' + location.href) !== beforeVid,
+               y: r ? Math.round(r.top) : -1, h: r ? Math.round(r.height) : -1,
+               paused: v2 ? v2.paused : true, t: v2 ? Math.round(v2.currentTime * 10) / 10 : -1 });
+      } catch (e) {}
+    }, 900);
   }
   // 🔴 2026-08-25 사장님 헬스장 실사용("거의 안 먹다가 한번에 5개씩") — 페이지가 로딩/스로틀로 버벅이는
   // 동안 RN의 injectJavaScript 호출이 WebView 큐에 쌓였다가 페이지가 살아나는 순간 몰아서 실행됐다.
@@ -842,6 +854,11 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'swipestate') {
+            const m = msg as unknown as { urlChanged?: boolean; y?: number; h?: number; paused?: boolean; t?: number };
+            diagLog('swipe_state', `url=${m.urlChanged ? 1 : 0} y=${m.y} h=${m.h} paused=${m.paused ? 1 : 0} t=${m.t}`);
             return;
           }
           if (msg.type === 'advdrop') {

@@ -86,6 +86,11 @@ public class PaceGestureModule: Module {
       self.waveDetector?.setPaused(paused)
     }
 
+    // 실명 채증(테스트 빌드 전용) — WaveDetector.diagCaptureEnabled 주석 참고. JS가 test 플래그일 때만 켠다.
+    Function("setDiagCapture") { (on: Bool) in
+      self.waveDetector?.setDiagCapture(on)
+    }
+
     // 고개짓 지원 기기인지(TrueDepth). JS가 UI 노출 여부 판단에 사용.
     Function("isHeadGestureSupported") { () -> Bool in
       if #available(iOS 11.0, *) { return ARFaceTrackingConfiguration.isSupported }
@@ -331,6 +336,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // — 통과 전용(속도 축 전면 미발화)은 지시를 넓게 잡은 것이었다. 껐어야 할 건 흔들기 축 전체가
   // 아니라 **제자리 떨림**이다. 그래서 false로 되돌리고, 떨림은 아래 glide 진폭 게이트로 거른다.
   private let passOnlyMode = false
+  // 🔴 2026-08-26 — 방향 무관 발화로 열면서 "갔다 돌아오는 손이 2번 넘김"이 생긴다(시뮬이 잡음).
+  // 절대 부호는 자세에 따라 뒤집히므로(오늘 확진) **상대 방향**으로 막는다: 직전 발화와 반대 방향
+  // 스트로크가 2초 안에 오면 복귀로 보고 무시. 2초 지나 오는 역방향은 의도적 통과로 인정.
+  private var crossLastFireDir: Double = 0
   // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
   // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
   private let passRefractoryMs: Double = 500
@@ -350,7 +359,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
   private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
   private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
-  private let crossMinSegSpeed: Double = 0.20   // 화면폭/초 — 느린 표류 차단
+  // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해
+  // 진짜 스트로크(속도 0.7~1.4 실측)를 죽였다. 큰 이동(crossBigNetX)의 느린 통과는 별도 통과 유지.
+  private let crossMinSegSpeed: Double = 0.40   // 화면폭/초 — 표류·잔움직임 차단
   private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
@@ -385,6 +396,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // Documents/wave_debug/에 JPEG로 남긴다(발화 시에만, 최근 30장 유지). MediaPipe가 무엇을 score
   // 0.99짜리 "손"으로 보는지 눈으로 확정한 뒤 제거할 임시 진단 코드.
   private var lastPixelBuffer: CVPixelBuffer?
+  // 🔴 2026-08-26 07:05 — "됐다/실명" 반복(같은 자리에서 0/59 무감지 ↔ 11/31 정상)의 최종 채증:
+  // 테스트 빌드에서만(JS가 setDiagCapture(true) — EXPO_PUBLIC_AD_TEST_DEVICES 게이트) 감지기 가동 중
+  // 3초마다 프레임을 저장한다. 실명 순간 카메라가 실제로 뭘 보는지 눈으로 확정하기 위함.
+  // ⚠️ 출시 빌드에는 JS 게이트가 꺼져 있어 절대 저장되지 않는다(프레임 저장 금지 원칙 유지).
+  private var diagCaptureEnabled = false
+  private var lastDiagCaptureMs: Double = 0
+  private var didLogPixelSize = false // 첫 프레임 버퍼 크기 1회 보고(campixel) — 회전 적용 여부의 원격 검증
   private let ciContext = CIContext(options: nil)
   // iOS 전용 안전망(안드에 없음): 영상 리로드로 MediaPipe가 접근 초반(작을 때)을 굶기면 growth가 안 나와
   // "5번에 1번"으로 놓쳤다. 손이 잠깐(≥reappearGapMs) 사라졌다 곧바로 크게(≥reappearMinSize) 나타나면
@@ -464,6 +482,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   // 영상 전환 중 추론 일시정지/재개. 재개 시 히스토리를 비워 전환 전의 낡은 손 크기 baseline이
   // 남아 growth를 오염시키지 않게 한다(재개 직후 새 접근을 깨끗한 기준으로 판정).
+  func setDiagCapture(_ on: Bool) {
+    queue.async { self.diagCaptureEnabled = on }
+  }
+
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
@@ -526,6 +548,57 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         conn.isVideoMirrored = true
       }
     }
+    // 🔴 2026-08-26 해상도 상향 2차(probe+자동 폴백) — 사장님 "너보다 안드가 더 잘돼": 안드는 1080×1440
+    // (VGA의 4.5배 픽셀)로 돌고 그게 인식률 격차의 최대 변수(f57afbc 실측). 1차 시도는 회전이 조용히
+    // 풀리며 실패 → 이번엔 포맷 변경 **후** 회전을 재적용·검증하고, 안 되면 그 자리에서 VGA로 복귀
+    // (지금보다 나빠질 수 없음). 실제 적용 결과는 camprobe/campixel로 물증 로그에 남는다.
+    var fmtDesc = "vga-default"
+    do {
+      try device.lockForConfiguration()
+      let wanted: [(Int32, Int32)] = [(1440, 1080), (1080, 1440), (1280, 960), (960, 1280)]
+      var picked: AVCaptureDevice.Format? = nil
+      outer: for (w, h) in wanted {
+        for f in device.formats {
+          let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+          if (d.width == w && d.height == h) || (d.width == h && d.height == w) {
+            picked = f
+            break outer
+          }
+        }
+      }
+      if let f = picked {
+        device.activeFormat = f
+        let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+        fmtDesc = "\(d.width)x\(d.height)"
+      }
+      device.unlockForConfiguration()
+    } catch {
+      fmtDesc = "lockFail-vga"
+    }
+    if let conn = output.connection(with: .video) {
+      var rotOK = false
+      if #available(iOS 17.0, *) {
+        if conn.isVideoRotationAngleSupported(90) {
+          conn.videoRotationAngle = 90
+          rotOK = true
+        }
+      } else if conn.isVideoOrientationSupported {
+        conn.videoOrientation = .portrait
+        rotOK = true
+      }
+      if conn.isVideoMirroringSupported {
+        conn.automaticallyAdjustsVideoMirroring = false
+        conn.isVideoMirrored = true
+      }
+      if !rotOK {
+        // 이 포맷에선 세로 회전 불가(1차 실패의 정황) — 검증된 VGA로 복귀.
+        session.sessionPreset = .vga640x480
+        fmtDesc += " rotFail->vga"
+        if #available(iOS 17.0, *), conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }
+        else if conn.isVideoOrientationSupported { conn.videoOrientation = .portrait }
+      }
+    }
+    onDiag("camprobe \(fmtDesc)")
     session.commitConfiguration()
     // ⭐ 손짓이 "2번째 영상부터 안 되는" 원인: 새 영상 WebView가 재생을 시작하면 시스템 압력/미디어로
     //   AVCaptureSession이 interrupted 되는데, 관찰자가 없어 자동 복구가 안 돼 카메라가 죽은 채 남는다.
@@ -608,6 +681,30 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         checkOcclusion((thirds.l + thirds.m + thirds.r) / 3, thirds.l, thirds.m, thirds.r, nowMs)
       }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
+      if !didLogPixelSize {
+        didLogPixelSize = true
+        // 세로 정상이면 height > width — 이 한 줄이 회전 적용의 원격 물증(campixel).
+        onDiag("campixel \(CVPixelBufferGetWidth(pb))x\(CVPixelBufferGetHeight(pb))")
+      }
+      // 실명 채증(상단 diagCaptureEnabled 주석) — 3초마다 1장, 최근 30장 유지.
+      if diagCaptureEnabled {
+        let nowCap = CFAbsoluteTimeGetCurrent() * 1000
+        if nowCap - lastDiagCaptureMs >= 3000 {
+          lastDiagCaptureMs = nowCap
+          let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("wave_diag_frames", isDirectory: true)
+          try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+          let ci = CIImage(cvPixelBuffer: pb)
+          if let data = ciContext.jpegRepresentation(of: ci, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]) {
+            try? data.write(to: dir.appendingPathComponent(String(format: "f_%.0f.jpg", nowCap)))
+            if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil), files.count > 30 {
+              for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(files.count - 30) {
+                try? FileManager.default.removeItem(at: f)
+              }
+            }
+          }
+        }
+      }
     }
     // 2026-07-28 리서치(#4) — MPImage 생성/detectAsync를 autoreleasepool로 감싼다. liveStream에서 매 프레임
     // CMSampleBuffer→MPImage 래핑이 오토릴리즈 객체를 쌓아 장시간 세션에서 메모리 증가 보고가 있다(값싼 보험).
@@ -763,7 +860,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // ⚠️ 여기서 tracks[ti].lastSeenMs를 쓰면 안 된다 — 이 블록 위(709행)에서 이미 nowMs로
         //    갱신돼 공백이 항상 0이다. 크로싱 전용 시각(crossLastT)을 따로 둔다.
         if !self.tracks[ti].crossArmed {
-          let returned = c.x - self.tracks[ti].crossFireX >= self.crossRearmReturnX
+          // 방향 무관(2026-08-26 부호 뒤집힘 확진) — 발화 지점에서 어느 쪽으로든 누적 이탈이면 복귀로 본다.
+          let returned = abs(c.x - self.tracks[ti].crossFireX) >= self.crossRearmReturnX
           let reappeared = nowMs - self.tracks[ti].crossLastT >= self.crossRearmAbsentMs
           if returned || reappeared {
             self.tracks[ti].crossArmed = true
@@ -827,7 +925,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           // 충분히 크면(0.30) 속도 무관하게 통과시킨다 — 그 크기는 표류로 설명되지 않는다.
           let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
           let speedOk = segSpeed >= self.crossMinSegSpeed || abs(segNet) >= self.crossBigNetX
-          if rangeOk, speedOk, self.tracks[ti].crossArmed || segNet > 0 {
+          if rangeOk, speedOk, self.tracks[ti].crossArmed {
             self.tracks[ti].crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.
@@ -837,16 +935,27 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
               self.onDiag(String(format: "crossdrop net=%+.2f", segNet))
               return glideAbs
             }
-            if segNet < 0 {
-              self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
-              self.tracks[ti].crossFireX = c.x
-              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            // 🔴 2026-08-26 07:00 확진 — 같은 왼→오가 어젯밤 net=-0.42, 오늘(케이블 거치) net=+0.17로
+            // **부호가 사용 자세에 따라 뒤집힌다.** 한쪽 부호 고정 규칙이 자세가 바뀔 때마다 정방향을
+            // 차단해온 것("왼오 안 되고 오왼이 됨" 반전 보고 전부와 일치). 자세 감지로 부호를 풀 때까지
+            // **통과는 방향 무관 발화**(사장님 원칙 "지나갔으면 넘어가야") — 오발화 방어(스트로크 단위·
+            // 속도 게이트·트랙 분리)는 그대로다.
+            let dir: Double = segNet > 0 ? 1 : -1
+            if dir == -self.crossLastFireDir && nowMs - self.lastTriggerMs < 2000 {
+              // 복귀 스트로크(직전 발화의 반대 방향, 2초 내) — **1회만** 무시하고 기억을 비운다.
+              // 🔴 2026-08-26 07:4x 사장님("왼오에서 안 되고 오→왼으로 손 돌릴 때 넘어간다") — 기억을
+              //   안 비우면 복귀 방향에 한 번 잘못 물렸을 때 진짜 스트로크가 전부 '복귀'로 오인돼
+              //   영구 반전 잠금이 된다. 1회 소비 후 초기화 → 다음 스트로크는 방향 불문 발화(자가 복구).
+              self.crossLastFireDir = 0
+              paceGLog("[pace-wave] returndrop net=%+.2f", segNet)
+              self.onDiag(String(format: "returndrop net=%+.2f", segNet))
               return glideAbs
             }
-            // 반대 방향(사용자 오→왼) — 무시하되 채증. 차단 직후 잔움직임 누수 방지 잠금(22:42 실측).
-            self.speedSuppressUntilMs = nowMs + 800
-            paceGLog("[pace-wave] crossskip net=%+.2f size=%.2f need=%.2f steps=%d spd=%.2f", segNet, handSize, needRange, segSteps, segSpeed)
-            self.onDiag(String(format: "crossskip net=%+.2f size=%.2f", segNet, handSize))
+            self.crossLastFireDir = dir
+            self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
+            self.tracks[ti].crossFireX = c.x
+            self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            return glideAbs
           }
         }
       }
@@ -959,7 +1068,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f straight=%.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
         return glideAbs
       }
-      if growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
+      // 🔴 2026-08-26 06:50 실측(사장님 "왼오 안 되고 오왼에서 되는 게 많은데") — 30초 창 발화 11건 중
+      // growth 3건. 접근(growth) 축은 방향을 원리적으로 모르는데, 오→왼 근접 통과에서 위치 샘플이
+      // 성겨 oneWayReverse 방향 게이트가 성립 불가한 순간에 크기 팽창만으로 발화했다(로그: growth
+      // 발화 직후 진짜 왼→오가 불응에 먹히는 패턴). 흔들기(glide/sweep)는 유지 — 끄는 건 접근 축 하나.
+      let growthAxisEnabled = false
+      if growthAxisEnabled && growth > self.growthRatioThreshold && speedPeak > self.speedThresholdPerSec && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         // 안드 파리티 — 즉시 발화(보류 없음). 뻗는 손의 오발은 볼륨눌림 후 1.5초 잠금(processTrack
         // 최상단)과 재무장(안드 원본)이 담당.
         self.fireTrigger(String(format: "T%d growth=%.2f speed=%.2f", ti, growth, speedPeak), nowMs, handSize: handSize, trackIdx: ti)
@@ -1021,10 +1135,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           return
         }
         if tL3 < tM3, tM3 < tR3, tR3 - tL3 >= 80, tR3 - tL3 <= 900 {
+          // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 역순도 통과로 인정.
           dipHistory.removeAll()
-          speedSuppressUntilMs = nowMs + 800
-          paceGLog("[pace-wave] lumaskip R->L span=%.0f", tR3 - tL3)
-          onDiag(String(format: "lumaskip span=%.0f", tR3 - tL3))
+          fireTrigger(String(format: "lumapass(rev) span=%.0f", tR3 - tL3), nowMs)
+          return
         }
       }
     }
@@ -1044,16 +1158,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let tL = dipCandidates.first(where: { $0.l <= onsetTh })?.t ?? dip.t
           let tR = dipCandidates.first(where: { $0.r <= onsetTh })?.t ?? dip.t
           dipHistory.removeAll()
-          if tR - tL >= 40 {
-            speedSuppressUntilMs = nowMs + 800 // 근접 오→왼 차단 직후 잔움직임 누수도 동일하게 잠금
-            paceGLog("[pace-wave] nearskip R->L dt=%.0f", tR - tL)
-            onDiag(String(format: "nearskip dt=%+.0f", tL - tR))
-          } else {
-            pendingOcclusionWork?.cancel()
-            pendingOcclusionWork = nil
-            fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
-            return
-          }
+          // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 어느 순서든 근접 통과로 인정.
+          pendingOcclusionWork?.cancel()
+          pendingOcclusionWork = nil
+          fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+          return
         }
       }
     }

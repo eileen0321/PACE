@@ -68,6 +68,8 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
     if (text.startsWith('lumaskip')) { diagLog('lumapass_skip', text); return; } // 중거리 밝기 통과 오→왼 무시
     if (text.startsWith('crossdrop')) { diagLog('cross_drop_refractory', text); return; } // 불응 중 스트로크 폐기
+    if (text.startsWith('camprobe') || text.startsWith('campixel')) { diagLog('cam_probe', text); return; } // 해상도·회전 원격 검증
+    if (text.startsWith('returndrop')) { diagLog('return_drop', text); return; } // 복귀 스트로크 무시
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
     else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에
@@ -139,7 +141,15 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     const active = !!callbacks.headDetectActive;
     if (active && !runningRef.current) {
       runningRef.current = true;
-      mod.start('wave').catch((err) => {
+      // 실명 채증(테스트 빌드 전용, 2026-08-26) — "됐다/실명" 반복의 원인을 프레임 사진으로 확정하기 위해
+      // 감지기 가동 중 3초마다 1장 저장(Documents/wave_diag_frames). 출시 빌드에선 이 플래그가 false라 안 켜짐.
+      mod.start('wave').then(() => {
+        // ⚠️ 감지기는 start() 안에서 생성된다 — 그 전에 부르면 nil에 조용히 사라진다(프레임 채증이
+        // 한 장도 안 찍히던 원인). start 완료 후에 켠다.
+        if (process.env.EXPO_PUBLIC_AD_TEST_DEVICES === 'true') {
+          try { (mod as unknown as { setDiagCapture?: (on: boolean) => void }).setDiagCapture?.(true); } catch {}
+        }
+      }).catch((err) => {
         runningRef.current = false;
         console.warn('[useFeedRemoteControl] 손짓(wave) start 실패:', err);
       });

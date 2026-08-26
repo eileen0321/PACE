@@ -652,7 +652,17 @@ object PaceHandWaveDetector {
   //     전역 조명 변화는 동시라 순서가 안 생기고, 한 곳만 가리면 셋 중 하나만 꺼져 성립하지 않는다.
   //     사장님 판단도 같다 — "카메라 앞을 가린다는 건데, 잡음을 걱정하는 것보다 안 되는 게 더 나쁘다".
   //   오탐이 실제로 나오면 순서·span을 조이지 이 값을 되올리지 말 것(깊이는 이 자세에서 못 얻는다).
-  private const val LUMAPASS_DIP_RATIO = 0.95   // 기준 대비 5% 하락 = onset (실측)
+  // 🔴 2026-08-26 재하향(0.95 -> 0.97) — 앱이 스스로 계산한 필요문턱이 두 번 연속 같은 값이었다:
+  //     lumapass 필요문턱=0.97 (현재 0.95) 순서=R-M-L span=200ms
+  //     lumapass 필요문턱=0.97 (현재 0.95) 순서=R-M-L span=182ms
+  //   **순서도 시간도 이미 맞는데** 밝기 하락이 3%라 5% 문턱에 2%p 모자랐다. 추측이 아니라
+  //   판정기가 후보 문턱을 실제로 대입해 찾은 값이다.
+  //   3%는 센서 잡음에 가깝지만, 이 축이 실제로 거르는 것은 깊이가 아니라 **순서 + 구간시간**이다
+  //   (세 구간이 한쪽 끝에서 반대쪽으로 80~900ms 안에 순차로 꺼져야 한다). 전역 조명 변화는 동시라
+  //   순서가 안 생기고, 한 곳만 가리면 셋 중 하나만 꺼져 성립하지 않는다.
+  //   ⚠️ 오탐이 나오면 이 값을 되올리지 말고 **순서/span 조건을 조일 것** — 깊이는 이 자세(카메라가
+  //     천장을 보는 거치)에서 원리적으로 못 얻는다.
+  private const val LUMAPASS_DIP_RATIO = 0.97   // 기준 대비 3% 하락 = onset (판정기 실측)
   private const val LUMAPASS_MIN_REF = 40.0     // 너무 어두우면 판정 불가(0~255)
   private const val LUMAPASS_MIN_SAMPLES = 6
   private const val LUMAPASS_MIN_SPAN_MS = 80.0
@@ -1172,18 +1182,39 @@ object PaceHandWaveDetector {
       handActive -> HAND_ACTIVE_PROCESS_INTERVAL_MS
       else -> PROCESS_INTERVAL_MS
     }
-    if (!running || now - lastProcessedAtMs < procInterval) {
+    // 🔴 2026-08-26 사장님 결정("손 감지 안 하고 그냥 카메라 앞을 지나가면 넘기는 게 낫지 않냐") —
+    //   실측이 그 말을 뒷받침한다: HB out=3516 nohand=3499, **손 인식률 0.5%**. 지난 한 시간의
+    //   모든 발화가 밝기 축에서 나왔다. 이 거치 자세(카메라가 천장을 봄)에서는 손이 화각 가장자리만
+    //   스쳐 MediaPipe가 손 모양을 잡을 수 없다 — 손 축은 사실상 죽어 있다.
+    //
+    //   그런데 정작 그 밝기 축이 **손 축과 같은 주기(80ms)로 묶여 있었다**:
+    //     실측 통과 시간 182~200ms ÷ 80ms = 샘플 2~3개
+    //   lumapass는 세 구간의 **순서**를 봐야 하므로 최소 3샘플이 필요하다. 딱 그 경계라, 손이 조금만
+    //   빠르면 2샘플이 되고 순서가 안 나온다. 오늘 놓친 것 상당수가 이것으로 설명된다.
+    //
+    //   → 밝기 축을 손 축의 주기에서 **떼어내 매 프레임** 돌린다(≈30fps). 통과 하나에 샘플이 6개로
+    //     늘어 순서 판정이 정확해진다. 비싼 것(YUV→Bitmap + MediaPipe)은 아래 procInterval 그대로다.
+    //   ⚠️ 셋이 각각 Y평면을 훑던 것을 **격자 한 번**으로 합친다(3배 낭비였다). 30fps로 올리는
+    //     비용을 그걸로 상쇄한다. 격자는 등면적 셀이라 평균/구간을 그대로 유도할 수 있다.
+    if (!running) { proxy.close(); return }
+    try {
+      val grid = lumaGrid(proxy)
+      var gridSum = 0
+      for (v in grid) gridSum += v
+      val avgLuma = if (grid.isNotEmpty()) gridSum.toDouble() / grid.size else 0.0
+      checkOcclusion(avgLuma, now, onWave)
+      checkGrossMotion(grid, now, onWave)
+      checkLumaPass(bandsFromGrid(grid, proxy.imageInfo.rotationDegrees), now, onWave)
+    } catch (e: Exception) {
+      Log.w(TAG, "luma 축 처리 실패", e)
+    }
+
+    if (now - lastProcessedAtMs < procInterval) {
       proxy.close()
       return
     }
     lastProcessedAtMs = now
     try {
-      // occlusion 안전망 — Y평면 평균 밝기만 보는 거라 MediaPipe 추론 전에 먼저, 훨씬 싸게 계산.
-      checkOcclusion(averageLuma(proxy), now, onWave)
-      // 큰 손짓 축 — 손 랜드마크와 무관하게 Y평면만 보므로 여기서 같이 싸게 처리한다.
-      checkGrossMotion(lumaGrid(proxy), now, onWave)
-      // lumapass(맥 iOS 이식) — 거치 자세에서 손만 스쳐 지나가는 경우를 잡는 축. 위 주석 참고.
-      checkLumaPass(lumaBands(proxy, proxy.imageInfo.rotationDegrees), now, onWave)
       // 2026-08-01 최적화(로그 실측 기반) — REFRACTORY_MS(1.2초) 안에서는 fireTrigger/onResult가
       // 어차피 새 트리거를 무시하는데(디바운스), 지금까진 그 1.2초 동안도(≈8프레임) 매번 YUV→Bitmap
       // 변환 + MediaPipe 손 랜드마크 추론(가장 비싼 연산, 화면전환 애니메이션 도중 손이 아직
@@ -1435,6 +1466,28 @@ object PaceHandWaveDetector {
     dipHistory.clear()
     Log.i(TAG, "LUMAPASS 순서=${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms refLMR=${brightRefL.toInt()}/${brightRefM.toInt()}/${brightRefR.toInt()} rot축")
     fireTrigger("lumapass ${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms", onWave)
+  }
+
+  /**
+   * 8x8 격자에서 세로 3분할(업라이트 기준 왼/가운데/오른쪽) 평균을 유도한다.
+   * Y평면을 다시 훑지 않으려고 만든 것 — 셀은 등면적이라 픽셀 평균과 같다.
+   * ⚠️ proxy는 회전 전 이미지다. rot 90/270이면 업라이트의 가로가 격자의 **행(gy)** 이다
+   *   (lumaBands 주석 참고). 축을 잘못 고르면 좌우 통과를 위아래로 보게 되어 순서가 영영 안 생긴다.
+   */
+  private fun bandsFromGrid(grid: IntArray, rotationDegrees: Int): DoubleArray {
+    val useRowAxis = rotationDegrees == 90 || rotationDegrees == 270
+    val sums = DoubleArray(3)
+    val counts = IntArray(3)
+    for (i in grid.indices) {
+      val gy = i / MOTION_GRID
+      val gx = i % MOTION_GRID
+      val b = ((if (useRowAxis) gy else gx) * 3) / MOTION_GRID
+      val bi = if (b > 2) 2 else b
+      sums[bi] += grid[i]
+      counts[bi]++
+    }
+    for (i in 0..2) if (counts[i] > 0) sums[i] /= counts[i]
+    return sums
   }
 
   private fun lumaGrid(proxy: ImageProxy): IntArray {

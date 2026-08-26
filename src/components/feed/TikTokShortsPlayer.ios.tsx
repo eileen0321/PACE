@@ -1678,7 +1678,20 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (window.__paceAdvGateT && now - window.__paceAdvGateT < 450) { send({ type: 'advdrop' }); return; }
     window.__paceAdvGateT = now;
     var v = getActiveVideo();
-    if (v && markAdvancingOnce(v)) tryAdvance(v);
+    // 🔴 2026-08-27 관측 사각 계기판 — "발화는 오는데 틱톡이 안 넘어감" 판정용: 명령이 어디서 죽는지
+    // (활성 비디오 없음 / 이미 진행 중 / tryAdvance 진입)와 0.9s 뒤 실제로 넘어갔는지를 보고한다.
+    if (!v) { send({ type: 'ttadv', st: 'novideo' }); return; }
+    if (!markAdvancingOnce(v)) { send({ type: 'ttadv', st: 'busy' }); return; }
+    var beforeSrc = ('' + (v.currentSrc || v.src || '')).slice(-40);
+    send({ type: 'ttadv', st: 'try' });
+    tryAdvance(v);
+    setTimeout(function () {
+      try {
+        var v2 = getActiveVideo();
+        var afterSrc = v2 ? ('' + (v2.currentSrc || v2.src || '')).slice(-40) : 'none';
+        send({ type: 'ttadv', st: afterSrc !== beforeSrc ? 'moved' : 'stuck', t: v2 ? Math.round(v2.currentTime * 10) / 10 : -1 });
+      } catch (e) {}
+    }, 900);
   };
   // 2026-08-15 — "현재 영상 즐겨찾기 추가"(iOS는 useShortsQueueStore.current로 읽던 유튜브 전용
   // 경로라 틱톡에선 vid가 항상 null이라 조용히 아무 일도 안 났다. 안드는 extractTikTokVideo로
@@ -2085,6 +2098,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'ttadv') {
+            const m = msg as unknown as { st?: string; t?: number };
+            diagLog('tt_adv', `${m.st}${m.t != null ? ' t=' + m.t : ''}`);
             return;
           }
           if (msg.type === 'advdrop') {

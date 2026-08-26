@@ -13,6 +13,9 @@ export const STORAGE_KEYS = {
   // 2026-07-21 런치 플로우: 온보딩 1회 완료 플래그. index.tsx가 이 값으로 "첫 실행=온보딩 /
   // 이후=바로 세션"을 분기. (Android 커밋 3c2cafb가 참조하면서 키 정의를 빠뜨려 tsc가 깨져 있던 것 보강.)
   onboardingCompleted: 'pace_onboarding_completed',
+  // 2026-08-26 Play 정책 — 접근성 고지를 첫 실행에 1회 자동 표시했는지(home.tsx 주석 참고).
+  //   "정상 사용 중 표시" 요건을 충족하되 매 실행 재표시(과도한 재요청)는 피하기 위한 플래그다.
+  a11yDisclosureSeen: 'pace_a11y_disclosure_seen',
   // 2026-07-23 버그 수정 — BluetoothOnboardingSheet에서 사용자가 고른 Enable/Not Now를 여기 저장한다.
   // 예전엔 이 선택이 "1회성 세션"에만 적용되고 이후 세션부터는 다시 켤 경로가 없어(Focus 탭 토글
   // 버튼이 7/22 UI 단순화로 삭제됨) 핑거스냅/블루투스 핸즈프리가 온보딩 직후 10분 지나면 영구히

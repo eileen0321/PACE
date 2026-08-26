@@ -121,6 +121,42 @@ export default function HomeScreen() {
   const [showAccessibilityPrompt, setShowAccessibilityPrompt] = useState(false);
   // Play 정책 고지·동의 시트(아래 acceptAccessibilityPrompt 주석 참고).
   const [showAccessibilityDisclosure, setShowAccessibilityDisclosure] = useState(false);
+  // 🔴 2026-08-26 Play 3차 대비 — **첫 실행에서 스스로 뜨게 한다.**
+  //
+  //   두 번 반려된 뒤 정책 원문(support.google.com/googleplay/android-developer/answer/11150561)을
+  //   직접 대조해 보니, 우리 고지는 내용·버튼·스타일 요건은 전부 충족하는데 **뜨는 시점**이 문제였다:
+  //     "고지는 앱의 **정상적인 사용 중에** 표시되어야 하며, 사용자가 메뉴나 설정을 찾아 들어가게
+  //      해서는 안 된다."
+  //   지금까지는 사용자가 배너나 버튼을 **눌러야** 떴다. 심사자가 앱을 켜고 곧장 안드로이드 설정으로
+  //   가서 접근성을 켜면 우리 고지를 **한 번도 안 보게 된다** — 그러면 "고지가 없다"고 판정된다.
+  //   두 번 다 그렇게 걸렸을 가능성이 크다(심사자는 가장 단순한 경로만 밟는다).
+  //
+  //   사장님 설계: 설치 후 **첫 실행 때 1회** 자동 표시, 그 뒤로는 매 실행마다가 아니라 권한이
+  //   필요한 시점(배너·버튼)에만. 정책의 "과도한 재요청 금지(user fatigue)"와도 맞는다.
+  //   ⚠️ 안드로이드 전용 — iOS는 접근성 API를 쓰지 않는다.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const seen = await AsyncStorage.getItem(STORAGE_KEYS.a11yDisclosureSeen);
+        if (seen === '1') return; // 1회만 — 이후에는 배너/버튼 경로가 담당한다
+        const granted = await overlayService.hasAccessibilityPermission().catch(() => false);
+        if (granted) {
+          // 이미 켜져 있으면 고지할 이유가 없다. 다만 다시 꺼졌을 때 또 자동으로 띄우지는 않는다
+          // (그건 재요청 남용이 된다) — 그때는 배너가 안내한다.
+          await AsyncStorage.setItem(STORAGE_KEYS.a11yDisclosureSeen, '1');
+          return;
+        }
+        if (cancelled) return;
+        setShowAccessibilityDisclosure(true);
+        await AsyncStorage.setItem(STORAGE_KEYS.a11yDisclosureSeen, '1');
+      } catch {
+        /* 저장 실패는 무시 — 최악의 경우 다음 실행에 한 번 더 뜬다 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [showFocusSessionExtend, setShowFocusSessionExtend] = useState(false);
   // 2026-08-02 사장님 지시("한도 차면 뜨는 팝업만 지워") — 하루 한도 도달 팝업(LimitReachedOverlay)
   // 과 그에 딸린 광고/크레딧 연장 모달은 제거됐다. 하루 한도는 이제 차단/팝업 없이 추적·표시만 하고,

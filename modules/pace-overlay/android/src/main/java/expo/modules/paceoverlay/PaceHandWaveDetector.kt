@@ -289,7 +289,7 @@ object PaceHandWaveDetector {
   //     **임계값은 안 건드렸다.** 축의 정의(측정 구간)를 고친 것이라 그 경고의 대상이 아니다.
   //     그래도 회귀가 의심되면 위 실측 3줄과 같은 형식으로 by=/sweep=/speed= 로그를 다시 받아 비교할 것.
   private const val SWEEP_WINDOW_MS = 700L
-  // Apple WWDC20 방식(연속 프레임 증거 누적)의 우리 버전 — 아래 sweptNow/sweepStreak 주석 참고.
+  // Apple WWDC20 방식(연속 프레임 증거 누적)의 우리 버전 — 아래 sweptNow/sweepHitTimes 주석 참고.
   // PROCESS_INTERVAL_MS(150ms) x 2 = 300ms. 애플 권장 구간(0.1~0.8초) 안이고 실제 손짓보다 짧다.
   private const val SWEEP_CONFIRM_FRAMES = 2
 
@@ -564,8 +564,20 @@ object PaceHandWaveDetector {
   // 랜드마크 자체를 못 찾는 경우)에 오히려 더 잘 맞는다. 둘 중 하나라도 걸리면 트리거(OR 조건) —
   // lastTriggerAtMs를 공유해 같은 제스처가 두 경로에서 중복 트리거되지 않게 한다.
   private const val LUMA_WINDOW_MS = 400L
-  private const val LUMA_DROP_RATIO = 0.45 // 최근 대비 밝기가 이 비율 이하로 떨어지면(45% 이하) 발동
-  private const val LUMA_DARK_ABS_MAX = 70.0 // 절대 밝기도 충분히 어두워야(0~255) — 정상 조도 변화 오탐 방지
+  // 🔴 2026-08-26 실측으로 확정 — 사장님 "가까이서 안 되잖아". 근접 통과의 실제 수치:
+  //     07:22:18.9  L=0.96 M=0.95 R=0.96   (기준 155/139/188)
+  //     07:22:20.0  L=0.84 M=0.82 R=0.88
+  //     07:22:20.7  L=0.83 M=0.83 R=0.86   <- 화면 **전체**가 17% 어두워졌다 회복
+  //   가까이서는 손이 세 구간을 **동시에** 덮어 lumapass의 순서 조건이 원리적으로 성립하지 않는다.
+  //   그래서 이 렌즈가림 축이 잡아야 하는데 55% 하락을 요구했다 — 실측은 17%다.
+  //
+  //   ⚠️ 문턱을 15%까지 내리면 그림자·사람 지나감도 걸릴 수 있다. 그걸 막는 것은 문턱이 아니라
+  //     **회복 조건**이다(아래 LUMA_RECOVER_RATIO) — 손은 지나가고 밝기가 돌아오지만, 소등·이불·
+  //     주머니는 계속 어둡다. 실제로 어젯밤 소등 오탐을 그 조건으로 잡았다.
+  //   절대 밝기 상한도 함께 올린다 — 실측 근접 통과의 밝기는 121로 기존 70/130 기준과 성격이 다르다.
+  //     판별을 절대 어두움이 아니라 **상대 하락 + 회복**에 맡긴다.
+  private const val LUMA_DROP_RATIO = 0.85 // 최근 대비 15% 이상 어두워지면(실측 17%)
+  private const val LUMA_DARK_ABS_MAX = 200.0 // 판별은 상대 하락+회복이 한다(위 주석) — 절대값은 상한만
   // 🟢 2026-08-20 거리별 적응의 일부 — **큰 손을 방금 봤을 때만** 가림 판정을 완화한다.
   //   위 두 값은 "렌즈를 완전히 덮었을 때"만 걸리도록 아주 빡빡하다. 그런데 20cm 안에서 손이
   //   렌즈 앞을 **스쳐 지나가면** 프레임이 통째로 까매지지는 않고 절반쯤 어두워졌다 밝아진다 —
@@ -574,10 +586,12 @@ object PaceHandWaveDetector {
   //   → NEAR 밴드 손(handSize ≥ 0.20)을 최근 NEAR_HAND_RECENT_MS 안에 실제로 본 경우에만 완화한다.
   //     "손이 렌즈 코앞에 있다"는 독립적인 증거가 이미 있는 상태이므로, 그때의 밝기 급감은
   //     조명 변화가 아니라 그 손이 지나간 것으로 보는 게 맞다.
-  private const val LUMA_DROP_RATIO_NEAR = 0.68
-  private const val LUMA_DARK_ABS_MAX_NEAR = 130.0
+  private const val LUMA_DROP_RATIO_NEAR = 0.90
+  private const val LUMA_DARK_ABS_MAX_NEAR = 220.0
   /** 가림이 끝나고 밝기가 이 비율 이상으로 돌아와야 지나간 것으로 본다(위 오탐 주석 참고). */
-  private const val LUMA_RECOVER_RATIO = 0.7
+  // 0.7 -> 0.9 — 문턱을 15%까지 내린 만큼 회복은 더 확실히 요구한다. 손이 지나간 뒤에는 거의 원래
+  // 밝기로 돌아온다(실측 0.83 -> 0.91~0.99). 그림자·소등은 이 조건에서 걸린다.
+  private const val LUMA_RECOVER_RATIO = 0.9
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
   // 🟢 2026-08-21 신규 축: gross-motion(격자 밝기 변화) — **큰 손짓 전용**.
@@ -628,7 +642,17 @@ object PaceHandWaveDetector {
   // ⚠️ 안드에만 있는 문제: ImageProxy는 **회전 전** 이미지다(실측 rot=270). 그래서 "세로 3분할"을
   //   proxy의 열(x)로 나누면 실제로는 위/아래로 나누는 것이 된다. 회전값에 따라 축을 골라야 한다.
   private const val LUMAPASS_WINDOW_MS = 1200L
-  private const val LUMAPASS_DIP_RATIO = 0.85   // 기준 대비 15% 하락 = onset
+  // 🔴 2026-08-26 실측으로 확정 — 앱이 스스로 계산한 값이다:
+  //     lumapass 필요문턱=0.95 (현재 0.85) 순서=L-M-R span=150ms
+  //   사장님이 가까이서 지나간 손은 구간 밝기를 **5%** 떨어뜨렸고, 순서와 시간(150ms)은 정확히
+  //   성립했다. 15%를 요구해서 놓친 것이다(실측 관측값: L=0.94 M=0.95 R=0.96 → 0.91/0.93/0.95).
+  //
+  //   ⚠️ 5%는 잡음에 가깝다. 그럼에도 내리는 근거는 **이 축의 판별력이 깊이가 아니라 순서**라는
+  //     것이다 — 세 구간이 한쪽 끝에서 반대쪽으로 80~900ms 안에 **순차로** 꺼져야 한다.
+  //     전역 조명 변화는 동시라 순서가 안 생기고, 한 곳만 가리면 셋 중 하나만 꺼져 성립하지 않는다.
+  //     사장님 판단도 같다 — "카메라 앞을 가린다는 건데, 잡음을 걱정하는 것보다 안 되는 게 더 나쁘다".
+  //   오탐이 실제로 나오면 순서·span을 조이지 이 값을 되올리지 말 것(깊이는 이 자세에서 못 얻는다).
+  private const val LUMAPASS_DIP_RATIO = 0.95   // 기준 대비 5% 하락 = onset (실측)
   private const val LUMAPASS_MIN_REF = 40.0     // 너무 어두우면 판정 불가(0~255)
   private const val LUMAPASS_MIN_SAMPLES = 6
   private const val LUMAPASS_MIN_SPAN_MS = 80.0
@@ -651,9 +675,25 @@ object PaceHandWaveDetector {
   //   즉 진짜 손 통과가 0.234인데 문턱이 그 두 배가 넘었다. 0.20으로 내린다.
   //   ⚠️ 오탐 방어는 문턱이 아니라 **darkenRatio(0.7)** 가 한다 — 위 실측에서 진짜 손만 1.0이고
   //     나머지는 0.16/0.08로 확실히 갈린다. 이 비율을 함께 낮추면 안 된다.
-  private const val GROSS_MOTION_CELL_FRACTION = 0.20
+  // 🔴 2026-08-26 재하향(0.20 → 0.10) — 실측 진짜 손 통과가 문턱 아래였다:
+  //     frac=0.109 darken=0.857 / frac=0.141 darken=0.778 / frac=0.156 darken=0.5   ← 손
+  //     frac=0.109 darken=0.286 / frac=0.125 darken=0.250                            ← 잡음
+  //   변한 칸 수로는 손과 잡음이 겹치지만 **darkenRatio는 확실히 갈린다**(0.78~0.86 vs 0.25~0.29).
+  //   그러니 칸 수 문턱을 내리고 판별은 darkenRatio(0.7)에 맡긴다 — 그쪽은 절대 낮추지 말 것.
+  // 🔴 2026-08-26 3차 하향(0.10 -> 0.06) — 실측이 계속 같은 말을 한다. 07:26:05~07 근접 시도:
+  //     frac=0.078 darken=1.0   <- 손 (변한 칸이 **전부** 어두워짐) — 문턱 0.1 미달로 탈락
+  //     frac=0.062 darken=1.0   <- 손 — 탈락
+  //     frac=0.109 darken=1.0   <- 손 — 통과해서 발화
+  //     frac=0.141 darken=0.22  <- 잡음 (칸 수는 많은데 밝아진 칸이 섞임)
+  //     frac=0.078 darken=0.0   <- 잡음
+  //   칸 수로는 손과 잡음이 완전히 겹치고, **darkenRatio가 유일한 판별선**이다(손 1.0 vs 잡음 0~0.5).
+  //   카메라가 천장을 보는 거치 자세에서는 손이 화각 가장자리만 스쳐 4~7칸(64칸 중)만 바꾼다.
+  //   → 칸 수 문턱은 실측 하한(4칸=0.0625)까지 내리고, 판별은 darkenRatio로 옮긴다.
+  private const val GROSS_MOTION_CELL_FRACTION = 0.06
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
-  private const val GROSS_MOTION_DARKEN_RATIO = 0.7
+  // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
+  // 0.8이면 둘 사이 빈 구간에 선이 놓인다. **이 값은 낮추지 말 것** — 유일한 판별선이다.
+  private const val GROSS_MOTION_DARKEN_RATIO = 0.8
 
   @Volatile private var running = false
   // 2026-07-28 감사 발견 — start()/stop()이 빠르게 연속 호출되면(예: Focus 탭 "손짓" 스위치를 짧은
@@ -708,12 +748,21 @@ object PaceHandWaveDetector {
   /** 진단용 프레임 저장 주기(ms). 0이면 끔. 위 "프레임 저장" 주석 참고. */
   private val FRAME_DUMP_INTERVAL_MS = 10_000L
   @Volatile private var lastFrameDumpAtMs = 0L
+  /**
+   * 🔬 2026-08-26 사장님("왜 손 지나가면 한참 뒤에 다음으로 바뀌어") — **감지 지연을 잰다.**
+   * 발화→스와이프는 실측 25~45ms로 빠르다. 그러니 체감 지연은 **증거가 쌓이기를 기다리는 구간**이다.
+   * 손이 한동안 안 보이다가 다시 나타난 시각을 기록해 두고, 발화 시 그 차이를 남긴다.
+   * 추측으로 확정 프레임 수나 창 길이를 만지지 않기 위한 계측이다.
+   */
+  @Volatile private var handAppearedAtMs = 0L
+  private val HAND_GAP_MS = 700L
   /** lumapass 기록: [시각, 왼, 가운데, 오른쪽] 평균 밝기. */
   private val dipHistory = ArrayDeque<DoubleArray>()
   private var brightRefL = 0.0
   private var brightRefM = 0.0
   private var brightRefR = 0.0
   private var lastLumaPassDiagAtMs = 0L
+  private var lastLumaPassProbeAtMs = 0L
   /** 감지 시작 시각 — "한참 돌았는데 아무것도 못 봤다"를 판정하는 기준(아래 BLIND_NOTICE_MS). */
   @Volatile private var detectStartedAtMs = 0L
   /**
@@ -747,9 +796,22 @@ object PaceHandWaveDetector {
   // 트리거 시점 손 크기의 REARM_SIZE_RATIO 이하로 다시 작아져야(=손을 치웠다는 증거) 재무장하도록
   // 게이트를 추가한다. 손이 화면에서 완전히 사라지는 경우(landmarks 없음)도 물러난 것으로 간주.
   // sweep 조건이 연속으로 몇 프레임 만족됐는지(오탐 방지 — SWEEP_CONFIRM_FRAMES 주석 참고).
-  private var sweepStreak = 0
-  // 신규 glide(2D 속도) 축의 연속 프레임 카운터 — sweepStreak과 같은 원리, 축만 다르다.
-  private var glideStreak = 0
+  // 🔴 2026-08-26 실기기 실측 — **연속 프레임 요구가 실패의 주원인이었다.**
+  //     06:49:24 near-miss  sweep=0.562(th=0.16, 3.5배 초과) glideA=0.723(0.45 ✓) glideR=4.50(3.5 ✓) streak=1
+  //   문턱은 전부 넉넉히 넘겼는데 확정 프레임 수(mid=2)를 못 채워 발화하지 못했다. 손 인식률이
+  //   10% 수준(HB: out=450 nohand=404)이라 **연속으로 잡히는 일 자체가 드물다** — 한 프레임 잡히고
+  //   다음을 놓치면 streak가 0으로 리셋되어 영영 못 채운다.
+  //
+  //   iOS 파일이 이미 같은 교훈을 적어뒀다(glideHitTimes): "문턱 언저리 손짓이 연속 N프레임을 영영
+  //   못 채움. 연속 대신 **창 내 초과 횟수**로 계수 — 같은 증거량, 교대 패턴 허용." 안드에는 그
+  //   수정이 안 옮겨져 있었다.
+  //   → 연속 카운터를 **창 내 히트 시각 목록**으로 바꾼다. 프레임이 연속으로 들어오면 예전과
+  //     완전히 같이 동작하고, 중간에 몇 프레임 놓쳐도 증거가 살아남는다.
+  private const val HIT_WINDOW_MS = 600L
+
+  private val sweepHitTimes = ArrayDeque<Long>()
+  // 신규 glide(2D 속도) 축의 연속 프레임 카운터 — sweepHitTimes과 같은 원리, 축만 다르다.
+  private val glideHitTimes = ArrayDeque<Long>()
   /** 마지막으로 NEAR 밴드 크기의 손을 본 시각 — luma 완화 게이트용(LUMA_*_NEAR 주석 참고). */
   @Volatile private var lastNearHandAtMs = 0L
   private var awaitingRearm = false
@@ -825,8 +887,8 @@ object PaceHandWaveDetector {
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
     posHistory.clear()
-    sweepStreak = 0
-    glideStreak = 0
+    sweepHitTimes.clear()
+    glideHitTimes.clear()
     lastNearHandAtMs = 0L
     gridHistory.clear()
     lastTriggerAtMs = 0L
@@ -1314,6 +1376,39 @@ object PaceHandWaveDetector {
           .format(rl, rm, rr, LUMAPASS_DIP_RATIO, brightRefL, brightRefM, brightRefR, dipHistory.size))
       }
     }
+    // 🔬 2026-08-26 — **"어느 문턱이었으면 발화했는가"를 직접 잰다.**
+    //   실측(06:51:27~34)에서 구간 밝기가 3~6%만 떨어졌는데 문턱은 15%였다. 문턱을 추측으로
+    //   낮추면 잡음까지 걸린다 — 이 축의 판별력은 **깊이가 아니라 순서**이므로, 후보 문턱들을
+    //   실제로 대입해 **순서와 span까지 성립하는 가장 엄격한 값**을 찾아 남긴다.
+    //   그 값이 여러 번 같은 범위로 나오면 그때 문턱을 그 근처로 내린다(실측 기반).
+    run {
+      if (now - lastLumaPassProbeAtMs >= 700L && dipHistory.size >= LUMAPASS_MIN_SAMPLES) {
+        lastLumaPassProbeAtMs = now
+        var best = -1.0
+        var bestOrder = ""
+        var bestSpan = 0.0
+        for (cand in doubleArrayOf(0.85, 0.90, 0.93, 0.95, 0.97)) {
+          fun on(idx: Int, ref: Double): Double? {
+            if (ref <= LUMAPASS_MIN_REF) return null
+            val th = ref * cand
+            return dipHistory.firstOrNull { it[idx] <= th }?.get(0)
+          }
+          val a = on(1, brightRefL) ?: continue
+          val b = on(2, brightRefM) ?: continue
+          val c = on(3, brightRefR) ?: continue
+          val f = c < b && b < a
+          val w = a < b && b < c
+          if (!f && !w) continue
+          val sp = if (f) a - c else c - a
+          if (sp < LUMAPASS_MIN_SPAN_MS || sp > LUMAPASS_MAX_SPAN_MS) continue
+          if (cand > best) { best = cand; bestOrder = if (f) "R-M-L" else "L-M-R"; bestSpan = sp }
+        }
+        if (best > 0) {
+          Log.i(TAG, "lumapass 필요문턱=%.2f (현재 %.2f) 순서=%s span=%.0fms"
+            .format(best, LUMAPASS_DIP_RATIO, bestOrder, bestSpan))
+        }
+      }
+    }
     if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
 
@@ -1671,9 +1766,13 @@ object PaceHandWaveDetector {
       //     크다 — 그쪽은 실측(rearmed after …ms 로그) 없이 건드리지 않는다.
       sizeHistory.clear()
       posHistory.clear() // 이동 이력도 같은 이유로 버린다(손이 나갔다 들어오면 새로 재기 시작)
-      sweepStreak = 0 // 연속 프레임 증거도 함께 버린다 — 안 그러면 손이 다시 들어오자마자 확정된다
-      glideStreak = 0
+      sweepHitTimes.clear() // 연속 프레임 증거도 함께 버린다 — 안 그러면 손이 다시 들어오자마자 확정된다
+      glideHitTimes.clear()
       return
+    }
+    run {
+      val nowLm = System.currentTimeMillis()
+      if (handAppearedAtMs == 0L || nowLm - lastLandmarkAtMs > HAND_GAP_MS) handAppearedAtMs = nowLm
     }
     lastLandmarkAtMs = System.currentTimeMillis()
     val landmarks = result.landmarks()[0]
@@ -1752,13 +1851,14 @@ object PaceHandWaveDetector {
     val glidedNow =
       glideAbsPerSec > GLIDE_ABS_MIN_PER_SEC * bandMult &&
         glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult
-    glideStreak = if (glidedNow) glideStreak + 1 else 0
+    if (glidedNow) glideHitTimes.addLast(now)
+    while (glideHitTimes.isNotEmpty() && now - glideHitTimes.first() > HIT_WINDOW_MS) glideHitTimes.removeFirst()
     // 압도적 마진이면 1프레임으로 확정 — GLIDE_INSTANT_MARGIN 주석의 실측 근거 참고.
     // 두 축이 **동시에** 배수를 넘어야 하므로 한쪽 축의 튐만으로는 성립하지 않는다.
     val glideOverwhelming = glidedNow &&
       glideAbsPerSec > GLIDE_ABS_MIN_PER_SEC * bandMult * GLIDE_INSTANT_MARGIN &&
       glideRelPerSec > GLIDE_REL_MIN_PER_SEC * bandMult * GLIDE_INSTANT_MARGIN
-    val glided = glideStreak >= bandConfirm || glideOverwhelming
+    val glided = glideHitTimes.size >= bandConfirm || glideOverwhelming
 
     // ── 🟢 2026-08-25 신규: 가로지르기(traverse) 축 — 사장님 제안 ──
     //   "카메라 가까이에서 50cm 정도까지, 손을 한쪽에서 반대쪽으로 지나갈 때"만 넘긴다.
@@ -1915,10 +2015,11 @@ object PaceHandWaveDetector {
     //   far 배수 1.8 → 문턱 0.16×1.8 = 0.288이고 확정 프레임도 3으로 오른다. 반대로 near 밴드는
     //   0.16×0.7 = 0.112 + 확정 1프레임이라, 렌즈 코앞을 스치는 손짓이 훨씬 쉽게 걸린다.
     val sweptNow = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult
-    sweepStreak = if (sweptNow) sweepStreak + 1 else 0
+    if (sweptNow) sweepHitTimes.addLast(now)
+    while (sweepHitTimes.isNotEmpty() && now - sweepHitTimes.first() > HIT_WINDOW_MS) sweepHitTimes.removeFirst()
     // 확정 프레임 수도 밴드값을 따른다. mid는 MID_BAND_CONFIRM_FRAMES(2) = SWEEP_CONFIRM_FRAMES(2)라
     // 기존과 동일하고, near는 1로 내려가고 far는 3으로 올라간다.
-    val swept = sweepStreak >= bandConfirm
+    val swept = sweepHitTimes.size >= bandConfirm
     // 기존 두 축은 그대로 두고 조건을 하나 더 얹기만 한다(가산적) — 지금 잡히던 동작은 전부 그대로
     // 잡히고, 놓치던 것 중 일부만 추가로 잡힌다. 기존 축을 조이면서 새 축을 넣었다가 오히려 더
     // 나빠졌던 2026-08-02의 실패를 반복하지 않기 위함이다.
@@ -1935,7 +2036,7 @@ object PaceHandWaveDetector {
       // 그동안 임계값 조정이 매번 실패한 근본 원인이었다). speed도 같이 남긴다.
       // 2026-08-20 — 밴드/glide도 같이 남긴다. 밴드별 분포를 못 뽑으면 이 방식은 다음에 조정할 근거가
       // 없어지고, 그러면 이 파일이 아홉 번 반복한 "검열된 데이터로 임계값 만지기"를 또 하게 된다.
-      Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) streak=$glideStreak speed=$peakSpeed handSize=$handSize")
+      Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) hits=${glideHitTimes.size} speed=$peakSpeed handSize=$handSize")
     }
 
     // 🔴 2026-08-25 사장님("흔들기에서 **가만있는 흔들기**는 미발화가 맞고 **이전 손짓은 남겨두고**")
@@ -2011,15 +2112,16 @@ object PaceHandWaveDetector {
       if (!shouldTrustHandSignal(now)) {
         Log.i(TAG, "WAVE 차단 by=$by handSize=$handSize — 사람 없음(마지막 얼굴 ${now - lastFaceSeenAtMs}ms 전)")
         lastTriggerAtMs = now
-        sizeHistory.clear(); posHistory.clear(); sweepStreak = 0; glideStreak = 0
+        sizeHistory.clear(); posHistory.clear(); sweepHitTimes.clear(); glideHitTimes.clear()
         return
       }
-      Log.i(TAG, "WAVE detected by=$by band=$band growth=$growthRatio sweep=$sweepRatio glideA=$glideAbsPerSec glideR=$glideRelPerSec speed=$peakSpeed handSize=$handSize")
+      val delayMs = if (handAppearedAtMs > 0L) now - handAppearedAtMs else -1L
+      Log.i(TAG, "WAVE detected 지연=${delayMs}ms by=$by band=$band growth=$growthRatio sweep=$sweepRatio glideA=$glideAbsPerSec glideR=$glideRelPerSec speed=$peakSpeed handSize=$handSize")
       lastTriggerAtMs = now
       sizeHistory.clear()
       posHistory.clear()
-      sweepStreak = 0
-      glideStreak = 0
+      sweepHitTimes.clear()
+      glideHitTimes.clear()
       awaitingRearm = true
       rearmBelowSize = handSize * REARM_SIZE_RATIO
       // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드

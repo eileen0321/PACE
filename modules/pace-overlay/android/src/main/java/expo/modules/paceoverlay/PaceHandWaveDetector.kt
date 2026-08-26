@@ -1557,14 +1557,25 @@ object PaceHandWaveDetector {
     val darkenRatio = darkened.toDouble() / changed
     // 오탐 방어 ② — 변한 칸의 대부분이 어두워진 쪽이어야 한다. 폰을 집어 들거나 장면이 바뀌면
     // 밝아진 칸과 어두워진 칸이 섞이지만, 손이 빛을 가리는 것은 한 방향이다.
-    if (fraction >= GROSS_MOTION_CELL_FRACTION && darkenRatio >= GROSS_MOTION_DARKEN_RATIO) {
+    // 🔴 2026-08-27 실측으로 가정이 뒤집혔다 — **손은 어두워지지 않는다. 밝아진다.**
+    //     frac=0.203 darken=0.0 changed=13/64   <- 13칸이 변했는데 어두워진 칸이 **0개**
+    //     frac=0.188 darken=0.0 / frac=0.172 darken=0.0 / ...   (연속으로 전부 밝아짐)
+    //   카메라가 천장을 보는 거치 자세라 배경(천장)이 어둡고, 손은 화면 불빛을 받아 **밝게**
+    //   지나간다. "손이 빛을 가린다"는 전제로 darkenRatio >= 0.8을 걸어둔 것이 **전부 막고 있었다**.
+    //
+    //   진짜 판별선은 **방향이 아니라 일관성**이다(실측):
+    //     darken=0.0  (전부 밝아짐) / darken=1.0 (전부 어두워짐)  -> 물체가 지나감
+    //     darken=0.25 ~ 0.625 (섞임)                              -> 조명/장면 변화, 잡음
+    //   -> max(darken, 1-darken)로 **한 방향으로 몰렸는지**만 본다. 어느 쪽으로 몰렸는지는 무관하다.
+    //   ⚠️ 이 값을 낮추지 말 것 — 칸 수 문턱을 이미 실측 하한까지 내렸으므로 여기가 유일한 판별선이다.
+    val consistency = kotlin.math.max(darkenRatio, 1.0 - darkenRatio)
+    if (fraction >= GROSS_MOTION_CELL_FRACTION && consistency >= GROSS_MOTION_DARKEN_RATIO) {
       fireTrigger(
-        "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio lag=${now - ref.first}ms",
+        "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio 일관성=$consistency lag=${now - ref.first}ms",
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
-      // 튜닝 근거 확보 — 아깝게 못 넘긴 경우만 남긴다(이 파일의 near-miss와 같은 원칙).
-      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio(th=$GROSS_MOTION_DARKEN_RATIO) changed=$changed/${grid.size}")
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) changed=$changed/${grid.size}")
     }
   }
 

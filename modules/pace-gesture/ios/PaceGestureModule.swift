@@ -1103,6 +1103,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 밝았던 장면을 기억해 연속 시도 중에도 "지금 어두워졌다"를 판정할 수 있다.
   private var brightRefAll: Double = 0
   private var brightRefL: Double = 0
+  // 느린 EMA 기준(2026-08-27) — max-감쇠 기준은 밝아짐을 즉시 흡수해 밝은 통과를 못 봤다(시뮬 s26이 잡음).
+  private var baseEmaL: Double = -1
+  private var baseEmaM: Double = -1
+  private var baseEmaR: Double = -1
   private var brightRefM: Double = 0
   private var brightRefR: Double = 0
   private func checkOcclusion(_ luma: Double, _ lumaL: Double, _ lumaM: Double, _ lumaR: Double, _ nowMs: Double) {
@@ -1115,20 +1119,32 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     brightRefL = max(lumaL, brightRefL * 0.995)
     brightRefM = max(lumaM, brightRefM * 0.995)
     brightRefR = max(lumaR, brightRefR * 0.995)
+    baseEmaL = baseEmaL < 0 ? lumaL : baseEmaL * 0.98 + lumaL * 0.02
+    baseEmaM = baseEmaM < 0 ? lumaM : baseEmaM * 0.98 + lumaM * 0.02
+    baseEmaR = baseEmaR < 0 ? lumaR : baseEmaR * 0.98 + lumaR * 0.02
     // 🔴 2026-08-25 22:47 확진("왼오가 안 넘어간다", 중거리) — 움직이는 손은 랜드마크가 27틱 중 2틱만
     // 잡혀 크로싱(2회 포착 필요)이 성립 불가. **lumapass**: 세로 3분할 밝기가 순차로 얕게(15%) 꺼지는
     // 패턴 = 중거리 통과. 손 모양 인식 불요·추적 끊김 무관. 사용자 왼→오 = 이미지 오른쪽→가운데→왼쪽
     // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
     if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6,
        let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
-      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> Double? {
+      // 🔴 2026-08-27 안드 실측 이식(0984254 — "손은 어두워지지 않는다, 밝아진다"): 어두운 배경(천장)
+      // 앞을 화면 불빛 받은 손이 지나가면 밝기가 **올라간다**. 어두워짐만 보던 기존 onset은 그 통과를
+      // 통째로 못 봤다(우리 프레임 사진의 자세가 정확히 이 조건). 판정은 방향이 아니라 **일관성**:
+      // 세 구간이 같은 방향으로(전부 밝아짐 또는 전부 어두워짐) 순차 변화하면 물체 통과, 섞이면 잡음.
+      // 숫자가 아니라 구조 이식 — 문턱(15%)은 iOS 자체 값 유지.
+      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> (at: Double, dir: Double)? {
         guard ref > 40 else { return nil }
-        return vals.first(where: { $0.v <= ref * 0.85 })?.t
+        if let e = vals.first(where: { abs($0.v - ref) >= ref * 0.15 }) {
+          return (e.t, e.v > ref ? 1.0 : -1.0)
+        }
+        return nil
       }
-      let tLo = onset(dipHistory.map { (t: $0.t, v: $0.l) }, brightRefL)
-      let tMo = onset(dipHistory.map { (t: $0.t, v: $0.m) }, brightRefM)
-      let tRo = onset(dipHistory.map { (t: $0.t, v: $0.r) }, brightRefR)
-      if let tR3 = tRo, let tM3 = tMo, let tL3 = tLo {
+      let oL = onset(dipHistory.map { (t: $0.t, v: $0.l) }, baseEmaL)
+      let oM = onset(dipHistory.map { (t: $0.t, v: $0.m) }, baseEmaM)
+      let oR = onset(dipHistory.map { (t: $0.t, v: $0.r) }, baseEmaR)
+      if let eR = oR, let eM = oM, let eL = oL, eR.dir == eM.dir, eM.dir == eL.dir {
+        let tR3 = eR.at, tM3 = eM.at, tL3 = eL.at
         if tR3 < tM3, tM3 < tL3, tL3 - tR3 >= 80, tL3 - tR3 <= 900 {
           dipHistory.removeAll()
           fireTrigger(String(format: "lumapass span=%.0f", tL3 - tR3), nowMs)

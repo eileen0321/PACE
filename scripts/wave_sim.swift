@@ -25,6 +25,7 @@ struct Sim {
   var crossFireX = 0.0
   var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
   var brightRefAll = 0.0, brightRefL = 0.0, brightRefM = 0.0, brightRefR = 0.0
+  var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
   var lastTriggerMs = -10000.0
   var events: [String] = []
 
@@ -78,16 +79,21 @@ struct Sim {
     brightRefL = max(l, brightRefL * 0.995)
     brightRefM = max(m, brightRefM * 0.995)
     brightRefR = max(r, brightRefR * 0.995)
+    baseEmaL = baseEmaL < 0 ? l : baseEmaL * 0.98 + l * 0.02
+    baseEmaM = baseEmaM < 0 ? m : baseEmaM * 0.98 + m * 0.02
+    baseEmaR = baseEmaR < 0 ? r : baseEmaR * 0.98 + r * 0.02
     // lumapass
     if t - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6, let firstD = dipHistory.first, t - firstD.t >= 500 {
-      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> Double? {
+      func onset(_ vals: [(t: Double, v: Double)], _ ref: Double) -> (at: Double, dir: Double)? {
         guard ref > 40 else { return nil }
-        return vals.first(where: { $0.v <= ref * 0.85 })?.t
+        if let e = vals.first(where: { abs($0.v - ref) >= ref * 0.15 }) { return (e.t, e.v > ref ? 1.0 : -1.0) }
+        return nil
       }
-      let tLo = onset(dipHistory.map { (t: $0.t, v: $0.l) }, brightRefL)
-      let tMo = onset(dipHistory.map { (t: $0.t, v: $0.m) }, brightRefM)
-      let tRo = onset(dipHistory.map { (t: $0.t, v: $0.r) }, brightRefR)
-      if let tR3 = tRo, let tM3 = tMo, let tL3 = tLo {
+      let oL = onset(dipHistory.map { (t: $0.t, v: $0.l) }, baseEmaL)
+      let oM = onset(dipHistory.map { (t: $0.t, v: $0.m) }, baseEmaM)
+      let oR = onset(dipHistory.map { (t: $0.t, v: $0.r) }, baseEmaR)
+      if let eR = oR, let eM = oM, let eL = oL, eR.dir == eM.dir, eM.dir == eL.dir {
+        let tR3 = eR.at, tM3 = eM.at, tL3 = eL.at
         if tR3 < tM3, tM3 < tL3, tL3 - tR3 >= 80, tL3 - tR3 <= 900 {
           dipHistory.removeAll(); lastTriggerMs = t; events.append("FIRE lumapass"); return
         }
@@ -330,6 +336,26 @@ for k in 0..<5 {
   s25.feedHand(t: t25, x: x1, size: 0.15); t25 += 700
 }
 check("역방향 라치 자가복구", s25.events, fires: 3, expectContains: ["returndrop"])
+
+// 26. 밝아지는 통과(안드 0984254 이식 검증) — 어두운 배경(60) 위로 밝은 손(100)이 오→가→왼 순차
+var s26 = Sim()
+var t26 = 0.0
+for _ in 0..<10 { s26.feedLuma(t: t26, l: 60, m: 60, r: 60); t26 += 80 }
+s26.feedLuma(t: t26, l: 60, m: 60, r: 100); t26 += 100
+s26.feedLuma(t: t26, l: 60, m: 100, r: 80); t26 += 100
+s26.feedLuma(t: t26, l: 100, m: 70, r: 60); t26 += 100
+for _ in 0..<3 { s26.feedLuma(t: t26, l: 60, m: 60, r: 60); t26 += 80 }
+check("밝아지는 통과(lumapass)", s26.events, fires: 1, expectContains: ["lumapass"])
+
+// 27. 방향 혼합(조명 잡음) — R 밝아지고 M 어두워짐: 발화 금지
+var s27 = Sim()
+var t27 = 0.0
+for _ in 0..<10 { s27.feedLuma(t: t27, l: 100, m: 100, r: 100); t27 += 80 }
+s27.feedLuma(t: t27, l: 100, m: 100, r: 130); t27 += 100
+s27.feedLuma(t: t27, l: 100, m: 70, r: 120); t27 += 100
+s27.feedLuma(t: t27, l: 130, m: 80, r: 100); t27 += 100
+for _ in 0..<3 { s27.feedLuma(t: t27, l: 100, m: 100, r: 100); t27 += 80 }
+check("방향 혼합 잡음 무발화", s27.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

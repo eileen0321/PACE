@@ -197,6 +197,22 @@ android {
             }
         }
 
+        // 🔴 2026-08-27 — 가드가 **로컬 테스트까지 막아버리면** 사장님이 손짓을 검증할 수 없다
+        //   (포커스온 광고 게이트에 걸려 세션 자체를 못 연다). 가드의 목적은 "실수로 스토어에
+        //   실리는 것"을 막는 것이지 로컬 검증을 막는 것이 아니다.
+        //   → 스토어 산출물인 **AAB(bundleRelease)는 예외 없이 차단**하고, 로컬 테스트 APK
+        //     (assembleRelease)만 `-PallowAdTestFlag=true`를 **명시적으로 붙였을 때** 허용한다.
+        //     실수로 붙을 수 있는 옵션이 아니고, 스토어 업로드는 AAB라 그 경로는 그대로 막힌다.
+        // ⚠️ "bundle"을 부분일치로 보면 안 된다 — assembleRelease도 createBundleReleaseJsAndAssets
+        //   같은 태스크를 함께 돌려서 로컬 APK까지 스토어 산출물로 오인한다(2026-08-27 실측).
+        //   스토어 AAB를 만드는 태스크는 이름이 정확히 bundleRelease다.
+        def bundling = graph.allTasks.any { it.name == "bundleRelease" }
+        def explicitOptIn = project.hasProperty("allowAdTestFlag") && project.property("allowAdTestFlag") == "true"
+        if ((envOn || dotEnvOn) && !bundling && explicitOptIn) {
+            logger.lifecycle("⚠️  EXPO_PUBLIC_AD_TEST_DEVICES=true 로 **로컬 테스트 APK**를 만듭니다 " +
+                "(-PallowAdTestFlag=true). 이 APK는 광고 게이트를 건너뜁니다 — 스토어에 올리지 마세요.")
+            return
+        }
         if (envOn || dotEnvOn) {
             throw new GradleException(
                 "릴리즈 빌드에 EXPO_PUBLIC_AD_TEST_DEVICES=true가 켜져 있습니다" +

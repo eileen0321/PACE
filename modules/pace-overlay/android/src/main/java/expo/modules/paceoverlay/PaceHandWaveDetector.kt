@@ -1241,7 +1241,12 @@ object PaceHandWaveDetector {
         //   ③은 가로지르기 방향 부호(왼→오가 x 증가인지 감소인지) 문제와 같은 질문이다 —
         //   그걸 못 정해서 오늘 부호를 반대로 넣어 손짓을 통째로 죽였다.
         //   비용: FRAME_DUMP_INTERVAL_MS마다 JPEG 1장. 끄려면 상수를 0으로.
-        if (FRAME_DUMP_INTERVAL_MS > 0 && now - lastFrameDumpAtMs >= FRAME_DUMP_INTERVAL_MS) {
+        // 🔴 2026-08-27 출시 정리 — **테스트 빌드에서만** 저장한다. 출시본이 사용자 카메라 사진을
+        //   10초마다 디스크에 쓰는 것은 개인정보 문제이자 심사 리스크다. 끄지 않고 게이트를 다는
+        //   이유는, 다음에 또 손짓을 디버깅할 때 이 수단이 없으면 오늘처럼 눈으로 확인할 방법이
+        //   사라지기 때문이다(맥도 d47438f에서 같은 이유로 테스트 빌드 한정으로 걸었다).
+        val dumpAllowed = dumpContext?.let { PaceOverlayService.isTestMode(it) } ?: false
+        if (dumpAllowed && FRAME_DUMP_INTERVAL_MS > 0 && now - lastFrameDumpAtMs >= FRAME_DUMP_INTERVAL_MS) {
           lastFrameDumpAtMs = now
           try {
             // 릴리즈 빌드는 run-as가 안 되므로 filesDir를 adb로 못 읽는다 — 앱 전용 외부 폴더에 쓴다

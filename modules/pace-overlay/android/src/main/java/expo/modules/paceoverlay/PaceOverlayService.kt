@@ -1817,7 +1817,9 @@ class PaceOverlayService : Service() {
       Log.i("PaceOverlayService", "testMode=$enabled (광고 연장 하루 제한 ${if (enabled) "해제" else "적용"})")
     }
 
-    private fun isTestMode(context: Context): Boolean =
+    /** 테스트 빌드 여부(EXPO_PUBLIC_AD_TEST_DEVICES). 진단 채증처럼 **출시본에 실리면 안 되는**
+     *  기능의 게이트로도 쓴다 — PaceHandWaveDetector의 프레임 저장이 그 예다. */
+    fun isTestMode(context: Context): Boolean =
       context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_TEST_MODE, false)
 
     fun setIsPremium(context: Context, isPremium: Boolean) {

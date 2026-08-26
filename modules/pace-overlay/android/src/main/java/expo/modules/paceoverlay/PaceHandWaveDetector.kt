@@ -775,12 +775,14 @@ object PaceHandWaveDetector {
   @Volatile private var handAppearedAtMs = 0L
   private val HAND_GAP_MS = 700L
   /** lumapass 기록: [시각, 왼, 가운데, 오른쪽] 평균 밝기. */
-  private val dipHistory = ArrayDeque<DoubleArray>()
-  private var brightRefL = 0.0
-  private var brightRefM = 0.0
-  private var brightRefR = 0.0
-  private var lastLumaPassDiagAtMs = 0L
-  private var lastLumaPassProbeAtMs = 0L
+  // 축별로 **분리된** 상태를 갖는다(0=행, 1=열). 하나를 공유하면 두 축의 표본이 섞여 이력이
+  // 통째로 오염된다 — 순서 판정은 시간 순서가 생명이라 그러면 아무것도 못 잡는다.
+  private val dipHistory = arrayOf(ArrayDeque<DoubleArray>(), ArrayDeque<DoubleArray>())
+  private val brightRef = arrayOf(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 0.0))
+  private val lastLumaPassDiagAtMs = longArrayOf(0L, 0L)
+  private val lastLumaPassProbeAtMs = longArrayOf(0L, 0L)
+  /** 한 프레임에서 두 축이 모두 발화하는 것을 막는다(같은 통과를 두 번 세지 않게). */
+  private var lumaPassFiredThisFrame = false
   /** 감지 시작 시각 — "한참 돌았는데 아무것도 못 봤다"를 판정하는 기준(아래 BLIND_NOTICE_MS). */
   @Volatile private var detectStartedAtMs = 0L
   /**
@@ -1212,7 +1214,10 @@ object PaceHandWaveDetector {
       val avgLuma = if (grid.isNotEmpty()) gridSum.toDouble() / grid.size else 0.0
       checkOcclusion(avgLuma, now, onWave)
       checkGrossMotion(grid, now, onWave)
-      checkLumaPass(bandsFromGrid(grid, proxy.imageInfo.rotationDegrees), now, onWave)
+      // 두 축을 다 본다 — 자세에 따라 어느 쪽이 업라이트의 가로인지 달라진다(위 bandsFromGrid 주석).
+      lumaPassFiredThisFrame = false
+      checkLumaPass(bandsFromGrid(grid, 0), now, onWave, 0, "행")
+      if (!lumaPassFiredThisFrame) checkLumaPass(bandsFromGrid(grid, 1), now, onWave, 1, "열")
     } catch (e: Exception) {
       Log.w(TAG, "luma 축 처리 실패", e)
     }
@@ -1394,30 +1399,32 @@ object PaceHandWaveDetector {
    * lumapass — 세로 3분할 밝기가 **순차로** 얕게 꺼지면 "손이 카메라 앞을 지나갔다"로 본다.
    * 손 모양 인식이 필요 없어 거치 자세(손만 화각을 스침)에 강하다. 위 상수 주석이 설계 근거다.
    */
-  private fun checkLumaPass(bands: DoubleArray, now: Long, onWave: () -> Unit) {
-    dipHistory.addLast(doubleArrayOf(now.toDouble(), bands[0], bands[1], bands[2]))
-    while (dipHistory.isNotEmpty() && now - dipHistory.first()[0] > LUMAPASS_WINDOW_MS) {
-      dipHistory.removeFirst()
+  private fun checkLumaPass(bands: DoubleArray, now: Long, onWave: () -> Unit, axis: Int, axisName: String) {
+    val hist = dipHistory[axis]
+    val ref = brightRef[axis]
+    hist.addLast(doubleArrayOf(now.toDouble(), bands[0], bands[1], bands[2]))
+    while (hist.isNotEmpty() && now - hist.first()[0] > LUMAPASS_WINDOW_MS) {
+      hist.removeFirst()
     }
     // 감쇠 기준값 — 최근 최댓값을 천천히 잊는다. 고정 최댓값을 쓰면 연속 시도로 기준이 오염된다
     // (맥이 fd42db4에서 같은 이유로 감쇠 기준으로 바꿨다).
-    brightRefL = kotlin.math.max(bands[0], brightRefL * LUMAPASS_REF_DECAY)
-    brightRefM = kotlin.math.max(bands[1], brightRefM * LUMAPASS_REF_DECAY)
-    brightRefR = kotlin.math.max(bands[2], brightRefR * LUMAPASS_REF_DECAY)
+    ref[0] = kotlin.math.max(bands[0], ref[0] * LUMAPASS_REF_DECAY)
+    ref[1] = kotlin.math.max(bands[1], ref[1] * LUMAPASS_REF_DECAY)
+    ref[2] = kotlin.math.max(bands[2], ref[2] * LUMAPASS_REF_DECAY)
     // 🔬 튜닝 근거 확보 — 이 축이 왜 안 걸렸는지를 수치로 남긴다. 거치 자세(카메라가 천장을 보는
     //   화각)에서는 손이 프레임의 작은 부분만 덮어 **구간 평균이 15%나 안 떨어질 수 있다.**
     //   그 경우 문턱을 낮춰야 하는데, 실측 없이 낮추면 이 파일이 아홉 번 반복한 "검열된 데이터로
     //   임계값 만지기"를 또 하게 된다. 한 구간이라도 5% 이상 꺼지면 세 구간 비율을 함께 남긴다
     //   (완전히 정지한 장면에서는 안 찍히므로 스팸이 되지 않는다).
     run {
-      val rl = if (brightRefL > 0) bands[0] / brightRefL else 1.0
-      val rm = if (brightRefM > 0) bands[1] / brightRefM else 1.0
-      val rr = if (brightRefR > 0) bands[2] / brightRefR else 1.0
+      val rl = if (ref[0] > 0) bands[0] / ref[0] else 1.0
+      val rm = if (ref[1] > 0) bands[1] / ref[1] else 1.0
+      val rr = if (ref[2] > 0) bands[2] / ref[2] else 1.0
       val lowest = kotlin.math.min(rl, kotlin.math.min(rm, rr))
-      if (lowest <= 0.95 && now - lastLumaPassDiagAtMs >= 500L) {
-        lastLumaPassDiagAtMs = now
-        Log.i(TAG, "lumapass 관측 L=%.2f M=%.2f R=%.2f (문턱 %.2f) ref=%.0f/%.0f/%.0f n=%d"
-          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, brightRefL, brightRefM, brightRefR, dipHistory.size))
+      if (lowest <= 0.95 && now - lastLumaPassDiagAtMs[axis] >= 500L) {
+        lastLumaPassDiagAtMs[axis] = now
+        Log.i(TAG, "lumapass[$axisName] 관측 A=%.2f B=%.2f C=%.2f (문턱 %.2f) ref=%.0f/%.0f/%.0f n=%d"
+          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, ref[0], ref[1], ref[2], dipHistory.size))
       }
     }
     // 🔬 2026-08-26 — **"어느 문턱이었으면 발화했는가"를 직접 잰다.**
@@ -1426,20 +1433,20 @@ object PaceHandWaveDetector {
     //   실제로 대입해 **순서와 span까지 성립하는 가장 엄격한 값**을 찾아 남긴다.
     //   그 값이 여러 번 같은 범위로 나오면 그때 문턱을 그 근처로 내린다(실측 기반).
     run {
-      if (now - lastLumaPassProbeAtMs >= 700L && dipHistory.size >= LUMAPASS_MIN_SAMPLES) {
-        lastLumaPassProbeAtMs = now
+      if (now - lastLumaPassProbeAtMs[axis] >= 700L && dipHistory.size >= LUMAPASS_MIN_SAMPLES) {
+        lastLumaPassProbeAtMs[axis] = now
         var best = -1.0
         var bestOrder = ""
         var bestSpan = 0.0
         for (cand in doubleArrayOf(0.85, 0.90, 0.93, 0.95, 0.97)) {
-          fun on(idx: Int, ref: Double): Double? {
-            if (ref <= LUMAPASS_MIN_REF) return null
-            val th = ref * cand
-            return dipHistory.firstOrNull { it[idx] <= th }?.get(0)
+          fun on(idx: Int, bandRef: Double): Double? {
+            if (bandRef <= LUMAPASS_MIN_REF) return null
+            val th = bandRef * cand
+            return hist.firstOrNull { it[idx] <= th }?.get(0)
           }
-          val a = on(1, brightRefL) ?: continue
-          val b = on(2, brightRefM) ?: continue
-          val c = on(3, brightRefR) ?: continue
+          val a = on(1, ref[0]) ?: continue
+          val b = on(2, ref[1]) ?: continue
+          val c = on(3, ref[2]) ?: continue
           val f = c < b && b < a
           val w = a < b && b < c
           if (!f && !w) continue
@@ -1448,7 +1455,7 @@ object PaceHandWaveDetector {
           if (cand > best) { best = cand; bestOrder = if (f) "R-M-L" else "L-M-R"; bestSpan = sp }
         }
         if (best > 0) {
-          Log.i(TAG, "lumapass 필요문턱=%.2f (현재 %.2f) 순서=%s span=%.0fms"
+          Log.i(TAG, "lumapass[$axisName] 필요문턱=%.2f (현재 %.2f) 순서=%s span=%.0fms"
             .format(best, LUMAPASS_DIP_RATIO, bestOrder, bestSpan))
         }
       }
@@ -1456,14 +1463,14 @@ object PaceHandWaveDetector {
     if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
 
-    fun onset(idx: Int, ref: Double): Double? {
-      if (ref <= LUMAPASS_MIN_REF) return null
-      val th = ref * LUMAPASS_DIP_RATIO
-      return dipHistory.firstOrNull { it[idx] <= th }?.get(0)
+    fun onset(idx: Int, bandRef: Double): Double? {
+      if (bandRef <= LUMAPASS_MIN_REF) return null
+      val th = bandRef * LUMAPASS_DIP_RATIO
+      return hist.firstOrNull { it[idx] <= th }?.get(0)
     }
-    val tL = onset(1, brightRefL) ?: return
-    val tM = onset(2, brightRefM) ?: return
-    val tR = onset(3, brightRefR) ?: return
+    val tL = onset(1, ref[0]) ?: return
+    val tM = onset(2, ref[1]) ?: return
+    val tR = onset(3, ref[2]) ?: return
 
     // 한쪽 끝 → 가운데 → 반대쪽 끝 순서여야 한다. 전역 조명 변화는 세 구간이 동시라 여기서 걸린다.
     val fwd = tR < tM && tM < tL   // 오른쪽부터 꺼짐
@@ -1476,25 +1483,30 @@ object PaceHandWaveDetector {
     //   확정되지 않았다(2026-08-26에 부호를 반대로 넣어 손짓을 통째로 죽인 적이 있다).
     //   지금은 양쪽 다 발화시키고 순서를 로그에 남긴다. 사장님이 방향을 지정해 해주시면 그 로그로
     //   확정한 뒤 한쪽만 남긴다.
-    dipHistory.clear()
-    Log.i(TAG, "LUMAPASS 순서=${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms refLMR=${brightRefL.toInt()}/${brightRefM.toInt()}/${brightRefR.toInt()} rot축")
-    fireTrigger("lumapass ${if (fwd) "R→M→L" else "L→M→R"} span=${span.toInt()}ms", onWave)
+    hist.clear()
+        lumaPassFiredThisFrame = true
+    Log.i(TAG, "LUMAPASS 축=$axisName 순서=${if (fwd) "A→B→C" else "C→B→A"} span=${span.toInt()}ms ref=${ref[0].toInt()}/${ref[1].toInt()}/${ref[2].toInt()}")
+    fireTrigger("lumapass 축=$axisName ${if (fwd) "A→B→C" else "C→B→A"} span=${span.toInt()}ms", onWave)
   }
 
   /**
-   * 8x8 격자에서 세로 3분할(업라이트 기준 왼/가운데/오른쪽) 평균을 유도한다.
-   * Y평면을 다시 훑지 않으려고 만든 것 — 셀은 등면적이라 픽셀 평균과 같다.
-   * ⚠️ proxy는 회전 전 이미지다. rot 90/270이면 업라이트의 가로가 격자의 **행(gy)** 이다
-   *   (lumaBands 주석 참고). 축을 잘못 고르면 좌우 통과를 위아래로 보게 되어 순서가 영영 안 생긴다.
+   * 격자에서 3분할 평균을 유도한다. axis=0이면 행(gy) 기준, axis=1이면 열(gx) 기준.
+   *
+   * 🔴 2026-08-27 사장님("거의 수평인 상태에서는 손짓을 하나도 못 잡아") — 원인이 여기였다.
+   *   예전엔 rotationDegrees로 "어느 축이 업라이트의 가로인가"를 하나만 골랐다. 그런데 폰이
+   *   수평에 가까워지면 화면 회전이 바뀌어 그 값이 달라지고, **가로 통과를 위아래로 보게 된다.**
+   *   그러면 세 구간의 순서가 영영 안 생겨 lumapass가 한 번도 발화하지 못한다.
+   *   → 회전값에 기대지 않는다. **두 축을 모두 계산해 어느 쪽이든 순서가 성립하면 통과**로 본다.
+   *     비용은 격자에서 유도하는 덧셈뿐이고, 자세가 어떻든 동작한다.
+   *   ⚠️ 회전값으로 축을 고르는 방식으로 되돌리지 말 것 — 거치 각도가 바뀌는 실사용에서 반드시 깨진다.
    */
-  private fun bandsFromGrid(grid: IntArray, rotationDegrees: Int): DoubleArray {
-    val useRowAxis = rotationDegrees == 90 || rotationDegrees == 270
+  private fun bandsFromGrid(grid: IntArray, axis: Int): DoubleArray {
     val sums = DoubleArray(3)
     val counts = IntArray(3)
     for (i in grid.indices) {
       val gy = i / MOTION_GRID
       val gx = i % MOTION_GRID
-      val b = ((if (useRowAxis) gy else gx) * 3) / MOTION_GRID
+      val b = ((if (axis == 0) gy else gx) * 3) / MOTION_GRID
       val bi = if (b > 2) 2 else b
       sums[bi] += grid[i]
       counts[bi]++

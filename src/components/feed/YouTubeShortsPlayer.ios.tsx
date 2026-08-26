@@ -774,9 +774,12 @@ export const YouTubeShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(functio
   const lastWebMsgAtRef = useRef(Date.now());
   const deadmanReloadsRef = useRef(0);
   useEffect(() => {
-    if (preload || !ready) { lastWebMsgAtRef.current = Date.now(); return; }
+    // 🔴 2026-08-26 14:56 실측 — 발화 11회에 전환 기록 0: 웹뷰가 **ready 전 상태로 굳으면** 이 게이트가
+    // 데드맨을 통째로 꺼서 영영 복구가 안 됐다. preload만 제외하고, 로딩 중(!ready)도 감시한다(15s 여유).
+    if (preload) { lastWebMsgAtRef.current = Date.now(); return; }
+    const deadMs = ready ? 10000 : 15000;
     const t = setInterval(() => {
-      if (Date.now() - lastWebMsgAtRef.current > 10000 && deadmanReloadsRef.current < 3) {
+      if (Date.now() - lastWebMsgAtRef.current > deadMs && deadmanReloadsRef.current < 3) {
         deadmanReloadsRef.current += 1;
         lastWebMsgAtRef.current = Date.now();
         diagLog('deadman_reload', '#' + deadmanReloadsRef.current);

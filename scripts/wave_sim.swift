@@ -143,7 +143,8 @@ extension Sim {
     let dr = Double(darkened) / Double(changed)
     let density = Double(changed) / Double(max(1, (maxX - minX + 1) * (maxY - minY + 1)))
     let cons = max(dr, 1 - dr)
-    if fraction >= 0.012, fraction <= 0.5, cons >= 0.8, density >= 0.55 {
+    let densityTh = changed <= 3 ? 0.9 : 0.30
+    if fraction >= 0.0078, fraction <= 0.30, cons >= 0.8, density >= densityTh {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
@@ -411,6 +412,24 @@ var g30 = flatGrid(150)
 for i in [0, 60, 130, 255] { g30[i] = 100 }
 for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
 check("격자 분산 잡음 차단", s30.events, fires: 0)
+
+// 31. 격자: 2칸 인접 스침(안드 실기기 실측 케이스) — 발화해야
+var s31 = Sim()
+var t31 = 0.0
+for _ in 0..<6 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
+var g31 = flatGrid(150)
+for i in [244, 245] { g31[i] = 100 }
+for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
+check("격자 2칸 인접 스침", s31.events, fires: 1)
+
+// 32. 격자: 2칸 분산 잡음(밀도 0.5) — 차단해야
+var s32 = Sim()
+var t32 = 0.0
+for _ in 0..<6 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
+var g32 = flatGrid(150)
+g32[10] = 100; g32[13] = 100
+for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
+check("격자 2칸 분산 잡음 차단", s32.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

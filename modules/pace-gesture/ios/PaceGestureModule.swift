@@ -1105,10 +1105,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let gridWindowMs: Double = 700
   private let gridLagMs: Double = 180
   private let gridCellDelta: Double = 30
-  private let gridFracMin: Double = 0.012
-  private let gridFracMax: Double = 0.5
+  // 🔴 2026-08-28 안드 실기기 실측 확정치 이식(fb915c0) — 손이 카메라 위를 지나도 2칸만 변한다(실측
+  // frac=0.0078·일관성 1.0·밀도 1.0). 잡음 2칸(합성 60초 ×4종, 4671회)은 일관성·밀도에서 전부 갈렸다.
+  // 밀도는 칸 수 2단: 작은 이벤트(≤3칸)는 딱 붙어야(0.9), 큰 이벤트는 느슨하게(0.30) — 단일 0.55는
+  // 5~8칸 진짜 손짓의 절반을 떨어뜨렸다("2번 중 1번"의 원인).
+  private let gridFracMin: Double = 0.0078
+  private let gridFracMax: Double = 0.30
   private let gridDarkenRatio: Double = 0.8
-  private let gridMinDensity: Double = 0.55
+  private let gridSmallCells: Int = 3
+  private let gridMinDensitySmall: Double = 0.9
+  private let gridMinDensityBig: Double = 0.30
   private var gridHistory: [(t: Double, g: [Double])] = []
 
   private let dipWindowMs: Double = 1200
@@ -1148,7 +1154,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let bbox = Double((maxX - minX + 1) * (maxY - minY + 1))
     let density = Double(changed) / max(1, bbox)
     let consistency = max(darkenRatio, 1 - darkenRatio)
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= gridMinDensity {
+    let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh {
       gridHistory.removeAll()
       fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f", changed, fraction, consistency, density), nowMs)
     } else if fraction >= gridFracMin * 0.5 {

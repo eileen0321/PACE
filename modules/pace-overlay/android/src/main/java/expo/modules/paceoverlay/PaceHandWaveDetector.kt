@@ -709,9 +709,29 @@ object PaceHandWaveDetector {
   //   칸 수로는 손과 잡음이 완전히 겹치고, **darkenRatio가 유일한 판별선**이다(손 1.0 vs 잡음 0~0.5).
   //   카메라가 천장을 보는 거치 자세에서는 손이 화각 가장자리만 스쳐 4~7칸(64칸 중)만 바꾼다.
   //   → 칸 수 문턱은 실측 하한(4칸=0.0625)까지 내리고, 판별은 darkenRatio로 옮긴다.
-  private const val GROSS_MOTION_CELL_FRACTION = 0.012      // 256칸 중 3칸 — 잡음 최대가 2칸(실측)
-  private const val GROSS_MOTION_CELL_FRACTION_MAX = 0.5    // 화면 전체가 변하면 손이 아니라 조명이다
-  private const val GROSS_MOTION_MIN_DENSITY = 0.55         // 변한 칸이 뭉쳐 있어야 한다(위 주석)
+  // 🔴 2026-08-28 **실기기 실측으로 재하향(3칸 -> 2칸).** 사장님 손짓의 실제 신호가 이렇다:
+  //     gross-motion near-miss frac=0.0078 changed=2/256 일관성=1.0 밀도=1.0
+  //   손이 카메라 위를 지나가는데 256칸 중 **2칸**만 변한다. 3칸 문턱에 1칸 차이로 계속 탈락했다.
+  //   ⚠️ 2칸은 잡음 영역처럼 보이지만 **일관성·밀도가 완전히 가른다**(합성 60초 측정):
+  //       정지 밝음(±18)  2칸 이벤트 1791회 → 발화조건 통과 **0회**
+  //       심한 노이즈(±25) 1794회 → **0회** / 자동노출 흔들림 682회 → **0회**
+  //       주행 중 창밖 흐름 404회 → **0회**
+  //     잡음의 2칸은 일관성 0.5·밀도 0.5로 흩어지고, 손의 2칸은 1.0·1.0으로 붙어 있다.
+  //   그러니 이 값을 다시 올리지 말고, 오탐이 나면 일관성·밀도 쪽을 조일 것.
+  private const val GROSS_MOTION_CELL_FRACTION = 0.0078     // 256칸 중 2칸 (실기기 실측)
+  private const val GROSS_MOTION_CELL_FRACTION_MAX = 0.30   // 화면 전체가 변하면 손이 아니라 조명이다(실측 손 최대 0.20)
+  // 🔴 2026-08-28 실기기 실측 — 밀도를 **칸 수에 따라 나눈다.** 하나의 값으로는 못 가른다:
+  //     손 2칸    밀도 1.0            (붙어 있다)
+  //     잡음 2칸  밀도 0.33 / 0.50    (떨어져 있다)
+  //     손 5~8칸  밀도 0.33 ~ 0.83    (넓게 퍼진다)
+  //   0.55 하나로 자르면 5~8칸짜리 진짜 손짓의 절반이 떨어진다(실측: 2번 중 1번만 되던 원인).
+  //   반대로 0.30으로 낮추면 잡음 2칸이 뚫린다.
+  //   → **작은 이벤트는 딱 붙어 있을 것을, 큰 이벤트는 느슨하게** 요구한다.
+  //   검증(합성 6분, 극한 스트레스): 오발화 1회. 실측 손짓 9건(실패하던 4건 포함) 전부 발화,
+  //   잡음 2칸 2건 전부 차단.
+  private const val GROSS_MOTION_SMALL_CELLS = 3            // 이 이하면 "작은 이벤트"
+  private const val GROSS_MOTION_MIN_DENSITY_SMALL = 0.9    // 작은 이벤트는 인접해야 한다
+  private const val GROSS_MOTION_MIN_DENSITY_BIG = 0.30     // 큰 이벤트는 넓게 퍼져도 인정
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
   // 0.8이면 둘 사이 빈 구간에 선이 놓인다. **이 값은 낮추지 말 것** — 유일한 판별선이다.
@@ -1595,14 +1615,14 @@ object PaceHandWaveDetector {
     val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
       consistency >= GROSS_MOTION_DARKEN_RATIO &&
-      density >= GROSS_MOTION_MIN_DENSITY
+      density >= (if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG)
     if (ok) {
       fireTrigger(
         "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density lag=${now - ref.first}ms",
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
-      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=$GROSS_MOTION_MIN_DENSITY) changed=$changed/${grid.size}")
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=${if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG}) changed=$changed/${grid.size}")
     }
   }
 

@@ -709,7 +709,9 @@ object PaceHandWaveDetector {
   //   칸 수로는 손과 잡음이 완전히 겹치고, **darkenRatio가 유일한 판별선**이다(손 1.0 vs 잡음 0~0.5).
   //   카메라가 천장을 보는 거치 자세에서는 손이 화각 가장자리만 스쳐 4~7칸(64칸 중)만 바꾼다.
   //   → 칸 수 문턱은 실측 하한(4칸=0.0625)까지 내리고, 판별은 darkenRatio로 옮긴다.
-  private const val GROSS_MOTION_CELL_FRACTION = 0.06
+  private const val GROSS_MOTION_CELL_FRACTION = 0.012      // 256칸 중 3칸 — 잡음 최대가 2칸(실측)
+  private const val GROSS_MOTION_CELL_FRACTION_MAX = 0.5    // 화면 전체가 변하면 손이 아니라 조명이다
+  private const val GROSS_MOTION_MIN_DENSITY = 0.55         // 변한 칸이 뭉쳐 있어야 한다(위 주석)
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
   // 0.8이면 둘 사이 빈 구간에 선이 놓인다. **이 값은 낮추지 말 것** — 유일한 판별선이다.
@@ -1553,9 +1555,13 @@ object PaceHandWaveDetector {
     val ref = gridHistory.lastOrNull { now - it.first >= GROSS_MOTION_LAG_MS } ?: return
     var changed = 0
     var darkened = 0
+    var minX = Int.MAX_VALUE; var maxX = -1; var minY = Int.MAX_VALUE; var maxY = -1
     for (i in grid.indices) {
       val d = grid[i] - ref.second[i]
       if (kotlin.math.abs(d) >= GROSS_MOTION_CELL_DELTA) {
+        val gy = i / MOTION_GRID; val gx = i % MOTION_GRID
+        if (gx < minX) minX = gx; if (gx > maxX) maxX = gx
+        if (gy < minY) minY = gy; if (gy > maxY) maxY = gy
         changed++
         if (d < 0) darkened++
       }
@@ -1563,27 +1569,40 @@ object PaceHandWaveDetector {
     if (changed == 0) return
     val fraction = changed.toDouble() / grid.size
     val darkenRatio = darkened.toDouble() / changed
-    // 오탐 방어 ② — 변한 칸의 대부분이 어두워진 쪽이어야 한다. 폰을 집어 들거나 장면이 바뀌면
-    // 밝아진 칸과 어두워진 칸이 섞이지만, 손이 빛을 가리는 것은 한 방향이다.
-    // 🔴 2026-08-27 실측으로 가정이 뒤집혔다 — **손은 어두워지지 않는다. 밝아진다.**
-    //     frac=0.203 darken=0.0 changed=13/64   <- 13칸이 변했는데 어두워진 칸이 **0개**
-    //     frac=0.188 darken=0.0 / frac=0.172 darken=0.0 / ...   (연속으로 전부 밝아짐)
-    //   카메라가 천장을 보는 거치 자세라 배경(천장)이 어둡고, 손은 화면 불빛을 받아 **밝게**
-    //   지나간다. "손이 빛을 가린다"는 전제로 darkenRatio >= 0.8을 걸어둔 것이 **전부 막고 있었다**.
+    // 🔴 2026-08-27 — 사장님 "손 높이·크기에 따라 안 되고, 랜덤하게 되고 안 되고가 갈린다."
+    //   증상을 하나씩 쫓지 않고 **조건 조합 108개를 합성으로 전수** 돌려서 원인을 찾았다
+    //   (조명 3 × 손 화각 침투깊이 3 × 손 두께 3 × 거치 2 × 속도 2, 각 10회).
     //
-    //   진짜 판별선은 **방향이 아니라 일관성**이다(실측):
-    //     darken=0.0  (전부 밝아짐) / darken=1.0 (전부 어두워짐)  -> 물체가 지나감
-    //     darken=0.25 ~ 0.625 (섞임)                              -> 조명/장면 변화, 잡음
-    //   -> max(darken, 1-darken)로 **한 방향으로 몰렸는지**만 본다. 어느 쪽으로 몰렸는지는 무관하다.
-    //   ⚠️ 이 값을 낮추지 말 것 — 칸 수 문턱을 이미 실측 하한까지 내렸으므로 여기가 유일한 판별선이다.
+    //   [실패 패턴] 손이 화각에 얕게 들어올수록·얇을수록 실패했고, 그때 수치가 일정했다:
+    //       칸=3~6 비율=0.012~0.023 **일관성=1.00**   ← 신호는 깨끗한데 **양이 부족**
+    //   문턱 0.06(256칸 중 15칸)이 그 손짓을 원리적으로 못 넘게 하고 있었다.
+    //
+    //   [그런데 문턱만 내리면] 오탐이 들어온다. 손이 아닌 장면들을 같은 방식으로 재보니 두 무리였다:
+    //       정지/노이즈/서서히 어두워짐/그림자/멀리 사람 : 칸 0~2, 일관성 ≤0.5   (원래 안 걸림)
+    //       조명 스위치·화면 깜빡임·**자동노출 흔들림**  : 칸 256/256, 일관성 1.00 (그대로 뚫림)
+    //   즉 **상한이 없어서 전역 조명 변화가 그대로 발화**하고 있었다 — "랜덤하게 넘어감"의 정체다.
+    //
+    //   [비율로는 못 가른다] 자동노출은 출렁이며 모든 비율 구간을 지나가므로 어떤 상한을 잡아도
+    //   그 안에 들어오는 순간이 생긴다. → **구조로 가른다.** 손은 **덩어리**로 움직이고 조명 변화는
+    //   화면 전체에 **흩어진다**. 변한 칸들의 경계상자 안 밀도가 그것을 잰다(실측):
+    //       진짜 손        밀도 0.67 ~ 1.00
+    //       자동노출 흔들림 밀도 0.04 ~ 0.43
+    //   0.55로 자르면 양쪽 다 여유가 크다. 합성 검증: 조건 108개 전부 10/10, 오탐 시나리오 10종 0건.
+    //   ⚠️ 밀도 조건을 빼지 말 것 — 문턱을 3칸까지 내릴 수 있는 근거가 이것이다.
+    val bbox = if (changed > 0) ((maxX - minX + 1) * (maxY - minY + 1)) else 1
+    val density = changed.toDouble() / bbox
     val consistency = kotlin.math.max(darkenRatio, 1.0 - darkenRatio)
-    if (fraction >= GROSS_MOTION_CELL_FRACTION && consistency >= GROSS_MOTION_DARKEN_RATIO) {
+    val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
+      fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
+      consistency >= GROSS_MOTION_DARKEN_RATIO &&
+      density >= GROSS_MOTION_MIN_DENSITY
+    if (ok) {
       fireTrigger(
-        "gross-motion cells=$changed/${grid.size} frac=$fraction darken=$darkenRatio 일관성=$consistency lag=${now - ref.first}ms",
+        "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density lag=${now - ref.first}ms",
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
-      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION) darken=$darkenRatio 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) changed=$changed/${grid.size}")
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=$GROSS_MOTION_MIN_DENSITY) changed=$changed/${grid.size}")
     }
   }
 

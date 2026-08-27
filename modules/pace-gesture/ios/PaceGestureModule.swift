@@ -1355,4 +1355,4 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let third = gridN / 3
     return (band(0, third), band(third, gridN - third), band(gridN - third, gridN), grid)
   }
-}}
+}

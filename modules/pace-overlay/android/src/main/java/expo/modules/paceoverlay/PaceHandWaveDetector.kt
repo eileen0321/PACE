@@ -676,6 +676,8 @@ object PaceHandWaveDetector {
   private const val LUMAPASS_MIN_SPAN_MS = 80.0
   private const val LUMAPASS_MAX_SPAN_MS = 900.0
   private const val LUMAPASS_REF_DECAY = 0.995
+  /** 기준선(감쇠 평균) 계수 — 손짓(수백 ms)보다 느리고 조명 변화(수 초)보다 빠르게. */
+  private const val LUMAPASS_BASE_DECAY = 0.97
 
   private const val GROSS_MOTION_WINDOW_MS = 700L
   /** 이만큼 전 프레임과 비교한다 — 손짓 한 번의 시간 규모(80ms 간격 기준 2~3프레임). */
@@ -1359,41 +1361,9 @@ object PaceHandWaveDetector {
    * Y평면을 MOTION_GRID x MOTION_GRID 격자로 줄여 칸별 평균 밝기(0~255)를 낸다.
    * MediaPipe도 Bitmap 변환도 안 거치므로 사실상 공짜다 — 위 gross-motion 주석 참고.
    */
-  /**
-   * 세로 3분할(업라이트 기준 왼/가운데/오른쪽) 평균 밝기. 위 lumapass 주석 참고.
-   *
-   * ⚠️ proxy는 회전 전 이미지다. 업라이트에서의 "가로"가 회전값에 따라 proxy의 x일 수도 y일 수도
-   *   있다 — 90/270도면 proxy의 **행(y)** 이 업라이트의 가로가 된다. 축을 잘못 고르면 손이 좌우로
-   *   지나가는 것을 위아래로 보게 되어 순서가 영영 안 생긴다.
-   */
-  private fun lumaBands(proxy: ImageProxy, rotationDegrees: Int): DoubleArray {
-    val plane = proxy.planes[0]
-    val buf = plane.buffer.duplicate()
-    val rowStride = plane.rowStride
-    val pixelStride = plane.pixelStride
-    val w = proxy.width
-    val h = proxy.height
-    val useRowAxis = rotationDegrees == 90 || rotationDegrees == 270
-    val sums = DoubleArray(3)
-    val counts = IntArray(3)
-    var y = 0
-    while (y < h) {
-      var x = 0
-      while (x < w) {
-        val pos = y * rowStride + x * pixelStride
-        if (pos < buf.limit()) {
-          val band = if (useRowAxis) (y * 3) / h else (x * 3) / w
-          val bi = if (band > 2) 2 else band
-          sums[bi] += (buf.get(pos).toInt() and 0xFF)
-          counts[bi]++
-        }
-        x += MOTION_SAMPLE_STEP
-      }
-      y += MOTION_SAMPLE_STEP
-    }
-    for (i in 0..2) if (counts[i] > 0) sums[i] /= counts[i]
-    return sums
-  }
+  // (lumaBands 제거 — 회전값으로 축을 하나만 고르던 옛 방식이다. 수평 거치에서 가로 통과를
+  //  위아래로 보게 되어 통째로 깨진다(2026-08-27 실측). 지금은 bandsFromGrid로 두 축을 다 본다.
+  //  같은 방식으로 되돌리지 말 것.)
 
   /**
    * lumapass — 세로 3분할 밝기가 **순차로** 얕게 꺼지면 "손이 카메라 앞을 지나갔다"로 본다.
@@ -1408,9 +1378,12 @@ object PaceHandWaveDetector {
     }
     // 감쇠 기준값 — 최근 최댓값을 천천히 잊는다. 고정 최댓값을 쓰면 연속 시도로 기준이 오염된다
     // (맥이 fd42db4에서 같은 이유로 감쇠 기준으로 바꿨다).
-    ref[0] = kotlin.math.max(bands[0], ref[0] * LUMAPASS_REF_DECAY)
-    ref[1] = kotlin.math.max(bands[1], ref[1] * LUMAPASS_REF_DECAY)
-    ref[2] = kotlin.math.max(bands[2], ref[2] * LUMAPASS_REF_DECAY)
+    // 🔴 2026-08-27 — 감쇠 **최댓값**에서 감쇠 **평균**으로 바꾼다. 최댓값 기준은 "어두워짐"만
+    //   볼 수 있다(밝아지는 값은 기준을 밀어올릴 뿐이라 편차가 영원히 0이다). 평균 기준선이어야
+    //   양방향 편차를 잴 수 있다. 계수는 손짓(수백 ms)보다 느리고 조명 변화(수 초)보다 빠르게 둔다.
+    for (i in 0..2) {
+      ref[i] = if (ref[i] <= 0.0) bands[i] else ref[i] * LUMAPASS_BASE_DECAY + bands[i] * (1.0 - LUMAPASS_BASE_DECAY)
+    }
     // 🔬 튜닝 근거 확보 — 이 축이 왜 안 걸렸는지를 수치로 남긴다. 거치 자세(카메라가 천장을 보는
     //   화각)에서는 손이 프레임의 작은 부분만 덮어 **구간 평균이 15%나 안 떨어질 수 있다.**
     //   그 경우 문턱을 낮춰야 하는데, 실측 없이 낮추면 이 파일이 아홉 번 반복한 "검열된 데이터로
@@ -1439,10 +1412,10 @@ object PaceHandWaveDetector {
         var bestOrder = ""
         var bestSpan = 0.0
         for (cand in doubleArrayOf(0.85, 0.90, 0.93, 0.95, 0.97)) {
-          fun on(idx: Int, bandRef: Double): Double? {
-            if (bandRef <= LUMAPASS_MIN_REF) return null
-            val th = bandRef * cand
-            return hist.firstOrNull { it[idx] <= th }?.get(0)
+          fun on(idx: Int, base: Double): Double? {
+            if (base <= LUMAPASS_MIN_REF) return null
+            val need = base * (1.0 - cand)
+            return hist.firstOrNull { kotlin.math.abs(it[idx] - base) >= need }?.get(0)
           }
           val a = on(1, ref[0]) ?: continue
           val b = on(2, ref[1]) ?: continue
@@ -1463,14 +1436,24 @@ object PaceHandWaveDetector {
     if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
 
-    fun onset(idx: Int, bandRef: Double): Double? {
-      if (bandRef <= LUMAPASS_MIN_REF) return null
-      val th = bandRef * LUMAPASS_DIP_RATIO
-      return hist.firstOrNull { it[idx] <= th }?.get(0)
+    // 🔴 2026-08-27 — **방향 가정을 버린다.** 사장님 실사용: "밝은 데서는 아예 인식이 안 되고,
+    //   (실내로) 들어오니 인식률이 올라간다." 안드 실측이 기전을 보여준다 —
+    //     frac=0.203 darken=0.0 changed=13/256   (13칸이 변했는데 어두워진 칸이 0개)
+    //   배경이 어두우면 손이 빛을 받아 **밝게** 지나가고, 배경이 밝으면 **어둡게** 지나간다.
+    //   부호는 조명에 따라 뒤집힌다 — "어두워져야 onset"이면 한쪽 조명에서 통째로 죽는다.
+    //   ⚠️ 방향 무관으로 열어두면 조명 변화가 뚫릴 수 있으므로 **세 구간의 편차 부호가 같을 것**을
+    //     요구한다. 순서 + 구간시간 조건은 그대로다 — 이 축의 진짜 판별력은 거기에 있다.
+    fun onsetAt(idx: Int, base: Double): Pair<Double, Int>? {
+      if (base <= LUMAPASS_MIN_REF) return null
+      val need = base * (1.0 - LUMAPASS_DIP_RATIO)
+      val hit = hist.firstOrNull { kotlin.math.abs(it[idx] - base) >= need } ?: return null
+      return hit[0] to (if (hit[idx] < base) -1 else 1)
     }
-    val tL = onset(1, ref[0]) ?: return
-    val tM = onset(2, ref[1]) ?: return
-    val tR = onset(3, ref[2]) ?: return
+    val oL = onsetAt(1, ref[0]) ?: return
+    val oM = onsetAt(2, ref[1]) ?: return
+    val oR = onsetAt(3, ref[2]) ?: return
+    if (oL.second != oM.second || oM.second != oR.second) return  // 섞이면 조명/장면 변화다
+    val tL = oL.first; val tM = oM.first; val tR = oR.first
 
     // 한쪽 끝 → 가운데 → 반대쪽 끝 순서여야 한다. 전역 조명 변화는 세 구간이 동시라 여기서 걸린다.
     val fwd = tR < tM && tM < tL   // 오른쪽부터 꺼짐
@@ -1638,17 +1621,23 @@ object PaceHandWaveDetector {
     //   (nearpass의 luma >= brightRefAll * 0.7) — 안드에만 빠져 있었다.
     //   → 창 안의 **최저점**이 충분히 어두웠고 **지금은 돌아와 있어야** 발화한다.
     //   이 앱은 밤에 침대에서 쓰는 일이 흔하므로(소등이 일상) 그냥 둘 수 없는 오탐이다.
-    val dipMin = lumaHistory.minOfOrNull { it.second } ?: luma
-    val dipRatio = if (brightestInWindow > 0.0) dipMin / brightestInWindow else 1.0
-    val recovered = luma >= brightestInWindow * LUMA_RECOVER_RATIO
-    if (dipRatio <= dropTh && dipMin <= darkTh && recovered) {
+    // 🔴 2026-08-27 — 여기도 **방향 가정**이 남아 있었다(격자 축만 고치고 이 축을 안 봤다).
+    //   사장님 실사용: "밝은 데서는 아예 인식이 안 되고, 들어오니 인식률이 올라간다."
+    //   배경이 어두우면 손이 빛을 받아 밝게 지나가고, 밝으면 어둡게 지나간다 — 부호가 조명에 따라
+    //   뒤집힌다. "어두워져야만" 인정하면 한쪽 조명에서 이 축이 통째로 죽는다.
+    //   → 창 안의 **최대 편차**를 양방향으로 보고, 지금은 기준으로 **돌아와 있어야** 발화한다.
+    //     회복 조건이 소등·이불·주머니를 거르는 그대로의 역할을 한다(2026-08-26 소등 오탐 참고).
+    val extreme = lumaHistory.maxByOrNull { kotlin.math.abs(it.second - brightestInWindow) }?.second ?: luma
+    val devRatio = if (brightestInWindow > 0.0) kotlin.math.abs(extreme - brightestInWindow) / brightestInWindow else 0.0
+    val recovered = kotlin.math.abs(luma - brightestInWindow) <= brightestInWindow * (1.0 - LUMA_RECOVER_RATIO)
+    if (devRatio >= (1.0 - dropTh) && recovered) {
       fireTrigger(
-        "occlusion near=$nearHandRecent dip=$dipMin now=$luma bright=$brightestInWindow dipRatio=$dipRatio(th=$dropTh)",
+        "occlusion near=$nearHandRecent 편차=$devRatio 기준=$brightestInWindow now=$luma 회복=$recovered",
         onWave
       )
-    } else if (dipRatio <= dropTh && dipMin <= darkTh) {
-      // 어두워지긴 했는데 아직 안 돌아왔다 — 소등/이불/주머니는 여기서 끝난다(로그로 구분 가능).
-      Log.d(TAG, "occlusion 보류(회복 안 됨) dip=$dipMin now=$luma bright=$brightestInWindow")
+    } else if (devRatio >= (1.0 - dropTh)) {
+      // 변하긴 했는데 아직 안 돌아왔다 — 소등/이불/주머니는 여기서 끝난다(로그로 구분 가능).
+      Log.d(TAG, "occlusion 보류(회복 안 됨) 편차=$devRatio 기준=$brightestInWindow now=$luma")
     }
   }
 
@@ -1667,8 +1656,14 @@ object PaceHandWaveDetector {
     }
     Log.i(TAG, "WAVE detected ($reason)")
     lastTriggerAtMs = now
+    // 🔴 2026-08-27 사장님(iOS) "10개씩 한꺼번에 넘어가고", "두 개씩 연달아" — **스트로크당 1발화**가
+    //   통과 축에 없으면 한 번의 손짓이 여러 번 세어진다. 안드는 불응이 1.2초라 덜하지만, 발화 후
+    //   **새 축들의 이력을 안 지우고 있었다** — 같은 통과의 표본이 창에 남아 불응이 풀리는 순간
+    //   다시 판정에 쓰인다. 발화했으면 그 통과는 소비된 것이므로 전부 버린다.
     sizeHistory.clear()
     lumaHistory.clear()
+    dipHistory[0].clear(); dipHistory[1].clear()
+    gridHistory.clear()
     // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
     // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
     Handler(Looper.getMainLooper()).post { onWave() }

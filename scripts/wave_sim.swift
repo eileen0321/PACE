@@ -26,6 +26,7 @@ struct Sim {
   var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
   var brightRefAll = 0.0, brightRefL = 0.0, brightRefM = 0.0, brightRefR = 0.0
   var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
+  var gridHistory: [(t: Double, g: [Double])] = []
   var lastTriggerMs = -10000.0
   var events: [String] = []
 
@@ -119,6 +120,35 @@ struct Sim {
     }
   }
 }
+
+let gridN = 16
+extension Sim {
+  mutating func feedGrid(t: Double, g: [Double]) {
+    gridHistory.append((t, g))
+    while let f = gridHistory.first, t - f.t > 700 { gridHistory.removeFirst() }
+    guard t - lastTriggerMs > passRefractoryMs else { return }
+    guard let ref = gridHistory.last(where: { t - $0.t >= 180 }) else { return }
+    var changed = 0, darkened = 0
+    var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
+    for i in 0..<g.count where g[i] >= 0 && ref.g[i] >= 0 {
+      let d = g[i] - ref.g[i]
+      if abs(d) >= 30 {
+        let gy = i / gridN, gx = i % gridN
+        minX = min(minX, gx); maxX = max(maxX, gx); minY = min(minY, gy); maxY = max(maxY, gy)
+        changed += 1; if d < 0 { darkened += 1 }
+      }
+    }
+    guard changed > 0 else { return }
+    let fraction = Double(changed) / Double(g.count)
+    let dr = Double(darkened) / Double(changed)
+    let density = Double(changed) / Double(max(1, (maxX - minX + 1) * (maxY - minY + 1)))
+    let cons = max(dr, 1 - dr)
+    if fraction >= 0.012, fraction <= 0.5, cons >= 0.8, density >= 0.55 {
+      gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
+    }
+  }
+}
+func flatGrid(_ v: Double) -> [Double] { [Double](repeating: v, count: gridN * gridN) }
 
 var pass = 0, fail = 0
 func check(_ name: String, _ events: [String], fires: Int, expectContains: [String] = [], expectAbsent: [String] = []) {
@@ -356,6 +386,31 @@ s27.feedLuma(t: t27, l: 100, m: 70, r: 120); t27 += 100
 s27.feedLuma(t: t27, l: 130, m: 80, r: 100); t27 += 100
 for _ in 0..<3 { s27.feedLuma(t: t27, l: 100, m: 100, r: 100); t27 += 80 }
 check("방향 혼합 잡음 무발화", s27.events, fires: 0)
+
+// 28. 격자: 가장자리 스침(뭉친 4칸 어두워짐) — 발화해야 (안드 108스윕의 핵심 케이스)
+var s28 = Sim()
+var t28 = 0.0
+for _ in 0..<6 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
+var g28 = flatGrid(150)
+for i in [240, 241, 242, 243] { g28[i] = 100 } // 아래쪽 한 줄에 뭉친 4칸
+for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
+check("격자 가장자리 스침", s28.events, fires: 1, expectContains: ["gridpass"])
+
+// 29. 격자: 자동노출 흔들림(전체 256칸 동시 변화) — 상한 0.5로 차단
+var s29 = Sim()
+var t29 = 0.0
+for _ in 0..<6 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
+for _ in 0..<3 { s29.feedGrid(t: t29, g: flatGrid(100)); t29 += 80 }
+check("격자 AE 전체변화 차단", s29.events, fires: 0)
+
+// 30. 격자: 흩어진 잡음(4칸이 사방에 분산 = 밀도 미달) — 차단
+var s30 = Sim()
+var t30 = 0.0
+for _ in 0..<6 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
+var g30 = flatGrid(150)
+for i in [0, 60, 130, 255] { g30[i] = 100 }
+for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
+check("격자 분산 잡음 차단", s30.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

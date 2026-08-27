@@ -676,9 +676,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard let lm = landmarker else { return }
     // occlusion 안전망 — Y(루마) 평면 평균 밝기(전부 camera queue라 상태 접근 안전)
     if let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
-      let thirds = avgLumaThirds(pb)
-      if thirds.l >= 0, thirds.m >= 0, thirds.r >= 0 {
-        checkOcclusion((thirds.l + thirds.m + thirds.r) / 3, thirds.l, thirds.m, thirds.r, nowMs)
+      let lg = avgLumaGrid(pb)
+      if lg.l >= 0, lg.m >= 0, lg.r >= 0 {
+        checkOcclusion((lg.l + lg.m + lg.r) / 3, lg.l, lg.m, lg.r, nowMs)
+        checkGridMotion(lg.grid, nowMs)
       }
       lastPixelBuffer = pb // 유령 채증용 최신 프레임(발화 시 JPEG 저장) — 같은 camera queue라 안전
       if !didLogPixelSize {
@@ -1096,6 +1097,20 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // ⚠️ 기존 lumaHistory(400ms, 안드 파리티)는 안 건드리고 dip 전용 기록을 따로 쓴다.
   // 좌/우 반쪽 루마(2026-08-25 사장님 "반대 방향은 또 되고 — 방향 정한 거 아냐?") — dip에도 방향을 준다:
   // 왼쪽 반이 먼저 어두워지면 왼→오(발화), 오른쪽이 먼저면 오→왼(무시). 30ms 이내 동시는 모호 → 발화(관대).
+  // 🟢 2026-08-27 안드 gross-motion(격자) 축 이식 — 수평 거치(카메라가 천장)에서 손이 화각 가장자리만
+  // 스치는 경우의 전용 축. 안드가 조건 108개 전수 스윕으로 확정한 구조·수치 그대로:
+  //   16×16 격자, |Δ|≥30 변화 셀의 비율 ∈ [0.012, 0.5] + 일관성(max(d,1-d)) ≥ 0.8 + 밀도 ≥ 0.55.
+  //   밀도(변화 셀이 경계상자 안에 뭉침)가 자동노출/조명 오탐을 가르는 유일한 선 — 빼지 말 것.
+  private let gridN = 16
+  private let gridWindowMs: Double = 700
+  private let gridLagMs: Double = 180
+  private let gridCellDelta: Double = 30
+  private let gridFracMin: Double = 0.012
+  private let gridFracMax: Double = 0.5
+  private let gridDarkenRatio: Double = 0.8
+  private let gridMinDensity: Double = 0.55
+  private var gridHistory: [(t: Double, g: [Double])] = []
+
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
   // 🔴 22:52 확진 — dip의 "밝음" 기준을 1.2s 창 최대로 잡으면 연속 스침 중엔 기준 자체가 어두워져
@@ -1109,6 +1124,38 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var baseEmaR: Double = -1
   private var brightRefM: Double = 0
   private var brightRefR: Double = 0
+  // 안드 checkGrossMotion 이식(2026-08-27) — 구조·수치 동일. 오탐 방어 = 상한 0.5 + 일관성 0.8 + 밀도 0.55.
+  private func checkGridMotion(_ grid: [Double], _ nowMs: Double) {
+    gridHistory.append((nowMs, grid))
+    while let f = gridHistory.first, nowMs - f.t > gridWindowMs { gridHistory.removeFirst() }
+    guard nowMs - lastTriggerMs > passRefractoryMs else { return }
+    guard let ref = gridHistory.last(where: { nowMs - $0.t >= gridLagMs }) else { return }
+    var changed = 0, darkened = 0
+    var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
+    for i in 0..<grid.count where grid[i] >= 0 && ref.g[i] >= 0 {
+      let d = grid[i] - ref.g[i]
+      if abs(d) >= gridCellDelta {
+        let gy = i / gridN, gx = i % gridN
+        minX = min(minX, gx); maxX = max(maxX, gx)
+        minY = min(minY, gy); maxY = max(maxY, gy)
+        changed += 1
+        if d < 0 { darkened += 1 }
+      }
+    }
+    guard changed > 0 else { return }
+    let fraction = Double(changed) / Double(grid.count)
+    let darkenRatio = Double(darkened) / Double(changed)
+    let bbox = Double((maxX - minX + 1) * (maxY - minY + 1))
+    let density = Double(changed) / max(1, bbox)
+    let consistency = max(darkenRatio, 1 - darkenRatio)
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= gridMinDensity {
+      gridHistory.removeAll()
+      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f", changed, fraction, consistency, density), nowMs)
+    } else if fraction >= gridFracMin * 0.5 {
+      onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f cells=%d", fraction, consistency, density, changed))
+    }
+  }
+
   private func checkOcclusion(_ luma: Double, _ lumaL: Double, _ lumaM: Double, _ lumaR: Double, _ nowMs: Double) {
     lumaHistory.append((nowMs, luma))
     while let f = lumaHistory.first, nowMs - f.t > lumaWindowMs { lumaHistory.removeFirst() }
@@ -1259,51 +1306,53 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 420f YUV의 plane 0이 곧 루마라 바이트 평균만 하면 된다(예전 BGRA 가중합보다 싸고 정확). BGRA 폴백도 유지.
   // 2026-08-25 — 좌/우 반쪽을 따로 평균한다(dip 방향 판정, checkOcclusion 주석). 버퍼는 connection에서
   // 세로+미러 고정이라(setupCamera) 버퍼 x축 = 화면 x축 = 랜드마크 x축.
-  private func avgLumaThirds(_ pb: CVPixelBuffer) -> (l: Double, m: Double, r: Double) {
+  private func avgLumaGrid(_ pb: CVPixelBuffer) -> (l: Double, m: Double, r: Double, grid: [Double]) {
     CVPixelBufferLockBaseAddress(pb, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
     let fmt = CVPixelBufferGetPixelFormatType(pb)
     let isYUV = (fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || fmt == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-    if isYUV && CVPixelBufferGetPlaneCount(pb) > 0 {
-      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return (-1, -1, -1) }
-      let w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0)
-      let bpr = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
-      let ptr = base.assumingMemoryBound(to: UInt8.self)
-      var sumL = 0, cntL = 0, sumM = 0, cntM = 0, sumR = 0, cntR = 0
-      let t1 = w / 3, t2 = 2 * w / 3
-      let sx = max(1, w / 24), sy = max(1, h / 24)
+    var sum = [Double](repeating: 0, count: gridN * gridN)
+    var cnt = [Int](repeating: 0, count: gridN * gridN)
+    func accumulate(w: Int, h: Int, luma: (Int, Int) -> Int) {
+      let sx = max(1, w / 96), sy = max(1, h / 96) // 격자당 ~6×6 표본
       var y = 0
       while y < h {
+        let gy = min(gridN - 1, y * gridN / h)
         var x = 0
         while x < w {
-          let v = Int(ptr[y * bpr + x])
-          if x < t1 { sumL += v; cntL += 1 } else if x < t2 { sumM += v; cntM += 1 } else { sumR += v; cntR += 1 }
+          let gx = min(gridN - 1, x * gridN / w)
+          let i = gy * gridN + gx
+          sum[i] += Double(luma(x, y)); cnt[i] += 1
           x += sx
         }
         y += sy
       }
-      return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntM > 0 ? Double(sumM) / Double(cntM) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
     }
-    // BGRA 폴백(포맷이 YUV가 아닐 때)
-    guard let base = CVPixelBufferGetBaseAddress(pb) else { return (-1, -1, -1) }
-    let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
-    let bpr = CVPixelBufferGetBytesPerRow(pb)
-    let ptr = base.assumingMemoryBound(to: UInt8.self)
-    var sumL = 0, cntL = 0, sumM = 0, cntM = 0, sumR = 0, cntR = 0
-    let t1 = w / 3, t2 = 2 * w / 3
-    let sx = max(1, w / 24), sy = max(1, h / 24)
-    var y = 0
-    while y < h {
-      var x = 0
-      while x < w {
+    if isYUV && CVPixelBufferGetPlaneCount(pb) > 0 {
+      guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return (-1, -1, -1, []) }
+      let w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0)
+      let bpr = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
+      let ptr = base.assumingMemoryBound(to: UInt8.self)
+      accumulate(w: w, h: h) { x, y in Int(ptr[y * bpr + x]) }
+    } else {
+      guard let base = CVPixelBufferGetBaseAddress(pb) else { return (-1, -1, -1, []) }
+      let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+      let bpr = CVPixelBufferGetBytesPerRow(pb)
+      let ptr = base.assumingMemoryBound(to: UInt8.self)
+      accumulate(w: w, h: h) { x, y in
         let o = y * bpr + x * 4
-        let b = Int(ptr[o]), g = Int(ptr[o + 1]), r = Int(ptr[o + 2])
-        let v = (r * 299 + g * 587 + b * 114) / 1000
-        if x < t1 { sumL += v; cntL += 1 } else if x < t2 { sumM += v; cntM += 1 } else { sumR += v; cntR += 1 }
-        x += sx
+        return (Int(ptr[o + 2]) * 299 + Int(ptr[o + 1]) * 587 + Int(ptr[o]) * 114) / 1000
       }
-      y += sy
     }
-    return (cntL > 0 ? Double(sumL) / Double(cntL) : -1, cntM > 0 ? Double(sumM) / Double(cntM) : -1, cntR > 0 ? Double(sumR) / Double(cntR) : -1)
+    var grid = [Double](repeating: -1, count: gridN * gridN)
+    for i in 0..<grid.count where cnt[i] > 0 { grid[i] = sum[i] / Double(cnt[i]) }
+    // thirds는 격자 열 밴드에서 유도(안드와 동일 — 한 번의 스캔으로 세 축 공용)
+    func band(_ from: Int, _ to: Int) -> Double {
+      var t = 0.0; var n = 0
+      for gy in 0..<gridN { for gx in from..<to where grid[gy * gridN + gx] >= 0 { t += grid[gy * gridN + gx]; n += 1 } }
+      return n > 0 ? t / Double(n) : -1
+    }
+    let third = gridN / 3
+    return (band(0, third), band(third, gridN - third), band(gridN - third, gridN), grid)
   }
 }

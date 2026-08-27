@@ -70,6 +70,7 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     if (text.startsWith('crossdrop')) { diagLog('cross_drop_refractory', text); return; } // 불응 중 스트로크 폐기
     if (text.startsWith('camprobe') || text.startsWith('campixel')) { diagLog('cam_probe', text); return; } // 해상도·회전 원격 검증
     if (text.startsWith('returndrop')) { diagLog('return_drop', text); return; } // 복귀 스트로크 무시
+    if (text.startsWith('gridnear')) { diagLog('grid_near', text); return; } // 격자 축 근접 미달 — 현장 캘리브레이션용
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
     else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에

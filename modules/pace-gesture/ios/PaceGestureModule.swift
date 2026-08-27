@@ -342,7 +342,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var crossLastFireDir: Double = 0
   // 🔴 2026-08-25 사장님("왜 그 시간을 막냐 — 그래서 안 되는 거 아냐?") — 1.2s 불응은 흔들기 이중발화
   // 방지용이었다. 통과(스침)는 스트로크 단위로 딱 떨어지므로 0.5s면 충분 — 빠른 연속 스침이 먹히지 않게.
-  private let passRefractoryMs: Double = 500
+  // 500→1200(2026-08-28 "두세 개씩 넘어가") — 한 물리 동작(접근+본동작+복귀 ≈1.2s)이 여러 축에
+  // 12발화/15s로 찍혔다. 통합 불응을 동작 봉투 길이로 되돌린다(안드 REFRACTORY와 동일).
+  private let passRefractoryMs: Double = 1200
   private var speedSuppressUntilMs: Double = 0
   private let crossWindowMs: Double = 2500
   // (crossMinRangeX(0.38 고정 화면비)는 needRange = min/max/비례로 대체돼 제거 — 남겨두면 어느 쪽이
@@ -1275,7 +1277,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // ⚠️ xHistory는 비우지 않는다(2026-08-21) — 비우면 발화 직후 글라이드 연속성이 끊겨 전역 burst의
     // "움직임 지속" 추적이 끊기고, 600ms 정지 판정이 손짓 도중 성립해 재발화한다(01:11 3연발 원인).
     // 재발화 방지는 globalBurstFired가 담당하므로 이력 유지가 안전하다.
-    for i in 0..<tracks.count { tracks[i].sizeHistory.removeAll(); tracks[i].sweepStreak = 0; tracks[i].glideStreak = 0 }
+    for i in 0..<tracks.count { tracks[i].sizeHistory.removeAll(); tracks[i].sweepStreak = 0; tracks[i].glideStreak = 0; tracks[i].crossHistory.removeAll() }
+    // 🔴 2026-08-28 — 같은 동작의 잔재가 다른 축으로 0.8~1s 뒤 재발화하던 것 차단(격자·밝기 이력 초기화).
+    gridHistory.removeAll()
+    dipHistory.removeAll()
     stillnessStartMs = 0 // 발화 후 정지 측정은 처음부터 다시(낡은 시계 오판 방지 — 01:30 실측)
     if handSize > 0, trackIdx >= 0, trackIdx < tracks.count {
       tracks[trackIdx].awaitingRearm = true

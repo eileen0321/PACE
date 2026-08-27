@@ -4,7 +4,7 @@
 import Foundation
 
 // ── 원본 상수(2026-08-25 안드 세션 수정 반영) ──
-let passRefractoryMs = 500.0
+let passRefractoryMs = 1200.0
 let crossWindowMs = 2500.0
 let crossNeedMin = 0.07
 let crossNeedMax = 0.10
@@ -174,8 +174,8 @@ var t2 = 0.0
 for k in 0..<3 {
   s2.feedHand(t: t2, x: 0.85, size: 0.15); t2 += 150
   s2.feedHand(t: t2, x: 0.45, size: 0.15); t2 += 150
-  s2.feedHand(t: t2, x: 0.15, size: 0.15); t2 += 300 // 스침 완료
-  if k < 2 { s2.feedHand(t: t2, x: 0.55, size: 0.15); t2 += 150; s2.feedHand(t: t2, x: 0.85, size: 0.15); t2 += 400 } // 복귀
+  s2.feedHand(t: t2, x: 0.15, size: 0.15); t2 += 900 // 스침 완료(발화 봉투 1.2s 반영)
+  if k < 2 { s2.feedHand(t: t2, x: 0.55, size: 0.15); t2 += 150; s2.feedHand(t: t2, x: 0.85, size: 0.15); t2 += 900 } // 복귀
 }
 check("연속 3스침+복귀 2회", s2.events, fires: 3, expectAbsent: [])
 
@@ -205,9 +205,9 @@ check("불응 중 스트로크 폐기", s5.events, fires: 1, expectContains: ["c
 var s6 = Sim()
 s6.feedHand(t: 0, x: 0.80, size: 0.15)
 s6.feedHand(t: 200, x: 0.30, size: 0.15) // FIRE 1
-s6.feedHand(t: 700, x: 0.82, size: 0.15) // 새 시작(불응 지남, 복귀로 인식될 수 있음 — 증가 스트로크는 0.38 초과 시 skip)
-s6.feedHand(t: 900, x: 0.32, size: 0.15) // FIRE 2
-check("빠른 2연속(0.7s)", s6.events, fires: 2)
+s6.feedHand(t: 1500, x: 0.82, size: 0.15) // 새 시작(1.2s 불응 지남)
+s6.feedHand(t: 1700, x: 0.32, size: 0.15) // FIRE 2
+check("연속 2스침(1.5s 간격)", s6.events, fires: 2)
 
 // 7. lumapass 왼→오: 오른쪽→가운데→왼쪽 순서 얕은 dip
 var s7 = Sim()
@@ -321,8 +321,8 @@ check("느린 복귀 후 재발화(데드락)", s18.events, fires: 2)
 var s19 = Sim()
 s19.feedHand(t: 0, x: 0.80, size: 0.15)
 s19.feedHand(t: 200, x: 0.30, size: 0.15)
-s19.feedHand(t: 1100, x: 0.78, size: 0.15)
-s19.feedHand(t: 1300, x: 0.28, size: 0.15)
+s19.feedHand(t: 1600, x: 0.78, size: 0.15)
+s19.feedHand(t: 1800, x: 0.28, size: 0.15)
 check("손 내렸다 다시 긋기", s19.events, fires: 2)
 
 // 21. 제자리 흔들림(진폭 0.09, 손폭 0.13) — 사장님 "가만히 있으면서 흔들리는 건 안 넘어가게"
@@ -364,7 +364,7 @@ for k in 0..<5 {
   let x0 = fwd ? 0.85 : 0.15, x1 = fwd ? 0.15 : 0.85
   s25.feedHand(t: t25, x: x0, size: 0.15); t25 += 150
   s25.feedHand(t: t25, x: (x0+x1)/2, size: 0.15); t25 += 150
-  s25.feedHand(t: t25, x: x1, size: 0.15); t25 += 700
+  s25.feedHand(t: t25, x: x1, size: 0.15); t25 += 1100
 }
 check("역방향 라치 자가복구", s25.events, fires: 3, expectContains: ["returndrop"])
 

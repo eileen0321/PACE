@@ -109,6 +109,29 @@ class PaceAccessibilityService : AccessibilityService() {
   // 재탐색). Shorts는 스크롤할 때마다 뷰가 리사이클되므로 무효화 자체는 자연스럽게 발생 — 캐시가
   // 없어도 동작은 똑같이 맞지만, 있으면 트리 워크 빈도가 크게 줄어든다.
   private var cachedTimingNode: AccessibilityNodeInfo? = null
+  /**
+   * 세션 경계에서 **영상 단위 상태**를 전부 지운다.
+   *
+   * 🔴 2026-08-28 — startWatching/startPlaybackTracking 이 lastKnownCurrentSec 등 일부만
+   *   초기화하고 나머지는 이전 세션 값을 그대로 물려받고 있었다. 두 가지가 실제로 샜다:
+   *   ⑴ videoStartedAtMs 가 예전 값이라(예: 10분 전) 새 세션 **첫 틱**에 곧바로
+   *      stuckOnSameVideoMs >= MAX_SINGLE_VIDEO_MS 가 되어 over-stay 로 판정 →
+   *      사용자가 방금 연 영상을 즉시 넘겨버린다("영상 하나 나오다 바로 넘어가").
+   *   ⑵ lastVideoFingerprint/lastKnownFrac 이 남아 첫 틱에서 "영상이 바뀌었다"로 오인 →
+   *      videoAdvanceCount 가 1 부터 시작하고 markUserActivity() 가 불려서, 일어나지도
+   *      않은 스와이프를 "사용자가 깨어 있다"는 증거로 삼는다(수면 감지 오염).
+   */
+  private fun resetPerVideoState() {
+    videoStartedAtMs = 0L
+    lastKnownFrac = -1f
+    lastVideoFingerprint = null
+    lastObservedTotalSec = -1
+    estimatedDurationMs = -1L
+    lastNearEndFireAtMs = 0L
+    adWasShowing = false
+    cachedTimingNode = null
+    rangeCandidateHistory.clear()
+  }
 
   // 2026-07-26 사용자 지시("유튜브 시청 시간을 측정할 방법 없어?" → "실제 재생 중일 때만 차감") —
   // 기존엔 isWatching(=Focus Session/자동넘김 ON)일 때만 이 폴링이 돌아서, Focus Session을 안 켠
@@ -317,6 +340,7 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       if (!service.isWatching) {
         service.isWatching = true
+        service.resetPerVideoState()
         service.lastKnownCurrentSec = -1
         // 🔴 2026-08-15 — "이번 세션에서 재생위치를 읽어봤는가"를 세션 경계에서 초기화한다.
         //   아래 blindOnTrackedApp 게이트가 이 값을 보는데, 리셋을 안 하면 **다른 앱(틱톡)에서 읽은
@@ -348,6 +372,7 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       if (!service.isTrackingPlayback) {
         service.isTrackingPlayback = true
+        service.resetPerVideoState()
         service.lastKnownCurrentSec = -1
         service.lastPlaybackAdvanceAtMs = 0L
         service.videoAdvanceCount = 0
@@ -870,10 +895,19 @@ class PaceAccessibilityService : AccessibilityService() {
     // 2026-08-02 진단 — "블루투스 눌러도 볼륨만 조절됨"이 재현되는데 아래 어떤 로그도 안 찍혀서,
     // 이 콜백 자체가 호출되는지부터 확정해야 한다(호출은 되는데 게이트에서 걸리는 것인지 vs
     // OS가 애초에 이 콜백으로 볼륨키를 안 주는 것인지 — 대응이 완전히 달라짐).
-    Log.i("PaceAccessibility", "onKeyEvent ENTRY keyCode=${event.keyCode} action=${event.action} deviceId=${event.deviceId} fg=$currentForegroundPackage winVisible=${supportedAppWindowVisible()} btSkip=$bluetoothVolumeKeySkipEnabled")
+    // 🔴 2026-08-28 전역 키 로그 제거 — 여기 있던 진단 로그(2026-08-02 추가)가 **필터보다 먼저**
+    //   돌고 있었다. onKeyEvent 는 packageNames 필터와 무관하게 **기기 전역**으로 오므로(이 서비스의
+    //   XML 주석에 그렇게 적혀 있다), 다른 앱에서 친 모든 키의 keyCode 가 logcat 에 남고 있었다 —
+    //   비밀번호 입력창·메신저·은행 앱 포함. 성능 이전에 개인정보 문제고, 구글이 접근성 서비스를
+    //   정확히 이런 이유로 들여다본다.
+    //   게다가 그 한 줄이 supportedAppWindowVisible() 을 호출해 **키 입력마다 창 전수 조사 +
+    //   창마다 바인더 IPC** 를 돌렸다. 키 디스패치는 이 콜백이 반환할 때까지 블록되므로 기기
+    //   전체의 타자 지연으로 이어진다. 볼륨키가 아니면 아무것도 하지 않고 즉시 빠진다.
     if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
       return false
     }
+    // 볼륨키일 때만 진단을 남긴다. 창 가시성은 아래에서 어차피 다시 계산하므로 여기선 안 부른다.
+    Log.i("PaceAccessibility", "onKeyEvent VOL keyCode=${event.keyCode} action=${event.action} deviceId=${event.deviceId} fg=$currentForegroundPackage btSkip=$bluetoothVolumeKeySkipEnabled")
     // 2026-07-27 사용자 지시 — 이 볼륨키 하이재킹은 카메라 제스처 Hands-Free(isWatching)와 별개의
     // 독립 토글이다(에어팟/블루투스 스피커를 순수 감상용으로만 쓰는 사용자를 위해 따로 끌 수 있어야
     // 함). isWatching 대신 bluetoothVolumeKeySkipEnabled로 게이팅 — 손짓/핑거스냅은 꺼둔 채 이것만

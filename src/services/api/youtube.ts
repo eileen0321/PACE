@@ -11,6 +11,7 @@
 // 훔쳐 쓸 수 있는 실제 리스크였다. 이제 프로덕션 경로는 api/youtube-shorts.ts(Vercel 서버리스
 // 함수, 진짜 키는 서버 환경변수에만 존재)를 거친다 — EXPO_PUBLIC_YOUTUBE_API_KEY는 로컬 __DEV__
 // 폴백에서만 쓰이므로 프로덕션 빌드 번들에는 실려도 무해하다(어차피 __DEV__ 분기라 실행 안 됨).
+import * as Localization from 'expo-localization';
 import type { YouTubeShort } from '../../types/models';
 
 export const YOUTUBE_PROXY_URL = process.env.EXPO_PUBLIC_YOUTUBE_PROXY_URL || '';
@@ -124,14 +125,21 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   //   1) 데스크톱 UA → m.youtube 리다이렉트 회피(데스크톱 results 페이지를 그대로 받음)
   //   2) 동의 우회 쿠키(SOCS/CONSENT) → "before you continue" 벽 통과
   //   3) &sp=EgIYAQ%3D%3D → 검색 필터를 **Shorts 전용**으로 고정 → 가로 영상 혼입 방지(세로 Shorts만)
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIYAQ%3D%3D`;
+  // 2026-08-28 — gl/hl 을 붙인다. 예전엔 Accept-Language 가 en-US 고정이라 한국어 사용자도
+  //   영어 결과를 받았다(서버 프록시는 이미 같은 이유로 2026-08-04 에 고쳤다).
+  const loc = Localization.getLocales()[0];
+  const lang = (loc?.languageCode || '').toLowerCase();
+  const LANG_TO_GL: Record<string, string> = { ko: 'KR', ja: 'JP' };
+  const gl = LANG_TO_GL[lang] || (loc?.regionCode || '').toUpperCase();
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIYAQ%3D%3D`
+    + (gl ? `&gl=${gl}` : '') + (lang ? `&hl=${lang}` : '');
   // 타임아웃(6s) — 제한 네트워크에서 응답이 안 오면 loadInitial이 isLoading에 갇혀 폴백까지 도달 못 함(방지).
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Language': lang && gl ? `${lang}-${gl},${lang};q=0.9` : 'en-US,en;q=0.9',
       Cookie: 'SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZF8yMDI0MDEwOS4wMV9wMBoCZW4gACgB; CONSENT=YES+1',
     },
     signal: controller.signal,
@@ -139,17 +147,28 @@ async function fetchShortsViaScrape(query: string): Promise<ShortsPage> {
   if (!res.ok) throw new Error(`YT_SCRAPE_ERROR ${res.status}`);
   const html = await res.text();
   // Shorts만 추출: shortsLockupViewModel 블록에 딸린 videoId를 우선 잡아 가로영상 videoId 혼입 방지.
-  // (블록당 videoId가 근처에 나옴 — 필터 페이지라 대부분 shortsLockup임.) 구조가 바뀌어 0이면
-  // 페이지 전체 videoId로 폴백.
-  const scoped = Array.from(html.matchAll(/shortsLockupViewModel[\s\S]{0,600}?"videoId":"([\w-]{11})"/g)).map((m) => m[1]);
-  const broad = Array.from(html.matchAll(/"videoId":"([\w-]{11})"/g)).map((m) => m[1]);
-  const ids = Array.from(new Set(scoped.length ? scoped : broad));
-  const shorts: YouTubeShort[] = ids.slice(0, 20).map((id) => ({
-    videoId: id,
-    title: 'YouTube Short',
-    channelTitle: '',
-    thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-  }));
+  // ⚠️ 페이지 전체 videoId 로 폴백하던 것을 없앤다. 유튜브가 요청을 차단 페이지로 튕기면
+  //   lockup 이 0개인데, 그때 "아무 videoId나" 긁으면 쇼츠가 아닌 영상이 섞여 들어온다.
+  //   서버 프록시가 2026-08-06 실기기에서 겪고 지운 바로 그 코드다(사장님 지적:
+  //   "쇼츠 아니라 일반 인터뷰 영상이 떴다"). 0개면 그냥 0개로 두고 호출부가 판단한다.
+  const starts = Array.from(html.matchAll(/shortsLockupViewModel":\{/g))
+    .map((m) => m.index ?? -1)
+    .filter((i) => i >= 0);
+  const shorts: YouTubeShort[] = [];
+  const seen = new Set<string>();
+  for (let bi = 0; bi < starts.length && shorts.length < 20; bi++) {
+    const block = html.slice(starts[bi], starts[bi + 1] ?? starts[bi] + 9000);
+    const idM = block.slice(0, 900).match(/"videoId":"([\w-]{11})"/);
+    if (!idM || seen.has(idM[1])) continue;
+    seen.add(idM[1]);
+    const pt = block.match(/"primaryText":\{"content":"((?:[^"\\]|\\.)*)"/);
+    shorts.push({
+      videoId: idM[1],
+      title: pt ? pt[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\(.)/g, "$1") : "YouTube Short",
+      channelTitle: '',
+      thumbnailUrl: `https://i.ytimg.com/vi/${idM[1]}/hqdefault.jpg`,
+    });
+  }
   return { shorts, nextPageToken: null };
 }
 
@@ -182,7 +201,18 @@ export async function fetchSearchPresets(gl?: string): Promise<SearchPreset[]> {
 export async function fetchShortsPage(opts: { query?: string; pageToken?: string | null } = {}): Promise<ShortsPage> {
   const query = opts.query || DEFAULT_QUERY;
   if (hasYouTubeProxy()) {
-    return fetchShortsViaProxy(query, opts.pageToken ?? null);
+    // 2026-08-28 — 예전엔 여기서 곧바로 return 이라, 프록시가 실패하면 아래 직접 스크래핑
+    //   경로에 **영영 도달하지 못했다**(프로덕션에선 프록시가 항상 설정돼 있으므로 죽은 코드).
+    //   실제로 유튜브가 Vercel IP 를 막아 프록시가 0개를 주는 동안 앱이 통째로 멈췄다.
+    //   측정(2026-08-28): 같은 검색이 서버에선 간헐적으로 0개, 가정용 IP 에선 항상 30~35개.
+    //   유튜브가 조이는 건 데이터센터 IP 라 폰(통신사/가정용 IP)은 안 막힌다.
+    //   그래서 프록시를 여전히 1순위로 두되(캐시 덕에 빠르고 데이터도 거의 안 씀),
+    //   프록시가 못 주면 그때만 폰이 직접 받는다.
+    const viaProxy = await fetchShortsViaProxy(query, opts.pageToken ?? null).catch(() => null);
+    if (viaProxy?.shorts?.length) return viaProxy;
+    const direct = await fetchShortsViaScrape(query).catch(() => null);
+    if (direct?.shorts.length) return direct;
+    return viaProxy ?? { shorts: [], nextPageToken: null };
   }
   if (__DEV__ && hasYouTubeKey()) {
     return fetchShortsViaDataApi(query, opts.pageToken ?? null);

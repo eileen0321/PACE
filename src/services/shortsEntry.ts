@@ -235,7 +235,29 @@ async function resolveVideoIdWithPrefetch(
   const prefetching = prefetchShortsEntryPolicy(); // 내부에서 전부 try/catch — reject 안 함
   if (waitMs === null) await prefetching;
   else await Promise.race([prefetching, new Promise<void>((r) => setTimeout(r, waitMs))]);
-  return resolveVideoId(sources);
+  const retried = await resolveVideoId(sources);
+  if (retried) return retried;
+  // 2026-08-28 — 마지막 수단: 폰이 직접 유튜브에서 시작 영상을 받는다.
+  //   서버(Vercel)가 시드를 못 주는 상황이 실제로 있었다 — 유튜브가 데이터센터 IP 의
+  //   스크래핑을 막으면 프록시가 0개를 주고, 그러면 여기까지 내려와 결국 null 이 됐다.
+  //   측정(2026-08-28): 같은 검색이 서버에선 간헐적으로 0개, 가정용 IP 에선 항상 30~35개.
+  //   폰은 통신사/가정용 IP 라 막히지 않으므로 이 경로가 실제로 통한다.
+  //   ⚠️ 평소엔 절대 오지 않는다(서버가 주면 위에서 이미 반환). 데이터(약 1MB)를 쓰므로
+  //     주력이 아니라 안전망으로만 둔다.
+  try {
+    const { fetchShortsPage } = require('./api/youtube');
+    const page = await fetchShortsPage({});
+    const ids: string[] = (page?.shorts ?? [])
+      .map((v: { videoId?: string }) => v.videoId)
+      .filter((v: unknown): v is string => typeof v === 'string' && VIDEO_ID_RE.test(v));
+    if (ids.length) {
+      cached = { ...cached, seedPool: ids }; // 다음 진입은 네트워크 없이 바로 고른다
+      return pickRandom(ids);
+    }
+  } catch {
+    /* 직접 받기도 실패 — 호출부가 다음 전략(open.shorts)으로 넘어간다 */
+  }
+  return null;
 }
 
 /**

@@ -86,6 +86,20 @@ const DEFAULT_POLICY: EntryPolicy = {
 // 뜰 땐 저장값이 없어 (수정된) DEFAULT_POLICY로 동작하므로 옛 순서가 되살아날 경로가 없다.
 const STORAGE_KEY = 'pace.shortsEntryPolicy.v4';
 const VIDEO_ID_RE = /^[\w-]{11}$/;
+
+// iOS 워밍(ShortsWarmup.ios.tsx)이 미리 받아 둔 시작 영상. 워밍은 홈의 "연결 중" 화면에서
+// 유튜브 페이지를 미리 로드하는데, **피드가 같은 영상을 열어야** 그 로드가 의미가 있다.
+// 그래서 워밍이 고른 videoId 를 여기 넣어두고 큐가 먼저 꺼내 쓴다. 한 번 쓰면 비운다 —
+// 다음 진입은 다시 새 영상에서 시작해야 하기 때문("누를 때마다 새 영상", 2026-08-04 지시).
+let warmedSeedId: string | null = null;
+export function setWarmedSeed(id: string | null): void {
+  warmedSeedId = id && VIDEO_ID_RE.test(id) ? id : null;
+}
+export function takeWarmedSeed(): string | null {
+  const v = warmedSeedId;
+  warmedSeedId = null;
+  return v;
+}
 let cached: EntryPolicy = DEFAULT_POLICY;
 
 // 서버 응답을 그대로 믿지 않는다 — 형태가 깨진 값이 들어오면 진입이 통째로 막히므로 검증한다.

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { YouTubeShort } from '../types/models';
 import { fetchShortsPage } from '../services/api/youtube';
-import { getShortsSeedVideoId } from '../services/shortsEntry';
+import { getShortsSeedVideoId, takeWarmedSeed } from '../services/shortsEntry';
 import { getRecentSearchQuery, getRecentSearchResults, pickUnusedSeed, useShortsSearchStore } from './useShortsSearchStore';
 
 // iOS Pace Feed = YouTube Shorts "리스트 순차 재생" 큐(2026-07-18 사용자 지시).
@@ -135,7 +135,9 @@ export const useShortsQueueStore = create<ShortsQueueState>((set, get) => ({
         /* 최근 검색 시드 실패 → 기존 경로 */
       }
 
-      const seedId = await getShortsSeedVideoId().catch(() => null);
+      // iOS 워밍이 미리 받아 둔 영상이 있으면 그것부터 쓴다 — 이미 유튜브 페이지를 받아놨으므로
+      // 다른 영상을 고르면 그 워밍이 통째로 헛수고가 된다(ShortsWarmup.ios.tsx 주석 참고).
+      const seedId = takeWarmedSeed() ?? (await getShortsSeedVideoId().catch(() => null));
       if (seedId) {
         set({
           queue: [{ videoId: seedId, title: 'Short', channelTitle: '', thumbnailUrl: null }],

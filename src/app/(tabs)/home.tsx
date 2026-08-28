@@ -30,6 +30,7 @@ import { toLocalDateStr } from '../../utils/date';
 import { BluetoothOnboardingSheet } from '../../components/home/BluetoothOnboardingSheet';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { ConnectingOverlay } from '../../components/home/ConnectingOverlay';
+import { ShortsWarmup } from '../../components/feed/ShortsWarmup';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
 import { STORAGE_KEYS } from '../../services/storage/keys';
 import { bluetoothService, capabilities, overlayService } from '../../services/platform';
@@ -831,6 +832,12 @@ export default function HomeScreen() {
         platformFullTitle={connectingCard?.title ?? ''}
         onComplete={handleConnectingComplete}
       />
+
+      {/* 2026-08-28 — 연결 화면이 도는 ~1.2초(2단계 x 450ms + 300ms)를 놀리지 않고 유튜브
+          페이지를 미리 받아 둔다. iOS 첫 영상이 느린 게 서버가 아니라 유튜브 페이지 자체가
+          무겁기 때문이라(HTML 646KB + script 30개, 2026-08-28 실측) 이 구간이 유일하게
+          공짜로 쓸 수 있는 시간이다. Android 는 유튜브 앱을 직접 열므로 no-op. */}
+      <ShortsWarmup active={connectingPlatform === 'youtube'} />
 
       {/* 2026-08-02 사장님 지시("60분에 대한 팝업 없애라고, 그냥 focus 일때 광고 5분만 남겨") —
           하루 한도(60분) 도달 팝업(LimitReachedOverlay)과 그에 딸린 광고/크레딧 연장 모달을 전부

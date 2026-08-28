@@ -682,7 +682,7 @@ const SOCS_BY_LANG: Record<string, string> = {
 };
 
 /** 기기 로케일 → 유튜브가 쓰는 (언어, 지역) 쌍. 지원 언어 밖이면 영어로 폴백. */
-function youtubeLocale(): { hl: string; gl: string } {
+export function youtubeLocale(): { hl: string; gl: string } {
   try {
     const loc = Localization.getLocales()[0];
     const hl = (loc?.languageCode || 'en').toLowerCase();
@@ -696,13 +696,13 @@ function youtubeLocale(): { hl: string; gl: string } {
 // 익명(비로그인) 세션에서 유튜브가 언어·지역을 판단하는 표준 경로 세 가지를 모두 맞춘다:
 //   ① SOCS 동의 쿠키의 언어 필드   ② PREF 쿠키(hl/gl)   ③ URL 쿼리(hl/gl) + Accept-Language 헤더
 // 하나만 맞추면 나머지가 영어로 남아 흐름이 도로 영어권으로 끌려간다(실제로 ①만 영어였는데도 그랬다).
-function consentCookie(hl: string, gl: string): string {
+export function consentCookie(hl: string, gl: string): string {
   return `SOCS=${SOCS_BY_LANG[hl] ?? SOCS_BY_LANG.en}; CONSENT=YES+1; PREF=hl=${hl}&gl=${gl}`;
 }
 
 // 기기 언어를 유튜브에 알려주는 헤더 — "ko-KR,ko;q=0.9,en;q=0.8" 형태.
 // 유튜브는 익명 세션의 추천 언어권을 이걸로도 판단한다.
-function acceptLanguageHeader(): string {
+export function acceptLanguageHeader(): string {
   try {
     const loc = Localization.getLocales()[0];
     const lang = (loc?.languageCode || 'en').toLowerCase();

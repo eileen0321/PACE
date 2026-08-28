@@ -4,16 +4,12 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.util.Size
-import java.io.ByteArrayOutputStream
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -1276,6 +1272,13 @@ object PaceHandWaveDetector {
       val bitmap = yuv420ToBitmap(proxy)
       if (bitmap != null) {
         val rotated = rotateBitmap(bitmap, proxy.imageInfo.rotationDegrees)
+        // 🔴 2026-08-28 — 회전본을 새로 만들었으면 원본은 즉시 돌려준다. 지금까지 이 파일에는
+        //   recycle() 이 **한 번도** 없었다. 1080x1440 ARGB_8888 이 장당 약 4.9MB 이고 프레임마다
+        //   두 장(원본+회전본)이 만들어졌으니, 초당 12.5장이면 GC 가 계속 쫓아다녀야 하는 양이다.
+        //   회전본(rotated)은 여기서 못 지운다 — detectAsync 가 비동기라 MediaPipe 가 아직 들고
+        //   있을 수 있다. 원본은 createBitmap(matrix) 이 복사본을 만들었으므로 안전하다.
+        //   회전이 0도면 rotated 가 곧 bitmap 이므로 그때는 건드리면 안 된다.
+        if (rotated !== bitmap && !bitmap.isRecycled) bitmap.recycle()
         // 🔬 2026-08-26 진단 — 카메라가 **실제로 무엇을 보는지** 그림으로 확인한다.
         //   손 0개·얼굴 0개인데 밝기는 129(정상)라는 상태를 로그만으로는 더 못 좁힌다.
         //   한 장이면 ① 카메라가 사람을 보는가 ② 회전이 맞는가 ③ 좌우가 뒤집혀 있는가가 전부 확정된다.
@@ -1712,87 +1715,36 @@ object PaceHandWaveDetector {
     // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
     Handler(Looper.getMainLooper()).post { onWave() }
   }
-
-  // ImageAnalysis 기본 출력 포맷(YUV_420_888) → Bitmap. CameraX 버전마다 존재 여부가 불확실한
-  // ImageProxy.toBitmap() 편의 함수에 기대지 않고, API 19부터 있던 표준 YuvImage 경로로 직접
-  // 변환한다 — 320x240 저해상도 + 150ms 간격이라 JPEG 왕복 비용도 무시할 만하다.
+  /**
+   * 카메라 프레임을 MediaPipe 에 넣을 Bitmap 으로 바꾼다.
+   *
+   * 🔴 2026-08-28 — 여기 있던 손수 만든 변환을 CameraX 의 네이티브 변환으로 바꾼다.
+   *   예전 경로: YUV 평면을 NV21 ByteArray(w*h*3/2 = 1.84MB)로 직접 복사 → YuvImage 로
+   *   **JPEG 인코딩** → BitmapFactory 로 **다시 디코딩**. 프레임마다 1.84MB 배열 + 행 버퍼 2개 +
+   *   JPEG 버퍼를 새로 할당하고, 코덱을 한 바퀴 돌렸다. PROCESS_INTERVAL_MS=80 이면 초당 12.5회다.
+   *   이 파일의 히트비트 분석이 "80ms 를 요청해도 실제로는 190ms/장"이라고 적어둔 그 병목이다.
+   *
+   *   ImageProxy.toBitmap() 은 camera-core 1.4.2 의 기본 메서드로, YUV_420_888 을
+   *   ImageProcessingUtil.convertYUVToBitmap() 의 **네이티브 경로**로 변환한다.
+   *   JPEG 왕복이 사라지고 중간 배열도 없다.
+   *
+   *   ⚠️ 부수 효과가 하나 더 있는데 이게 더 중요하다 — 2026-08-26 에 이 함수가
+   *   rowStride/pixelStride 를 무시해서 프레임이 사선으로 깨졌고(폭 1088 에서는 우연히 멀쩡했다가
+   *   1080 으로 바꾸자마자 터졌다), 그 상태로는 MediaPipe 가 손을 아예 못 찾았다. 해상도를
+   *   건드리는 순간 터지는 지뢰였다. 네이티브 변환은 stride 를 구조적으로 지키므로 그 지뢰가
+   *   아예 없어진다.
+   */
   private fun yuv420ToBitmap(proxy: ImageProxy): Bitmap? {
     if (proxy.format != ImageFormat.YUV_420_888) {
       Log.w(TAG, "unexpected image format=${proxy.format}")
       return null
     }
-    // 🔴 2026-08-26 실기기 확진 — 이 변환이 **rowStride/pixelStride를 무시하고 있었다.**
-    //   카메라는 행마다 패딩(rowStride > width)을 넣을 수 있는데, 그 패딩을 그대로 픽셀로 취급하면
-    //   행이 조금씩 밀려 이미지가 사선 줄무늬로 깨진다. 그 상태로 MediaPipe에 넣으면 손을 찾을 수 없다.
-    //   폭 1088에서는 stride == width라 우연히 멀쩡했고, 1080으로 바꾸자마자 프레임이 통째로 깨졌다
-    //   (진단 프레임 저장으로 눈으로 확인). 바로 아래 lumaGrid는 stride를 제대로 쓰고 있는데
-    //   여기만 빠져 있었다 — 해상도를 건드리는 순간 터지는 지뢰였다.
-    //   → 행 단위로 stride를 지켜 복사한다. stride == width인 흔한 경우는 기존과 동일한 한 번 복사.
-    val w = proxy.width
-    val h = proxy.height
-    val nv21 = ByteArray(w * h * 3 / 2)
-    var pos = 0
-
-    val yP = proxy.planes[0]
-    val yBuf = yP.buffer.duplicate()
-    if (yP.pixelStride == 1 && yP.rowStride == w) {
-      yBuf.position(0)
-      yBuf.get(nv21, 0, w * h)
-      pos = w * h
-    } else {
-      val row = ByteArray(yP.rowStride)
-      for (r in 0 until h) {
-        val off = r * yP.rowStride
-        if (off >= yBuf.limit()) break
-        yBuf.position(off)
-        val len = kotlin.math.min(yP.rowStride, yBuf.remaining())
-        yBuf.get(row, 0, len)
-        if (yP.pixelStride == 1) {
-          System.arraycopy(row, 0, nv21, pos, kotlin.math.min(w, len))
-          pos += w
-        } else {
-          var c = 0
-          while (c < w) { nv21[pos++] = row[c * yP.pixelStride]; c++ }
-        }
-      }
-      pos = w * h
+    return try {
+      proxy.toBitmap()
+    } catch (e: Exception) {
+      Log.w(TAG, "toBitmap failed", e)
+      null
     }
-
-    // NV21은 Y 뒤에 V,U가 번갈아 온다. 크로마 평면도 stride/pixelStride를 지켜야 한다
-    // (많은 기기가 pixelStride=2로 U와 V를 이미 인터리브해 준다).
-    val uP = proxy.planes[1]
-    val vP = proxy.planes[2]
-    val uBuf = uP.buffer.duplicate()
-    val vBuf = vP.buffer.duplicate()
-    val cw = w / 2
-    val ch = h / 2
-    val uRow = ByteArray(uP.rowStride)
-    val vRow = ByteArray(vP.rowStride)
-    for (r in 0 until ch) {
-      val uOff = r * uP.rowStride
-      val vOff = r * vP.rowStride
-      if (uOff >= uBuf.limit() || vOff >= vBuf.limit()) break
-      uBuf.position(uOff)
-      vBuf.position(vOff)
-      val ul = kotlin.math.min(uP.rowStride, uBuf.remaining())
-      val vl = kotlin.math.min(vP.rowStride, vBuf.remaining())
-      uBuf.get(uRow, 0, ul)
-      vBuf.get(vRow, 0, vl)
-      var c = 0
-      while (c < cw) {
-        val ui = c * uP.pixelStride
-        val vi = c * vP.pixelStride
-        if (vi < vl) nv21[pos++] = vRow[vi] else pos++
-        if (ui < ul) nv21[pos++] = uRow[ui] else pos++
-        c++
-      }
-    }
-
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, w, h), 90, out)
-    val bytes = out.toByteArray()
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
   }
 
   private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {

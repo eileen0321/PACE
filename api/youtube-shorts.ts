@@ -159,18 +159,26 @@ const UA_POOL = [
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
 ];
 
+// 유튜브가 서버에 실제로 무엇을 돌려주는지 밖에서 보기 위한 관측 기록. 정상 검색 페이지는
+// 1.1MB 안팎이고, 동의벽/CAPTCHA/차단 페이지는 그보다 훨씬 작다 — 크기만으로 구분이 된다.
+// 운영 로그에 접근할 수 없어 응답에 실어 보낸다(개인정보·키 없음).
+type ScrapeObs = { q: string; status: number; bytes: number; lockups: number };
+let lastScrapeObs: ScrapeObs[] = [];
+
 async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): Promise<Short[]> {
   // 2026-08-04 — gl/hl을 붙여야 유튜브가 해당 지역·언어 결과를 준다. 예전엔 이 둘이 없어 서버(미국
   // Vercel) 기준 영어 결과만 나왔다 — 사장님 지적("HOT 리스트가 왜 영어냐")의 직접 원인.
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}&gl=${gl}&hl=${hl}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
+  let httpStatus = 0;
   let html: string;
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': UA_POOL[attempt % UA_POOL.length], 'Accept-Language': `${hl}-${gl},${hl};q=0.9`, Cookie: CONSENT_COOKIE },
       signal: controller.signal,
     });
+    httpStatus = res.status;
     if (!res.ok) throw new Error(`YT_SCRAPE_HTTP_${res.status}`);
     html = await res.text();
   } finally {
@@ -197,6 +205,8 @@ async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): P
   // 🔴 2026-08-12 — 차단 여부를 남긴다. HTTP는 200인데 lockup이 0이면 유튜브가 검색 결과 대신
   //   다른 페이지를 준 것이다(= 차단). 이게 유일하게 믿을 수 있는 판별 신호다 —
   //   본문의 "captcha" 문자열은 **정상 응답에도 2개씩 들어있어** 쓸 수 없다(실측).
+  lastScrapeObs.push({ q: query, status: httpStatus, bytes: html.length, lockups: starts.length });
+  if (lastScrapeObs.length > 6) lastScrapeObs.shift();
   if (!starts.length) console.warn(`YT_SCRAPE_BLOCKED q="${query}" gl=${gl} attempt=${attempt} bytes=${html.length}`);
   const out: Short[] = [];
   const seen = new Set<string>();
@@ -380,6 +390,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 실패 원인을 응답 자체에 담는다 — Vercel 로그를 볼 수 없는 상황에서 "왜 0개인지"를
   // 밖에서 알 수 있는 유일한 방법이다. 키 값은 절대 넣지 않고 유무만 담는다.
   const diag: Record<string, unknown> = {};
+  lastScrapeObs = [];
   try {
     let shorts: Short[] = [];
     try {
@@ -421,6 +432,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //   ⚠️ 한계: Vercel 서버리스는 인스턴스별 메모리라 이 카운터가 전역 정확값이 아니다(웜 인스턴스
       //     수만큼 곱해진다). 정확히 세려면 KV/Redis가 필요한데 그건 유료 리소스 추가라 안 쓴다.
       //     목적은 정확한 제어가 아니라 **쿼터가 통째로 날아가는 것을 막는 상한**이므로 이걸로 충분하다.
+      diag.scrape = lastScrapeObs;
       diag.hasKey = !!apiKey;
       diag.budgetUsed = fallbackUsed;
       if (!apiKey) {

@@ -253,7 +253,7 @@ async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3)
 //   무료 쿼터(10,000)를 네 배 넘긴다 — 실제로 오늘 quotaExceeded로 검색이 통째로 죽었다.
 //   5면 같은 조건에서 5,000 units로 절반 안에 들어온다. 폴백은 어차피 스크래핑이 실패했을 때만
 //   도는 안전망이고, 이제 그 위에 stale-if-error(직전 정상 목록 재사용)가 한 겹 더 있다.
-const FALLBACK_DAILY_BUDGET = 5;
+const FALLBACK_DAILY_BUDGET = 30;
 let fallbackDay = '';
 let fallbackUsed = 0;
 function consumeFallbackBudget(): boolean {
@@ -377,6 +377,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? Array.from({ length: MIX_COUNT }, (_, i) => cats[(page * MIX_COUNT + seed + i) % cats.length])
     : [reqQuery];
 
+  // 실패 원인을 응답 자체에 담는다 — Vercel 로그를 볼 수 없는 상황에서 "왜 0개인지"를
+  // 밖에서 알 수 있는 유일한 방법이다. 키 값은 절대 넣지 않고 유무만 담는다.
+  const diag: Record<string, unknown> = {};
   try {
     let shorts: Short[] = [];
     try {
@@ -418,8 +421,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //   ⚠️ 한계: Vercel 서버리스는 인스턴스별 메모리라 이 카운터가 전역 정확값이 아니다(웜 인스턴스
       //     수만큼 곱해진다). 정확히 세려면 KV/Redis가 필요한데 그건 유료 리소스 추가라 안 쓴다.
       //     목적은 정확한 제어가 아니라 **쿼터가 통째로 날아가는 것을 막는 상한**이므로 이걸로 충분하다.
-      if (apiKey && consumeFallbackBudget()) {
-        shorts = await dataApiFallback(categories[0], apiKey, gl, hl);
+      diag.hasKey = !!apiKey;
+      diag.budgetUsed = fallbackUsed;
+      if (!apiKey) {
+        diag.fallback = "NO_KEY";
+      } else if (!consumeFallbackBudget()) {
+        diag.fallback = "BUDGET_EXHAUSTED";
+      } else {
+        diag.fallback = "TRIED";
+        try {
+          shorts = await dataApiFallback(categories[0], apiKey, gl, hl);
+          diag.fallbackGot = shorts.length;
+        } catch (err) {
+          diag.fallbackError = err instanceof Error ? err.message : String(err);
+        }
       }
     }
     // 카테고리 로테이션이라 nextPageToken은 항상 다음 index → 피드가 하드스톱 안 됨(무한).
@@ -453,6 +468,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Vary', 'x-vercel-ip-country');
     res.status(200).json({ shorts, nextPageToken });
   } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'PROXY_ERROR' });
+    res.status(500).json({ error: e instanceof Error ? e.message : 'PROXY_ERROR', diag });
   }
 }

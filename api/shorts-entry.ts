@@ -87,7 +87,7 @@ const SEED_COUNT = 12;
 async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promise<string[]> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 25000);
     try {
       // 같은 프로젝트의 기존 프록시를 재사용한다 — 스크래핑/캐싱/지역분기 로직을 중복 구현하지 않는다.
       // ⚠️ 2026-08-05 — hl을 안 넘기고 있었다. 앱은 ?hl=을 보내는데 이 핸들러가 읽지도, 안쪽 호출에
@@ -127,7 +127,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 진입 전략은 거의 안 바뀌므로 길게 캐시해도 되지만, 시드 영상은 자주 갈려야 사용자마다 시작점이
   // 흩어진다 — 둘의 요구가 반대라 짧은 쪽(시드)에 맞춘다. 어차피 앱이 부팅 때 1회만 부른다.
-  res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1800');
+  // 빈 시드를 10분간 캐시하면 그 10분 동안 모든 사용자가 쇼츠를 시작조차 못 한다
+  // (실측 2026-08-28: 안쪽 호출이 18~28초 걸려 8초 제한에 걸리는 바람에 빈 배열이 캐시됐다).
+  // 빈 결과는 성공이 아니므로 짧게만 캐시해 다음 요청이 곧바로 다시 시도하게 한다.
+  res.setHeader('Cache-Control', seedVideoIds.length
+    ? 's-maxage=600, stale-while-revalidate=1800'
+    : 's-maxage=10, stale-while-revalidate=60');
   res.setHeader('Vary', 'x-vercel-ip-country');
   // 2026-08-04 사장님 설계 확정("안드로이드랑 애플이 시작 주소만 다를 뿐, 다음 영상은 유튜브
   // 알고리즘이 보여준다") — 두 플랫폼이 **같은 정책 소스**를 쓰고 시작 주소 형태만 다르다.

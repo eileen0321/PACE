@@ -164,7 +164,7 @@ async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): P
   // Vercel) 기준 영어 결과만 나왔다 — 사장님 지적("HOT 리스트가 왜 영어냐")의 직접 원인.
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}&gl=${gl}&hl=${hl}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 5000);
   let html: string;
   try {
     const res = await fetch(url, {
@@ -231,7 +231,7 @@ async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): P
 }
 
 // 캐시 미스 시에만 실행되므로(대부분 CDN 히트) 재시도 백오프로 순간 레이트리밋/네트워크 흔들림 흡수.
-async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 3): Promise<Short[]> {
+async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 2): Promise<Short[]> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
@@ -404,7 +404,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     //   확률이 충분히 높은데, 예전 코드는 3개만 시도하고 곧장 100 units짜리 search.list로 갔다.
     //   추가 시도는 전부 스크래핑이라 쿼터 소모가 0이다.
     if (!shorts.length && isGeneric) {
-      for (let extra = 1; extra <= 2 && !shorts.length; extra++) {
+      for (let extra = 1; extra <= 1 && !shorts.length; extra++) {
         const alt = cats[(page * MIX_COUNT + seed + MIX_COUNT * extra) % cats.length];
         shorts = await scrapeWithRetry(alt, gl, hl, 1).catch(() => []);
       }

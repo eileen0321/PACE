@@ -84,6 +84,11 @@ const STRATEGIES: Strategy[] = [
 // 영상" 문제였다. 시작점만 갈라주면 그 뒤는 각자의 개인 피드로 흩어진다.
 const SEED_COUNT = 12;
 
+// 마지막으로 성공한 시드를 기억한다. 유튜브가 스크래핑을 막는 동안에도 "조금 묵은 시드"로
+// 시작은 되게 하려는 것 — 시작조차 못 하는 것보다 언제나 낫다. 서버리스라 인스턴스가 갈리면
+// 사라지므로 이것만으로는 부족하고, 아래 stale-if-error(CDN)가 진짜 안전망이다.
+let lastGoodSeed: string[] = [];
+
 async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promise<string[]> {
   try {
     const controller = new AbortController();
@@ -102,10 +107,12 @@ async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promis
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { shorts?: Array<{ videoId?: string }> };
-      return (data.shorts ?? [])
+      const ids = (data.shorts ?? [])
         .map((s) => s.videoId)
         .filter((v): v is string => typeof v === 'string' && v.length === 11)
         .slice(0, SEED_COUNT);
+      if (ids.length) lastGoodSeed = ids;
+      return ids;
     } finally {
       clearTimeout(timer);
     }
@@ -123,16 +130,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const hl = /^[a-z]{2}$/.test(rawHl) ? rawHl : '';
   // 배포 도메인을 코드에 박지 않는다 — 프리뷰/프로덕션 어디에 배포돼도 자기 자신을 부른다.
   const origin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
-  const seedVideoIds = origin ? await fetchSeedVideoIds(origin, gl, hl) : [];
+  const fetched = origin ? await fetchSeedVideoIds(origin, gl, hl) : [];
+  // 이번에 못 받았으면 직전 성공분을 쓴다(위 lastGoodSeed 주석 참고).
+  const seedVideoIds = fetched.length ? fetched : lastGoodSeed;
 
   // 진입 전략은 거의 안 바뀌므로 길게 캐시해도 되지만, 시드 영상은 자주 갈려야 사용자마다 시작점이
   // 흩어진다 — 둘의 요구가 반대라 짧은 쪽(시드)에 맞춘다. 어차피 앱이 부팅 때 1회만 부른다.
   // 빈 시드를 10분간 캐시하면 그 10분 동안 모든 사용자가 쇼츠를 시작조차 못 한다
   // (실측 2026-08-28: 안쪽 호출이 18~28초 걸려 8초 제한에 걸리는 바람에 빈 배열이 캐시됐다).
   // 빈 결과는 성공이 아니므로 짧게만 캐시해 다음 요청이 곧바로 다시 시도하게 한다.
-  res.setHeader('Cache-Control', seedVideoIds.length
-    ? 's-maxage=600, stale-while-revalidate=1800'
-    : 's-maxage=10, stale-while-revalidate=60');
+  // stale-if-error — 시드가 하나도 없으면 200 대신 503 을 돌려, CDN 이 **마지막 정상 응답**을
+  // 최대 하루까지 대신 서빙하게 한다. 200 으로 빈 배열을 돌려주던 게 장애를 10분씩 연장한
+  // 원인이었다(youtube-shorts 에서 이미 같은 교훈을 적용했다).
+  if (!seedVideoIds.length) {
+    res.setHeader('Cache-Control', 's-maxage=10, stale-while-revalidate=60, stale-if-error=86400');
+    res.setHeader('Vary', 'x-vercel-ip-country');
+    res.status(503).json({ error: 'NO_SEED', strategies: STRATEGIES });
+    return;
+  }
+  res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=1800, stale-if-error=86400');
   res.setHeader('Vary', 'x-vercel-ip-country');
   // 2026-08-04 사장님 설계 확정("안드로이드랑 애플이 시작 주소만 다를 뿐, 다음 영상은 유튜브
   // 알고리즘이 보여준다") — 두 플랫폼이 **같은 정책 소스**를 쓰고 시작 주소 형태만 다르다.

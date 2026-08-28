@@ -105,6 +105,10 @@ public class PaceVolumeKeyModule: Module {
   private var lastPhonePressAtMs: Double = 0 // 폰버튼 확정 시각 — 자동반복/연타 상속용(핸들러 주석)
   private var lastLensCoveredMs: Double = 0  // 렌즈 가림 신호 최근 수신(PaceLensCovered — 2026-08-21 사장님 설계)
   private var lensObserverInstalled = false
+  // 🔴 2026-08-28 사장님 재현("무료 소진→광고→포커스온 쇼츠에서 볼륨 눌러도 안 켜짐") — 광고(AdMob)가
+  // 공유 AVAudioSession을 가로챈 뒤 .notifyOthersOnDeactivation으로 반납하면 우리 outputVolume KVO가
+  // 비활성 세션에 남아 볼륨키 변화를 못 잡는다. 인터럽션 종료/앱 복귀 때 세션을 되찾는 관찰자.
+  private var interruptObserversInstalled = false
 
   /// 눌림창([now-400ms, now])의 피크를 직전 배경([now-2900, now-450])의 μ/σ 대비 z-점수로 환산.
   /// 고정 임계 3연속 실패(그립마다 절대값이 다름)의 처방 — 본인 손 노이즈 대비 상대 돌출만 본다.
@@ -216,6 +220,54 @@ public class PaceVolumeKeyModule: Module {
     } catch {}
   }
 
+  // 오디오 인터럽션/앱 복귀/미디어리셋 관찰자 설치(멱등) — start(무장)과 startSilentUnmuteWatch
+  // 양쪽에서 부른다. 리모컨 토글이 꺼진 일반 사용자는 start()가 안 불리므로 워치 쪽에서도 걸어야 한다.
+  private func installInterruptObserversIfNeeded() {
+    guard !interruptObserversInstalled else { return }
+    interruptObserversInstalled = true
+    NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+      guard let self = self else { return }
+      guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+            AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+      self.reclaimSessionIfNeeded()
+    }
+    NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.reclaimSessionIfNeeded()
+    }
+    NotificationCenter.default.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.reinstallVolumeObserversAfterReset()
+    }
+  }
+
+  // 인터럽션(광고 등) 종료 후 세션을 되찾는다 — 감시/개입이 켜져 있을 때만. KVO 기준을 현재
+  // 시스템 볼륨으로 다시 잡아, 인터럽션 동안 벌어진 차이를 "사용자 눌림"으로 오탐하지 않게 한다.
+  private func reclaimSessionIfNeeded() {
+    guard unmuteWatchActive || remoteActive else { return }
+    ensureSessionActive()
+    let cur = session.outputVolume
+    unmuteBaselineVolume = cur
+    if !engaged { baseline = (cur * 16).rounded() / 16 }
+    NSLog("PACEVOL 인터럽션 종료 — 세션 재활성화, baseline=\(cur)")
+  }
+
+  // 미디어 서비스 리셋 시 KVO 관찰자가 무효화된다 — 활성화 후 관찰자를 다시 건다(애플 문서 권고).
+  private func reinstallVolumeObserversAfterReset() {
+    ensureSessionActive()
+    if unmuteWatchActive {
+      unmuteObserver?.invalidate()
+      unmuteBaselineVolume = session.outputVolume
+      unmuteObserver = session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in
+        guard let self = self else { return }
+        let v = s.outputVolume
+        if abs(v - self.unmuteBaselineVolume) < 0.01 { return }
+        if self.remoteActive && abs(v - self.baseline) < 0.03 { self.unmuteBaselineVolume = v; return }
+        self.unmuteBaselineVolume = v
+        self.sendEvent("onSilentUnmute", [:])
+      }
+    }
+    NSLog("PACEVOL 미디어서비스 리셋 — 관찰자 재설치")
+  }
+
   private func deactivateSessionIfIdle() {
     guard !remoteActive && !unmuteWatchActive else { return }
     do {
@@ -275,6 +327,7 @@ public class PaceVolumeKeyModule: Module {
             NSLog("PACEVOL HID키보드 해제 — 리모컨 존재 신호 OFF")
           }
         }
+        self.installInterruptObserversIfNeeded()
         self.keyboardPresent = GCKeyboard.coalesced != nil // 시작 시 1회 조회(앱 활성·메인 큐 — 안전 조건)
         if self.keyboardPresent { NSLog("PACEVOL HID키보드 이미 연결(리모컨 추정)") }
 
@@ -577,6 +630,7 @@ public class PaceVolumeKeyModule: Module {
       DispatchQueue.main.async {
         if self.unmuteWatchActive { return }
         self.unmuteWatchActive = true
+        self.installInterruptObserversIfNeeded() // 광고 인터럽션 복구(리모컨 토글 무관 — 위 헬퍼 주석)
         self.ensureSessionActive()
         self.unmuteBaselineVolume = self.session.outputVolume
         self.unmuteObserver = self.session.observe(\.outputVolume, options: [.new]) { [weak self] s, _ in

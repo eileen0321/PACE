@@ -10642,3 +10642,9 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 1.0.6(15)이 스토어 배포됨(사장님 확인). 빌드 16(1.0.6)은 세션 단절로 업로드 미완 + 버전 소진이라 폐기.
 - **1.0.7(17)**: 격자 축(안드 실기기 확정치: 2칸 하한·밀도 2단) + 한 동작 한 발화(통합 불응 1.2s·발화 시 전 이력 초기화) + 양방향 통과(안드와 동일 합의 사양, TRAVERSE_DIRECTION=0) 포함. runtimeVersion 1.0.7.
 - ⚠️ Windows: iOS runtimeVersion 1.0.7 — 안드 다음 출시 때 맞출 것. 손짓은 양쪽 격자·밝기·통과 구조 수렴 상태, 방향 한정(왼→오)은 공통 후속 과제(자세 센서 기반 부호 결정).
+
+### 2026-08-28(Mac/iOS) — 🟢 볼륨 무음해제 광고 후 먹통 수정(스토어 빌드 전용 버그)
+- 증상(사장님): 무료 소진→광고→포커스온 쇼츠에서 볼륨 눌러도 소리 안 켜짐. 광고 게이트 경로라 테스트 빌드(우회)에선 미재현.
+- 원인: 광고(AdMob)가 공유 AVAudioSession 하이재킹 후 .notifyOthersOnDeactivation 반납 → 볼륨 KVO가 비활성 세션에 남아 볼륨키 미감지 → onSilentUnmute 미발화. 볼륨 모듈에 인터럽션 관찰자 부재.
+- 수정: interruptionNotification(ended)+didBecomeActive+mediaServicesWereReset 관찰자 → 세션 재활성화·KVO 기준 갱신. armed(volumeKeyRemote) 기본 OFF라 start() 미호출 → installInterruptObserversIfNeeded()를 startSilentUnmuteWatch에서도 호출(기본 사용자 커버). 기기 설치 완료, 다음 릴리즈 포함 예정.
+- ⚠️ Windows: 안드도 광고(보상형) 후 볼륨/오디오 포커스 복구 확인 요망.

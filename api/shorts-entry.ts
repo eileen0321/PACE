@@ -142,6 +142,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // stale-if-error — 시드가 하나도 없으면 200 대신 503 을 돌려, CDN 이 **마지막 정상 응답**을
   // 최대 하루까지 대신 서빙하게 한다. 200 으로 빈 배열을 돌려주던 게 장애를 10분씩 연장한
   // 원인이었다(youtube-shorts 에서 이미 같은 교훈을 적용했다).
+  // 지금 운영에 떠 있는 커밋을 응답이 직접 말하게 한다. 2026-08-28 에 빌드가 11일간 실패하고
+  // 있었는데 아무도 몰랐다 — 배포 성공 여부를 밖에서 확인할 방법이 없었던 게 컸다.
+  res.setHeader('x-pace-commit', (process.env.VERCEL_GIT_COMMIT_SHA || 'unknown').slice(0, 7));
   if (!seedVideoIds.length) {
     res.setHeader('Cache-Control', 's-maxage=10, stale-while-revalidate=60, stale-if-error=86400');
     res.setHeader('Vary', 'x-vercel-ip-country');

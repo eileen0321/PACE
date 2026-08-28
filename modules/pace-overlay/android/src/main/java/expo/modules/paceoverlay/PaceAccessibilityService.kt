@@ -95,6 +95,14 @@ class PaceAccessibilityService : AccessibilityService() {
    */
   @Volatile private var gestureInFlight = false
   private var lastVolumeKeySwipeAtMs = 0L
+  /**
+   * 제스처 발사 일련번호. 만료 타이머가 **자기가 건 제스처일 때만** 잠금을 풀게 하려는 것.
+   * 🔴 2026-08-28 — 예전엔 타이머가 무조건 gestureInFlight 를 false 로 만들었고 취소도 안 했다.
+   *   A 발사(만료 t=720 예약) → A 가 t=150 에 정상 완료 → 사용자가 t=300 에 다시 손짓해 B 발사
+   *   → t=720 에 **A 의 타이머가 B 의 잠금을 풀어버린다.** 그 직후 손짓이 또 통과해 B 가 아직
+   *   스와이프 중인데 다음 발사가 겹쳤다 — 사장님 보고 "한 번에 두 개씩 연달아 넘어간다".
+   */
+  @Volatile private var gestureSeq = 0
   // 2026-07-19: 매 폴링(500ms)마다 rootInActiveWindow부터 트리 전체를 다시 훑으면 실제 YouTube
   // 재생 화면에 부하가 걸릴 수 있다는 지적 — 한 번 찾은 SeekBar 노드를 캐싱해서, 다음 폴링부터는
   // node.refresh()로 그 노드 하나만 저렴하게 재검증(유효하면 재사용, 무효화됐으면 그때만 전체
@@ -1709,6 +1717,7 @@ class PaceAccessibilityService : AccessibilityService() {
       return
     }
     gestureInFlight = true
+    val myGesture = ++gestureSeq // 이 발사의 일련번호 — 만료 타이머가 자기 것만 풀게 한다
     val dispatchedAtMs = SystemClock.elapsedRealtime()
     selfAdvanceArmedUntilMs = dispatchedAtMs + SELF_ADVANCE_ATTRIBUTION_MS
     // 🔴 2026-08-15 실기기 — 사장님이 오래 신고해오신 "안 눌렀는데 두세 개씩 넘어간다"의 정체.
@@ -1746,7 +1755,7 @@ class PaceAccessibilityService : AccessibilityService() {
     if (!dispatched) gestureInFlight = false
     // 콜백이 유실되는 기기가 있을 수 있어 상한도 둔다(제스처 길이 + 여유). 잠금이 안 풀리는 것이
     // 중복 발사보다 훨씬 나쁜 고장이므로 안전한 쪽으로 만료시킨다.
-    Handler(Looper.getMainLooper()).postDelayed({ gestureInFlight = false }, durationMs + 600L)
+    Handler(Looper.getMainLooper()).postDelayed({ if (myGesture == gestureSeq) gestureInFlight = false }, durationMs + 600L)
   }
 
   // ── Favorite/Capture: 현재 영상 정보 캡처(2026-07-31) ──

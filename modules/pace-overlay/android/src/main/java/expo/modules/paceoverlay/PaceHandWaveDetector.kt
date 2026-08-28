@@ -999,8 +999,12 @@ object PaceHandWaveDetector {
       )
     } catch (e: Exception) {
       Log.e(TAG, "HandLandmarker init failed", e)
-      running = false
+      // 🔴 2026-08-28 — 여기서 faceDetector 가 샜다. 바로 위에서 만들어 둔 FaceDetector 를
+      //   닫지 않고 return 해서, start() 가 실패할 때마다 네이티브 FaceDetector + TFLite
+      //   인터프리터가 그대로 남았다. start() 는 여러 경로에서 반복 호출되므로 누적된다.
+      //   (전면 카메라 없음 경로는 이미 cleanupAfterStartFailure() 를 부르고 있었다.)
       handLandmarker = null
+      cleanupAfterStartFailure()
       return
     }
 
@@ -1331,6 +1335,7 @@ object PaceHandWaveDetector {
       if (result.detections().isNotEmpty()) {
         if (!faceEverSeen) Log.i(TAG, "FACE 첫 인식 — 이제부터 손짓 게이트가 작동한다")
         faceEverSeen = true
+        firstDetectionDone = true // 얼굴이 잡혔으면 카메라는 정상 — 촘촘한 웜업을 계속할 이유가 없다
         lastFaceSeenAtMs = now
       }
     } catch (e: Exception) {
@@ -1419,7 +1424,7 @@ object PaceHandWaveDetector {
       if (lowest <= 0.95 && now - lastLumaPassDiagAtMs[axis] >= 500L) {
         lastLumaPassDiagAtMs[axis] = now
         Log.i(TAG, "lumapass[$axisName] 관측 A=%.2f B=%.2f C=%.2f (문턱 %.2f) ref=%.0f/%.0f/%.0f n=%d"
-          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, ref[0], ref[1], ref[2], dipHistory.size))
+          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, ref[0], ref[1], ref[2], hist.size))
       }
     }
     // 🔬 2026-08-26 — **"어느 문턱이었으면 발화했는가"를 직접 잰다.**
@@ -1428,7 +1433,7 @@ object PaceHandWaveDetector {
     //   실제로 대입해 **순서와 span까지 성립하는 가장 엄격한 값**을 찾아 남긴다.
     //   그 값이 여러 번 같은 범위로 나오면 그때 문턱을 그 근처로 내린다(실측 기반).
     run {
-      if (now - lastLumaPassProbeAtMs[axis] >= 700L && dipHistory.size >= LUMAPASS_MIN_SAMPLES) {
+      if (now - lastLumaPassProbeAtMs[axis] >= 700L && hist.size >= LUMAPASS_MIN_SAMPLES) {
         lastLumaPassProbeAtMs[axis] = now
         var best = -1.0
         var bestOrder = ""
@@ -1455,7 +1460,7 @@ object PaceHandWaveDetector {
         }
       }
     }
-    if (dipHistory.size < LUMAPASS_MIN_SAMPLES) return
+    if (hist.size < LUMAPASS_MIN_SAMPLES) return
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
 
     // 🔴 2026-08-27 — **방향 가정을 버린다.** 사장님 실사용: "밝은 데서는 아예 인식이 안 되고,
@@ -1898,6 +1903,12 @@ object PaceHandWaveDetector {
       if (handAppearedAtMs == 0L || nowLm - lastLandmarkAtMs > HAND_GAP_MS) handAppearedAtMs = nowLm
     }
     lastLandmarkAtMs = System.currentTimeMillis()
+    // 🔴 2026-08-28 — 여기가 빠져 있었다. firstDetectionDone 이 선언·초기화·읽기만 있고
+    //   true 가 되는 곳이 없어서, 모든 세션이 WARMUP_MAX_MS(20초)를 통째로 웜업으로 보냈다.
+    //   그 20초 동안 얼굴 인식이 2500ms 가 아니라 250ms 마다 돈다(10배). detectFace 는
+    //   RunningMode.IMAGE 라 **손 추론과 같은 단일 스레드에서 동기로** 실행되므로,
+    //   세션 시작 20초간 손짓 프레임을 계속 뺏겼다("처음엔 안 되다 갑자기 된다"의 기전).
+    firstDetectionDone = true
     val landmarks = result.landmarks()[0]
     if (landmarks.size <= 9) return
     val wrist = landmarks[0]

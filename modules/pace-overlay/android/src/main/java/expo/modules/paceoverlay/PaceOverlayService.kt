@@ -291,7 +291,12 @@ class PaceOverlayService : Service() {
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
         // 밀려나 디버깅을 방해했다(실기기 조사 중 반복 확인). 오버레이 표시 로직 자체는 무변경.
-        if (foregroundPackage != null && SupportedApps.PACKAGES.contains(foregroundPackage)) {
+        // 🔴 2026-08-28 — 값이 바뀔 때만 쓴다. POLL_INTERVAL_MS=1000 이라 예전엔 **같은 문자열을**
+        //   초당 1회, 세션 내내 다시 썼다(시간당 3,600회의 비동기 디스크 커밋 + XML 재직렬화).
+        //   바로 위 주석이 같은 이유로 진단 로그를 걷어낸 자리인데, 디스크 쓰기는 남아 있었다.
+        if (foregroundPackage != null && foregroundPackage != lastTrackedAppWritten &&
+            SupportedApps.PACKAGES.contains(foregroundPackage)) {
+          lastTrackedAppWritten = foregroundPackage
           getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(PREF_LAST_TRACKED_APP_PACKAGE, foregroundPackage).apply()
         }
@@ -1199,6 +1204,8 @@ class PaceOverlayService : Service() {
   // 확정 처리는 여기서 직접 하지 않고 플래그만 세운 뒤 performTick()을 한 번 돌린다 — 세션 종료는
   // 알림/goHome/암전/통계까지 얽힌 긴 경로라, 그 경로를 복제하면 두 벌이 갈라진다(이 파일에서 반복해
   // 겪은 실패 패턴). 경과시간 기준 정산 덕분에 틱을 일찍 한 번 더 돌려도 이중 차감이 없다.
+  /** 위 폴이 마지막으로 디스크에 쓴 값 — 같은 값을 초당 다시 쓰지 않기 위한 것. */
+  private var lastTrackedAppWritten: String? = null
   @Volatile private var sleepConfirmPending = false
   private val sleepPromptHandler = Handler(Looper.getMainLooper())
   private val sleepPromptTimeoutRunnable = Runnable {

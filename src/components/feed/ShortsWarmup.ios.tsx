@@ -6,9 +6,13 @@
 // 설계). 그 페이지는 HTML만 646KB에 <script> 30개고, 그게 다 받아진 뒤에야 유튜브 SPA가
 // 부팅하고 그제서야 영상을 요청한다. 서버는 병목이 아니다 — 시드는 0.27~0.33초에 온다.
 //
-// 게다가 지금은 프리로드가 **한 번도 쓰이지 않는다**. YouTubeShortsPlayer에 preload 모드가
-// 완전히 구현돼 있는데 feed/index.tsx가 그 prop을 넘기지 않아서, 첫 영상이든 다음 영상이든
-// 매번 차가운 WebView를 새로 띄운다.
+// 게다가 프리로드가 **한 번도 쓰이지 않는다**. feed/index.tsx 가 preload prop 을 넘기지 않는데,
+// ⚠️ 더 중요한 건 **넘겨서도 안 된다**는 것이다(2026-08-28 확인). NAV_MODE 가 'swipe' 고정이라
+//    항상 INJECTED_JS_SWIPE 가 주입되는데 거기엔 paceActivate 도 __pacePreload 도 없다(각각 0건).
+//    그 둘은 주입되지 않는 INJECTED_JS 쪽에만 있다. 즉 preload 는 껍데기만 남았다 — 지금
+//    preload={true} 를 넘기면 로딩 커버가 사라지고 데드맨 감시가 꺼지며 영상이 **소리를 내며
+//    자동재생**된다. 되살리려면 INJECTED_JS_SWIPE 안에 구현부터 해야 한다.
+// 그래서 여기서는 플레이어의 preload 에 기대지 않고 **별도의 조용한 WebView** 로 데운다.
 //
 // 홈의 ConnectingOverlay는 iOS에서 2단계 × 450ms + 300ms = 약 1,200ms를 반드시 머문다.
 // 그 시간을 놀리지 않고 워밍에 쓴다.
@@ -42,6 +46,9 @@ export function ShortsWarmup({ active }: { active: boolean }) {
   // 한 번 데운 뒤에는 다시 안 한다 — 연결 화면이 여러 번 떠도 매번 1MB를 다시 받으면
   // 데이터만 축낸다(캐시가 살아 있으면 어차피 두 번째 워밍은 이득이 없다).
   const doneRef = useRef(false);
+  // 로드가 실제로 끝났는지 — 이게 true 가 되면 WebView 를 내려 메모리를 돌려준다.
+  const warmedRef = useRef(false);
+  const [, forceRender] = useState(0);
 
   useEffect(() => {
     if (!active || doneRef.current) return;
@@ -62,7 +69,11 @@ export function ShortsWarmup({ active }: { active: boolean }) {
 
   // 연결 화면이 사라지면(=피드로 이동) 즉시 언마운트해 메모리를 돌려준다. 디스크 캐시는
   // WKWebsiteDataStore가 앱 전역으로 공유하므로 언마운트해도 데운 효과는 남는다.
-  if (!active || !videoId) return null;
+  // 🔴 doneRef 는 effect 만 막는다. videoId 는 state 에 남으므로, 가드를 여기에도 두지 않으면
+  //   연결 화면이 두 번째로 뜰 때 WebView 가 **낡은 videoId 로 리마운트되어 1MB 를 다시 받는다.**
+  //   게다가 그때는 setWarmedSeed 가 다시 불리지 않아 피드는 새 시드를 고르므로, 받은 1MB 가
+  //   통째로 헛수고가 된다. 한 번 데웠으면 그것으로 끝낸다.
+  if (!active || !videoId || warmedRef.current) return null;
 
   const { hl, gl } = youtubeLocale();
   return (
@@ -86,6 +97,11 @@ export function ShortsWarmup({ active }: { active: boolean }) {
         // 워밍 중 다른 곳으로 튀지 않게 — 쇼츠 페이지 자체만 받는다.
         onShouldStartLoadWithRequest={(req) => req.url.startsWith('https://www.youtube.com/')}
         // 실패해도 조용히 넘어간다. 워밍 실패가 진입을 막아서는 안 된다.
+        // 다 받았으면 내린다 — 더 들고 있어도 이득이 없고 메모리만 쓴다.
+        onLoadEnd={() => {
+          warmedRef.current = true;
+          forceRender((v) => v + 1);
+        }}
         onError={() => {}}
         onHttpError={() => {}}
         style={styles.web}

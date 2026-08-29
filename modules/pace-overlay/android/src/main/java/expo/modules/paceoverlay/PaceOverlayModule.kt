@@ -73,7 +73,7 @@ class PaceOverlayModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PaceOverlay")
 
-    Events("onFeedMediaCommand")
+    Events("onFeedMediaCommand", "onGestureCalibrationSample")
 
     // 2026-07-20 Pace Feed 전용 MediaSession(PaceFeedMediaSession.kt 참고) — PaceOverlayService의
     // 세션과 별개, feed/index.tsx 화면이 떠 있는 동안만 존재. AirPods next/previous/play-pause를
@@ -429,6 +429,37 @@ class PaceOverlayModule : Module() {
     // 2026-07-27 사용자 지시 — 손짓(카메라 제스처)을 마스터(Focus Session)와 별개로 켜고 끄는 독립 토글.
     Function("setHandsFreeGestureEnabled") { enable: Boolean ->
       appContext.reactContext?.let { context -> PaceOverlayService.setHandsFreeGestureEnabled(context, enable) }
+    }
+
+    // ── 손짓 개인 보정(2026-08-29) ────────────────────────────────────────────────
+    // 손짓 깊이는 손 크기·거리·조명에 따라 사람마다 크게 다르다. 상수 하나를 전 사용자에게
+    // 쓰던 것이 과발화의 직접 원인이었다(실측: 사람이 앞에 있으면 1.2초마다 연속 발화,
+    // 빈 벽에서는 2분간 0건). 손짓을 켤 때 본인 손짓을 재서 그 값을 쓴다.
+    //
+    // 측정 중에는 **발화하지 않는다** — 보정하다 영상이 넘어가면 무엇을 재는지 알 수 없다.
+    AsyncFunction("startGestureCalibration") {
+      val context = appContext.reactContext ?: return@AsyncFunction false
+      PaceHandWaveDetector.startCalibration(context) { depth, spanMs, axis ->
+        sendEvent("onGestureCalibrationSample", mapOf(
+          "depth" to depth, "spanMs" to spanMs, "axis" to axis))
+      }
+    }
+
+    AsyncFunction("stopGestureCalibration") {
+      PaceHandWaveDetector.stopCalibration()
+    }
+
+    /** JS 가 표본을 모아 계산한 개인 문턱을 저장한다(0~1, 1에 가까울수록 민감). */
+    AsyncFunction("saveGestureCalibration") { dipRatio: Double ->
+      val context = appContext.reactContext ?: return@AsyncFunction false
+      PaceHandWaveDetector.saveCalibration(context, dipRatio)
+      true
+    }
+
+    /** 저장된 개인값(미보정이면 0) — 설정에서 "보정됨/미보정"을 보여주는 데 쓴다. */
+    AsyncFunction("getGestureCalibration") {
+      val context = appContext.reactContext ?: return@AsyncFunction 0.0
+      PaceHandWaveDetector.savedCalibration(context)
     }
 
     // 2026-07-27 사용자 실기기 지적 — 블루투스 볼륨키 스킵도 손짓과 동일하게 이미 도는 세션에

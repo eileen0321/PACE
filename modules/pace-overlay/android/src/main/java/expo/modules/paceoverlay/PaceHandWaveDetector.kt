@@ -779,6 +779,21 @@ object PaceHandWaveDetector {
   private var cameraBoundAtMs = 0L
   /** 손이든 얼굴이든 **처음으로 뭔가 인식된** 적이 있는가. 붙으면 웜업을 끝낸다. */
   @Volatile private var firstDetectionDone = false
+  /**
+   * lumapass 의 밝기 하락 문턱 — **사용자마다 다르므로 개인값을 쓴다.**
+   *
+   * 🔴 2026-08-29 — 상수 하나(0.97 = 3% 하락)를 전 사용자에게 똑같이 쓰던 것이 과발화의
+   *   직접 원인이었다. 3% 는 사람이 앞에 있기만 해도 늘 넘는 값이라, 몸을 기울이거나 팔을
+   *   뻗는 것까지 전부 "손이 지나갔다"가 됐다(실측: 사람 있으면 1.2초마다 연속 발화,
+   *   빈 벽에서는 2분간 0건). 손짓 깊이는 손 크기·거리·조명에 따라 달라지므로 상수로는
+   *   맞출 수가 없다 — 켤 때 본인 손짓을 재서 그 값을 쓴다.
+   *   0 이하면 미보정 상태로 보고 기본 상수를 쓴다.
+   */
+  @Volatile private var lumapassDipRatio = LUMAPASS_DIP_RATIO
+
+  /** 캘리브레이션 중에는 발화하지 않고 **측정값만** 콜백으로 올려보낸다. */
+  @Volatile private var calibrationMode = false
+  @Volatile var onCalibrationSample: ((depth: Double, spanMs: Double, axis: String) -> Unit)? = null
   // 진단 카운터(2026-08-05) — analyzeFrame 진입 / detectAsync 호출 / onResult 수신.
   @Volatile private var framesIn = 0
   /** 마지막 프레임 평균 밝기(0~255). HB에 실어 "카메라가 깜깜한가 / 밝은데 인식만 실패하나"를 가른다. */
@@ -894,6 +909,7 @@ object PaceHandWaveDetector {
   // 무거운 초기화 전부를 메인 Looper로 넘겨 이 스레드 요구사항을 만족시킨다.
   fun start(context: Context, onWave: () -> Unit) {
     if (running) return
+    loadCalibration(context)  // 세션마다 개인 보정값을 다시 읽는다(설정에서 재보정했을 수 있다)
     if (!hasPermission(context)) {
       // 🔴 2026-08-16 사장님 "권한 노티도 없고 손짓은 안 되는데" — 정확한 지적이다.
       //   여기서 조용히 return하는 바람에, 카메라 권한이 꺼지면 손짓이 **아무 설명 없이 죽는다.**
@@ -1130,6 +1146,99 @@ object PaceHandWaveDetector {
       }
     }, ContextCompat.getMainExecutor(context))
   }
+
+  // ── 개인 보정(2026-08-29) ─────────────────────────────────────────────────────────
+
+  //
+
+  // 손짓 깊이는 손 크기·카메라와의 거리·조명에 따라 사람마다 크게 다르다. 상수 하나로는
+
+  // 맞출 수가 없어서, 손짓을 켤 때 본인 손짓을 몇 번 재고 그 값을 쓴다.
+
+  // 값은 SharedPreferences 에 남아 다음 세션에도 그대로 쓰인다.
+
+  const val PREFS_CALIB = "pace_overlay_prefs"
+
+  const val PREF_LUMAPASS_DIP = "gesture_lumapass_dip_ratio"
+
+
+  /** 저장된 개인값을 불러온다. 없으면 기본 상수를 그대로 쓴다. */
+
+  fun loadCalibration(context: Context) {
+
+    val v = context.getSharedPreferences(PREFS_CALIB, Context.MODE_PRIVATE)
+
+      .getFloat(PREF_LUMAPASS_DIP, -1f).toDouble()
+
+    lumapassDipRatio = if (v > 0.0 && v < 1.0) v else LUMAPASS_DIP_RATIO
+
+    Log.i(TAG, "보정값 적용 lumapassDipRatio=%.4f (%s)".format(
+
+      lumapassDipRatio, if (v > 0.0 && v < 1.0) "개인 보정" else "미보정·기본값"))
+
+  }
+
+
+  /** 캘리브레이션 결과를 저장하고 즉시 적용한다. dipRatio 는 0~1(1에 가까울수록 민감). */
+
+  fun saveCalibration(context: Context, dipRatio: Double) {
+
+    context.getSharedPreferences(PREFS_CALIB, Context.MODE_PRIVATE).edit()
+
+      .putFloat(PREF_LUMAPASS_DIP, dipRatio.toFloat()).apply()
+
+    lumapassDipRatio = dipRatio
+
+    Log.i(TAG, "보정값 저장 lumapassDipRatio=%.4f".format(dipRatio))
+
+  }
+
+
+  /** 저장된 개인값(없으면 0). 설정 화면이 "보정됨/미보정"을 표시하는 데 쓴다. */
+
+  fun savedCalibration(context: Context): Double =
+
+    context.getSharedPreferences(PREFS_CALIB, Context.MODE_PRIVATE)
+
+      .getFloat(PREF_LUMAPASS_DIP, 0f).toDouble()
+
+
+  /**
+
+   * 측정 전용으로 검출기를 켠다 — **발화하지 않는다.**
+
+   * 통과가 관측될 때마다 onSample(깊이, 소요ms, 축) 이 불린다.
+
+   */
+
+  fun startCalibration(context: Context, onSample: (Double, Double, String) -> Unit): Boolean {
+
+    if (!hasPermission(context)) return false
+
+    stop()
+
+    calibrationMode = true
+
+    onCalibrationSample = onSample
+
+    start(context) { /* 캘리브레이션 중엔 발화 없음 */ }
+
+    return true
+
+  }
+
+
+  fun stopCalibration() {
+
+    calibrationMode = false
+
+    onCalibrationSample = null
+
+    stop()
+
+  }
+
+
 
   fun stop() {
     if (!running && cameraProvider == null && handLandmarker == null) return
@@ -1400,6 +1509,9 @@ object PaceHandWaveDetector {
    * 손 모양 인식이 필요 없어 거치 자세(손만 화각을 스침)에 강하다. 위 상수 주석이 설계 근거다.
    */
   private fun checkLumaPass(bands: DoubleArray, now: Long, onWave: () -> Unit, axis: Int, axisName: String) {
+    // 캘리브레이션 중에는 문턱을 1% 로 활짝 열어 **실제로 얼마나 어두워졌는지**를 관측한다.
+    // 판정용이 아니라 측정용이므로 여기서 느슨한 것이 맞다.
+    val effectiveDipRatio = if (calibrationMode) 0.99 else lumapassDipRatio
     val hist = dipHistory[axis]
     val ref = brightRef[axis]
     hist.addLast(doubleArrayOf(now.toDouble(), bands[0], bands[1], bands[2]))
@@ -1475,7 +1587,7 @@ object PaceHandWaveDetector {
     //     요구한다. 순서 + 구간시간 조건은 그대로다 — 이 축의 진짜 판별력은 거기에 있다.
     fun onsetAt(idx: Int, base: Double): Pair<Double, Int>? {
       if (base <= LUMAPASS_MIN_REF) return null
-      val need = base * (1.0 - LUMAPASS_DIP_RATIO)
+      val need = base * (1.0 - effectiveDipRatio)
       val hit = hist.firstOrNull { kotlin.math.abs(it[idx] - base) >= need } ?: return null
       return hit[0] to (if (hit[idx] < base) -1 else 1)
     }
@@ -1496,6 +1608,22 @@ object PaceHandWaveDetector {
     //   확정되지 않았다(2026-08-26에 부호를 반대로 넣어 손짓을 통째로 죽인 적이 있다).
     //   지금은 양쪽 다 발화시키고 순서를 로그에 남긴다. 사장님이 방향을 지정해 해주시면 그 로그로
     //   확정한 뒤 한쪽만 남긴다.
+    // 이 통과가 **실제로 얼마나 깊게** 가렸는지 잰다 — 세 구간 각각의 최대 편차를 기준 밝기로
+    // 나눈 뒤 그중 가장 얕은 값을 쓴다(세 구간을 모두 그만큼은 가렸다는 뜻).
+    // 캘리브레이션은 이 값을 모아 개인 문턱을 정한다.
+    fun depthAt(idx: Int, base: Double): Double {
+      if (base <= 0.0) return 0.0
+      return (hist.maxOfOrNull { kotlin.math.abs(it[idx] - base) } ?: 0.0) / base
+    }
+    val depth = kotlin.math.min(depthAt(1, ref[0]), kotlin.math.min(depthAt(2, ref[1]), depthAt(3, ref[2])))
+    if (calibrationMode) {
+      // 캘리브레이션 중에는 **발화하지 않는다.** 측정만 올려보낸다 — 보정하다가 영상이 넘어가면
+      // 사용자가 무엇을 재고 있는지 알 수 없게 된다.
+      hist.clear()
+      Log.i(TAG, "CALIB 표본 깊이=%.4f span=%.0fms 축=%s".format(depth, span, axisName))
+      onCalibrationSample?.invoke(depth, span, axisName)
+      return
+    }
     hist.clear()
         lumaPassFiredThisFrame = true
     Log.i(TAG, "LUMAPASS 축=$axisName 순서=${if (fwd) "A→B→C" else "C→B→A"} span=${span.toInt()}ms ref=${ref[0].toInt()}/${ref[1].toInt()}/${ref[2].toInt()}")

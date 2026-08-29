@@ -804,6 +804,8 @@ object PaceHandWaveDetector {
    */
   private var lastNearMissLogAtMs = 0L
   private var lastDirLogAtMs = 0L
+  /** traverse·glide차단·near-miss 공용 간격 타이머(위 lastNearMissLogAtMs 주석과 같은 이유). */
+  private var lastFrameLogAtMs = 0L
 
   /** 캘리브레이션 중에는 발화하지 않고 **측정값만** 콜백으로 올려보낸다. */
   @Volatile private var calibrationMode = false
@@ -2137,7 +2139,12 @@ object PaceHandWaveDetector {
       // 통과든 아니든 남긴다 — 왜 안 됐는지를 수치로 봐야 다음에 추측으로 문턱을 만지지 않는다.
       if (kotlin.math.abs(netX) >= TRAVERSE_NEED_MIN) {
         val tag = if (traversed) "TRAVERSE" else "TRAVERSE-miss"
-        Log.i(TAG, "$tag net=$netX need=$needNet mono=$monotonic straight=$straightness spd=$tSpeed dir=$traverseDir handSize=$handSize n=${tWin.size}")
+        // 프레임 속도(초당 12.5회) 진단 로그 — 간격을 둔다. Android 는 Release 에서 Log 를 지워주지
+        // 않으므로 출시본에서도 이 문자열 보간이 매 프레임 실행된다.
+        if (System.currentTimeMillis() - lastFrameLogAtMs >= HOT_LOG_MIN_GAP_MS) {
+          lastFrameLogAtMs = System.currentTimeMillis()
+          Log.i(TAG, "$tag net=$netX need=$needNet mono=$monotonic straight=$straightness spd=$tSpeed dir=$traverseDir handSize=$handSize n=${tWin.size}")
+        }
       }
     }
 
@@ -2265,7 +2272,12 @@ object PaceHandWaveDetector {
       // 그동안 임계값 조정이 매번 실패한 근본 원인이었다). speed도 같이 남긴다.
       // 2026-08-20 — 밴드/glide도 같이 남긴다. 밴드별 분포를 못 뽑으면 이 방식은 다음에 조정할 근거가
       // 없어지고, 그러면 이 파일이 아홉 번 반복한 "검열된 데이터로 임계값 만지기"를 또 하게 된다.
-      Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) hits=${glideHitTimes.size} speed=$peakSpeed handSize=$handSize")
+      // 프레임 속도(초당 12.5회) 진단 로그 — 간격을 둔다. Android 는 Release 에서 Log 를 지워주지
+      // 않으므로 출시본에서도 이 문자열 보간이 매 프레임 실행된다.
+      if (System.currentTimeMillis() - lastFrameLogAtMs >= HOT_LOG_MIN_GAP_MS) {
+        lastFrameLogAtMs = System.currentTimeMillis()
+        Log.d(TAG, "near-miss band=$band(x$bandMult/${bandConfirm}f) growth=$growthRatio(th=$GROWTH_RATIO_THRESHOLD/$SPEED_ASSIST_GROWTH_THRESHOLD) sweep=$sweepRatio(th=${SWEEP_RATIO_THRESHOLD * bandMult}) glideA=$glideAbsPerSec(th=${GLIDE_ABS_MIN_PER_SEC * bandMult}) glideR=$glideRelPerSec(th=${GLIDE_REL_MIN_PER_SEC * bandMult}) hits=${glideHitTimes.size} speed=$peakSpeed handSize=$handSize")
+      }
     }
 
     // 🔴 2026-08-25 사장님("흔들기에서 **가만있는 흔들기**는 미발화가 맞고 **이전 손짓은 남겨두고**")
@@ -2323,7 +2335,12 @@ object PaceHandWaveDetector {
     }
     val glideSpanOk = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult
     if (glided && !glideSpanOk) {
-      Log.i(TAG, "glide 차단(제자리) sweep=$sweepRatio need=${SWEEP_RATIO_THRESHOLD * bandMult} glideR=$glideRelPerSec handSize=$handSize")
+      // 프레임 속도(초당 12.5회) 진단 로그 — 간격을 둔다. Android 는 Release 에서 Log 를 지워주지
+      // 않으므로 출시본에서도 이 문자열 보간이 매 프레임 실행된다.
+      if (System.currentTimeMillis() - lastFrameLogAtMs >= HOT_LOG_MIN_GAP_MS) {
+        lastFrameLogAtMs = System.currentTimeMillis()
+        Log.i(TAG, "glide 차단(제자리) sweep=$sweepRatio need=${SWEEP_RATIO_THRESHOLD * bandMult} glideR=$glideRelPerSec handSize=$handSize")
+      }
     }
     val glideFires = glided && glideSpanOk
 

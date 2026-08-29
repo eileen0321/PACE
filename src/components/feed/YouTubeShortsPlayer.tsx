@@ -91,7 +91,10 @@ const INJECTED_JS = `
     function reportAudio(tag) { send({ type: 'audio', tag: tag, muted: v.muted, paused: v.paused, vol: v.volume, rs: v.readyState }); }
     reportAudio('attach');
     v.play().then(function () { reportAudio('play-ok'); }).catch(function (e) { send({ type: 'audio', tag: 'play-ERR', err: String(e && e.name), muted: v.muted }); });
-    setInterval(function () { reportAudio('tick'); }, 1500);
+    // 🔴 2026-08-30 제거 — 이 1.5초 틱은 세션 내내(시간당 2,400회) 브리지를 건넜는데,
+    //   유일한 소비자가 feed/index.tsx 의 onAudioDiag={() => {}} 다(성능 때문에 상태 갱신을
+    //   이미 걷어낸 자리). JSON.stringify → postMessage → RN 쪽 parse 를 거쳐 버려지고 있었다.
+    //   attach/play-ok/play-ERR 단발 보고는 그대로 두므로 무음 원인 진단력은 유지된다.
     v.addEventListener('volumechange', function () { if (v.muted) forceUnmute(); });
     v.addEventListener('play', forceUnmute);
     window.pacePlay = function () { forceUnmute(); v.play().catch(function () {}); };

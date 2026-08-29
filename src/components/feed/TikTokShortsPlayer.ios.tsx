@@ -1420,7 +1420,10 @@ const INJECTED_JS_BEFORE_LOAD = `
   function pollActiveVideo(){
     // sweepHideUndecided는 "지금 활성인 영상"과 무관하게(프리로드된, 아직 화면 밖인 영상 포함)
     // 항상 먼저 돈다 — 활성 영상 못 찾아도(!v로 아래에서 return) 프리로드분은 계속 숨겨둬야 함.
-    sweepHideUndecided();
+    // 🔴 2026-08-30 제거 — sweepHideUndecided 는 **자체 50ms 인터벌**을 이미 갖고 있다.
+    //   여기서 또 부르면 같은 일이 초당 40회 돈다(의도한 20회의 두 배). 각 실행이
+    //   querySelectorAll 전체 순회 + 컨테이너마다 중첩 querySelectorAll 이라 싸지 않다.
+    //   자체 인터벌만으로 충분하므로 이 호출은 뺀다.
     // 🔴 캐러셀 대응 — 기존 "영상 바뀜" 감지는 video src 기준이라, video가 없는 사진 캐러셀
     // 아이템으로 스와이프해 들어가는 순간을 못 잡았다(이전 영상의 RN 아이콘이 그대로 남아 페이지
     // 아이콘과 겹치는 원인의 나머지 절반). 활성 컨테이너 자체의 교체를 겹침으로 감지해 즉시
@@ -1554,7 +1557,13 @@ const INJECTED_JS_BEFORE_LOAD = `
     if (v.readyState >= 2 && !v.__paceReadySent) { v.__paceReadySent = true; send({ type: 'ready' }); }
     if (!v.duration || isNaN(v.duration)) return;
     var t = v.currentTime;
-    if (v.duration > 0) send({ type: 'progress', value: t / v.duration });
+    // 🔴 2026-08-30 — 이 틱은 50ms 라 progress 가 **초당 20회** 브리지를 건넜다(JSON.stringify +
+    //   postMessage + RN 쪽 parse). 다른 플레이어 셋은 전부 500ms 다. 소비자(handleProgress)는
+    //   에러 카운터만 리셋하므로 20개 중 19개가 순수 낭비였다. 같은 500ms 로 맞춘다.
+    if (v.duration > 0 && Date.now() - (window.__paceLastProgAt || 0) >= 500) {
+      window.__paceLastProgAt = Date.now();
+      send({ type: 'progress', value: t / v.duration });
+    }
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
     if ((nearEnd || loopedBack) && markEndedOnce(v)) {

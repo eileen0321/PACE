@@ -189,6 +189,8 @@ class PaceAccessibilityService : AccessibilityService() {
   @Volatile private var autoNextSuspendedUntilMs = 0L
   /** 창 미검출 로그의 최소 간격(위 supportedAppWindowVisible 주석 참고). */
   private var lastWindowMissLogAtMs = 0L
+  /** RANGE_INFO 로그 간격(위 주석 참고). */
+  private var lastRangeInfoLogAtMs = 0L
 
   private fun pollTargetPackage(): String? {
     val fromEvent = currentForegroundPackage
@@ -1506,33 +1508,39 @@ class PaceAccessibilityService : AccessibilityService() {
   private fun supportedAppWindowVisible(): Boolean {
     try {
       val screenWidth = resources.displayMetrics.widthPixels
-      val dump = StringBuilder()
+      // 🔴 2026-08-30(2차) — 덤프는 실제로 찍을 때만 만든다.
+      //   앞선 수정은 Log.w 만 간격 제한했는데, StringBuilder 조립과 append 는 **성공 경로에서도**
+      //   매번 돌고 있었다. 이 함수는 초당 1회 불리므로(PaceOverlayService 의 포그라운드 폴),
+      //   찍지도 않을 문자열을 세션 내내 만들고 있었던 셈이다.
+      //   판정에 필요한 건 pkg 뿐이라 먼저 가볍게 훑고, 미검출이면서 로그 간격이 됐을 때만
+      //   두 번째 패스로 덤프를 만든다.
       var hit = false
       val bounds = Rect()
       for (window in windows) {
-        val pkg = window.root?.packageName?.toString()
+        val pkg = window.root?.packageName?.toString() ?: continue
         window.getBoundsInScreen(bounds)
         // 진짜 PIP인지는 **플래그가 아니라 창 크기**로 판정한다(위 주석 참고). 진짜 PIP 창은 화면
         // 한구석의 작은 썸네일이고, 전체화면 창은 화면 폭을 그대로 덮는다.
         val small = screenWidth > 0 && bounds.width() < screenWidth * 0.8
         val pipFlag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && window.isInPictureInPictureMode
-        dump.append("{id=").append(window.id)
-          .append(" type=").append(window.type)
-          .append(" pipFlag=").append(pipFlag)
-          .append(" w=").append(bounds.width()).append('/').append(screenWidth)
-          .append(" pkg=").append(pkg ?: "NULL")
-          .append("} ")
-        if ((pipFlag && small) || pkg == null) continue
-        if (pkg in SupportedApps.PACKAGES) hit = true
+        if (pipFlag && small) continue
+        if (pkg in SupportedApps.PACKAGES) { hit = true; break }
       }
       if (hit) return true
-      // 🔴 2026-08-30 실기기 — 이 한 줄이 **초당 1회** 창 목록 전체를 덤프하고 있었다.
-      //   대상 앱이 아닐 때는 매 폴마다 미검출이므로 세션 내내 계속 찍힌다(로그 폭발 +
-      //   문자열 보간 비용, 그리고 정작 필요한 로그가 링버퍼에서 밀려난다).
-      //   이 파일이 이미 같은 이유로 fgPoll 로그를 걷어낸 이력이 있는데 여기가 남아 있었다.
       val nowMiss = SystemClock.elapsedRealtime()
       if (nowMiss - lastWindowMissLogAtMs >= WINDOW_MISS_LOG_GAP_MS) {
         lastWindowMissLogAtMs = nowMiss
+        val dump = StringBuilder()
+        for (window in windows) {
+          window.getBoundsInScreen(bounds)
+          val pipFlag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && window.isInPictureInPictureMode
+          dump.append("{id=").append(window.id)
+            .append(" type=").append(window.type)
+            .append(" pipFlag=").append(pipFlag)
+            .append(" w=").append(bounds.width()).append(0x2F.toChar()).append(screenWidth)
+            .append(" pkg=").append(window.root?.packageName?.toString() ?: "NULL")
+            .append("} ")
+        }
         Log.w("PaceAccessibility", "supportedAppWindowVisible=false n=${windows.size} active=${rootInActiveWindow?.packageName} $dump")
       }
     } catch (e: Exception) {
@@ -1620,7 +1628,12 @@ class PaceAccessibilityService : AccessibilityService() {
     //   → 보이는 후보들의 직전 값을 기억해두고, 이번에 **증가한 것**을 재생바로 채택한다.
     //     아직 판단이 안 서는 첫 폴링에서는 종전대로 SeekBar를 우선하고, 그것도 없으면
     //     보이는 후보 중 하나를 잠정 채택해 다음 폴링에서 흐르는지 본다.
-    Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.cls.substringAfterLast('.')}(max=${it.max},frac=${"%.3f".format(it.frac)},vis=${it.visible})" })
+    // 🔴 2026-08-30 — 500ms 폴마다 joinToString + "%.3f".format 이 돌았다(2줄/초, 7,200줄/시).
+    //   같은 함수의 "RANGE_INFO none" 로그는 이미 5초 간격이 걸려 있는데 이쪽만 빠져 있었다.
+    if (SystemClock.elapsedRealtime() - lastRangeInfoLogAtMs >= WINDOW_MISS_LOG_GAP_MS) {
+      lastRangeInfoLogAtMs = SystemClock.elapsedRealtime()
+      Log.d("PaceAccessibility", "RANGE_INFO n=${found.size} " + found.joinToString(" ") { "${it.cls.substringAfterLast('.')}(max=${it.max},frac=${"%.3f".format(it.frac)},vis=${it.visible})" })
+    }
     val visible = found.filter { it.visible }
     if (visible.isEmpty()) return null
     val advancing = visible.filter { hit ->

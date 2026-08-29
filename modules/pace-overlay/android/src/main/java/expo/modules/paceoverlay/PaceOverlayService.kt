@@ -289,6 +289,7 @@ class PaceOverlayService : Service() {
         //   ⚠️ 틱에서 ForegroundAppWatcher.getForegroundPackage()를 다시 부르면 안 되는 이유는
         //     performTick의 주석 참고(커서를 전진시켜 이 폴링의 이벤트를 뺏는다).
         lastUsageBasedVisible = usageBasedVisible
+        lastUsageBasedVisibleAtMs = SystemClock.elapsedRealtime()
         val shouldShow = !selfForeground && ((windowVisibleOrNull ?: eventBasedVisible) || usageBasedVisible)
         // 2026-08-02 — 여기 있던 fgPoll 진단 로그 제거. POLL_INTERVAL_MS=1000이라 세션 내내 초당 1회
         // 문자열 보간+logcat 기록이 일어나 1시간에 3,600줄씩 쌓였고, 정작 필요한 로그가 링버퍼에서
@@ -1264,6 +1265,19 @@ class PaceOverlayService : Service() {
     // 매초 갱신하고, 분 단위 틱의 차감 판정이 읽기만 한다. lastSupportedAppPackage와 달리 대상 앱을
     // 떠나면 false로 내려간다.
     @Volatile private var lastUsageBasedVisible: Boolean = false
+    /**
+     * 위 값을 **언제** 썼는가. 값만 보고 판단하면 안 되기 때문에 둔다.
+     *
+     * 🔴 2026-08-30 — 이 필드의 유일한 필자(foregroundPollRunnable)가 **아예 안 돌 수 있다.**
+     *   startForegroundAppPolling() 은 사용정보 접근 권한이 없으면 isPolling 도 안 켜고 그대로
+     *   return 한다. 그러면 값이 초기값 false 로 영원히 남는다.
+     *   게다가 companion object 필드라 onDestroy 후에도 살아남는다 — 이전 세션의 true 가
+     *   다음 세션 첫 틱에 그대로 읽혀 **보고 있지도 않은데 하루 한도가 깎인다.**
+     *   같은 파일의 ForegroundAppWatcher.peekForegroundPackage / getForegroundPackage 와
+     *   PaceAccessibilityService.getCurrentForegroundPackage 는 전부 나이 검사를 갖고 있는데
+     *   이 값만 없었다.
+     */
+    @Volatile private var lastUsageBasedVisibleAtMs: Long = 0L
 
     /** 2026-08-13 — 접근성 서비스가 "전체 창 후보 중 어느 앱을 우선할지" 판단할 때 쓴다
      *  (PaceAccessibilityService.bestTrackedWindow 참고). 폴링이 매초 갱신하는 값이다. */
@@ -2618,7 +2632,10 @@ class PaceOverlayService : Service() {
         //   같은 시간대에 알약도 사라졌다.
         // → 이미 매초 갱신돼 있는 캐시(lastSupportedAppPackage)를 **읽기만** 한다. 이 값은 위
         //   폴링이 "지원 앱이 전면에 보인다"고 확정했을 때만 채워지므로 그대로 쓰면 된다.
-        null -> lastUsageBasedVisible
+        // 위 lastUsageBasedVisibleAtMs 주석 참고 — 낡은 값은 "모름"으로 보고 **깎지 않는다.**
+        //   틀릴 때는 사용자에게 불리하지 않은 쪽으로 넘어져야 한다(이 파일의 다른 판정들과 같은 원칙).
+        null -> lastUsageBasedVisible &&
+            SystemClock.elapsedRealtime() - lastUsageBasedVisibleAtMs <= POLL_INTERVAL_MS * 3
       }
       if (shouldDecrement && elapsedMinutes > 0) {
         remainingMinutes = (remainingMinutes - elapsedMinutes).coerceAtLeast(0)
@@ -5904,6 +5921,9 @@ class PaceOverlayService : Service() {
   }
 
   private fun stopForegroundAppPolling() {
+    // 세션 경계에서 지운다 — 안 지우면 이전 세션 값이 다음 세션 첫 틱에 읽힌다.
+    lastUsageBasedVisible = false
+    lastUsageBasedVisibleAtMs = 0L
     if (!isPolling) return
     isPolling = false
     foregroundPollHandler.removeCallbacks(foregroundPollRunnable)

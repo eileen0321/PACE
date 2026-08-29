@@ -187,9 +187,21 @@ class PaceAccessibilityService : AccessibilityService() {
   private var lastNearEndFireAtMs = 0L
   // 사용자가 검색으로 직접 고른 영상을 우리가 밀어내지 않도록 두는 유예(위 suspendAutoNext 참고).
   @Volatile private var autoNextSuspendedUntilMs = 0L
+  /** 창 미검출 로그의 최소 간격(위 supportedAppWindowVisible 주석 참고). */
+  private var lastWindowMissLogAtMs = 0L
+
   private fun pollTargetPackage(): String? {
     val fromEvent = currentForegroundPackage
-    if (SupportedApps.PACKAGES.contains(fromEvent)) return fromEvent
+    // 🔴 2026-08-30 — 여기에 신선도 검사가 없었다. currentForegroundPackage 는
+    //   onAccessibilityEvent 에서만 쓰이는데, 그 이벤트는 packageNames 필터 때문에 **감시 대상**
+    //   앱에서만 온다. 그래서 유튜브를 떠나 런처로 가면 이벤트가 아예 안 와서 이 필드가
+    //   "com.google.android.youtube" 로 **영원히 남는다.** 그러면 사용자가 다른 앱에 있는 내내
+    //   500ms 폴이 계속 돌며 창 목록을 두 번씩 훑는다(getCurrentForegroundPackage 는 같은
+    //   문제를 maxAgeMs 로 이미 막고 있었는데 이 경로만 빠져 있었다).
+    if (SupportedApps.PACKAGES.contains(fromEvent) &&
+        SystemClock.elapsedRealtime() - currentForegroundPackageAtMs <= FG_PROBE_INTERVAL_MS * 2) {
+      return fromEvent
+    }
     val now = SystemClock.elapsedRealtime()
     if (now - lastFgProbeAtMs < FG_PROBE_INTERVAL_MS) return fgProbedPackage
     lastFgProbeAtMs = now
@@ -235,6 +247,7 @@ class PaceAccessibilityService : AccessibilityService() {
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
     private const val MAX_SINGLE_VIDEO_MS = 90_000L
+    private const val WINDOW_MISS_LOG_GAP_MS = 10_000L
     private const val NEAR_END_LEAD_MS = 2_500L
     private const val NEAR_END_FRAC = 0.95f
     private const val LOOP_BACK_FRAC_DROP = 0.3f
@@ -1513,7 +1526,15 @@ class PaceAccessibilityService : AccessibilityService() {
         if (pkg in SupportedApps.PACKAGES) hit = true
       }
       if (hit) return true
-      Log.w("PaceAccessibility", "supportedAppWindowVisible=false n=${windows.size} active=${rootInActiveWindow?.packageName} $dump")
+      // 🔴 2026-08-30 실기기 — 이 한 줄이 **초당 1회** 창 목록 전체를 덤프하고 있었다.
+      //   대상 앱이 아닐 때는 매 폴마다 미검출이므로 세션 내내 계속 찍힌다(로그 폭발 +
+      //   문자열 보간 비용, 그리고 정작 필요한 로그가 링버퍼에서 밀려난다).
+      //   이 파일이 이미 같은 이유로 fgPoll 로그를 걷어낸 이력이 있는데 여기가 남아 있었다.
+      val nowMiss = SystemClock.elapsedRealtime()
+      if (nowMiss - lastWindowMissLogAtMs >= WINDOW_MISS_LOG_GAP_MS) {
+        lastWindowMissLogAtMs = nowMiss
+        Log.w("PaceAccessibility", "supportedAppWindowVisible=false n=${windows.size} active=${rootInActiveWindow?.packageName} $dump")
+      }
     } catch (e: Exception) {
       Log.w("PaceAccessibility", "supportedAppWindowVisible lookup failed", e)
     }

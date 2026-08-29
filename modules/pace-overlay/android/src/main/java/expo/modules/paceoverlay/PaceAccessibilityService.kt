@@ -1083,12 +1083,31 @@ class PaceAccessibilityService : AccessibilityService() {
     // (suspendAutoNext 주석 참고). 관측(재생 감지·영상 전환 카운트·수면감지 증거)은 그대로 돌아야
     // 하므로 폴링 자체를 멈추지 않고, 아래 발사 지점들에서만 이 값을 본다.
     val autoNextSuspended = now < autoNextSuspendedUntilMs
+    // 🔴 2026-08-29 OVER_STAY 공통화 — 90초 상한이 **유튜브에서는 한 번도 작동하지 않았다.**
+    //   예전엔 이 검사가 `if (timing != null)` 의 else 분기 안에만 있었다. 그런데 유튜브는
+    //   타이밍 텍스트가 정상적으로 읽히는 쪽(then 분기)이라, 그 코드에 **도달 자체를 못 했다.**
+    //   상한을 넣은 이유가 "한 영상에 계속 머무는 것"("포커스 온인데 계속 같은 영상이 나와")인데,
+    //   정작 주 사용처인 유튜브에서 빠져 있었다. videoStartedAtMs 도 else 에서만 갱신됐으므로
+    //   아래 then 분기에서도 함께 갱신한다.
+    //   ⚠️ nearEnd 로 자연히 끝나는 영상은 여기 오기 전에 넘어간다 — 이 경로는 **길이를 모르거나
+    //     끝나지 않는 영상**에만 걸린다.
+    if (videoStartedAtMs > 0L && now - videoStartedAtMs >= MAX_SINGLE_VIDEO_MS &&
+        isWatching && !autoNextSuspended && now - lastSwipeAtMs > MANUAL_SWIPE_MIN_GAP_MS) {
+      Log.i("PaceAccessibility", "AUTO_NEXT reason=over-stay(${now - videoStartedAtMs}ms) — 한 영상에 너무 오래 머물렀다")
+      performSwipeUp()
+      lastSwipeAtMs = now
+      videoStartedAtMs = now
+      return
+    }
     val timing = readCachedOrSearchTiming()
     if (timing != null) {
       val (currentSec, totalSec) = timing
       // 🔴 2026-08-15 — **직전 폴링에서 보고 있던 영상의 길이.** 아래 loopedBack 판정이 "같은 영상이
       // 반복된 건지"를 이 값과 비교해서 가른다(예전엔 lastAdvanceTotalSec을 봤는데 그건 전환 시점의
       // 값이라 틀렸다 — 아래 그 자리 주석에 실측 근거).
+      // 위 OVER_STAY 주석 참고 — 이 분기에서도 "이 영상을 언제부터 보고 있나"를 유지해야
+      // 상한이 의미를 갖는다. 처음 관측이면 지금부터 센다.
+      if (videoStartedAtMs == 0L) videoStartedAtMs = now
       val prevTotalSec = lastObservedTotalSec
       lastObservedTotalSec = totalSec
       // 관측 가능성 도장 — 위 lastTimingReadAtMs 주석 참고(수면감지 게이트가 이 신선도를 본다).
@@ -1130,6 +1149,7 @@ class PaceAccessibilityService : AccessibilityService() {
       }
       if (nearEnd) lastNearEndFireAtMs = now
       if (nearEnd || loopedBack) {
+        videoStartedAtMs = now // 새 영상이 시작됐다 — 초과체류 시계도 여기서 리셋
         videoAdvanceCount++
         Log.d("PaceAccessibility", "VIDEO_ADVANCE reason=${if (nearEnd) "near-end" else "looped-back"} current=${currentSec}s total=${totalSec}s count=$videoAdvanceCount isWatching=$isWatching")
         // 2026-08-02 실기기 발견("3초 정도에 넘어갔다고 다 끝나기 전에") — loopedBack은 "영상이 이미
@@ -1529,6 +1549,12 @@ class PaceAccessibilityService : AccessibilityService() {
    *
    * 반환: 진행률 0.0~1.0. 없으면 null.
    */
+  /** 순회 중 만든 노드를 풀에 돌려준다. API 33+ 에서는 no-op 이라 예외만 삼키면 된다. */
+  @Suppress("DEPRECATION")
+  private fun recycleChild(node: AccessibilityNodeInfo) {
+    try { node.recycle() } catch (_: Exception) { /* 이미 회수됐거나 신 SDK — 무시 */ }
+  }
+
   private fun collectRanges(node: AccessibilityNodeInfo?, out: MutableList<RangeHit>, depth: Int = 0, budget: IntArray = intArrayOf(3000)) {
     if (node == null || depth > 40 || budget[0] <= 0) return
     budget[0]--
@@ -1539,7 +1565,16 @@ class PaceAccessibilityService : AccessibilityService() {
         out.add(RangeHit(node.className?.toString() ?: "?", (range.current - range.min) / span, range.max, node.isVisibleToUser))
       }
     }
-    for (i in 0 until node.childCount) collectRanges(node.getChild(i), out, depth + 1, budget)
+    // 🔴 2026-08-29 — getChild() 로 받은 노드를 돌려주지 않고 있었다. 2Hz 폴링에서 한 틱에
+    //   최대 3,000개를 만들어 전부 버렸다. API 33+ 에서는 recycle() 이 no-op 이지만 minSdk 는
+    //   24라 구형 기기에서는 프로세스별 노드 풀이 실제로 고갈된다.
+    //   ⚠️ **자식만** 돌려준다. 인자로 받은 node 는 호출자 소유이고, 노드를 반환하는 순회
+    //     (findPlaybackTimingNode)는 반환값이 캐시되므로 손대지 않는다 — 잘못 돌려주면
+     //     use-after-recycle 로 크래시한다.
+    for (i in 0 until node.childCount) {
+      val child = node.getChild(i) ?: continue
+      try { collectRanges(child, out, depth + 1, budget) } finally { recycleChild(child) }
+    }
   }
 
   private fun findProgressRange(node: AccessibilityNodeInfo?, depth: Int = 0, budget: IntArray = intArrayOf(3000)): Float? {
@@ -1595,7 +1630,11 @@ class PaceAccessibilityService : AccessibilityService() {
     val desc = node.contentDescription?.toString()
     // 프로필/사운드/설명만 고른다 — 좋아요·댓글 수는 실시간으로 계속 바뀌어 지문으로 못 쓴다.
     if (!desc.isNullOrEmpty() && (desc.startsWith("사운드:") || desc.endsWith("님의 프로필"))) sb.append(desc).append('|')
-    for (i in 0 until node.childCount) currentVideoFingerprint(node.getChild(i), depth + 1, budget, sb)
+    // 위 collectRanges 와 같은 이유로 자식 노드를 돌려준다.
+    for (i in 0 until node.childCount) {
+      val child = node.getChild(i) ?: continue
+      try { currentVideoFingerprint(child, depth + 1, budget, sb) } finally { recycleChild(child) }
+    }
     return if (sb.isEmpty()) null else sb.toString()
   }
 

@@ -669,6 +669,8 @@ object PaceHandWaveDetector {
   private const val LUMAPASS_DIP_RATIO = 0.97   // 기준 대비 3% 하락 = onset (판정기 실측)
   private const val LUMAPASS_MIN_REF = 40.0     // 너무 어두우면 판정 불가(0~255)
   private const val LUMAPASS_MIN_SAMPLES = 6
+  /** 프레임 속도 진단 로그의 최소 간격(위 lastNearMissLogAtMs 주석 참고). */
+  private const val HOT_LOG_MIN_GAP_MS = 500L
   private const val LUMAPASS_MIN_SPAN_MS = 80.0
   private const val LUMAPASS_MAX_SPAN_MS = 900.0
   private const val LUMAPASS_REF_DECAY = 0.995
@@ -790,6 +792,18 @@ object PaceHandWaveDetector {
    *   0 이하면 미보정 상태로 보고 기본 상수를 쓴다.
    */
   @Volatile private var lumapassDipRatio = LUMAPASS_DIP_RATIO
+
+  /**
+   * 프레임 속도로 찍히던 진단 로그의 최소 간격.
+   *
+   * 🔴 2026-08-29 — near-miss·방향관측은 조건에 걸릴 때마다 찍혀서 초당 수십 줄이 나갔다.
+   *   Android 는 Release 에서 Log.i 를 지워주지 않으므로 **출시본에서도 문자열 보간이
+   *   프레임마다 실행된다.** 게다가 정작 필요한 로그(WAVE·LUMAPASS)가 링버퍼에서 밀려나
+   *   디버깅을 방해했다 — 이 파일이 이미 같은 이유로 fgPoll 로그를 걷어낸 이력이 있다.
+   *   진단 가치는 "분포를 보는 것"이라 표본이 촘촘할 필요가 없다. 간격만 둔다.
+   */
+  private var lastNearMissLogAtMs = 0L
+  private var lastDirLogAtMs = 0L
 
   /** 캘리브레이션 중에는 발화하지 않고 **측정값만** 콜백으로 올려보낸다. */
   @Volatile private var calibrationMode = false
@@ -1758,7 +1772,8 @@ object PaceHandWaveDetector {
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
-      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=${if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG}) changed=$changed/${grid.size}")
+      if (now - lastNearMissLogAtMs >= HOT_LOG_MIN_GAP_MS) { lastNearMissLogAtMs = now
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=${if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG}) changed=$changed/${grid.size}") }
     }
   }
 
@@ -2300,7 +2315,10 @@ object PaceHandWaveDetector {
         oneWayReverse = REVERSE_BLOCK_SIGN != 0 &&
           straight >= 0.7 &&
           (if (REVERSE_BLOCK_SIGN > 0) net >= 0.06 else net <= -0.06)
-        Log.i(TAG, "방향관측 net=$net straight=$straight handSize=$handSize 차단=$oneWayReverse")
+        if (System.currentTimeMillis() - lastDirLogAtMs >= HOT_LOG_MIN_GAP_MS) {
+          lastDirLogAtMs = System.currentTimeMillis()
+          Log.i(TAG, "방향관측 net=$net straight=$straight handSize=$handSize 차단=$oneWayReverse")
+        }
       }
     }
     val glideSpanOk = sweepRatio > SWEEP_RATIO_THRESHOLD * bandMult

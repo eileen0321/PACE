@@ -132,8 +132,10 @@ class PaceOverlayService : Service() {
   private var lastOverlayRefreshAtMs = 0L
   private fun refreshOverlayIfDue(remainingMinutesForRecreate: Int) {
     val now = SystemClock.elapsedRealtime()
-    if (now - lastOverlayRefreshAtMs < REFRESH_INTERVAL_MS) return
+    if (now - lastOverlayRefreshAtMs < overlayRefreshIntervalMs) return
     lastOverlayRefreshAtMs = now
+    // 한 번 무사히 돌 때마다 간격을 늘린다(위 overlayRefreshIntervalMs 주석 참고).
+    overlayRefreshIntervalMs = minOf(overlayRefreshIntervalMs * 2, REFRESH_INTERVAL_MAX_MS)
     // 2026-08-02 실기기 발견("영상 넘어갈 때 화면 위쪽이 까맣게 됨, 3개 이상 연속") — 이 4초 강제
     // 재생성이 원인으로 의심된다. 예전엔 removeView(구창) → showOverlay(새창) 순서라 그 사이에
     // Pace 오버레이 창이 WindowManager에서 완전히 사라지는 짧은 순간이 항상 있었는데, 이 시점이
@@ -1206,6 +1208,17 @@ class PaceOverlayService : Service() {
   // 겪은 실패 패턴). 경과시간 기준 정산 덕분에 틱을 일찍 한 번 더 돌려도 이중 차감이 없다.
   /** 위 폴이 마지막으로 디스크에 쓴 값 — 같은 값을 초당 다시 쓰지 않기 위한 것. */
   private var lastTrackedAppWritten: String? = null
+
+  /**
+   * 오버레이 강제 재생성 간격 — 고정 4초에서 **점점 늘어나는** 값으로 바꾼다.
+   *
+   * 🔴 2026-08-29 — 4초 고정이면 세션 내내 분당 15회씩 창을 지웠다 다시 만든다. 그때마다
+   *   WindowManager add/remove 와 SurfaceFlinger 전체 재합성이 일어난다(위 2026-08-02 주석이
+   *   말하는 "영상 넘어갈 때 화면 위쪽이 까맣게" 증상도 이 재생성과 겹칠 때 났다).
+   *   유령 창은 붙은 직후에 주로 생기므로 초반에는 촘촘히 보되, 멀쩡히 유지되고 있으면
+   *   간격을 두 배씩 늘려 상한까지 물러난다. 새로 띄울 때 다시 4초로 돌아온다.
+   */
+  private var overlayRefreshIntervalMs = REFRESH_INTERVAL_MS
   @Volatile private var sleepConfirmPending = false
   private val sleepPromptHandler = Handler(Looper.getMainLooper())
   private val sleepPromptTimeoutRunnable = Runnable {
@@ -1263,6 +1276,8 @@ class PaceOverlayService : Service() {
     // 2026-07-28 — 오버레이 유령 창(mHasSurface=false) 대응 강제 재생성 주기. 너무 짧으면 매번
     // add/removeView 오버헤드+깜빡임, 너무 길면 복구 체감이 느림 — 4초로 절충.
     private const val REFRESH_INTERVAL_MS = 4000L
+    /** 백오프 상한 — 이보다 드물게 보면 유령 창이 오래 남는다. */
+    private const val REFRESH_INTERVAL_MAX_MS = 60_000L
     // 공유창을 띄운 직후엔 아직 전환 중이라 우리 앱이 잠깐 전경으로 잡힐 수 있다 — 그 프레임에
     // 되돌리면 공유창 자체를 밀어내 버린다. 최소 지연을 둬서 "정말 닫힌 뒤"만 잡는다.
     private const val SHARE_RETURN_MIN_DELAY_MS = 1500L
@@ -2866,6 +2881,8 @@ class PaceOverlayService : Service() {
   // 훨씬 얇고 반투명하게 만들어 "두껍다"는 지적을 해소.
   private fun showOverlay(remainingMinutes: Int) {
     if (overlayView != null) return
+    // 새로 띄우는 순간에는 간격을 다시 촘촘하게 돌린다 — 유령 창은 붙은 직후에 주로 생긴다.
+    overlayRefreshIntervalMs = REFRESH_INTERVAL_MS
     windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
     val d = resources.displayMetrics.density
 

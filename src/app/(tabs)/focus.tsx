@@ -25,6 +25,8 @@ import { useAdBannerStore } from '../../store/useAdBannerStore';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
+import { GestureCalibrationSheet } from '../../components/gesture/GestureCalibrationSheet';
+import { getSavedCalibration } from '../../services/gestureCalibration';
 
 // getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
 // Date.getDay()와 동일)를 실제 번역 키로 매핑 — settings.tsx에서 그대로 가져옴(2026-07-27, Weekly
@@ -228,6 +230,9 @@ export default function FocusScreen() {
   //   ⚠️ 접근성 경로는 시스템 설정 화면으로 나갔다 오므로 요청 직후에 다시 물어봐야 소용이 없다
   //     (그 시점엔 아직 안 켠 상태다). 그래서 "켜달라고 했다"는 의도를 ref에 적어두고, 권한이
   //     실제로 채워지는 순간(복귀 후 재확인) 그때 이어서 켠다.
+  // 손짓을 **켤 때** 개인 보정 시트를 띄운다. 이미 보정한 사람에게는 다시 묻지 않는다.
+  // (사람마다 손짓 깊이가 달라 상수 하나로는 맞출 수 없다 — GestureCalibrationSheet 주석 참고)
+  const [calibVisible, setCalibVisible] = useState(false);
   const pendingEnableRef = useRef<null | 'gesture' | 'bluetooth'>(null);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -590,7 +595,12 @@ export default function FocusScreen() {
                 <Switch
                   value={gestureOn && !gestureBlocked}
                   onValueChange={(v) => {
-                    if (!gestureBlocked) { setGesture(v); return; }
+                    if (!gestureBlocked) {
+                      setGesture(v);
+                      // 켜는 순간에만, 그리고 아직 보정한 적 없을 때만 띄운다. 끌 때는 묻지 않는다.
+                      if (v) getSavedCalibration().then((c) => { if (!c) setCalibVisible(true); }).catch(() => {});
+                      return;
+                    }
                     // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.
                     if (v) pendingEnableRef.current = 'gesture';
                     explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera');
@@ -651,6 +661,15 @@ export default function FocusScreen() {
           overlayService.requestAccessibilityPermission?.();
         }}
         onDismiss={() => setShowAccessibilityDisclosure(false)}
+      />
+
+      {/* 손짓을 켤 때 뜨는 개인 보정 — 손짓 깊이는 손 크기·거리·조명에 따라 사람마다 다르다.
+          상수 하나를 전 사용자에게 쓰던 것이 과발화의 직접 원인이었다(실측: 사람이 앞에 있으면
+          1.2초마다 연속 발화, 빈 벽에서는 2분간 0회). 건너뛰면 기본값으로 동작한다. */}
+      <GestureCalibrationSheet
+        visible={calibVisible}
+        onDone={() => setCalibVisible(false)}
+        onSkip={() => setCalibVisible(false)}
       />
     </SafeAreaView>
   );

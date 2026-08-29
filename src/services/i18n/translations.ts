@@ -548,6 +548,24 @@ export const translations = {
 
     // 2026-07-26 감사 발견 — 이번 세션에 새로 작성한 BluetoothOnboardingSheet.tsx 카피가 t() 없이
     // 하드코딩된 채로 나갈 뻔했다(작성 당시엔 영문 카피만 확정, 뒤늦게 번역 배선).
+    gestureCalib: {
+      eyebrow: 'Calibration',
+      introTitle: 'Teach Pace your wave',
+      introBody: 'Everyone waves a little differently. Sweep your hand past the camera a few times so Pace learns yours — otherwise it may skip when you did not mean to.',
+      start: 'Start',
+      measuringTitle: 'Sweep past the camera',
+      measuringBody: 'Move your hand across the front camera the way you would to skip a video.',
+      waiting: 'Waiting for your hand…',
+      doneEyebrow: 'All set',
+      doneTitle: 'Calibrated',
+      doneBody: 'Pace now knows your wave. You can redo this any time in Settings.',
+      finish: 'Done',
+      deniedEyebrow: 'Camera off',
+      deniedTitle: 'Camera access needed',
+      deniedBody: 'Pace needs the front camera to see your wave. You can continue with default settings and calibrate later.',
+      useDefault: 'Continue anyway',
+      skip: 'Skip for now',
+    },
     handsFreeSheet: {
       title: 'Focus Session Controls',
       valueLine: 'Stay focused without touching your phone.',
@@ -1049,6 +1067,24 @@ export const translations = {
       selectedTitle: '{{platform}} 선택됨',
     },
 
+    gestureCalib: {
+      eyebrow: '손짓 보정',
+      introTitle: '내 손짓을 알려주세요',
+      introBody: '손짓은 사람마다 다릅니다. 카메라 앞으로 몇 번만 손을 지나가 주시면 회원님의 손짓을 기억합니다 — 안 하면 원하지 않을 때 넘어갈 수 있어요.',
+      start: '시작하기',
+      measuringTitle: '카메라 앞을 지나가 주세요',
+      measuringBody: '영상을 넘길 때처럼 전면 카메라 앞으로 손을 스쳐 지나가세요.',
+      waiting: '손을 기다리는 중…',
+      doneEyebrow: '완료',
+      doneTitle: '보정됐습니다',
+      doneBody: '이제 회원님의 손짓을 기억합니다. 설정에서 언제든 다시 할 수 있어요.',
+      finish: '완료',
+      deniedEyebrow: '카메라 꺼짐',
+      deniedTitle: '카메라 권한이 필요해요',
+      deniedBody: '손짓을 보려면 전면 카메라가 필요합니다. 기본 설정으로 계속하고 나중에 보정해도 됩니다.',
+      useDefault: '기본값으로 계속',
+      skip: '나중에 하기',
+    },
     handsFreeSheet: {
       title: '포커스 세션 컨트롤',
       valueLine: '화면을 만지지 않고도 집중을 유지하세요.',

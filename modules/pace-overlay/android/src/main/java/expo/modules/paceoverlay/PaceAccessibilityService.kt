@@ -73,10 +73,11 @@ class PaceAccessibilityService : AccessibilityService() {
   private var lastKnownFrac = -1f
   private var lastFracAtMs = 0L
   private var estimatedDurationMs = -1L
-  // 2026-07-26 추가 — currentSec가 이전 폴링보다 실제로 늘어난(=재생 중이라는 강한 증거) 마지막
-  // 시각. companion의 isLikelyPlaying()이 이 값의 신선도로 "지금 실제로 재생 중인가"를 판단해
-  // PaceOverlayService.performTick()의 사용시간 차감을 게이팅한다.
-  private var lastPlaybackAdvanceAtMs = 0L
+  // 2026-07-26 추가 — currentSec 가 이전 폴링보다 실제로 늘어난 마지막 시각.
+  // ⚠️ 2026-08-30 정정 — 예전 주석은 "isLikelyPlaying() 이 이 값의 신선도로 재생 여부를 판단해
+  //   사용시간 차감을 게이팅한다"고 적혀 있었으나 **사실이 아니다.** 그 판정은 2026-08-06 에
+  //   제거됐고(그 자리 주석에 실측 근거와 "되살리지 말 것"이 남아 있다), 지금 isLikelyPlaying()
+  //   은 **창이 보이는가**만 본다. 이 값은 이제 영상 전환 감지(VIDEO_ADVANCE)에만 쓰인다.
   // 2026-07-26 사용자 지시("몇 편 봤는지 카운트") — 자동넘김 스와이프든 사용자가 직접 손으로 넘긴
   // 것이든 checkPlaybackAndMaybeSwipe()가 "영상이 바뀌었다"고 판단할 때마다 1씩 증가. 세션 시작
   // (startPlaybackTracking)마다 0으로 리셋 — companion getVideoCount()로 JS가 읽는다.
@@ -388,8 +389,7 @@ class PaceAccessibilityService : AccessibilityService() {
       if (!service.isTrackingPlayback) {
         service.isTrackingPlayback = true
         service.resetPerVideoState()
-        service.lastKnownCurrentSec = -1
-        service.lastPlaybackAdvanceAtMs = 0L
+        service.lastKnownCurrentSec = -1
         service.videoAdvanceCount = 0
         service.ensurePollingScheduled()
         Log.d("PaceAccessibility", "startPlaybackTracking() -> polling started (usage-time accuracy only)")
@@ -403,8 +403,7 @@ class PaceAccessibilityService : AccessibilityService() {
 
     fun stopPlaybackTracking() {
       instance?.let { service ->
-        service.isTrackingPlayback = false
-        service.lastPlaybackAdvanceAtMs = 0L
+        service.isTrackingPlayback = false
         service.maybeStopPolling()
       }
     }
@@ -440,7 +439,13 @@ class PaceAccessibilityService : AccessibilityService() {
     // null = 판단 불가(접근성 꺼짐/추적 미시작/아직 신호 한 번도 못 잡음) — 호출부는 이 경우 기존
     // 방식대로 항상 차감하는 쪽으로 안전하게 폴백해야 한다. true/false = 실제로 판단 가능한 경우의
     // 재생 여부(maxStaleMs 이내에 재생 위치가 실제로 늘어난 적이 있는지).
-    fun isLikelyPlaying(maxStaleMs: Long = 5_000L): Boolean? {
+    // ⚠️ 2026-08-30 — 인자 maxStaleMs 와 필드 lastPlaybackAdvanceAtMs 를 지웠다. 둘 다 2026-08-06 에
+//   제거된 "일시정지 감지"의 잔재로, 읽는 곳이 한 군데도 없으면서(주석 처리된 옛 코드 제외)
+//   폴마다 계속 쓰이고 있었다. 위 :77 과 이 함수의 옛 KDoc 이 그 사라진 동작을 여전히
+//   설명하고 있어서, 다음 사람이 "재생 위치 신선도로 일시정지를 가린다"고 믿게 만들었다.
+//   실제 동작은 **창이 보이면 재생 중**이다 — 그 판단의 실측 근거는 아래 2026-08-06 주석에 있고,
+//   되살리지 말라고 명시돼 있으므로 동작은 그대로 두고 이름만 사실에 맞춘다.
+fun isLikelyPlaying(): Boolean? {
       val service = instance ?: return null
       // 2026-08-01 — 감시 대상 앱 창이 지금 실제로 떠 있으면(PIP 포함) 재생시간 텍스트를 못 찾아도
       // (초소형 PIP 화면은 보통 그 텍스트 자체가 없음) "재생 중"으로 간주한다. 다른 판정보다 먼저
@@ -1132,10 +1137,11 @@ class PaceAccessibilityService : AccessibilityService() {
       // VIDEO_ADVANCE/스와이프/onKeyEvent 로그를 밀어내 실기기 디버깅을 반복적으로 방해했다.
       // 판정에 진짜 필요한 이벤트(VIDEO_ADVANCE, tier2 타임아웃)는 아래에서 계속 로깅한다.
       // 2026-07-26 — currentSec가 이전 폴링보다 실제로 늘었다는 건 스와이프 여부(isWatching)와
-      // 무관하게 "지금 영상이 실제로 재생 중"이라는 강한 증거. isLikelyPlaying()이 이 시각의
-      // 신선도로 PaceOverlayService의 사용시간 차감을 게이팅한다.
-      if (lastKnownCurrentSec >= 0 && currentSec > lastKnownCurrentSec) {
-        lastPlaybackAdvanceAtMs = now
+      // 무관하게 "지금 영상이 실제로 재생 중"이라는 강한 증거.
+      // 무관하게 "지금 영상이 실제로 재생 중"이라는 강한 증거. ⚠️ 2026-08-30 — 예전엔 여기
+      // 주석이 "isLikelyPlaying() 이 이 신선도로 차감을 게이팅한다"고 했으나 그 판정은
+      // 2026-08-06 에 제거됐다(위 :77 정정 참고). 지금 이 값은 전환 감지에만 쓰인다.
+      if (lastKnownCurrentSec >= 0 && currentSec > lastKnownCurrentSec) {
       }
       val nearEnd = totalSec > 0 && currentSec >= totalSec - 1
       // 영상이 끝나고 다음(또는 반복) 영상으로 넘어가 재생 위치가 이전보다 확 줄어든 경우 —

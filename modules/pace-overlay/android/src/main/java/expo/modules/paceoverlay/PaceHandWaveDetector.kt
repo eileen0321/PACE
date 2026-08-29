@@ -956,6 +956,12 @@ object PaceHandWaveDetector {
     detectStartedAtMs = System.currentTimeMillis()
     blindNoticeDone = false
     PaceOverlayService.resetCameraBlindNotice()
+    // 🔴 2026-08-30 — 권한 안내 플래그도 함께 되돌린다. 이 함수는 호출자가 하나도 없어서
+    //   cameraPermissionNoticeShown 이 프로세스 내내 true 로 잠겼다 — 사용자가 권한을 껐다 켜도
+    //   "카메라 권한이 필요해요" 안내가 **다시는 안 떴다**. 손짓이 조용히 죽는 그 상태를
+    //   막으려고 만든 안내인데 정작 그 상황에서 안 나왔다(형제 함수 resetCameraBlindNotice 는
+    //   여기서 이미 불리고 있었다).
+    PaceOverlayService.resetCameraPermissionNotice()
     if (!running || myGeneration != startGeneration) return // stop() 또는 더 최신 start()가 먼저 있었음
     sizeHistory.clear()
     posHistory.clear()
@@ -1555,7 +1561,7 @@ object PaceHandWaveDetector {
       if (lowest <= 0.95 && now - lastLumaPassDiagAtMs[axis] >= 500L) {
         lastLumaPassDiagAtMs[axis] = now
         Log.i(TAG, "lumapass[$axisName] 관측 A=%.2f B=%.2f C=%.2f (문턱 %.2f) ref=%.0f/%.0f/%.0f n=%d"
-          .format(rl, rm, rr, LUMAPASS_DIP_RATIO, ref[0], ref[1], ref[2], hist.size))
+          .format(rl, rm, rr, effectiveDipRatio, ref[0], ref[1], ref[2], hist.size))
       }
     }
     // 🔬 2026-08-26 — **"어느 문턱이었으면 발화했는가"를 직접 잰다.**
@@ -1587,7 +1593,7 @@ object PaceHandWaveDetector {
         }
         if (best > 0) {
           Log.i(TAG, "lumapass[$axisName] 필요문턱=%.2f (현재 %.2f) 순서=%s span=%.0fms"
-            .format(best, LUMAPASS_DIP_RATIO, bestOrder, bestSpan))
+            .format(best, effectiveDipRatio, bestOrder, bestSpan))
         }
       }
     }

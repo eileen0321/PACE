@@ -92,7 +92,7 @@ let lastGoodSeed: string[] = [];
 async function fetchSeedVideoIds(origin: string, gl: string, hl: string): Promise<string[]> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
+    const timer = setTimeout(() => controller.abort(), 12000);
     try {
       // 같은 프로젝트의 기존 프록시를 재사용한다 — 스크래핑/캐싱/지역분기 로직을 중복 구현하지 않는다.
       // ⚠️ 2026-08-05 — hl을 안 넘기고 있었다. 앱은 ?hl=을 보내는데 이 핸들러가 읽지도, 안쪽 호출에

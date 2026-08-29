@@ -155,7 +155,11 @@ export async function prefetchShortsEntryPolicy(): Promise<void> {
   try {
     if (!YOUTUBE_PROXY_URL) return;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    // 🔴 2026-08-30 — 여기가 8초였는데 서버(api/shorts-entry)는 안쪽 호출에 25초를 쓴다.
+    //   서버가 쓸 수 있는 시간보다 앱이 먼저 포기하면, 내가 서버에 준 여유가 통째로 무의미해진다
+    //   (캐시 미적중일 때만 발생하지만 그때가 정확히 시드가 필요한 순간이다).
+    //   서버 상한(12초, api/shorts-entry.ts)보다 넉넉하게 잡는다.
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
       // 2026-08-04 사장님 지적("iOS는 아직 외국" + "안드 확인해") — 서버(api/shorts-entry)는 seedPool을
       // 만들 때 앱이 넘긴 gl을 쓰는데, gl이 없으면 서버-투-서버 호출이라 IP추정도 안 돼 US로 떨어진다.
@@ -172,7 +176,10 @@ export async function prefetchShortsEntryPolicy(): Promise<void> {
       if (lang) qp.set('hl', lang);
       const entryUrl = `${YOUTUBE_PROXY_URL}/api/shorts-entry${qp.toString() ? `?${qp}` : ''}`;
       const res = await fetch(entryUrl, { signal: controller.signal });
-      if (!res.ok) return;
+      // 🔴 2026-08-30 — 예전엔 여기서 그냥 return 이라, 서버가 시드를 못 구했을 때 보내주는
+      //   503 본문의 strategies 를 통째로 버렸다. 정작 정책이 가장 필요한 상황인데
+      //   앱은 내장 기본값으로 떨어졌다. 503 이어도 strategies 는 받아 쓴다.
+      if (!res.ok && res.status !== 503) return;
       const parsed = sanitize(await res.json());
       if (!parsed) return;
       cached = parsed;

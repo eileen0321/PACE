@@ -27,6 +27,7 @@ import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { getShortsSeedVideoId, setWarmedSeed } from '../../services/shortsEntry';
+import { getRecentSearchQuery } from '../../store/useShortsSearchStore';
 import { youtubeLocale, consentCookie, acceptLanguageHeader } from './YouTubeShortsPlayer';
 
 // 자동재생 차단이 뚫려도 소리가 나지 않도록 하는 2차 방어.
@@ -54,8 +55,12 @@ export function ShortsWarmup({ active }: { active: boolean }) {
     if (!active || doneRef.current) return;
     let cancelled = false;
     // 시드를 못 구해도 조용히 포기한다 — 워밍은 어디까지나 최적화라 실패해도 진입은 정상이다.
-    getShortsSeedVideoId()
-      .then((id) => {
+    // 🔴 2026-08-30 — 최근 검색이 있으면 큐(useShortsQueueStore.loadInitial)가 **검색 시드를
+    //   먼저 쓰고 return** 하므로 여기서 데운 영상은 열리지 않는다. 그대로 두면 1MB 를 받아
+    //   통째로 버리는 셈이라, 그 경우엔 아예 데우지 않는다(우선순위는 큐 쪽 그대로 유지).
+    getRecentSearchQuery()
+      .then((q: string | null) => (q ? null : getShortsSeedVideoId()))
+      .then((id: string | null) => {
         if (cancelled || !id) return;
         doneRef.current = true;
         setWarmedSeed(id); // 피드가 같은 영상을 열게 해야 워밍이 의미가 있다

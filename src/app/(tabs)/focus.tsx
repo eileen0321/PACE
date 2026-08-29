@@ -26,7 +26,7 @@ import { colors, radius, spacing, typography } from '../../constants/theme';
 import { getSavedVideos, removeSavedVideo, type SavedVideo, type SavedVideoKind } from '../../database/repositories/savedVideosRepository';
 import { AccessibilityOnboardingSheet } from '../../components/onboarding/AccessibilityOnboardingSheet';
 import { GestureCalibrationSheet } from '../../components/gesture/GestureCalibrationSheet';
-import { getSavedCalibration } from '../../services/gestureCalibration';
+import { getSavedCalibration, isCalibrated } from '../../services/gestureCalibration';
 
 // getLast7Days()(useAttendanceStore, 순수 함수라 t() 접근 불가)가 넘겨주는 dayIndex(0=일~6=토,
 // Date.getDay()와 동일)를 실제 번역 키로 매핑 — settings.tsx에서 그대로 가져옴(2026-07-27, Weekly
@@ -598,7 +598,7 @@ export default function FocusScreen() {
                     if (!gestureBlocked) {
                       setGesture(v);
                       // 켜는 순간에만, 그리고 아직 보정한 적 없을 때만 띄운다. 끌 때는 묻지 않는다.
-                      if (v) getSavedCalibration().then((c) => { if (!c) setCalibVisible(true); }).catch(() => {});
+                      if (v) getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
                       return;
                     }
                     // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.

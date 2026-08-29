@@ -1,19 +1,22 @@
 // 손짓 개인 보정 시트 — 손짓을 **켤 때** 뜬다.
 //
-// ── 왜 필요한가 (2026-08-29) ──
+// ── 왜 필요한가 (2026-08-29 실측) ──
 // 손짓 깊이(카메라 앞을 지날 때 밝기가 얼마나 떨어지는가)는 손 크기·거리·조명에 따라 사람마다
-// 크게 다르다. 그런데 지금까지는 상수 하나(3% 하락)를 전 사용자에게 똑같이 썼다. 3%는 사람이
-// 앞에 있기만 해도 늘 넘는 값이라, 몸을 기울이거나 팔을 뻗는 것까지 전부 손짓이 됐다.
-//   실측: 사람 있음 → 1.2초(불응시간)마다 연속 발화, 30초에 44회 / 빈 벽 → 2분간 0회
-// 문턱을 조이면 이번엔 진짜 손짓도 죽는다. 그래서 값을 추측하는 대신 **본인 손짓을 잰다.**
+// 크게 다르다. 그런데 상수 하나(3% 하락)를 전 사용자에게 똑같이 썼다. 실기기로 재보니
+// **가만히 있을 때의 잡음만으로 1.0~3.4%**가 나온다 — 문턱이 잡음 분포 한가운데 있었던 것이다.
+// 그래서 사람이 앞에 있기만 하면 불응시간(1.2초)마다 계속 터졌다(30초에 44회, 빈 벽에서는 0회).
+// 문턱을 조이면 이번엔 진짜 손짓이 죽는다. 값을 추측하는 대신 **본인 손짓을 잰다.**
 //
-// ── 이탈을 막는 설계 ──
-// ⚠️ 이 화면은 "시험"이 아니라 **시연**으로 보여야 한다. 지금 앱에는 어떤 동작을 해야 하는지
-//    알려주는 화면이 아예 없어서, 안내는 어차피 필요하다 — 보정은 거기에 얹는 것이라 사용자가
-//    느끼는 추가 부담이 거의 없다.
-// ⚠️ 매 성공마다 **즉시 반응**(링이 빛나고 점이 채워지고 햅틱)을 준다. 무반응이 이탈을 만든다.
-// ⚠️ 반드시 **건너뛰기**를 둔다. 어두운 방 등으로 측정이 안 되는 경우가 반드시 생기는데,
-//    거기서 막히면 그 자리에서 이탈한다. 건너뛰면 기본값으로 동작하고 나중에 설정에서 다시 한다.
+// ── UI 원칙 (2026-08-29 리서치) ──
+// "불확실성이 대기를 길게 느끼게 한다. 카운트다운과 진행 표시가 그 불안을 없앤다."
+// 첫 구현에는 남은 초도 카운트도 안 보여서, 잡음이 순식간에 표본을 채우고 "완료"만 떴다 —
+// 사용자는 손을 들기도 전에 끝난 것을 알 수 없었다(사장님 지적). 그래서:
+//   ① 시작 전에 **무엇을 얼마나 할지** 먼저 말한다(N초 정지 → 손 M번).
+//   ② 정지 구간은 **큰 숫자로 카운트다운**한다.
+//   ③ 손짓 구간은 **0/5 를 크게** 보여주고, 인식될 때마다 링이 빛나고 햅틱이 온다.
+//   ④ 한동안 아무것도 안 잡히면 **원인을 짚어준다**(카메라가 사용자를 안 향한 경우가 대부분).
+//   ⑤ 건너뛰기는 항상 열어둔다 — 어두운 방 등으로 측정이 안 되는 경우가 반드시 생기는데,
+//      거기서 막히면 그 자리에서 이탈한다.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
@@ -33,7 +36,10 @@ import { Feather } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../constants/theme';
 import { useTranslation } from '../../services/i18n';
 import {
+  NOISE_PHASE_MS,
   REQUIRED_SAMPLES,
+  isGestureDepth,
+  noiseFloor,
   startCalibration,
   stopCalibration,
   type CalibrationSample,
@@ -41,7 +47,13 @@ import {
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
-/** 감지될 때마다 바깥으로 퍼지는 링 — "지금 보고 있다"를 시각적으로 알린다. */
+/** 이 시간 동안 손짓이 하나도 안 잡히면 원인을 짚어준다. */
+const STALL_HINT_MS = 12000;
+/** 연속 표본을 한 번의 손짓으로 묶는 간격. 잡음 3개를 3회로 세지 않기 위한 것. */
+const MIN_GAP_MS = 700;
+
+type Phase = 'intro' | 'noise' | 'measuring' | 'done' | 'unusable' | 'denied';
+
 function SensorRings({ pulse }: { pulse: SharedValue<number> }) {
   const idle = useSharedValue(0);
   useEffect(() => {
@@ -59,7 +71,7 @@ function SensorRings({ pulse }: { pulse: SharedValue<number> }) {
   }));
 
   return (
-    <View style={styles.stage} pointerEvents="none">
+    <>
       <AnimatedView style={[styles.ringOuter, outer]} />
       <AnimatedView style={[styles.ringInner, inner]} />
       <LinearGradient
@@ -68,21 +80,7 @@ function SensorRings({ pulse }: { pulse: SharedValue<number> }) {
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
       />
-      <View style={styles.handIcon}>
-        <Feather name="wind" size={30} color={colors.primary} />
-      </View>
-    </View>
-  );
-}
-
-/** 남은 횟수 — 채워질 때 스프링으로 튀어 진행이 눈에 보이게 한다. */
-function ProgressDots({ done }: { done: number }) {
-  return (
-    <View style={styles.dots}>
-      {Array.from({ length: REQUIRED_SAMPLES }, (_, i) => (
-        <Dot key={i} filled={i < done} />
-      ))}
-    </View>
+    </>
   );
 }
 
@@ -104,16 +102,29 @@ export function GestureCalibrationSheet({
   onSkip,
 }: {
   visible: boolean;
-  /** 보정 성공 — 산출된 문턱은 이미 저장된 뒤에 불린다. */
   onDone: () => void;
-  /** 건너뛰기 — 기본값으로 동작한다. */
   onSkip: () => void;
 }) {
   const { t } = useTranslation();
-  const [samples, setSamples] = useState<CalibrationSample[]>([]);
-  const [phase, setPhase] = useState<'intro' | 'measuring' | 'done' | 'denied'>('intro');
+  const [phase, setPhase] = useState<Phase>('intro');
+  const [count, setCount] = useState(0);
+  const [countdown, setCountdown] = useState(Math.round(NOISE_PHASE_MS / 1000));
+  const [savedRatio, setSavedRatio] = useState<number | null>(null);
+  const [stalled, setStalled] = useState(false);
   const pulse = useSharedValue(0);
-  const samplesRef = useRef<CalibrationSample[]>([]);
+
+  // 콜백은 네이티브 이벤트로 자주 불린다 — state 는 비동기라 개수를 놓친다. ref 로 센다.
+  const phaseRef = useRef<Phase>('intro');
+  const gesturesRef = useRef<CalibrationSample[]>([]);
+  const noiseRef = useRef<CalibrationSample[]>([]);
+  const floorRef = useRef(0);
+  const lastAtRef = useRef(0);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  }, []);
 
   const flash = useCallback(() => {
     pulse.value = withSequence(
@@ -123,68 +134,155 @@ export function GestureCalibrationSheet({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }, [pulse]);
 
-  // 시트가 닫히면 무슨 일이 있어도 카메라를 끈다 — 보정 화면을 벗어났는데 카메라가 남아 있으면
-  // 배터리를 먹고, 무엇보다 사용자가 이해할 수 없는 상태가 된다.
+  const reset = useCallback(() => {
+    clearTimers();
+    phaseRef.current = 'intro';
+    gesturesRef.current = [];
+    noiseRef.current = [];
+    floorRef.current = 0;
+    lastAtRef.current = 0;
+    setPhase('intro');
+    setCount(0);
+    setCountdown(Math.round(NOISE_PHASE_MS / 1000));
+    setSavedRatio(null);
+    setStalled(false);
+  }, [clearTimers]);
+
+  // 시트를 벗어나면 무슨 일이 있어도 카메라를 끈다.
   useEffect(() => {
     if (!visible) {
       stopCalibration().catch(() => {});
-      setSamples([]);
-      samplesRef.current = [];
-      setPhase('intro');
+      reset();
     }
-  }, [visible]);
+    return () => clearTimers();
+  }, [visible, reset, clearTimers]);
 
   const begin = useCallback(async () => {
-    samplesRef.current = [];
-    setSamples([]);
-    const ok = await startCalibration((s) => {
-      // 표본은 ref 로도 들고 간다 — setState 는 비동기라 연속 표본에서 개수를 놓칠 수 있다.
-      samplesRef.current = [...samplesRef.current, s];
-      setSamples(samplesRef.current);
+    reset();
+    phaseRef.current = 'noise';
+
+    const ok = await startCalibration((sample) => {
+      // 1단계: 가만히 있는 동안의 잡음 — 손짓 문턱의 바닥이 된다.
+      if (phaseRef.current === 'noise') {
+        noiseRef.current = [...noiseRef.current, sample];
+        return;
+      }
+      if (phaseRef.current !== 'measuring') return;
+      // 2단계: 잡음보다 확실히 깊은 것만 1회로 센다.
+      if (!isGestureDepth(sample.depth, floorRef.current)) return;
+      const now = Date.now();
+      if (now - lastAtRef.current < MIN_GAP_MS) return;
+      lastAtRef.current = now;
+      gesturesRef.current = [...gesturesRef.current, sample];
+      setCount(gesturesRef.current.length);
+      setStalled(false);
       flash();
-      if (samplesRef.current.length >= REQUIRED_SAMPLES) {
-        stopCalibration(samplesRef.current)
-          .then(() => setPhase('done'))
-          .catch(() => setPhase('done'));
+      if (gesturesRef.current.length >= REQUIRED_SAMPLES) {
+        phaseRef.current = 'done';
+        clearTimers();
+        stopCalibration(gesturesRef.current, floorRef.current)
+          .then((saved) => {
+            setSavedRatio(saved);
+            setPhase(saved == null ? 'unusable' : 'done');
+          })
+          .catch(() => setPhase('unusable'));
       }
     });
-    setPhase(ok ? 'measuring' : 'denied');
-  }, [flash]);
+
+    if (!ok) {
+      phaseRef.current = 'denied';
+      setPhase('denied');
+      return;
+    }
+    setPhase('noise');
+
+    // 남은 초를 실제로 보여준다 — 얼마나 기다려야 하는지 모르는 것이 가장 나쁘다.
+    const total = Math.round(NOISE_PHASE_MS / 1000);
+    for (let i = 1; i <= total; i++) {
+      timersRef.current.push(setTimeout(() => setCountdown(total - i), i * 1000));
+    }
+    timersRef.current.push(
+      setTimeout(() => {
+        floorRef.current = noiseFloor(noiseRef.current);
+        phaseRef.current = 'measuring';
+        lastAtRef.current = Date.now();
+        setPhase('measuring');
+        // 한참 아무것도 안 잡히면 원인을 짚어준다(대부분 카메라가 사용자를 안 향한다).
+        timersRef.current.push(
+          setTimeout(() => {
+            if (gesturesRef.current.length === 0) setStalled(true);
+          }, STALL_HINT_MS)
+        );
+      }, NOISE_PHASE_MS)
+    );
+  }, [reset, flash, clearTimers]);
 
   const skip = useCallback(() => {
     stopCalibration().catch(() => {});
     onSkip();
   }, [onSkip]);
 
-  const done = samples.length;
-  const lastDepth = done > 0 ? samples[done - 1].depth : 0;
+  const centerIcon =
+    phase === 'done' ? 'check' : phase === 'unusable' || phase === 'denied' ? 'alert-circle' : 'wind';
+  const centerColor =
+    phase === 'done' ? colors.successLight : phase === 'intro' ? colors.primary : colors.warning;
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
-          <SensorRings pulse={pulse} />
+          <View style={styles.stage} pointerEvents="none">
+            <SensorRings pulse={pulse} />
+            {/* 링 한가운데는 지금 무엇을 해야 하는지에 따라 바뀐다 — 숫자가 곧 안내다. */}
+            {phase === 'noise' ? (
+              <Text style={styles.bigNumber}>{countdown}</Text>
+            ) : phase === 'measuring' ? (
+              <Text style={styles.bigNumber}>
+                {count}
+                <Text style={styles.bigNumberDim}>/{REQUIRED_SAMPLES}</Text>
+              </Text>
+            ) : (
+              <View style={styles.handIcon}>
+                <Feather name={centerIcon} size={30} color={centerColor} />
+              </View>
+            )}
+          </View>
 
           {phase === 'intro' && (
             <>
               <Text style={styles.eyebrow}>{t('gestureCalib.eyebrow')}</Text>
               <Text style={styles.title}>{t('gestureCalib.introTitle')}</Text>
               <Text style={styles.body}>{t('gestureCalib.introBody')}</Text>
+              {/* 시작 전에 무엇을 얼마나 할지 먼저 말한다. */}
+              <View style={styles.steps}>
+                <Text style={styles.step}>
+                  {t('gestureCalib.step1', { sec: Math.round(NOISE_PHASE_MS / 1000) })}
+                </Text>
+                <Text style={styles.step}>{t('gestureCalib.step2', { n: REQUIRED_SAMPLES })}</Text>
+              </View>
+            </>
+          )}
+
+          {phase === 'noise' && (
+            <>
+              <Text style={styles.eyebrow}>{t('gestureCalib.step1of2')}</Text>
+              <Text style={styles.title}>{t('gestureCalib.noiseTitle')}</Text>
+              <Text style={styles.body}>{t('gestureCalib.noiseBody')}</Text>
             </>
           )}
 
           {phase === 'measuring' && (
             <>
-              <Text style={styles.eyebrow}>{t('gestureCalib.eyebrow')}</Text>
+              <Text style={styles.eyebrow}>{t('gestureCalib.step2of2')}</Text>
               <Text style={styles.title}>{t('gestureCalib.measuringTitle')}</Text>
-              <Text style={styles.body}>{t('gestureCalib.measuringBody')}</Text>
-              <ProgressDots done={done} />
-              {/* 모노 숫자로 실측값을 보여준다 — "재고 있다"는 것이 눈에 보여야 기다린다. */}
-              <Text style={styles.telemetry}>
-                {done > 0
-                  ? `${done}/${REQUIRED_SAMPLES}   ${(lastDepth * 100).toFixed(1)}%`
-                  : t('gestureCalib.waiting')}
+              <Text style={styles.body}>
+                {stalled ? t('gestureCalib.stallHint') : t('gestureCalib.measuringBody')}
               </Text>
+              <View style={styles.dots}>
+                {Array.from({ length: REQUIRED_SAMPLES }, (_, i) => (
+                  <Dot key={i} filled={i < count} />
+                ))}
+              </View>
             </>
           )}
 
@@ -193,6 +291,20 @@ export function GestureCalibrationSheet({
               <Text style={[styles.eyebrow, styles.eyebrowOk]}>{t('gestureCalib.doneEyebrow')}</Text>
               <Text style={styles.title}>{t('gestureCalib.doneTitle')}</Text>
               <Text style={styles.body}>{t('gestureCalib.doneBody')}</Text>
+              {/* 무엇이 저장됐는지 숫자로 보여준다 — "완료"만으로는 무엇을 했는지 알 수 없다. */}
+              {savedRatio != null && (
+                <Text style={styles.telemetry}>
+                  {t('gestureCalib.savedLabel')}  {((1 - savedRatio) * 100).toFixed(1)}%
+                </Text>
+              )}
+            </>
+          )}
+
+          {phase === 'unusable' && (
+            <>
+              <Text style={[styles.eyebrow, styles.eyebrowWarn]}>{t('gestureCalib.unusableEyebrow')}</Text>
+              <Text style={styles.title}>{t('gestureCalib.unusableTitle')}</Text>
+              <Text style={styles.body}>{t('gestureCalib.unusableBody')}</Text>
             </>
           )}
 
@@ -215,13 +327,17 @@ export function GestureCalibrationSheet({
                 <Text style={styles.ctaText}>{t('gestureCalib.finish')}</Text>
               </Pressable>
             )}
-            {phase === 'denied' && (
-              <Pressable style={styles.cta} onPress={skip}>
-                <Text style={styles.ctaText}>{t('gestureCalib.useDefault')}</Text>
-              </Pressable>
+            {(phase === 'unusable' || phase === 'denied') && (
+              <>
+                <Pressable style={styles.cta} onPress={begin}>
+                  <Text style={styles.ctaText}>{t('gestureCalib.retry')}</Text>
+                </Pressable>
+                <Pressable style={styles.skip} onPress={skip} hitSlop={12}>
+                  <Text style={styles.skipText}>{t('gestureCalib.useDefault')}</Text>
+                </Pressable>
+              </>
             )}
-            {/* 건너뛰기는 항상 열어둔다 — 여기서 막히면 그 자리에서 이탈한다. */}
-            {phase !== 'done' && (
+            {(phase === 'intro' || phase === 'noise' || phase === 'measuring') && (
               <Pressable style={styles.skip} onPress={skip} hitSlop={12}>
                 <Text style={styles.skipText}>{t('gestureCalib.skip')}</Text>
               </Pressable>
@@ -261,6 +377,11 @@ const styles = StyleSheet.create({
     width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(88,86,214,0.14)',
   },
+  bigNumber: {
+    fontFamily: typography.monoFontFamilyBold, fontSize: 46, color: colors.textPrimary,
+    includeFontPadding: false,
+  },
+  bigNumberDim: { fontSize: 24, color: colors.textTertiary },
   eyebrow: {
     fontFamily: typography.monoFontFamily, fontSize: 11, letterSpacing: 1.6,
     color: colors.textTertiary, textTransform: 'uppercase', marginBottom: spacing.sm,
@@ -274,6 +395,12 @@ const styles = StyleSheet.create({
   body: {
     fontFamily: typography.bodyFontFamily, fontSize: 14, lineHeight: 21,
     color: colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.sm,
+  },
+  steps: { marginTop: spacing.lg, gap: spacing.xs, alignSelf: 'stretch' },
+  step: {
+    fontFamily: typography.bodyFontFamily, fontSize: 13, color: colors.textSecondary,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: radius.chip,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
   },
   dots: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   dot: { width: 10, height: 10, borderRadius: 5 },

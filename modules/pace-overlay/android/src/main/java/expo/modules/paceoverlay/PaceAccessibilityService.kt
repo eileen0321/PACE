@@ -246,7 +246,7 @@ class PaceAccessibilityService : AccessibilityService() {
     // 스와이프가 실제로 먹혀 다음 영상이 붙고 접근성 트리가 갱신되기까지 실측 ~2.5초가 걸리므로
     // 그보다 넉넉히 잡는다 — 이보다 짧으면 "안 먹힌 것"과 "아직 반영이 안 된 것"을 구분 못 한다.
     private const val NEAR_END_REFIRE_GAP_MS = 4_000L
-    private const val SWIPE_FLING_MS = 120L
+    private const val SWIPE_FLING_MS = 160L
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
     private const val MAX_SINGLE_VIDEO_MS = 90_000L
@@ -1767,9 +1767,19 @@ fun isLikelyPlaying(): Boolean? {
     //     이전: 0.75h→0.25h / 250ms (≈4,600px/s)   지금: 0.70h→0.40h / 120ms (≈5,800px/s)
     //   시작점도 0.70h로 올렸다 — 0.75h는 설명/댓글 입력 영역에 걸려 피드가 아니라 그쪽이 먹는
     //   경우가 있었다(실기기에서 댓글창이 열린 채로 발견).
+    // 🔴 2026-08-31 감속 — 사장님 보고 "한 번에 두 번씩 넘어가는 현상은 그래도 있네".
+    //   실기기 로그로 기전이 확정됐다: 손짓 → triggerNext → dispatchGesture → onCompleted 가
+    //   **정확히 1:1** 인데(제스처 잠금은 정상), VIDEO_ADVANCE 가 0.6초 간격으로 두 번 찍혔다.
+    //   즉 이중 발사가 아니라 **우리 스와이프 한 번에 유튜브가 두 칸을 넘긴 것**이다.
+    //   직전 값(0.70h→0.40h / 120ms)은 2316px 화면에서 약 5,800px/s 로, 플링 인식을 확실히
+    //   하려고 08-12 에 올린 값인데 이번엔 반대로 과했다.
+    //   거리를 줄이고 시간을 늘려 약 3,600px/s 로 낮춘다 — 안드로이드 최소 플링 속도
+    //   (약 50dp/s)보다는 여전히 훨씬 위라 드래그로 오인될 여지는 없다.
+    //   ⚠️ 다시 만질 일이 생기면 두 방향을 같이 보라 — 너무 빠르면 두 칸, 너무 느리면
+    //     중간에 걸리거나 되돌아간다(08-12 주석의 실측 근거).
     val path = Path().apply {
       moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.70f)
-      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.40f)
+      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.45f)
     }
     dispatchSwipe(path, SWIPE_FLING_MS)
   }

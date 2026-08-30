@@ -670,12 +670,26 @@ object PaceHandWaveDetector {
   //   순서가 안 생기고, 한 곳만 가리면 셋 중 하나만 꺼져 성립하지 않는다.
   //   ⚠️ 오탐이 나오면 이 값을 되올리지 말고 **순서/span 조건을 조일 것** — 깊이는 이 자세(카메라가
   //     천장을 보는 거치)에서 원리적으로 못 얻는다.
-  private const val LUMAPASS_DIP_RATIO = 0.97   // 기준 대비 3% 하락 = onset (판정기 실측)
+  // 🔴 2026-08-30 실측 근거로 상향 — 0.97(3% 하락)은 **잡음 분포 한복판**이었다.
+  //   보정 화면의 측정으로 확인: 사장님이 손짓을 하지 않은 상태에서만 모은 12개 표본의
+  //   깊이가 1.0% ~ 3.4% 였다. 문턱 3% 는 그 안에 들어가므로 평소 움직임이 그냥 통과한다.
+  //   실기기 물증(17:58:24~30): span=457ms / 116ms / 91ms 로 세 번 연속 발화 — 손이
+  //   카메라를 가로지르는 데 0.1초는 불가능하다. 전부 잡음이다.
+  //   관측 잡음 상한(3.4%)의 약 3배인 10% 를 요구한다.
+  //   ⚠️ 실제 손짓의 깊이는 **아직 측정하지 못했다**(카메라가 손을 못 본 상태였다).
+  //     감도가 부족하면 보정 화면(GestureCalibrationSheet)으로 본인 값을 재서 낮출 것 —
+  //     그 화면은 잡음 바닥을 먼저 재고 그보다 깊은 것만 손짓으로 인정하므로 추측이 안 섞인다.
+  private const val LUMAPASS_DIP_RATIO = 0.90   // 기준 대비 10% 하락 = onset
+  /**
+   * 통과에 걸린 최소 시간. 80ms 는 실측 잡음(91·116ms)보다 낮아 걸러내지 못했다.
+   * 손이 화각을 가로지르면 최소 이 정도는 걸린다 — 그보다 빠른 것은 조명 변화나 잡음이다.
+   */
+
   private const val LUMAPASS_MIN_REF = 40.0     // 너무 어두우면 판정 불가(0~255)
   private const val LUMAPASS_MIN_SAMPLES = 6
   /** 프레임 속도 진단 로그의 최소 간격(위 lastNearMissLogAtMs 주석 참고). */
   private const val HOT_LOG_MIN_GAP_MS = 500L
-  private const val LUMAPASS_MIN_SPAN_MS = 80.0
+  private const val LUMAPASS_MIN_SPAN_MS = 150.0
   private const val LUMAPASS_MAX_SPAN_MS = 900.0
   private const val LUMAPASS_REF_DECAY = 0.995
   /** 기준선(감쇠 평균) 계수 — 손짓(수백 ms)보다 느리고 조명 변화(수 초)보다 빠르게. */
@@ -721,6 +735,12 @@ object PaceHandWaveDetector {
   //     잡음의 2칸은 일관성 0.5·밀도 0.5로 흩어지고, 손의 2칸은 1.0·1.0으로 붙어 있다.
   //   그러니 이 값을 다시 올리지 말고, 오탐이 나면 일관성·밀도 쪽을 조일 것.
   private const val GROSS_MOTION_CELL_FRACTION = 0.0078     // 256칸 중 2칸 (실기기 실측)
+  /**
+   * gross-motion 단독 발화 허용 여부. 2026-08-30 현재 **꺼둔다**(위 발화 지점 주석의 실측 근거).
+   * 실측 기반 문턱이 나오기 전까지는 이 축이 판정을 좌우하면 안 된다.
+   */
+  private const val GROSS_MOTION_STANDALONE = false
+
   private const val GROSS_MOTION_CELL_FRACTION_MAX = 0.30   // 화면 전체가 변하면 손이 아니라 조명이다(실측 손 최대 0.20)
   // 🔴 2026-08-28 실기기 실측 — 밀도를 **칸 수에 따라 나눈다.** 하나의 값으로는 못 가른다:
   //     손 2칸    밀도 1.0            (붙어 있다)
@@ -1778,7 +1798,20 @@ object PaceHandWaveDetector {
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
       consistency >= GROSS_MOTION_DARKEN_RATIO &&
       density >= (if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG)
-    if (ok) {
+    // 🔴 2026-08-30 실기기 — 이 축을 **단독 발화에서 뺀다.**
+    //   로그 물증(17:47:21~29, 사장님이 앱을 누르려 손을 움직인 8초):
+    //     cells=6/256 → 6 → 6 → 6 → 5 → 2   1.2~1.4초 간격 = 불응시간마다 포화
+    //   손짓이 아니라 **평범한 손 움직임**에 매번 걸렸다.
+    //   원인은 문턱을 내가 시뮬레이션으로 정했기 때문이다(0.55→0.20→0.10→0.06→0.012→0.0078).
+    //   2/256 은 화면의 0.8% 로, 실측 노이즈 분포(cells 2~39 관측) 한복판이다.
+    //   이 파일의 08-21 블록이 정확히 이 실패를 경고했다 —
+    //     "손짓 데이터만 보고 정하면 정확히 이 실패를 반복한다."
+    //   sweep 축도 같은 이유로 단독 발화가 막혔다(08-21: "이 축은 살릴 수 없다 —
+    //   노이즈와 완전히 겹친다"). 같은 처방을 적용한다.
+    //   ⚠️ 되살리려면 08-21 과 같은 방식으로 재라 — diagEnabled 로 20분 이상,
+    //     "가만히 있는 구간"을 포함해 전수 기록하고 문턱별 통과 프레임 수 표를 만들 것.
+    //     계산과 로그는 그대로 두므로 그 측정은 지금도 할 수 있다.
+    if (ok && GROSS_MOTION_STANDALONE) {
       fireTrigger(
         "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density lag=${now - ref.first}ms",
         onWave

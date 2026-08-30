@@ -591,6 +591,9 @@ object PaceHandWaveDetector {
   /** 가림이 끝나고 밝기가 이 비율 이상으로 돌아와야 지나간 것으로 본다(위 오탐 주석 참고). */
   // 0.7 -> 0.9 — 문턱을 15%까지 내린 만큼 회복은 더 확실히 요구한다. 손이 지나간 뒤에는 거의 원래
   // 밝기로 돌아온다(실측 0.83 -> 0.91~0.99). 그림자·소등은 이 조건에서 걸린다.
+  /** occlusion 단독 발화 허용 여부 — 2026-08-30 현재 꺼둔다(위 발화 지점 주석 참고). */
+  private const val OCCLUSION_STANDALONE = false
+
   private const val LUMA_RECOVER_RATIO = 0.9
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -686,7 +689,12 @@ object PaceHandWaveDetector {
   //   ⚠️ 이 값은 이 파일 역사상 처음으로 **잡음과 손짓을 둘 다 측정해서** 정한 값이다.
   //     다시 만질 일이 생기면 같은 방식으로 양쪽을 재라 — 한쪽만 보고 정하면 이 파일이
   //     열 번 반복한 실패(너무 무르면 계속 넘어가고, 조이면 하나도 안 먹는다)를 또 반복한다.
-  private const val LUMAPASS_DIP_RATIO = 0.955  // 기준 대비 4.5% 하락 = onset
+  //   2차 실측(3번 중 1번 성공 구간)에서 성공/실패가 명확히 갈렸다:
+  //     성공: A=0.87 B=0.91 C=0.90 (9~13%) · A=0.91 B=0.92 C=0.94 (6~9%)
+  //     실패: A=0.95 B=0.95 C=0.96 (4~5%, 한 구간 모자람) · A=0.96 B=0.95 C=0.97
+  //   진단 프로브도 필요문턱=0.95 / 0.97 을 직접 찍었다. 얕게 스치면 한 구간이 모자란다.
+  //   잡음 상한이 3.4% 이므로 4%(0.96)까지는 안전하게 내릴 수 있다.
+  private const val LUMAPASS_DIP_RATIO = 0.96   // 기준 대비 4% 하락 = onset (잡음 상한 3.4% 바로 위)
   /**
    * 통과에 걸린 최소 시간. 80ms 는 실측 잡음(91·116ms)보다 낮아 걸러내지 못했다.
    * 손이 화각을 가로지르면 최소 이 정도는 걸린다 — 그보다 빠른 것은 조명 변화나 잡음이다.
@@ -1706,21 +1714,48 @@ object PaceHandWaveDetector {
    *     비용은 격자에서 유도하는 덧셈뿐이고, 자세가 어떻든 동작한다.
    *   ⚠️ 회전값으로 축을 고르는 방식으로 되돌리지 말 것 — 거치 각도가 바뀌는 실사용에서 반드시 깨진다.
    */
+  /** 구간별 셀 값을 담아 정렬하는 재사용 버퍼 — 프레임마다 새로 할당하지 않기 위한 것. */
+  private val bandCells = Array(3) { IntArray(MOTION_GRID * MOTION_GRID) }
+  private val bandCellCount = IntArray(3)
+
+  /**
+   * 격자를 3구간으로 나눠 구간별 밝기를 낸다.
+   *
+   * 🔴 2026-08-30 — **구간 전체 평균에서 "가장 어두운 4분위 평균"으로 바꾼다.**
+   *   사장님 지적: "카메라 가까운 지점부터 50cm 정도 거리로 트래킹하라고 한 거 아니냐."
+   *   맞는 지적이고, 원인이 여기 있었다. 한 구간은 셀이 약 85개(256/3)인데 예전엔 그걸
+   *   전부 평균냈다. 그러면 손이 가리는 면적이 그대로 희석된다:
+   *     15cm 손 → 셀 40개쯤 가림 → 평균이 크게 떨어짐 → 잡힘
+   *     50cm 손 → 셀 5개쯤 가림  → 1/17 로 희석    → 안 잡힘
+   *   즉 **거리가 멀수록 구조적으로 불리**했고, 문턱을 어떻게 만져도 고쳐지지 않는다
+   *   (실측: 성공한 통과는 전부 9~13% 깊이, 실패는 3~5%였다).
+   *
+   *   가장 어두운 4분위만 평균내면 "가려진 부분이 얼마나 어두워졌나"를 보게 되어
+   *   가린 면적에 훨씬 덜 휘둘린다. 기준값(brightRef)도 같은 통계로 쌓이므로 비율은
+   *   그대로 정규화된다 — 문턱의 의미가 바뀌지 않는다.
+   */
   private fun bandsFromGrid(grid: IntArray, axis: Int): DoubleArray {
-    val sums = DoubleArray(3)
-    val counts = IntArray(3)
+    bandCellCount[0] = 0; bandCellCount[1] = 0; bandCellCount[2] = 0
     for (i in grid.indices) {
       val gy = i / MOTION_GRID
       val gx = i % MOTION_GRID
       val b = ((if (axis == 0) gy else gx) * 3) / MOTION_GRID
       val bi = if (b > 2) 2 else b
-      sums[bi] += grid[i]
-      counts[bi]++
+      bandCells[bi][bandCellCount[bi]++] = grid[i]
     }
-    for (i in 0..2) if (counts[i] > 0) sums[i] /= counts[i]
-    return sums
+    val out = DoubleArray(3)
+    for (bi in 0..2) {
+      val n = bandCellCount[bi]
+      if (n == 0) continue
+      java.util.Arrays.sort(bandCells[bi], 0, n)
+      // 하위 25%(가장 어두운 쪽)만 본다. 최소 4개는 확보해 한두 칸 잡음에 휘둘리지 않게 한다.
+      val take = kotlin.math.max(4, n / 4).coerceAtMost(n)
+      var s = 0L
+      for (k in 0 until take) s += bandCells[bi][k]
+      out[bi] = s.toDouble() / take
+    }
+    return out
   }
-
   private fun lumaGrid(proxy: ImageProxy): IntArray {
     val plane = proxy.planes[0]
     val buf = plane.buffer.duplicate()
@@ -1884,7 +1919,17 @@ object PaceHandWaveDetector {
     val extreme = lumaHistory.maxByOrNull { kotlin.math.abs(it.second - brightestInWindow) }?.second ?: luma
     val devRatio = if (brightestInWindow > 0.0) kotlin.math.abs(extreme - brightestInWindow) / brightestInWindow else 0.0
     val recovered = kotlin.math.abs(luma - brightestInWindow) <= brightestInWindow * (1.0 - LUMA_RECOVER_RATIO)
-    if (devRatio >= (1.0 - dropTh) && recovered) {
+    // 🔴 2026-08-30 — 이 축도 **단독 발화에서 뺀다.**
+    //   이 축은 "창 안 어느 순간 전체 밝기가 크게 흔들렸고 지금은 돌아왔다"만 본다 —
+    //   속도도, 공간 구조도, 순서도 보지 않는다. 화면 내용 변화·조명·사람의 이동 등
+    //   손짓이 아닌 것과 구분할 근거가 판정 안에 하나도 없다.
+    //   오늘(2026-08-30) 축들이 차례로 오탐의 주범이 됐고(gross-motion 24건 → lumapass →
+    //   occlusion), 그 셋의 공통점이 "판별 조건이 밝기 크기 하나뿐"이라는 것이다.
+    //   sweep·gross-motion 과 같은 처방을 적용한다. 계산과 로그는 남기므로 나중에
+    //   08-21 방식(잡음/손짓 양쪽 전수측정)으로 재서 되살릴 수 있다.
+    //   ⚠️ lumapass 는 남긴다 — 세 구간이 **순서대로** 어두워질 것을 요구하므로 이 셋과
+    //     달리 구조적 판별 근거가 있다.
+    if (devRatio >= (1.0 - dropTh) && recovered && OCCLUSION_STANDALONE) {
       fireTrigger(
         "occlusion near=$nearHandRecent 편차=$devRatio 기준=$brightestInWindow now=$luma 회복=$recovered",
         onWave

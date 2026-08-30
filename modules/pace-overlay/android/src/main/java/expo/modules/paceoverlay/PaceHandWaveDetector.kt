@@ -706,11 +706,22 @@ object PaceHandWaveDetector {
   private const val LUMAPASS_MIN_SAMPLES = 6
   /** 프레임 속도 진단 로그의 최소 간격(위 lastNearMissLogAtMs 주석 참고). */
   private const val HOT_LOG_MIN_GAP_MS = 500L
-  private const val LUMAPASS_MIN_SPAN_MS = 150.0
-  private const val LUMAPASS_MAX_SPAN_MS = 900.0
+  // 🔴 2026-08-30 2차 — 150ms 는 **빠른 손짓을 잘랐다**(사장님 지적: "빠르게 하면 또 안 된다").
+  //   손짓을 휙 하면 100~140ms 에 끝나는데 그게 전부 버려졌다.
+  //   원래 150 으로 올린 이유는 91·116ms 짜리 잡음을 막기 위해서였지만, 이제 깊이 쪽 판별이
+  //   훨씬 좋아졌다 — 구간을 가장 어두운 4분위로 재고(거리 희석 제거) 문턱도 잡음 상한(3.4%)
+  //   위인 4% 다. span 에 덜 기대도 된다.
+  private const val LUMAPASS_MIN_SPAN_MS = 100.0
+  // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
+  //   879ms 짜리도 통과해 발화했다 — 0.9초에 걸쳐 조립된 것은 손짓이 아니라 느린 움직임이고,
+  //   게다가 **한참 뒤에** 터지므로 사용자에게는 "반응이 느리다"로 체감된다(사장님 지적).
+  //   실측 상한(351ms)에 여유를 둔 500ms 로 조인다. 오탐과 체감지연을 동시에 줄인다.
+  private const val LUMAPASS_MAX_SPAN_MS = 500.0
   private const val LUMAPASS_REF_DECAY = 0.995
   /** 기준선(감쇠 평균) 계수 — 손짓(수백 ms)보다 느리고 조명 변화(수 초)보다 빠르게. */
   private const val LUMAPASS_BASE_DECAY = 0.97
+  /** 이 장수까지는 참평균으로 즉시 수렴시킨다 — 30프레임이면 1초 안에 기준이 선다. */
+  private const val REF_WARM_FRAMES = 30
 
   private const val GROSS_MOTION_WINDOW_MS = 700L
   /** 이만큼 전 프레임과 비교한다 — 손짓 한 번의 시간 규모(80ms 간격 기준 2~3프레임). */
@@ -870,6 +881,8 @@ object PaceHandWaveDetector {
   // 축별로 **분리된** 상태를 갖는다(0=행, 1=열). 하나를 공유하면 두 축의 표본이 섞여 이력이
   // 통째로 오염된다 — 순서 판정은 시간 순서가 생명이라 그러면 아무것도 못 잡는다.
   private val dipHistory = arrayOf(ArrayDeque<DoubleArray>(), ArrayDeque<DoubleArray>())
+  /** 기준값이 아직 데워지는 중인 프레임 수(축별). 위 alpha 계산 참고. */
+  private val refWarmCount = intArrayOf(0, 0)
   private val brightRef = arrayOf(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 0.0))
   private val lastLumaPassDiagAtMs = longArrayOf(0L, 0L)
   private val lastLumaPassProbeAtMs = longArrayOf(0L, 0L)
@@ -1585,6 +1598,7 @@ object PaceHandWaveDetector {
     // 캘리브레이션 중에는 문턱을 1% 로 활짝 열어 **실제로 얼마나 어두워졌는지**를 관측한다.
     // 판정용이 아니라 측정용이므로 여기서 느슨한 것이 맞다.
     val effectiveDipRatio = if (calibrationMode) 0.99 else lumapassDipRatio
+    if (refWarmCount[axis] < REF_WARM_FRAMES) refWarmCount[axis]++
     val hist = dipHistory[axis]
     val ref = brightRef[axis]
     hist.addLast(doubleArrayOf(now.toDouble(), bands[0], bands[1], bands[2]))
@@ -1597,7 +1611,14 @@ object PaceHandWaveDetector {
     //   볼 수 있다(밝아지는 값은 기준을 밀어올릴 뿐이라 편차가 영원히 0이다). 평균 기준선이어야
     //   양방향 편차를 잴 수 있다. 계수는 손짓(수백 ms)보다 느리고 조명 변화(수 초)보다 빠르게 둔다.
     for (i in 0..2) {
-      ref[i] = if (ref[i] <= 0.0) bands[i] else ref[i] * LUMAPASS_BASE_DECAY + bands[i] * (1.0 - LUMAPASS_BASE_DECAY)
+      // 🔴 2026-08-30 — **첫 손짓만 실패하던 원인.** 기준값이 감쇠 0.97 의 EMA 라 안정되는 데
+      //   약 33프레임(≈1.1초)이 걸린다. 그 사이에 손짓하면 기준이 아직 실제 밝기를 따라가는
+      //   중이라 비율이 제대로 안 나온다(사장님 지적: "확실히 처음 손짓 안 되는 현상이 많다").
+      //   → 처음 REF_WARM_FRAMES 장까지는 **참평균**으로 즉시 수렴시키고, 그 뒤에 EMA 로
+      //     넘어간다. 정상 구간의 동작(느린 조명 변화 추종)은 그대로다.
+      val warm = refWarmCount[axis]
+      val alpha = if (warm < REF_WARM_FRAMES) 1.0 / (warm + 1).toDouble() else (1.0 - LUMAPASS_BASE_DECAY)
+      ref[i] = if (ref[i] <= 0.0) bands[i] else ref[i] * (1.0 - alpha) + bands[i] * alpha
     }
     // 🔬 튜닝 근거 확보 — 이 축이 왜 안 걸렸는지를 수치로 남긴다. 거치 자세(카메라가 천장을 보는
     //   화각)에서는 손이 프레임의 작은 부분만 덮어 **구간 평균이 15%나 안 떨어질 수 있다.**

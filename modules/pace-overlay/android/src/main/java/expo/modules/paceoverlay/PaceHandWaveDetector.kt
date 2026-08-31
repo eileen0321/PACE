@@ -729,6 +729,8 @@ object PaceHandWaveDetector {
    * 세 구간이 거의 동시에 꺼지므로 안 생긴다 — 이 둘을 가르는 핵심 조건이다.
    * span 만으로는 못 막는다: A·B 가 1ms, B·C 가 99ms 여도 span 은 100ms 다.
    */
+  /** 통과 시점 기준 "최근에 손이 보였는가"의 창. 위 발화 지점 주석 참고. */
+  private const val LUMAPASS_HAND_RECENT_MS = 1200L
   private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
@@ -1729,6 +1731,11 @@ object PaceHandWaveDetector {
     val gap1 = if (fwd) tM - tR else tM - tL
     val gap2 = if (fwd) tL - tM else tR - tM
     if (gap1 < LUMAPASS_MIN_GAP_MS || gap2 < LUMAPASS_MIN_GAP_MS) return
+    // ⚠️ 2026-08-31 — 여기 있던 "최근 1.2초 안에 손이 보였을 때만 발화" 가드를 뺐다.
+    //   얼굴 오탐을 막으려 넣었지만, 세션 시작 직후에는 손이 한 번도 안 잡혔을 수 있어
+    //   **첫 손짓을 막을 수 있는 구조**였다(사장님 지적). 실측에서는 차단 0건이라 효과를
+    //   본 적도 없다 — 검증되지 않은 위험만 남는다.
+    //   얼굴 오탐이 실제로 남아 있는지 먼저 확인하고, 필요하면 그때 다시 넣는다.
 
     // ⚠️ 방향으로 거르지 않는다 — 안드에서 "사용자 왼→오"가 이미지의 어느 쪽인지 아직 실측으로
     //   확정되지 않았다(2026-08-26에 부호를 반대로 넣어 손짓을 통째로 죽인 적이 있다).
@@ -1767,47 +1774,36 @@ object PaceHandWaveDetector {
    *     비용은 격자에서 유도하는 덧셈뿐이고, 자세가 어떻든 동작한다.
    *   ⚠️ 회전값으로 축을 고르는 방식으로 되돌리지 말 것 — 거치 각도가 바뀌는 실사용에서 반드시 깨진다.
    */
-  /** 구간별 셀 값을 담아 정렬하는 재사용 버퍼 — 프레임마다 새로 할당하지 않기 위한 것. */
-  private val bandCells = Array(3) { IntArray(MOTION_GRID * MOTION_GRID) }
-  private val bandCellCount = IntArray(3)
-
   /**
-   * 격자를 3구간으로 나눠 구간별 밝기를 낸다.
+   * 격자를 3구간으로 나눠 구간별 평균 밝기를 낸다.
    *
-   * 🔴 2026-08-30 — **구간 전체 평균에서 "가장 어두운 4분위 평균"으로 바꾼다.**
-   *   사장님 지적: "카메라 가까운 지점부터 50cm 정도 거리로 트래킹하라고 한 거 아니냐."
-   *   맞는 지적이고, 원인이 여기 있었다. 한 구간은 셀이 약 85개(256/3)인데 예전엔 그걸
-   *   전부 평균냈다. 그러면 손이 가리는 면적이 그대로 희석된다:
-   *     15cm 손 → 셀 40개쯤 가림 → 평균이 크게 떨어짐 → 잡힘
-   *     50cm 손 → 셀 5개쯤 가림  → 1/17 로 희석    → 안 잡힘
-   *   즉 **거리가 멀수록 구조적으로 불리**했고, 문턱을 어떻게 만져도 고쳐지지 않는다
-   *   (실측: 성공한 통과는 전부 9~13% 깊이, 실패는 3~5%였다).
+   * 🔴 2026-08-31 4분위 되돌림 — 08-30 에 "거리 희석"을 고치려고 구간 평균 대신
+   *   **가장 어두운 4분위 평균**을 썼는데, 그게 신호를 통째로 깨뜨렸다.
+   *   실측(2026-08-31, 손짓 10회 이상 미발화):
+   *     A=0.84 B=1.08 C=1.01 · A=0.88 B=1.00 C=1.01 · A=0.92 B=1.07 C=1.06
+   *     → **한 구간만 어두워지고 나머지는 오히려 밝아진다.** 세 구간 순차 조건이
+   *       성립할 수가 없다. 기준값도 ref=72/139/125 처럼 구간마다 두 배씩 벌어졌다.
+   *   원인: 가장 어두운 셀들은 이미 어두운 영역(그림자·어두운 옷)을 잡고 있어서
+   *   손이 지나가도 그 셀들은 거의 안 변한다 — 정작 손이 덮는 밝은 영역을 놓친다.
+   *   되돌리기 전에는 A=0.87 B=0.91 C=0.90 처럼 세 구간이 **함께** 어두워졌다.
    *
-   *   가장 어두운 4분위만 평균내면 "가려진 부분이 얼마나 어두워졌나"를 보게 되어
-   *   가린 면적에 훨씬 덜 휘둘린다. 기준값(brightRef)도 같은 통계로 쌓이므로 비율은
-   *   그대로 정규화된다 — 문턱의 의미가 바뀌지 않는다.
+   *   ⚠️ 거리에 따른 희석은 여전히 실재하는 문제다(먼 손은 셀 몇 개만 덮어 평균이 희석된다).
+   *     다만 "어두운 쪽만 보기"는 답이 아니었다. 다시 시도한다면 **손이 덮은 영역을
+   *     찾아서** 그 안에서만 재는 방식이어야 한다(변화량이 큰 셀들을 고르는 식).
    */
   private fun bandsFromGrid(grid: IntArray, axis: Int): DoubleArray {
-    bandCellCount[0] = 0; bandCellCount[1] = 0; bandCellCount[2] = 0
+    val sums = DoubleArray(3)
+    val counts = IntArray(3)
     for (i in grid.indices) {
       val gy = i / MOTION_GRID
       val gx = i % MOTION_GRID
       val b = ((if (axis == 0) gy else gx) * 3) / MOTION_GRID
       val bi = if (b > 2) 2 else b
-      bandCells[bi][bandCellCount[bi]++] = grid[i]
+      sums[bi] += grid[i]
+      counts[bi]++
     }
-    val out = DoubleArray(3)
-    for (bi in 0..2) {
-      val n = bandCellCount[bi]
-      if (n == 0) continue
-      java.util.Arrays.sort(bandCells[bi], 0, n)
-      // 하위 25%(가장 어두운 쪽)만 본다. 최소 4개는 확보해 한두 칸 잡음에 휘둘리지 않게 한다.
-      val take = kotlin.math.max(4, n / 4).coerceAtMost(n)
-      var s = 0L
-      for (k in 0 until take) s += bandCells[bi][k]
-      out[bi] = s.toDouble() / take
-    }
-    return out
+    for (i in 0..2) if (counts[i] > 0) sums[i] /= counts[i]
+    return sums
   }
   private fun lumaGrid(proxy: ImageProxy): IntArray {
     val plane = proxy.planes[0]

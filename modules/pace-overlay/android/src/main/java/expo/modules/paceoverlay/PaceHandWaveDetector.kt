@@ -852,6 +852,20 @@ object PaceHandWaveDetector {
    * 1.5 는 "세로보다 가로가 1.5배 이상 길다"는 뜻이다.
    */
   private const val GROSS_MOTION_MIN_ASPECT = 1.5
+  /**
+   * 변한 영역의 가로/세로 최대 비율. **손은 세로로 길고, 얼굴은 가로세로가 비슷하다.**
+   *
+   * 🔴 2026-08-31 라벨된 실측:
+   *   얼굴만 움직임: 1.0
+   *   사장님 손짓:   0.45 · 0.46 · 0.57 · 0.80  ← 전부 세로가 김(손가락 때문)
+   *
+   * ⚠️ 오늘 이 조건을 **반대 방향으로**(가로 >= 1.5) 넣었다가 손짓을 전부 죽였다.
+   *   변하는 영역은 "지나간 경로"가 아니라 그 순간 손이 있는 자리라서 세로가 길다.
+   * ⚠️ 얼굴 표본이 1건뿐이다. 각도·거리에 따라 0.9 아래로 나오면 효과가 없고,
+   *   손짓이 0.9 를 넘는 경우가 있으면 그 손짓이 막힌다. 로그의 가로세로= 값으로
+   *   확인하고 조정할 것.
+   */
+  private const val GROSS_MOTION_MAX_ASPECT = 0.9
   private const val GROSS_MOTION_MIN_DENSITY_BIG = 0.15
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
@@ -1970,7 +1984,8 @@ object PaceHandWaveDetector {
     val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
       consistency >= GROSS_MOTION_DARKEN_RATIO &&
-      density >= (if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG)
+      density >= (if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG) &&
+      aspect <= GROSS_MOTION_MAX_ASPECT
     // 🔴 2026-08-30 실기기 — 이 축을 **단독 발화에서 뺀다.**
     //   로그 물증(17:47:21~29, 사장님이 앱을 누르려 손을 움직인 8초):
     //     cells=6/256 → 6 → 6 → 6 → 5 → 2   1.2~1.4초 간격 = 불응시간마다 포화

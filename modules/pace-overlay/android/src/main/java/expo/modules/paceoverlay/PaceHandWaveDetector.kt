@@ -811,7 +811,15 @@ object PaceHandWaveDetector {
   //   잡음 2칸 2건 전부 차단.
   private const val GROSS_MOTION_SMALL_CELLS = 3            // 이 이하면 "작은 이벤트"
   private const val GROSS_MOTION_MIN_DENSITY_SMALL = 0.9    // 작은 이벤트는 인접해야 한다
-  private const val GROSS_MOTION_MIN_DENSITY_BIG = 0.30     // 큰 이벤트는 넓게 퍼져도 인정
+  // 🔴 2026-08-31 — **밀도 조건이 정작 손짓을 벌주고 있었다.**
+  //   밀도 = 변한 칸 / 그 칸들을 감싸는 사각형 넓이. 그런데 손이 가로로 지나가면
+  //   길고 얇은 띠가 되므로 사각형이 넓어져 밀도가 구조적으로 낮게 나온다.
+  //   실측 near-miss(사장님 손짓이 안 먹던 순간):
+  //     changed=12/256 일관성=0.917 밀도=0.190  ← 12칸이 깨끗하게 변했는데 밀도에서 잘림
+  //     changed=6/256  일관성=0.833 밀도=0.150
+  //   흩어진 잡음은 칸 수 하한(8칸, GROSS_MOTION_CELL_FRACTION=0.03)이 이미 거른다.
+  //   관측된 손짓 밀도(0.15~0.19)를 담도록 0.30 → 0.15 로 내린다.
+  private const val GROSS_MOTION_MIN_DENSITY_BIG = 0.15
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
   // 0.8이면 둘 사이 빈 구간에 선이 놓인다. **이 값은 낮추지 말 것** — 유일한 판별선이다.

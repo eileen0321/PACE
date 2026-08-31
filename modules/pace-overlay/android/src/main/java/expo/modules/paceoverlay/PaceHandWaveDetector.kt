@@ -819,6 +819,12 @@ object PaceHandWaveDetector {
   //     changed=6/256  일관성=0.833 밀도=0.150
   //   흩어진 잡음은 칸 수 하한(8칸, GROSS_MOTION_CELL_FRACTION=0.03)이 이미 거른다.
   //   관측된 손짓 밀도(0.15~0.19)를 담도록 0.30 → 0.15 로 내린다.
+  /**
+   * 변한 영역의 가로/세로 최소 비율. 가로 통과는 넓고 낮은 띠가 되고,
+   * 정면 접근은 가로세로가 비슷한 덩어리가 된다 — 이 둘을 형태로 가른다.
+   * 1.5 는 "세로보다 가로가 1.5배 이상 길다"는 뜻이다.
+   */
+  private const val GROSS_MOTION_MIN_ASPECT = 1.5
   private const val GROSS_MOTION_MIN_DENSITY_BIG = 0.15
   /** 변한 칸 중 **어두워진** 칸의 최소 비율(위 오탐 방어 ②). */
   // 0.7 -> 0.8 — 칸 수 문턱을 내린 만큼 이쪽을 조인다. 실측에서 손은 1.0, 잡음은 0.0~0.6이라
@@ -1913,6 +1919,26 @@ object PaceHandWaveDetector {
     //   ⚠️ 밀도 조건을 빼지 말 것 — 문턱을 3칸까지 내릴 수 있는 근거가 이것이다.
     val bbox = if (changed > 0) ((maxX - minX + 1) * (maxY - minY + 1)) else 1
     val density = changed.toDouble() / bbox
+
+    // ⚠️ 2026-08-31 — 여기서 가로/세로 비율 조건(가로가 1.5배 이상)을 걸었다가 **뺐다.**
+    //   내 가정이 정반대였다. 실측한 사장님 손짓의 가로세로:
+    //     changed=23/256 → 0.46 · changed=15/256 → 0.45 · changed=25/256 → 0.80
+    //   **세로가 더 길다.** 손 자체가 세로로 길고(손가락), 변하는 영역은 "지나간 경로"가
+    //   아니라 **그 순간 손이 있는 자리**이기 때문이다. 가로를 요구하니 손짓이 전부 막혔다.
+    //   값(aspect)은 계속 계산·로깅한다 — 얼굴 쪽 분포를 모아 비교하면 반대 방향으로
+    //   쓸 수 있을지 판단할 근거가 된다(손 0.45~0.80 vs 얼굴 ?).
+    // (원래 의도) 변한 영역의 모양으로 손과 얼굴을 가른다:
+    //   사장님 지적: "얼굴만 다가가도 넘어가네, 다시 얼굴 뒤로 빼도 넘어가고"
+    //   이 축은 지금까지 "얼마나 많이/얼마나 어둡게 변했나"만 봤다. 크기만 보면 얼굴이
+    //   다가오는 것과 손이 지나가는 것이 구분되지 않는다 — 둘 다 큰 물체가 화면을 덮는다.
+    //   그런데 **모양이 다르다**(사장님이 앞서 짚으신 그 차이다):
+    //     손이 가로로 지나감  → 넓고 낮은 띠   (가로 >> 세로)
+    //     얼굴이 정면에서 접근 → 가운데 뭉친 덩어리 (가로 ≈ 세로)
+    //   밀도 계산에 이미 그 사각형이 있으므로 비율만 보면 된다. 크기 문턱과 달리
+    //   **감도를 깎지 않고** 형태로만 거른다.
+    val bw = maxX - minX + 1
+    val bh = maxY - minY + 1
+    val aspect = if (bh > 0) bw.toDouble() / bh else 0.0
     val consistency = kotlin.math.max(darkenRatio, 1.0 - darkenRatio)
     val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
@@ -1933,12 +1959,12 @@ object PaceHandWaveDetector {
     //     계산과 로그는 그대로 두므로 그 측정은 지금도 할 수 있다.
     if (ok && GROSS_MOTION_STANDALONE) {
       fireTrigger(
-        "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density lag=${now - ref.first}ms",
+        "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density 가로세로=$aspect lag=${now - ref.first}ms",
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {
       if (now - lastNearMissLogAtMs >= HOT_LOG_MIN_GAP_MS) { lastNearMissLogAtMs = now
-      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=${if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG}) changed=$changed/${grid.size}") }
+      Log.i(TAG, "gross-motion near-miss frac=$fraction(th=$GROSS_MOTION_CELL_FRACTION~$GROSS_MOTION_CELL_FRACTION_MAX) 일관성=$consistency(th=$GROSS_MOTION_DARKEN_RATIO) 밀도=$density(th=${if (changed <= GROSS_MOTION_SMALL_CELLS) GROSS_MOTION_MIN_DENSITY_SMALL else GROSS_MOTION_MIN_DENSITY_BIG}) changed=$changed/${grid.size} 가로세로=$aspect(th=$GROSS_MOTION_MIN_ASPECT)") }
     }
   }
 

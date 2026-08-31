@@ -724,6 +724,12 @@ object PaceHandWaveDetector {
   //   원래 150 으로 올린 이유는 91·116ms 짜리 잡음을 막기 위해서였지만, 이제 깊이 쪽 판별이
   //   훨씬 좋아졌다 — 구간을 가장 어두운 4분위로 재고(거리 희석 제거) 문턱도 잡음 상한(3.4%)
   //   위인 4% 다. span 에 덜 기대도 된다.
+  /**
+   * 이웃 구간의 onset 사이 최소 시간차. 가로 통과에서는 반드시 생기고, 정면 접근에서는
+   * 세 구간이 거의 동시에 꺼지므로 안 생긴다 — 이 둘을 가르는 핵심 조건이다.
+   * span 만으로는 못 막는다: A·B 가 1ms, B·C 가 99ms 여도 span 은 100ms 다.
+   */
+  private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
   //   879ms 짜리도 통과해 발화했다 — 0.9초에 걸쳐 조립된 것은 손짓이 아니라 느린 움직임이고,
@@ -1710,6 +1716,19 @@ object PaceHandWaveDetector {
     if (!fwd && !bwd) return
     val span = if (fwd) tL - tR else tR - tL
     if (span < LUMAPASS_MIN_SPAN_MS || span > LUMAPASS_MAX_SPAN_MS) return
+
+    // 🔴 2026-08-31 — **순서만 보고 간격을 안 봤다.** 사장님 지적이 정확했다:
+    //   "얼굴은 정면에서 다가오는 거고 손은 왼쪽에서 오른쪽인데 같은 거야?"
+    //   다르다. 그런데 이 검사가 빠져 있어서 같게 취급됐다.
+    //     손이 가로로 지나감   → A 어두워짐 → (시간차) → B → (시간차) → C
+    //     얼굴이 정면에서 접근 → A·B·C 가 거의 **동시에** 어두워짐
+    //   기존 조건은 tR < tM < tL 이라는 **부등호**뿐이라, 세 구간이 1ms 차이로 꺼져도
+    //   "순서가 맞다"로 통과했다. 정면 접근이 가로 통과로 둔갑하는 경로가 이것이다.
+    //   실측(2026-08-31): 얼굴을 가까이 했다 멀어질 때 lumapass 가 4건 발화했다.
+    //   → 이웃 구간 사이에 최소 시간차를 요구한다. 가로로 실제 훑고 지나가야만 생기는 간격이다.
+    val gap1 = if (fwd) tM - tR else tM - tL
+    val gap2 = if (fwd) tL - tM else tR - tM
+    if (gap1 < LUMAPASS_MIN_GAP_MS || gap2 < LUMAPASS_MIN_GAP_MS) return
 
     // ⚠️ 방향으로 거르지 않는다 — 안드에서 "사용자 왼→오"가 이미지의 어느 쪽인지 아직 실측으로
     //   확정되지 않았다(2026-08-26에 부호를 반대로 넣어 손짓을 통째로 죽인 적이 있다).

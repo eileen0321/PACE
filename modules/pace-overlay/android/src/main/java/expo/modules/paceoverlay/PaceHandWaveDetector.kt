@@ -118,6 +118,11 @@ object PaceHandWaveDetector {
   //   웜업(60ms)과 같은 발상을 "손이 보이는 동안"으로 확장한 것이다.
   private const val HAND_ACTIVE_PROCESS_INTERVAL_MS = 80L
   /** 마지막 랜드마크 이후 이 시간 안이면 "손이 프레임에 있다"로 보고 위 간격을 쓴다. */
+  /**
+   * 손이 화면에 나타난 뒤 이 시간 안에 판정돼야 손짓으로 인정한다.
+   * 실측: 정상 손짓 165·644ms / 자세 변화 오탐 17,210·18,476ms (위 발화 지점 주석 참고).
+   */
+  private const val HAND_FRESH_MAX_MS = 3000L
   private const val HAND_ACTIVE_WINDOW_MS = 700L
   //   ④ — 불응 구간(1.2초) 동안 추론을 통째로 건너뛰던 최적화(2026-08-01)가, 그 사이 sizeHistory/
   //   posHistory를 텅 빈 채로 유지시킨다. 그래서 불응이 끝난 **뒤에도** 비교할 과거 샘플이 쌓일
@@ -2588,7 +2593,17 @@ object PaceHandWaveDetector {
     // 접근(밀기)·스윕(좌우)·glide(어떤 방향이든)는 OR — 뭘 하든 사용자 의도는 "다음 영상"으로 동일하다.
     // 가로지르기(traversed)는 자체 방향 게이트가 있으므로 oneWayReverse를 적용하지 않는다 —
     // 그쪽은 애초에 왼→오만 통과시킨다. 방향을 모르는 속도 축에만 건다.
-    if ((((grew || swept || grewFast || glideFires) && !oneWayReverse) || traversed) && pastRefractory) {
+    // 🔴 2026-08-31 — **손이 화면에 나타난 지 얼마나 됐는지**로 자세 변화를 거른다.
+    //   사장님 지적 "그냥 자세만 바꾸거나 해도 넘어가네". 실측이 명확히 갈렸다:
+    //     정상 손짓:  지연 = 165ms · 644ms
+    //     자세 바꿈:  지연 = 17,210ms · 18,476ms   ← 17~18초
+    //   몸이 오래 화면에 있다가 앞으로 기울이면 growth(크기 증가) 축이 "손이 다가온다"로 읽는다.
+    //   손짓은 나타나자마자 지나가는 동작이라 1초를 넘지 않는다. 3초는 "손을 들었다가 잠깐
+    //   망설이고 흔드는" 경우까지 넉넉히 담는 값이다(실측 오탐 17초와는 5배 이상 떨어져 있다).
+    //   ⚠️ lumapass 는 이 게이트를 안 탄다 — 손 랜드마크가 없어도 도는 축이라
+    //     handAppearedAtMs 가 의미를 갖지 않는다.
+    val handFresh = handAppearedAtMs > 0L && now - handAppearedAtMs <= HAND_FRESH_MAX_MS
+    if ((((grew || swept || grewFast || glideFires) && !oneWayReverse) || traversed) && pastRefractory && handFresh) {
       val by = when {
         traversed -> "traverse(dir=$traverseDir)"
         glideFires -> "glide"

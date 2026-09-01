@@ -35,6 +35,7 @@ import { ShortsHotOverlay } from '../../components/overlays/ShortsHotOverlay';
 import { ShortsSearchOverlay } from '../../components/overlays/ShortsSearchOverlay';
 import { useShortsHotStore } from '../../store/useShortsHotStore';
 import { diagLog } from '../../services/diagLog';
+import { setFeedWatching } from '../../services/updates';
 import { useShortsSearchStore } from '../../store/useShortsSearchStore';
 import { TikTokSearchOverlay } from '../../components/overlays/TikTokSearchOverlay';
 import { FocusSessionExtendModal } from '../../components/home/FocusSessionExtendModal';
@@ -321,6 +322,17 @@ export default function PaceFeedScreen() {
   // 틱톡은 큐가 없어(현재 없음 == current) — platform이 tiktok이면 큐 유무와 무관하게 재생 가능.
   const playing = (platform === 'tiktok' || current != null) && status !== 'PAUSED';
 
+  // 🔴 2026-09-02 감사 — OTA 강제 리로드의 "시청 중이면 미룬다" 가드가 항상 false였다
+  //   (services/updates/index.ts의 isUserMidSession 주석: usePlayerStore는 이 피드가 쓰지 않는
+  //   옛 폴백 스토어고, useTimerStore는 iOS에서 시작되지 않는다). 그 결과 쇼츠를 보는 도중에
+  //   업데이트가 도착하면 그대로 앱이 재시작돼 큐·세션·재생 위치가 날아갔다.
+  //   여기서 실제 재생 상태를 알려 그 가드를 되살린다. 언마운트(피드 이탈) 시 반드시 끈다 —
+  //   켜둔 채 나가면 업데이트가 영영 적용되지 않는다.
+  useEffect(() => {
+    setFeedWatching(playing);
+  }, [playing]);
+  useEffect(() => () => setFeedWatching(false), []);
+
   // 엎어놓으면(쉬는 시간 시작) 영상을 멈춘다 — WKWebView가 재생 중이면 화면 wake-lock을 잡아 안 그러면
   // 폰이 슬립에 못 든다. 정지 → 화면 꺼짐 허용 → 폰 자동잠금(스펙 §4-B "내려놓으면 쇼츠 멈춤" 방향).
   // 집어들 때 자동 재생하진 않는다(쉼 존중 — 사용자가 탭/리모컨으로 재개).
@@ -525,6 +537,12 @@ export default function PaceFeedScreen() {
       if (state === 'background') {
         flushWatchTime('completed');     // 앱을 벗어나면 그때까지의 시청 시간을 기록(세그먼트 닫힘)
         setIsAutoMode((prev) => (prev ? false : prev));
+        // 🔴 2026-09-02 사장님 지시("본 시간만 차감해야 하는 거 아냐? 누가 백그라운드로 시간 다
+        //   소비되면 쓰겠어") — 여기서 isAutoMode만 끄고 마감시각은 그대로 뒀던 것이 원인이다.
+        //   endsAt은 벽시계라 앱을 벗어난 동안에도 계속 흘렀고, 카톡 6분 확인하고 오면 10분 중
+        //   4분만 남아 있었다(사장님이 본 "4분"). 시청하지 않은 시간은 차감하지 않는다 —
+        //   남은 시간을 얼려두고(pause) 돌아와 다시 켤 때 그대로 이어받는다(resume).
+        useFocusSessionStore.getState().pause();
         // 2026-08-01 배터리 감사 — 백그라운드에선 status를 PAUSED로 내려 playing=false로 만든다.
         // iOS는 백그라운드오디오 권한이 없어 WebView 영상을 자동 일시정지하지만 status는 그대로라
         // 복귀 시 keepAwake가 "정지된 영상" 위에서 계속 화면을 켜둬 최대 30분(idle 상한) 배터리를
@@ -571,7 +589,12 @@ export default function PaceFeedScreen() {
     // 마감시각의 진실원천은 스토어다. 살아 있는 세션이 있으면 **이어받고**(백그라운드 복귀,
     // 광고/크레딧 연장 직후), 없을 때만 새 세션을 시작한다 — 재개가 곧 10분 리셋이 되지 않게.
     const session = useFocusSessionStore.getState();
-    if (session.endsAt == null || session.endsAt <= Date.now()) session.start(focusSessionDurationMinutes);
+    // 🔴 2026-09-02 — 멈춰둔 세션이 있으면 **그것부터 이어받는다**(위 AppState pause 주석).
+    //   이 분기가 endsAt만 보던 시절엔 백그라운드에서 얼려둔 잔여분이 "세션 없음"으로 읽혀
+    //   새 세션이 시작됐다 — 그러면 얼려둔 의미가 없어진다.
+    if (!session.resume() && (session.endsAt == null || session.endsAt <= Date.now())) {
+      session.start(focusSessionDurationMinutes);
+    }
     const endsAt = useFocusSessionStore.getState().endsAt ?? Date.now();
     const remainingMs = Math.max(0, endsAt - Date.now());
     // 토스트/Live Activity에 쓰는 "이번 세션 길이" — 맥 수정의 durationMinutes와 같은 의미지만
@@ -803,6 +826,21 @@ export default function PaceFeedScreen() {
   // 채 리모컨 세션을 시작하면 네이티브가 감지용으로 시스템 볼륨을 1칸으로 클램프한다. 그 동안 영상을
   // 강제 muted로 잠가 실제 소리는 0을 유지한다(세션 종료 시 네이티브가 볼륨 0 복원 + 여기서 잠금 해제).
   const zeroVolRemoteRef = useRef(false);
+  // 🔴 2026-09-02 사장님 지시("애플이 무음키가 켜져있을 때 무음으로 시작하라고 했는데, 사용자가
+  //   볼륨 키면 키우라고. 안드로이드는 무음 버튼이 없으니까 폰의 오디오 레벨에 따라 플레이") —
+  //   배선은 다 있었는데 **기본값이 반대로 떨어져 있었다.** initialMuted가
+  //   `getLastKnownSilent() ?? false`라, 이 프로세스에서 아직 한 번도 무음스위치를 못 읽은
+  //   상태(=앱 켜고 첫 영상)에서 "소리 켬"으로 확정돼 버렸다. 무음스위치가 켜져 있어도 그 첫
+  //   영상은 소리를 내고 시작한다 — 사장님이 본 그 증상이다.
+  //   → 모를 때는 **무음 쪽으로 떨어뜨린다.** 오판의 대가가 비대칭이라서다: 무음으로 잘못
+  //     시작하면 잠깐 조용할 뿐이고(폴링이 곧 소리를 켠다), 소리로 잘못 시작하면 무음을 원한
+  //     사용자에게 실제로 소리가 샌다.
+  //   ⚠️ iOS 한정이다. 아래 checkSilentSwitch 폴링이 `Platform.OS !== 'ios'`에서 즉시 return
+  //     하므로, 안드로이드까지 true로 두면 **무음을 풀어줄 주체가 없어 영영 무음**이 된다.
+  //     안드로이드는 무음스위치 자체가 없고 muted=false로 둬도 시스템 미디어 볼륨이 0이면
+  //     소리가 안 나므로, 그대로 두는 것이 곧 "폰의 오디오 레벨에 따라"다.
+  const initialMuted =
+    getUserSoundOn() ? false : Platform.OS === 'ios' ? (getLastKnownSilent() ?? true) : false;
   // 2026-08-15 — 마지막으로 확인된 무음 스위치 상태. YouTube/TikTok 플레이어의 initialMuted prop으로
   // 넘겨서, 새 영상(WebView 콜드 스타트)이 뜨자마자 이미 알고 있는 값으로 시작하게 한다 — 없으면
   // checkSilentSwitch()가 비동기(200~300ms)라 그동안 소리가 새는 "나왔다가 안 나와" 증상이 생긴다
@@ -862,7 +900,24 @@ export default function PaceFeedScreen() {
       }).catch(() => {});
     };
     check();
-    const id = setInterval(check, 2000);
+    // 🔴 2026-09-02 — initialMuted가 "모르면 무음"으로 바뀌면서(위 주석) 이 폴링이 **무음을 푸는
+    //   유일한 주체**가 됐다. 2초 간격 × 연속 2회 확인이면 무음스위치를 꺼둔 사용자도 앱 켜고 첫
+    //   영상이 최대 2.2초간 조용하다 — 이전엔 이 지연이 "이미 소리 나는 상태를 늦게 끄는" 쪽이라
+    //   체감이 없었지만, 이제는 "소리를 늦게 켜는" 쪽이라 그대로 들린다.
+    //   → 아직 한 번도 못 읽은 동안만 400ms로 촘촘히 확인하고, 값이 확정되면 원래 2초로 돌아간다
+    //     (확정 후에는 스위치를 새로 켠 걸 감지하는 용도라 2초면 충분하다). 확인 1회가 0.2초
+    //     시스템사운드를 재생하는 부작용은 그대로지만, 빨라진 구간은 첫 확정까지의 2~3회뿐이다.
+    const FAST_MS = 400;
+    const SLOW_MS = 2000;
+    let intervalMs = getLastKnownSilent() == null ? FAST_MS : SLOW_MS;
+    let id = setInterval(check, intervalMs);
+    const rateWatch = setInterval(() => {
+      const want = getLastKnownSilent() == null ? FAST_MS : SLOW_MS;
+      if (want === intervalMs) return;
+      intervalMs = want;
+      clearInterval(id);
+      id = setInterval(check, intervalMs);
+    }, FAST_MS);
     // 2026-08-08 — 원래는 리모컨 토글과 무관하게 항상 켜서, 볼륨키를 누르면(방향 무관) 무음스위치가
     // 켜져 있어도 소리를 냈다(유튜브/인스타그램의 "폰 물리 볼륨버튼을 누르면 무음이라도 소리 난다"
     // 관행 재현).
@@ -875,6 +930,7 @@ export default function PaceFeedScreen() {
     return () => {
       cancelled = true;
       clearInterval(id);
+      clearInterval(rateWatch);
     };
   }, [playing, volumeKeyRemote]);
 
@@ -1061,11 +1117,18 @@ export default function PaceFeedScreen() {
       // 것. 2026-08-10에 종료 토스트(focusSessionAutoEndedToast)는 이미 같은 이유로 실제 남은
       // 시간 기준으로 고쳤는데(durationMinutes), 시작 토스트는 그때 같이 안 고쳐져 있었다 — 같은
       // 계산을 여기도 적용.
-      const existingEndsAt = useFocusSessionStore.getState().endsAt;
+      // 🔴 2026-09-02 — 멈춰둔 세션(백그라운드에 다녀옴)도 "이어받는 시간"으로 세야 한다.
+      //   이 토스트는 setIsAutoMode 직후, 즉 위 세션 effect가 resume()하기 **전**에 계산되므로
+      //   endsAt만 보면 아직 null이라 설정값(10분)을 잘못 보여준다.
+      const { endsAt: existingEndsAt, pausedRemainingMs } = useFocusSessionStore.getState();
+      const resumingMs =
+        pausedRemainingMs != null && pausedRemainingMs > 0
+          ? pausedRemainingMs
+          : existingEndsAt != null && existingEndsAt > Date.now()
+            ? existingEndsAt - Date.now()
+            : null;
       const displayMinutes =
-        existingEndsAt != null && existingEndsAt > Date.now()
-          ? Math.max(1, Math.ceil((existingEndsAt - Date.now()) / 60000))
-          : focusSessionDurationMinutes;
+        resumingMs != null ? Math.max(1, Math.ceil(resumingMs / 60000)) : focusSessionDurationMinutes;
       useToastStore.getState().show(
         handsFreeGesture
           ? t('feed.focusSessionStartedToast', { n: displayMinutes })
@@ -1169,7 +1232,7 @@ export default function PaceFeedScreen() {
             key={`tiktok-${tiktokRetryKey}`}
             ref={playerRef}
             playing={playing}
-            initialMuted={getUserSoundOn() ? false : (getLastKnownSilent() ?? false)}
+            initialMuted={initialMuted}
             onProgress={handleProgress}
             onReady={clearForcedTransitionCover}
             onEnded={onEnded}
@@ -1183,7 +1246,7 @@ export default function PaceFeedScreen() {
             ref={playerRef}
             videoId={forcedVideoId ?? current!.videoId}
             playing={playing}
-            initialMuted={getUserSoundOn() ? false : (getLastKnownSilent() ?? false)}
+            initialMuted={initialMuted}
             onProgress={handleProgress}
             onVideoChange={(id) => {
               // 물증(2026-08-25): 발화(wave_fire)와 실제 전환의 매칭용 — "발화는 찍히는데 안 넘어감"을 가른다.

@@ -79,9 +79,30 @@ export type ForceUpdateResult =
 
 export type ForceUpdatePhase = 'checking' | 'downloading' | 'reloading';
 
-/** Android 오버레이 세션(useTimerStore) 또는 Pace Feed 재생(usePlayerStore) 도중인지. */
+/**
+ * 🔴 2026-09-02 감사 — 이 가드는 **한 번도 동작한 적이 없다.**
+ *   · `usePlayerStore`는 코드베이스에서 이 파일만 import한다. 실제 쇼츠 피드(feed/index.tsx)는
+ *     여기에 아무것도 쓰지 않는다 — 그 파일 주석이 직접 밝히듯 usePlayerStore는 옛 Pexels 피드용
+ *     폴백 소스로 남아 있을 뿐이다. 즉 `isPlaying`은 영원히 false다.
+ *   · `useTimerStore.isSessionActive`는 오버레이 전용이라 iOS에선 시작되지 않는다
+ *     (feed/index.tsx의 "iOS는 useTimerStore가 절대 시작되지 않는다" 주석).
+ *   둘 다 false면 이 함수도 항상 false다 — **iOS에서 쇼츠를 보는 도중에 OTA가 도착하면 그대로
+ *   강제 리로드가 걸려** 큐·세션·재생 위치가 통째로 날아간다. 정확히 그걸 막으려던 가드다.
+ *   → 피드가 실제로 재생 중인지를 프로세스 레벨로 직접 받는다(setFeedWatching).
+ */
+let feedWatching = false;
+/**
+ * 쇼츠 피드가 재생 중인지 알린다(feed/index.tsx가 호출). OTA 강제 리로드가 시청 도중 끼어들지
+ * 않게 하는 유일한 근거다 — 피드를 벗어나거나 멈추면 반드시 false로 되돌려야 한다(안 그러면
+ * 업데이트가 영영 적용되지 않는다).
+ */
+export function setFeedWatching(v: boolean): void {
+  feedWatching = v;
+}
+
+/** Android 오버레이 세션(useTimerStore) 또는 쇼츠 피드 재생 도중인지. */
 function isUserMidSession(): boolean {
-  return useTimerStore.getState().isSessionActive || usePlayerStore.getState().isPlaying;
+  return feedWatching || useTimerStore.getState().isSessionActive || usePlayerStore.getState().isPlaying;
 }
 
 /**

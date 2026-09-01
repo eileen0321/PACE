@@ -114,6 +114,21 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
   return (
     <View style={styles.backdrop} pointerEvents="auto">
       <View style={styles.card}>
+        {/* 🔴 2026-09-02 사장님 지적("광고 안 보고 싶은 사람은 왜 x키가 없어? 광고를 보다 나갈
+            수가 없잖아") — 나갈 문이 화면 맨 아래 작은 회색 글씨("나중에") 하나뿐이었고, 그마저
+            watchingAd 동안 disabled였다. 광고 로드는 최대 20초까지 걸릴 수 있고(rewardedAd.ts의
+            LOAD_TIMEOUT_MS) 그동안 backdrop이 뒤를 통째로 막으므로, 사용자는 자기가 시작하지도
+            않은 대기 화면에 갇힌 것처럼 느낀다. → 카드 우상단에 항상 보이는 X를 둔다. */}
+        <Pressable
+          style={styles.closeBtn}
+          onPress={onDismiss}
+          disabled={usingCredits}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={t('overlay.close')}
+        >
+          <Feather name="x" size={20} color={colors.textSecondary} />
+        </Pressable>
         <View style={styles.iconWrap}>
           <Feather name="zap" size={22} color={colors.primary} />
         </View>
@@ -149,7 +164,12 @@ export function FocusSessionExtendModal({ visible, onDismiss, onExtend, onAdVisi
             <Text style={styles.btnCreditsText}>{t('home.useCreditsToExtend', { credits: FOCUS_SESSION_EXTEND_MINUTES, extend: FOCUS_SESSION_EXTEND_MINUTES })}</Text>
           </Pressable>
         )}
-        <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={watchingAd || usingCredits}>
+        {/* 위 X와 같은 이유로 watchingAd 동안에도 막지 않는다. 광고를 이미 보고 있는 중이면 이
+            모달은 전면 광고 뒤에 가려 있어 눌릴 일이 없고, 아직 로드 중이면 나갈 수 있어야 한다.
+            도중에 나가도 showRewardedAd()는 자기 워치독으로 반드시 resolve하고(rewardedAd.ts),
+            이 컴포넌트는 visible=false여도 언마운트되지 않으므로 뒤늦은 setState도 안전하다.
+            보상을 이미 받았다면 그 시점에 grant()가 정상 실행돼 연장분도 잃지 않는다. */}
+        <Pressable style={styles.dismissBtn} onPress={onDismiss} disabled={usingCredits}>
           <Text style={styles.dismissText}>{t('overlay.notNow')}</Text>
         </Pressable>
       </View>
@@ -167,6 +187,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   card: { width: '100%', maxWidth: 340, backgroundColor: colors.card, borderRadius: radius.card, padding: spacing.lg, alignItems: 'center', gap: spacing.xs },
+  // 카드 안쪽 우상단. absolute라 기존 세로 스택(gap)에 영향을 주지 않는다.
+  closeBtn: { position: 'absolute', top: spacing.sm, right: spacing.sm, padding: spacing.xs, zIndex: 1 },
   iconWrap: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
   title: { color: colors.textPrimary, fontSize: 17, fontFamily: typography.bodyFontFamilyBold, textAlign: 'center' },
   message: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, textAlign: 'center', marginBottom: spacing.sm },

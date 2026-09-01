@@ -1359,7 +1359,22 @@ const INJECTED_JS_BEFORE_LOAD = `
         return;
       }
       if (attemptsLeft > 0) { tryAdvance(video, attemptsLeft - 1); }
-      else { video.__paceAdvancing = false; }
+      else {
+        video.__paceAdvancing = false;
+        // 🔴 2026-09-02 사장님 제보("특정 쇼츠에서 다음으로 안 넘어가고 계속 같은 쇼츠만 반복") —
+        // 여기가 그 구조적 원인이었다. markEndedOnce()가 __paceEndedNotified를 **영구 래치**로
+        // 세우는데(video 엘리먼트당 1회), 6회 재시도가 전부 실패한 이 경로에서 그 래치를 안 풀었다.
+        // 그러면 틱톡이 같은 영상을 되감아 다시 재생해도 그 다음 'ended'가 통째로 삼켜져 RN에
+        // 도달하지 않는다 → RN이 advance()를 다시 부를 계기가 영영 없어져 **그 영상에 갇힌다.**
+        // 특정 영상에서만 재현되는 이유도 이걸로 설명된다: 합성 스크롤이 안 먹는 영상(전체화면
+        // 승격·관심사 게이트 등)에서만 6회가 다 실패하고, 한 번 실패하면 그 뒤로는 재시도 자체가
+        // 일어나지 않는다.
+        // → 전환에 실패했으면 래치를 되돌린다. 다음 자연종료에서 다시 시도하게 된다(성공 경로는
+        //   위에서 return하므로 영향 없고, 재시도 락은 __paceAdvancing이 따로 관리하므로 중복
+        //   발사도 안 생긴다).
+        video.__paceEndedNotified = false;
+        send({ type: 'domlog', text: '자동넘김: 6회 실패 — ended 래치 해제(다음 종료에 재시도)' });
+      }
     }, 700);
   }
   // 2026-08-13(25차) 사장님 실기기 지적("포커스 오프인데도 영상이 계속 넘어감") — 유튜브는 FOCUS
@@ -1670,8 +1685,19 @@ const INJECTED_JS_BEFORE_LOAD = `
     // "Shorts를 불러오지 못했습니다" 화면을 띄울 수 있었다. 검색 결과 페이지에선 이 체크를 안 한다.
     var onSearchPage = href.indexOf('/search') !== -1;
     var noVideo = !document.querySelector('video');
-    if (!onSearchPage && noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent) {
+    // 🔴 2026-09-02 감사 — __paceNoVideoSent가 **window 레벨 영구 래치**라 이 신고가 WebView
+    //   한 번 뜨는 동안 딱 한 번만 나갔다. 그래서 틱톡이 한 번 회복했다가 같은 마운트 안에서
+    //   다시 영상을 잃으면 두 번째는 신고조차 안 됐다 — 방금 고친 __paceEndedNotified와 정확히
+    //   같은 부류(한 번 서면 안 풀리는 래치)다.
+    //   → 영상이 다시 보이면 래치를 푼다. "지금 문제가 있는가"를 신고하는 값이므로 문제가
+    //     해소되면 되돌아가는 것이 맞다. 연속 도배는 12초 경과 조건이 이미 막고 있고(영상이
+    //     사라진 뒤 12초가 다시 지나야 재신고), 신고 시각을 따로 기록해 최소 간격도 둔다.
+    if (!noVideo) { window.__paceNoVideoSent = false; window.__paceNoVideoAt = 0; }
+    var lastNoVid = window.__paceNoVideoAt || 0;
+    if (!onSearchPage && noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent
+        && (!lastNoVid || Date.now() - lastNoVid > 12000)) {
       window.__paceNoVideoSent = true;
+      window.__paceNoVideoAt = Date.now();
       send({ type: 'novideo', href: href.slice(0, 80) });
     }
   }
@@ -1868,6 +1894,29 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
 ) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
+  // 🔴 2026-09-02 감사 — 유튜브 플레이어에는 있는 데드맨 워치독이 틱톡에는 **통째로 없었다**
+  //   (YouTubeShortsPlayer.ios.tsx의 lastWebMsgAtRef/deadmanReloadsRef). 페이지 JS가 얼면
+  //   (느린 네트워크·틱톡 스로틀·관심사 게이트 교착) 안에 심어둔 하우스키핑도 같이 멈추므로
+  //   **웹뷰 스스로는 절대 못 깨어난다.** 게다가 유일한 이상신호인 novideo 보고는
+  //   window.__paceNoVideoSent 래치 때문에 마운트당 1회뿐이라(아래 페이지 스크립트 주석 참고),
+  //   한 번 신고한 뒤 다시 굳으면 알릴 방법조차 없었다. 사장님이 보신 "틱톡이 갇힌다"의
+  //   복구 경로가 아예 없던 셈이다. 유튜브와 같은 처방을 그대로 이식한다.
+  const lastWebMsgAtRef = useRef(Date.now());
+  const deadmanReloadsRef = useRef(0);
+  useEffect(() => {
+    // ready 전(로딩 중)에도 감시한다 — 틱톡은 관심사 게이트 때문에 유튜브보다 준비가 느려서
+    // (실측 6초 대기) 여유를 더 준다. 상한 3회는 무한 리로드 방지.
+    const deadMs = ready ? 12000 : 20000;
+    const t = setInterval(() => {
+      if (Date.now() - lastWebMsgAtRef.current > deadMs && deadmanReloadsRef.current < 3) {
+        deadmanReloadsRef.current += 1;
+        lastWebMsgAtRef.current = Date.now();
+        diagLog('deadman_reload', 'tiktok#' + deadmanReloadsRef.current);
+        webRef.current?.reload();
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [ready]);
   const [showSpinner, setShowSpinner] = useState(false);
   // 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/
   // 공유 아이콘 열을 숨긴 대가로, RN이 그 자리에 오버레이 버튼을 그리기 위한 카운트 상태.
@@ -2103,6 +2152,9 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
+          // 🔴 2026-09-02 — 데드맨 워치독의 생존 신호(아래 useEffect 주석). 페이지가 살아 있으면
+          //   하우스키핑이 최소 3초마다 뭐든 postMessage하므로, 이 값이 멈추면 페이지가 죽은 것이다.
+          lastWebMsgAtRef.current = Date.now();
           let msg: { type?: string; value?: number; url?: string | null; like?: string; comment?: string; favorite?: string; share?: string } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);

@@ -33,7 +33,21 @@ const FRESH_INSTALL_MERGE_TIMEOUT_MS = 3000;
 //   → 저장값에 날짜를 넣고, 날짜가 다르면 버린다. 서버가 이미 allowance_date로 날짜별 관리를
 //     하므로 그쪽 규칙에 맞추는 것이다. 같은 날 안에서는 예전과 완전히 동일하게 동작하므로
 //     남용 차단(하루 광고 3회 상한, timedOut 게이트)은 그대로다.
-type PersistedFocusSession = { date: string; endsAt: number | null; timedOut: boolean };
+// 🔴 2026-09-02 사장님 지시("본 시간만 차감해야 하는 거 아냐? 누가 백그라운드로 시간 다 소비되면
+//   쓰겠어") — 맞는 지적이고, 지금까지는 마감시각(endsAt)이 **벽시계**라 앱을 벗어난 동안에도
+//   할당량이 계속 탔다. 피드가 백그라운드 전환 때 isAutoMode만 끄고 endsAt은 그대로 뒀기 때문에
+//   (feed/index.tsx의 AppState effect), 카톡 6분 확인하고 오면 10분 중 4분만 남아 있었다.
+//   → 남은 시간을 얼려두는 pausedRemainingMs를 둔다. 백그라운드로 나갈 때 pause()가 남은 ms를
+//     여기 옮기고 endsAt을 비우며, 돌아와 다시 켤 때 resume()이 그 값으로 마감시각을 다시 세운다.
+//   ⚠️ endsAt이 null이면서 pausedRemainingMs가 있는 상태는 "세션 없음"이 아니라 **"멈춘 세션"**이다.
+//     endsAt만 보고 판단하던 자리는 전부 이 값을 함께 봐야 한다(feed/index.tsx의 시작 분기, load()).
+type PersistedFocusSession = {
+  date: string;
+  endsAt: number | null;
+  timedOut: boolean;
+  /** 일시정지된 세션의 남은 시간(ms). null이면 멈춰 있지 않다. */
+  pausedRemainingMs?: number | null;
+};
 
 type FocusSessionState = PersistedFocusSession & {
   /** load()가 끝났는지 — 끝나기 전에 화면이 세션 상태를 판단하면 "없음"으로 오인한다. */
@@ -47,6 +61,13 @@ type FocusSessionState = PersistedFocusSession & {
   markTimedOut: () => void;
   /** 사용자가 직접 끔 — timedOut이 아니므로 다음 켜기는 게이트 없이 통과한다. */
   stop: () => void;
+  /**
+   * 시계를 멈춘다(앱이 백그라운드로 나감). 남은 시간을 pausedRemainingMs로 옮기고 endsAt을 비운다.
+   * 살아 있는 세션이 없으면 아무것도 안 한다 — 이미 멈춰 있거나 끝난 세션을 되살리지 않는다.
+   */
+  pause: () => void;
+  /** 멈춰둔 시계를 다시 돌린다(사용자가 돌아와 FOCUS를 켬). 멈춘 세션이 없으면 false. */
+  resume: () => boolean;
 };
 
 function persist(state: PersistedFocusSession) {
@@ -103,9 +124,17 @@ async function mergeServer(): Promise<void> {
     //   연장한 직후가 정확히 그 상태다(서버는 아직 timedOut=true인데 로컬은 이미 연장됨).
     //   예전엔 무조건 endsAt=null로 밀어서 연장이 통째로 사라질 수 있었다.
     if (endsAt != null && endsAt > Date.now()) timedOut = false;
+    // 🔴 2026-09-02 — 멈춰둔 잔여분(pausedRemainingMs)이 있으면 서버 병합이 손대지 않는다.
+    //   서버는 이 개념을 모르고(마감시각만 안다) 멈춘 세션은 로컬에만 있는 상태다. 여기서
+    //   서버의 timedOut을 받아 덮으면 백그라운드에 잠깐 다녀온 사용자의 남은 시간이 사라진다.
+    if (state.pausedRemainingMs != null && state.pausedRemainingMs > 0) return;
     if (timedOut !== state.timedOut || endsAt !== state.endsAt) {
-      useFocusSessionStore.setState({ date: todayKey(), endsAt, timedOut });
-      AsyncStorage.setItem(STORAGE_KEYS.focusSession, JSON.stringify({ date: todayKey(), endsAt, timedOut })).catch(() => {});
+      useFocusSessionStore.setState({ date: todayKey(), endsAt, timedOut, pausedRemainingMs: null });
+      // ⚠️ 저장은 항상 전체 모양으로 — 일부 키만 쓰면 다음 load()에서 빠진 키가 통째로 사라진다.
+      AsyncStorage.setItem(
+        STORAGE_KEYS.focusSession,
+        JSON.stringify({ date: todayKey(), endsAt, timedOut, pausedRemainingMs: null })
+      ).catch(() => {});
     }
   } catch {
     // 오프라인/미인증 — 로컬 값으로 계속 간다.
@@ -116,6 +145,7 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
   date: todayKey(),
   endsAt: null,
   timedOut: false,
+  pausedRemainingMs: null,
   hydrated: false,
 
   load: async () => {
@@ -127,21 +157,28 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
         //   날짜가 없는 구버전 저장값도 여기서 함께 걸러진다 — 그 값들이 정확히 이 버그의
         //   피해자이므로(영구 timedOut) 새 날짜로 초기화하는 것이 맞다.
         if (saved.date !== todayKey()) {
-          set({ date: todayKey(), endsAt: null, timedOut: false, hydrated: true });
-          persist({ date: todayKey(), endsAt: null, timedOut: false });
+          set({ date: todayKey(), endsAt: null, timedOut: false, pausedRemainingMs: null, hydrated: true });
+          persist({ date: todayKey(), endsAt: null, timedOut: false, pausedRemainingMs: null });
           await mergeServer();
           return;
         }
         const endsAt = typeof saved.endsAt === 'number' ? saved.endsAt : null;
         const timedOut = saved.timedOut === true;
+        // 멈춰둔 잔여분(pause()) — 앱을 아예 껐다 켜도 살아나야 "본 시간만 차감"이 성립한다.
+        // 앱이 꺼져 있던 시간은 흐르지 않으므로 아래 "마감시각 지남" 판정과는 무관하다(그 분기는
+        // endsAt이 살아 있는 = 멈추지 않은 세션에만 해당한다).
+        const pausedRemainingMs =
+          typeof saved.pausedRemainingMs === 'number' && saved.pausedRemainingMs > 0
+            ? saved.pausedRemainingMs
+            : null;
         // 앱이 꺼져 있는 동안 마감시각이 지났으면, 그건 "시간이 다 된" 것이다 — 되살릴 세션은
         // 없지만 timedOut은 세워야 한다. 안 그러면 앱을 껐다 켜는 것만으로 광고 게이트를 피할 수 있다.
         if (endsAt != null && endsAt <= Date.now()) {
-          set({ date: todayKey(), endsAt: null, timedOut: true, hydrated: true });
-          persist({ date: todayKey(), endsAt: null, timedOut: true });
+          set({ date: todayKey(), endsAt: null, timedOut: true, pausedRemainingMs: null, hydrated: true });
+          persist({ date: todayKey(), endsAt: null, timedOut: true, pausedRemainingMs: null });
           return;
         }
-        set({ date: todayKey(), endsAt, timedOut, hydrated: true });
+        set({ date: todayKey(), endsAt, timedOut, pausedRemainingMs, hydrated: true });
         await mergeServer();
         return;
       }
@@ -156,7 +193,7 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
     //   → 로컬에 근거가 하나도 없는 이 경로에서만 **서버 답을 받은 뒤에** hydrated를 세운다.
     //   ⚠️ 오프라인에서 영원히 막히면 안 되므로(이 앱의 fail-open 원칙) 최대 3초만 기다린다.
     //     그 안에 못 받으면 일단 열어주고, 병합은 도착하는 대로 스토어에 반영된다.
-    set({ date: todayKey(), endsAt: null, timedOut: false });
+    set({ date: todayKey(), endsAt: null, timedOut: false, pausedRemainingMs: null });
     await Promise.race([
       mergeServer(),
       new Promise<void>((resolve) => setTimeout(resolve, FRESH_INSTALL_MERGE_TIMEOUT_MS)),
@@ -165,7 +202,7 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
   },
 
   start: (durationMinutes) => {
-    const next = { date: todayKey(), endsAt: Date.now() + durationMinutes * 60 * 1000, timedOut: false };
+    const next = { date: todayKey(), endsAt: Date.now() + durationMinutes * 60 * 1000, timedOut: false, pausedRemainingMs: null };
     set(next);
     persist(next);
   },
@@ -173,20 +210,45 @@ export const useFocusSessionStore = create<FocusSessionState>((set, get) => ({
   extend: (minutes) => {
     // 남은 시간이 있으면 거기에 더하고, 없으면(타임아웃 직후 연장) 지금부터 센다.
     const base = Math.max(get().endsAt ?? 0, Date.now());
-    const next = { date: todayKey(), endsAt: base + minutes * 60 * 1000, timedOut: false };
+    const next = { date: todayKey(), endsAt: base + minutes * 60 * 1000, timedOut: false, pausedRemainingMs: null };
     set(next);
     persist(next);
   },
 
   markTimedOut: () => {
-    const next = { date: todayKey(), endsAt: null, timedOut: true };
+    const next = { date: todayKey(), endsAt: null, timedOut: true, pausedRemainingMs: null };
     set(next);
     persist(next);
   },
 
   stop: () => {
-    const next = { date: todayKey(), endsAt: null, timedOut: false };
+    // 사용자가 직접 끈 것은 세션 종료다 — 멈춰둔 잔여분도 같이 버린다(다음 켜기는 새 세션).
+    const next = { date: todayKey(), endsAt: null, timedOut: false, pausedRemainingMs: null };
     set(next);
     persist(next);
+  },
+
+  pause: () => {
+    const s = get();
+    if (s.pausedRemainingMs != null) return; // 이미 멈춰 있음 — 재진입해도 잔여분을 덮지 않는다
+    const endsAt = s.endsAt;
+    if (endsAt == null) return; // 살아 있는 세션이 없음
+    const remaining = endsAt - Date.now();
+    // 이미 지났으면 멈출 게 아니라 끝난 것이다 — 여기서 timedOut을 세우지는 않는다(그 판정은
+    // 화면의 타이머와 load()가 각자 하던 대로 한다). 잔여분만 안 남기고 빠진다.
+    if (remaining <= 0) return;
+    const next = { date: todayKey(), endsAt: null, timedOut: s.timedOut, pausedRemainingMs: remaining };
+    set(next);
+    persist(next);
+  },
+
+  resume: () => {
+    const s = get();
+    const remaining = s.pausedRemainingMs;
+    if (remaining == null || remaining <= 0) return false;
+    const next = { date: todayKey(), endsAt: Date.now() + remaining, timedOut: false, pausedRemainingMs: null };
+    set(next);
+    persist(next);
+    return true;
   },
 }));

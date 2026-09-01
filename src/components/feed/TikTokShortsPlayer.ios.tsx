@@ -1685,19 +1685,16 @@ const INJECTED_JS_BEFORE_LOAD = `
     // "Shorts를 불러오지 못했습니다" 화면을 띄울 수 있었다. 검색 결과 페이지에선 이 체크를 안 한다.
     var onSearchPage = href.indexOf('/search') !== -1;
     var noVideo = !document.querySelector('video');
-    // 🔴 2026-09-02 감사 — __paceNoVideoSent가 **window 레벨 영구 래치**라 이 신고가 WebView
-    //   한 번 뜨는 동안 딱 한 번만 나갔다. 그래서 틱톡이 한 번 회복했다가 같은 마운트 안에서
-    //   다시 영상을 잃으면 두 번째는 신고조차 안 됐다 — 방금 고친 __paceEndedNotified와 정확히
-    //   같은 부류(한 번 서면 안 풀리는 래치)다.
-    //   → 영상이 다시 보이면 래치를 푼다. "지금 문제가 있는가"를 신고하는 값이므로 문제가
-    //     해소되면 되돌아가는 것이 맞다. 연속 도배는 12초 경과 조건이 이미 막고 있고(영상이
-    //     사라진 뒤 12초가 다시 지나야 재신고), 신고 시각을 따로 기록해 최소 간격도 둔다.
-    if (!noVideo) { window.__paceNoVideoSent = false; window.__paceNoVideoAt = 0; }
-    var lastNoVid = window.__paceNoVideoAt || 0;
-    if (!onSearchPage && noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent
-        && (!lastNoVid || Date.now() - lastNoVid > 12000)) {
+    // ⚠️ 2026-09-02 되돌림 — 이 래치를 "한 번 서면 안 풀리는 버그"로 보고 재무장시켰다가
+    //   사장님 실기기에서 **"틱톡 실행 중 문제가 발생했습니다"**를 만들었다. 마운트당 1회는
+    //   실수가 아니라 바로 위 20차 주석이 설명하는 **의도적 방어**다: novideo 는 onError(-2) 로
+    //   가고, feed/index.tsx 의 handlePlayerError 가 그걸 연속 6회 세면 death-spiral 로 판단해
+    //   "쇼츠를 불러오지 못했습니다" 화면을 띄운다. 12초마다 재신고하게 만들면 72초면 그 화면이
+    //   뜬다 — 내가 정확히 그 경로를 되살렸다.
+    //   재신고가 필요하다면 onError 로 보내는 대신 **에러 카운터를 건드리지 않는 별도 신호**로
+    //   분리해야 한다. 그 설계 없이 래치만 푸는 것은 회귀다.
+    if (!onSearchPage && noVideo && (Date.now() - startedAt) > 12000 && !window.__paceNoVideoSent) {
       window.__paceNoVideoSent = true;
-      window.__paceNoVideoAt = Date.now();
       send({ type: 'novideo', href: href.slice(0, 80) });
     }
   }
@@ -1894,29 +1891,15 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
 ) {
   const webRef = useRef<WebView>(null);
   const [ready, setReady] = useState(false);
-  // 🔴 2026-09-02 감사 — 유튜브 플레이어에는 있는 데드맨 워치독이 틱톡에는 **통째로 없었다**
-  //   (YouTubeShortsPlayer.ios.tsx의 lastWebMsgAtRef/deadmanReloadsRef). 페이지 JS가 얼면
-  //   (느린 네트워크·틱톡 스로틀·관심사 게이트 교착) 안에 심어둔 하우스키핑도 같이 멈추므로
-  //   **웹뷰 스스로는 절대 못 깨어난다.** 게다가 유일한 이상신호인 novideo 보고는
-  //   window.__paceNoVideoSent 래치 때문에 마운트당 1회뿐이라(아래 페이지 스크립트 주석 참고),
-  //   한 번 신고한 뒤 다시 굳으면 알릴 방법조차 없었다. 사장님이 보신 "틱톡이 갇힌다"의
-  //   복구 경로가 아예 없던 셈이다. 유튜브와 같은 처방을 그대로 이식한다.
-  const lastWebMsgAtRef = useRef(Date.now());
-  const deadmanReloadsRef = useRef(0);
-  useEffect(() => {
-    // ready 전(로딩 중)에도 감시한다 — 틱톡은 관심사 게이트 때문에 유튜브보다 준비가 느려서
-    // (실측 6초 대기) 여유를 더 준다. 상한 3회는 무한 리로드 방지.
-    const deadMs = ready ? 12000 : 20000;
-    const t = setInterval(() => {
-      if (Date.now() - lastWebMsgAtRef.current > deadMs && deadmanReloadsRef.current < 3) {
-        deadmanReloadsRef.current += 1;
-        lastWebMsgAtRef.current = Date.now();
-        diagLog('deadman_reload', 'tiktok#' + deadmanReloadsRef.current);
-        webRef.current?.reload();
-      }
-    }, 2000);
-    return () => clearInterval(t);
-  }, [ready]);
+  // ⚠️ 2026-09-02 되돌림 — 유튜브에 있는 데드맨 워치독을 틱톡에도 이식했다가 **화면이 멈추는**
+  //   회귀를 만들었다(사장님 실기기: "focus on 키고 좀있다 꺼지네 그래서 다시 누르니 화면
+  //   멈춰있고"). 유튜브에서 그 워치독이 성립하는 근거는 **페이지가 살아 있으면 pollTick이
+  //   최소 500ms 간격으로 무조건 postMessage한다**는 것인데, 틱톡 페이지에는 그 전제가 없다.
+  //   여기서 유일하게 주기적으로 나가는 progress는 `<video>`가 있고 duration이 유효할 때만
+  //   보내므로(pollActiveVideo 참고), 로딩 중·관심사 게이트·영상 스톨 상태에서는 **정상인데도
+  //   아무 메시지가 안 나간다** → 워치독이 12초마다 리로드 → 영원히 로딩 = 멈춘 화면.
+  //   되살리려면 먼저 페이지에 **무조건 도는 하트비트**를 심어야 한다(houseKeeping 3초 틱에서
+  //   조건 없이 send). 그 전제 없이 워치독만 켜는 것은 회귀다.
   const [showSpinner, setShowSpinner] = useState(false);
   // 2026-08-16 — hideIconRailAndScaleVideo가 세로 풀스크린을 위해 페이지 자체 좋아요/댓글/북마크/
   // 공유 아이콘 열을 숨긴 대가로, RN이 그 자리에 오버레이 버튼을 그리기 위한 카운트 상태.
@@ -2152,9 +2135,6 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
         onHttpError={(e) => { if (__DEV__) console.log('[TikTok WV] httpError', e.nativeEvent?.statusCode); }}
         onContentProcessDidTerminate={() => webRef.current?.reload()}
         onMessage={(e) => {
-          // 🔴 2026-09-02 — 데드맨 워치독의 생존 신호(아래 useEffect 주석). 페이지가 살아 있으면
-          //   하우스키핑이 최소 3초마다 뭐든 postMessage하므로, 이 값이 멈추면 페이지가 죽은 것이다.
-          lastWebMsgAtRef.current = Date.now();
           let msg: { type?: string; value?: number; url?: string | null; like?: string; comment?: string; favorite?: string; share?: string } = {};
           try {
             msg = JSON.parse(e.nativeEvent.data);

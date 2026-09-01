@@ -18,7 +18,7 @@
 //   ⑤ 건너뛰기는 항상 열어둔다 — 어두운 방 등으로 측정이 안 되는 경우가 반드시 생기는데,
 //      거기서 막히면 그 자리에서 이탈한다.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   type SharedValue,
   Easing,
@@ -222,6 +222,27 @@ export function GestureCalibrationSheet({
     onSkip();
   }, [onSkip]);
 
+  // 🔴 2026-09-02 사장님 지적("다시 시도가 뜨는 건 뭐야? 카메라 권한 설정으로 바로 이어지게
+  //   해야 하는 거 아냐?") — 맞다. denied 상태가 unusable(조명이 나빠 손짓을 못 가름)과 버튼을
+  //   공유하고 있었는데, 그 둘은 사용자가 할 수 있는 행동이 다르다.
+  //   조명은 다시 해보면 되지만, **권한 거부는 다시 시도해도 OS가 다이얼로그를 다시 띄우지
+  //   않는다**(특히 "다시 묻지 않음"). begin()은 네이티브를 다시 부르고 똑같이 false를 받아
+  //   같은 화면으로 돌아올 뿐이다 — 눌러도 아무 일도 일어나지 않는 버튼이었다.
+  //   → 앱 설정 화면으로 바로 보낸다. 거기서만 켤 수 있다.
+  const openAppSettings = useCallback(() => {
+    Linking.openSettings().catch(() => {});
+  }, []);
+
+  // 설정에서 권한을 켜고 돌아왔을 때 사용자가 버튼을 한 번 더 누르게 하지 않는다 —
+  // 포그라운드 복귀 시 denied 상태면 스스로 다시 시도한다.
+  useEffect(() => {
+    if (phase !== 'denied') return;
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') begin();
+    });
+    return () => sub.remove();
+  }, [phase, begin]);
+
   const centerIcon =
     phase === 'done' ? 'check' : phase === 'unusable' || phase === 'denied' ? 'alert-circle' : 'wind';
   const centerColor =
@@ -327,10 +348,21 @@ export function GestureCalibrationSheet({
                 <Text style={styles.ctaText}>{t('gestureCalib.finish')}</Text>
               </Pressable>
             )}
-            {(phase === 'unusable' || phase === 'denied') && (
+            {phase === 'unusable' && (
               <>
                 <Pressable style={styles.cta} onPress={begin}>
                   <Text style={styles.ctaText}>{t('gestureCalib.retry')}</Text>
+                </Pressable>
+                <Pressable style={styles.skip} onPress={skip} hitSlop={12}>
+                  <Text style={styles.skipText}>{t('gestureCalib.useDefault')}</Text>
+                </Pressable>
+              </>
+            )}
+            {/* 권한 거부는 이 화면에서 해결할 수 없다 — 설정으로 보낸다(위 openAppSettings 주석). */}
+            {phase === 'denied' && (
+              <>
+                <Pressable style={styles.cta} onPress={openAppSettings}>
+                  <Text style={styles.ctaText}>{t('gestureCalib.openSettings')}</Text>
                 </Pressable>
                 <Pressable style={styles.skip} onPress={skip} hitSlop={12}>
                   <Text style={styles.skipText}>{t('gestureCalib.useDefault')}</Text>

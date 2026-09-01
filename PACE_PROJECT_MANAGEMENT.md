@@ -10648,3 +10648,9 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 원인: 광고(AdMob)가 공유 AVAudioSession 하이재킹 후 .notifyOthersOnDeactivation 반납 → 볼륨 KVO가 비활성 세션에 남아 볼륨키 미감지 → onSilentUnmute 미발화. 볼륨 모듈에 인터럽션 관찰자 부재.
 - 수정: interruptionNotification(ended)+didBecomeActive+mediaServicesWereReset 관찰자 → 세션 재활성화·KVO 기준 갱신. armed(volumeKeyRemote) 기본 OFF라 start() 미호출 → installInterruptObserversIfNeeded()를 startSilentUnmuteWatch에서도 호출(기본 사용자 커버). 기기 설치 완료, 다음 릴리즈 포함 예정.
 - ⚠️ Windows: 안드도 광고(보상형) 후 볼륨/오디오 포커스 복구 확인 요망.
+
+### 2026-09-02(Mac/iOS) — 🟢 윈도우 대규모 병합분 검증·기기+에뮬 설치
+- 병합분(윈도우): 손짓 축 재작업(gross-motion 문턱·얼굴접근 형태 필터·"한 번 서면 안 풀리는 래치" 다수 수정), 포커스 세션 pause/resume("본 시간만 차감" — 백그라운드 이탈 시 시계 정지), diagLog 버퍼링 재작성(핫패스 동기쓰기 제거), 손짓 캘리브레이션 시트, ShortsWarmup, TikTok 플레이어 개선.
+- 맥 검증: 시뮬 스위트 wave_sim 32/32·matrix·falsepositive·density_tiers·noise_floor 통과, 주입JS 3종 OK, tsc 0 에러, 볼륨 인터럽션 수정 존치(6참조).
+- 기기(Release, 1F1CE7…) 설치·실행 OK. 에뮬(iPhone17 Debug) — 처음 실행 시 **Metro 캐시 stale 레드박스**(옛 expo-system-ui import, 현 소스엔 없음) → `expo start --clear` 재시작으로 해소, 홈·피드(YouTube Shorts 재생) 정상 렌더 확인.
+- iOS PaceGestureModule.swift는 이번 라운드 미변경(안드+JS만) — 시뮬 미러 유효.

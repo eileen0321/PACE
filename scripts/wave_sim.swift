@@ -28,7 +28,11 @@ struct Sim {
   var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
   var gridHistory: [(t: Double, g: [Double])] = []
   var lastTriggerMs = -10000.0
+  var lastHandSeenMs = 0.0  // 격자 손-부재 게이트용(모듈 미러). 손 스침 케이스는 seeHand()로 최근값 세팅.
   var events: [String] = []
+
+  // 격자 테스트가 "직전에 손이 스쳤다"를 표현하기 위한 헬퍼 — 실기기 Vision이 손을 잡은 시점 모사.
+  mutating func seeHand(t: Double) { lastHandSeenMs = t }
 
   // 크로싱 판정 — processTrack의 해당 블록 미러
   mutating func feedHand(t: Double, x: Double, size: Double) {
@@ -127,6 +131,7 @@ extension Sim {
     gridHistory.append((t, g))
     while let f = gridHistory.first, t - f.t > 700 { gridHistory.removeFirst() }
     guard t - lastTriggerMs > passRefractoryMs else { return }
+    guard lastHandSeenMs > 0, t - lastHandSeenMs <= 3000 else { return }  // 손 부재 게이트(모듈 미러)
     guard let ref = gridHistory.last(where: { t - $0.t >= 180 }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -394,6 +399,7 @@ var t28 = 0.0
 for _ in 0..<6 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
 for i in [240, 241, 242, 243] { g28[i] = 100 } // 아래쪽 한 줄에 뭉친 4칸
+s28.seeHand(t: t28)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
 check("격자 가장자리 스침", s28.events, fires: 1, expectContains: ["gridpass"])
 
@@ -401,6 +407,7 @@ check("격자 가장자리 스침", s28.events, fires: 1, expectContains: ["grid
 var s29 = Sim()
 var t29 = 0.0
 for _ in 0..<6 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
+s29.seeHand(t: t29)
 for _ in 0..<3 { s29.feedGrid(t: t29, g: flatGrid(100)); t29 += 80 }
 check("격자 AE 전체변화 차단", s29.events, fires: 0)
 
@@ -410,6 +417,7 @@ var t30 = 0.0
 for _ in 0..<6 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
 var g30 = flatGrid(150)
 for i in [0, 60, 130, 255] { g30[i] = 100 }
+s30.seeHand(t: t30)
 for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
 check("격자 분산 잡음 차단", s30.events, fires: 0)
 
@@ -419,6 +427,7 @@ var t31 = 0.0
 for _ in 0..<6 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
 var g31 = flatGrid(150)
 for i in [244, 245] { g31[i] = 100 }
+s31.seeHand(t: t31)
 for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
 check("격자 2칸 인접 스침", s31.events, fires: 1)
 
@@ -428,8 +437,32 @@ var t32 = 0.0
 for _ in 0..<6 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
 var g32 = flatGrid(150)
 g32[10] = 100; g32[13] = 100
+s32.seeHand(t: t32)
 for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
 check("격자 2칸 분산 잡음 차단", s32.events, fires: 0)
+
+// 33. 격자: 손 부재 잡음(실기기 채증 2026-09-02 14:22:25 재현) — 31과 동일한 2칸 인접 스침이지만
+//     seeHand() 없음(=wave_summary hand=0 nohand=36). 손이 없으면 발화 금지 — 이게 "가만있는데 20개
+//     자동 전진"의 회귀 방지선. (31은 손 스침이라 발화, 33은 손 부재라 차단 — 유일한 차이가 손 존재)
+var s33 = Sim()
+var t33 = 0.0
+for _ in 0..<6 { s33.feedGrid(t: t33, g: flatGrid(150)); t33 += 80 }
+var g33 = flatGrid(150)
+for i in [244, 245] { g33[i] = 100 }
+for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }  // seeHand 없음 — 손 부재
+check("격자 손부재 잡음 차단(채증회귀)", s33.events, fires: 0)
+
+// 34. 격자: 손 스침이 오래전(3.2초 전) — 최근성 창(3초) 밖이면 차단. 손을 내린 뒤 한참 있다 생긴
+//     조명 잡음이 격자를 흔들어도 안 넘어가야 한다.
+var s34 = Sim()
+var t34 = 0.0
+s34.seeHand(t: 0)  // 손은 t=0에 마지막 목격
+t34 = 3200  // 3.2초 경과 후 잡음(창 3000ms 밖)
+for _ in 0..<6 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
+var g34 = flatGrid(150)
+for i in [244, 245] { g34[i] = 100 }
+for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
+check("격자 손목격 만료 차단", s34.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

@@ -10665,3 +10665,19 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 원인: GestureCalibrationSheet가 startGestureCalibration 네이티브를 부르는데 **iOS Swift 모듈엔 미구현**(안드 Kotlin PaceOverlayModule에만 있음). startCalibration()이 항상 false→phase='denied'→권한 화면. 보정 저장 불가라 isCalibrated 영구 false → 매번 재표시.
 - 조치: iOS는 손짓이 자체 문턱으로 동작하며 보정값을 읽지 않음(네이티브 grep 0). focus.tsx 트리거를 Platform.OS==='android'로 게이트. iOS 손짓 동작 영향 0. tsc 0에러, 기기 설치 완료.
 - ⏳ 후속(iOS 개인 보정 필요 시): PaceGestureModule.swift에 startGestureCalibration/stopGestureCalibration/onGestureCalibrationSample(깊이 표본 emit) 네이티브 구현 — 별도 작업.
+
+### 2026-09-03(Mac/iOS, 긴급) — 🔴 "가만있는데 틱톡 20개 자동 전진" 근본원인=격자 축 손-부재 오발화
+- 증상(사장님): 손 안 대고 거치/충전 중인데 틱톡이 저절로 계속 넘어감(20개+).
+- 채증(실기기 diag): 모든 go_next 앞에 wave_fire+gesture_next. 두 종류였음:
+  ① 14:21:37~58 랜드마크 웨이브 8회 — hand=49 실제 손 감지(실제 손 움직임일 가능성, 별개).
+  ② **14:22:25 gridpass cells=2 / 14:23:04 cells=4 — 둘 다 wave_summary hand=0 nohand=36**
+     (손이 창 전체에 0프레임인데 발화). ← 진짜 원인. 격자(gross-motion grid) 축이 손 없이
+     2~4칸(0.8~1.6%) 미세 루마 변화(거치/충전 중 조명·그림자)를 웨이브로 오검지.
+- 조치(iOS): PaceGestureModule.swift checkGridMotion에 **손-부재 게이트** 추가 —
+  `guard lastHandSeenMs>0, nowMs-lastHandSeenMs <= gridHandRecencyMs(3000ms)`.
+  **안드 임계(칸수/밀도/일관성/frac)는 한 줄도 안 바꿈.** 진짜 손-스침은 Vision이 몇 틱은 잡아
+  (사장님 graze 사양 3/33) lastHandSeenMs 최근 → 통과. 빈 프레임 잡음(손 부재)만 차단.
+- 검증: scripts/wave_sim.swift 34/34 통과. 회귀 테스트 2건 신규(33=손부재 2칸 차단[채증 재현],
+  34=손목격 3.2s 만료 차단). 31(손 스침 2칸)은 발화 유지 — 유일한 차이가 "손 존재".
+- ⚠️ **안드 세션 확인 요청**: 안드 checkGrossMotion에도 동일 손-부재 게이트가 있는지/필요한지 검토.
+  안드는 MediaPipe라 손 검출력이 달라 오발화 프로파일이 다를 수 있음. iOS는 Vision. 사양 동기화 판단 요망.

@@ -1117,6 +1117,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let gridSmallCells: Int = 3
   private let gridMinDensitySmall: Double = 0.9
   private let gridMinDensityBig: Double = 0.30
+  // 🔴 2026-09-02 실기기 채증 확정(diag 14:22:25 gridpass cells=2 / 14:23:04 cells=4, 둘 다
+  //   wave_summary hand=0 nohand=36 — 손이 창 전체에 0프레임인데 발화 → 거치/충전 중 "가만있는데
+  //   틱톡 20개 자동 전진"의 직접 원인). 안드 임계(칸수/밀도/일관성)는 한 줄도 안 바꾸고, 격자 축에만
+  //   "최근 손 목격" 전제를 더한다. 진짜 손-스침은 Vision이 최소 몇 틱은 잡아(사장님 graze 사양 3/33)
+  //   lastHandSeenMs가 최근이라 통과하고, 빈 프레임 잡음(손 부재)만 차단된다. 안드 미러 필요(PM.md 기록).
+  private let gridHandRecencyMs: Double = 3000
   private var gridHistory: [(t: Double, g: [Double])] = []
 
   private let dipWindowMs: Double = 1200
@@ -1137,6 +1143,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     gridHistory.append((nowMs, grid))
     while let f = gridHistory.first, nowMs - f.t > gridWindowMs { gridHistory.removeFirst() }
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
+    // 손 부재 게이트 — 최근 손 목격이 없으면 격자 발화 금지(위 상수 주석의 채증 근거). 빈 프레임
+    // 잡음(거치/충전 중 조명·그림자)이 2~4칸을 흔들어도 손이 없으면 웨이브가 아니다.
+    guard lastHandSeenMs > 0, nowMs - lastHandSeenMs <= gridHandRecencyMs else { return }
     guard let ref = gridHistory.last(where: { nowMs - $0.t >= gridLagMs }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1

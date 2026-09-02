@@ -1558,6 +1558,16 @@ const INJECTED_JS_BEFORE_LOAD = `
       // 여기(500ms 폴링, 영상 전환 감지 시점)서 즉시 판단을 돌려 그 창을 3000ms→최대 500ms로 줄인다.
       try { hideIconRailAndScaleVideo(true); } catch(eSwap) {}
     }
+    // 🔴 2026-09-02 루프 규명 심박 — 3초마다 활성 영상 상태를 남긴다(src 안 바뀌는지/시간 도는지/loop).
+    //   '같은 영상 반복'이 우리 ended/loopedBack을 왜 안 건드리는지 실측으로 확정하기 위함.
+    try {
+      var nowHb = Date.now();
+      if (nowHb - (window.__paceHbAt || 0) >= 3000) {
+        window.__paceHbAt = nowHb;
+        var vsrcHb = ('' + (v.currentSrc || v.src || '')).slice(-12);
+        send({ type: 'tthb', src: vsrcHb, ct: Math.round(v.currentTime * 10) / 10, dur: Math.round((v.duration || 0) * 10) / 10, paused: v.paused, loop: v.loop, rs: v.readyState });
+      }
+    } catch(eHb) {}
     try { if (v.loop) v.loop = false; } catch(e) {}
     // 2026-08-15 사장님 실기기 지적("틱톡 소리 안나다 한번씩 소리나던데 간헐적으로") — tryAdvance의
     // "전환 확인 후 window.__paceMuted 적용"(위 452줄)만으론 안 됐다. 그 확인은 goToNext() 뒤
@@ -2173,6 +2183,11 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'tthb') {
+            const m = msg as unknown as { src?: string; ct?: number; dur?: number; paused?: boolean; loop?: boolean; rs?: number };
+            diagLog('tt_hb', `src=${m.src} ct=${m.ct} dur=${m.dur} p=${m.paused ? 1 : 0} loop=${m.loop ? 1 : 0} rs=${m.rs}`);
             return;
           }
           if (msg.type === 'ttstall') {

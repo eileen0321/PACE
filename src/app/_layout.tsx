@@ -267,6 +267,19 @@ export default function RootLayout() {
     overlayService.endOrphanedOverlays?.().catch(() => {});
   }, []);
 
+  // 🔴 2026-09-02 사장님("앱이 포그라운드에 안 떠있는데 왜 그 알림이 떠") — Live Activity는 앱과 별개
+  //   프로세스라 백그라운드에서도 남는다(그게 원래 동작). iOS는 이제 LA를 아예 시작하지 않으므로
+  //   (overlayService.ios.ts startSession) 남아있어야 할 이유가 없다. 콜드스타트 1회 정리만으론
+  //   예전 빌드가 띄워둔 유령이 안 지워질 수 있어, **앱이 포그라운드로 올 때마다** 무조건 정리한다.
+  //   (Android는 endOrphanedOverlays가 미구현이라 자동 no-op — 정상 세션에 영향 없음.)
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const clear = () => { overlayService.endOrphanedOverlays?.().catch(() => {}); };
+    clear();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') clear(); });
+    return () => sub.remove();
+  }, []);
+
   // 🟢 2026-08-21 — 테스트 빌드 플래그를 네이티브에 알린다(광고 연장 하루 3회 캡 해제).
   //   ⚠️ 처음엔 enforceFreeFocusSessionDuration() 안에 넣었는데 **그건 틀린 자리였다.** 그 함수는
   //     `Promise.all([settingsReady, subscriptionReady])` 뒤에 있어서, RevenueCat 초기화가 실패하면

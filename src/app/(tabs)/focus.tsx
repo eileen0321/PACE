@@ -14,6 +14,7 @@ import { useBluetoothStore } from '../../store/useBluetoothStore';
 import { bluetoothService, autoNextService, overlayService } from '../../services/platform';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useToastStore } from '../../store/useToastStore';
+import { diagLog } from '../../services/diagLog';
 import { useAttendanceStore, getLast7Days, getCurrentStreak } from '../../store/useAttendanceStore';
 import { useTranslation, type TranslationKey } from '../../services/i18n';
 import { AppHeader } from '../../components/ui/AppHeader';
@@ -119,6 +120,7 @@ export default function FocusScreen() {
     if (!isIOS || !gestureMod) return;
     const check = () => { try { setCamStatus(gestureMod.cameraPermissionStatus()); } catch {} };
     check();
+    try { diagLog('focus_cam', `cam=${gestureMod?.cameraPermissionStatus?.() ?? 'null'} mod=${gestureMod ? 1 : 0}`); } catch {}
     const sub = AppState.addEventListener('change', (s) => { if (s === 'active') check(); }); // 설정에서 돌아오면 재확인
     return () => sub.remove();
   }, []);
@@ -126,28 +128,30 @@ export default function FocusScreen() {
   const gestureOn = settings.handsFreeGesture && !camDenied; // 권한 거부면 무조건 OFF 표시
   const setGesture = (v: boolean) => {
     if (isIOS) {
-      if (v && gestureMod) {
-        // 2026-08-01 크래시 감사 F3 — :78과 달리 여기 sync 네이티브 호출이 try/catch 없이 탭 핸들러
-        // 안에서 돌아, 바이너리 불일치 등으로 throw하면 크래시. 위와 동일하게 방어(실패 시 미결정 취급).
-        let st: string;
-        try { st = gestureMod.cameraPermissionStatus(); } catch { st = 'notDetermined'; }
-        if (st === 'denied' || st === 'restricted') {
-          // 🔴 2026-09-02 사장님("권한 껐다 토글하면 권한 켜라는 안내도 없다") — 설정으로 점프만 하면
-          //   왜 열렸는지 몰라 "아무 일도 안 남"으로 읽힌다. 먼저 토스트로 이유를 알리고 설정을 연다.
-          setCamStatus(st);
-          useToastStore.getState().show(t('focus.cameraNeededToast'));
-          Linking.openSettings().catch(() => {});
-          return;
-        }
-        if (st === 'notDetermined') {
-          gestureMod.requestCameraPermission().then((granted) => {
-            setCamStatus(granted ? 'authorized' : 'denied');
-            if (granted) update({ handsFreeGesture: true });
-          }).catch(() => {});
-          return;
-        }
+      // 끄는 건 항상 통과.
+      if (!v) { update({ handsFreeGesture: false }); return; }
+      // 🔴 2026-09-02 사장님("권한 껐다 토글해도 안내가 안 뜬다") — 방어적으로 재작성한다. 이전엔
+      //   `if (v && gestureMod)`라 gestureMod가 없으면 분기를 통째로 건너뛰고 조용히 켜져 안내가 0이었다.
+      //   이제 **켤 때 authorized가 아니면 어떤 경로든 반드시 안내**한다(설정 링크 또는 토스트).
+      let st = 'notDetermined';
+      try { st = gestureMod?.cameraPermissionStatus?.() ?? 'notDetermined'; } catch { st = 'notDetermined'; }
+      if (st === 'authorized') { update({ handsFreeGesture: true }); return; }
+      if (st === 'denied' || st === 'restricted') {
+        setCamStatus(st);
+        useToastStore.getState().show(t('focus.cameraNeededToast'));
+        Linking.openSettings().catch(() => {});
+        return;
       }
-      update({ handsFreeGesture: v });
+      // notDetermined — 시스템 프롬프트. 거부하면(또는 모듈 부재로 요청 불가) 반드시 안내한다.
+      if (gestureMod?.requestCameraPermission) {
+        gestureMod.requestCameraPermission().then((granted) => {
+          setCamStatus(granted ? 'authorized' : 'denied');
+          if (granted) update({ handsFreeGesture: true });
+          else useToastStore.getState().show(t('focus.cameraNeededToast'));
+        }).catch(() => { useToastStore.getState().show(t('focus.cameraNeededToast')); });
+        return;
+      }
+      useToastStore.getState().show(t('focus.cameraNeededToast')); // 모듈 자체가 없다 — 켜지 않고 알린다.
       return;
     }
     // 2026-07-28 감사 발견 — 마스터 토글(toggleAutoMode/enableAutoModeForSession)은 켤 때 카메라 권한을

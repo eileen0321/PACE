@@ -131,7 +131,14 @@ export default function FocusScreen() {
         // 안에서 돌아, 바이너리 불일치 등으로 throw하면 크래시. 위와 동일하게 방어(실패 시 미결정 취급).
         let st: string;
         try { st = gestureMod.cameraPermissionStatus(); } catch { st = 'notDetermined'; }
-        if (st === 'denied' || st === 'restricted') { setCamStatus(st); Linking.openSettings().catch(() => {}); return; } // 설정으로
+        if (st === 'denied' || st === 'restricted') {
+          // 🔴 2026-09-02 사장님("권한 껐다 토글하면 권한 켜라는 안내도 없다") — 설정으로 점프만 하면
+          //   왜 열렸는지 몰라 "아무 일도 안 남"으로 읽힌다. 먼저 토스트로 이유를 알리고 설정을 연다.
+          setCamStatus(st);
+          useToastStore.getState().show(t('focus.cameraNeededToast'));
+          Linking.openSettings().catch(() => {});
+          return;
+        }
         if (st === 'notDetermined') {
           gestureMod.requestCameraPermission().then((granted) => {
             setCamStatus(granted ? 'authorized' : 'denied');

@@ -1579,6 +1579,24 @@ const INJECTED_JS_BEFORE_LOAD = `
       window.__paceLastProgAt = Date.now();
       send({ type: 'progress', value: t / v.duration });
     }
+    // 🔴 2026-09-02 사장님("기기 틱톡 왜 멈춰있어") — 재생 중인데 currentTime이 15s 멈추면(양성 증거)
+    //   리로드로 복구. 되돌린 '메시지 없음' 데드맨(1900행 주석)과 다르다: pollTick은 페이지가 살아
+    //   있을 때만 돌고, 조건이 '!paused && ready && 시간정지'라 로딩 중엔 성립 안 해 리로드 루프가 없다.
+    try {
+      if (!v.paused && v.readyState >= 2) {
+        if (window.__paceTtStallT !== t) { window.__paceTtStallT = t; window.__paceTtStallSince = Date.now(); }
+        else if (window.__paceTtStallSince && Date.now() - window.__paceTtStallSince > 15000) {
+          var ttR = 0; try { ttR = parseInt(sessionStorage.getItem('paceTtStallReloads') || '0', 10) || 0; } catch(eTtR) {}
+          if (ttR < 3) {
+            try { sessionStorage.setItem('paceTtStallReloads', String(ttR + 1)); } catch(eTtR2) {}
+            send({ type: 'ttstall', n: ttR + 1 });
+            window.__paceTtStallSince = 0;
+            location.reload();
+            return;
+          }
+        }
+      } else { window.__paceTtStallSince = 0; }
+    } catch(eTtStall) {}
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
     if ((nearEnd || loopedBack) && markEndedOnce(v)) {
@@ -2145,6 +2163,10 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           try {
             msg = JSON.parse(e.nativeEvent.data);
           } catch {
+            return;
+          }
+          if (msg.type === 'ttstall') {
+            diagLog('tt_stall_reload', '#' + ((msg as unknown as { n?: number }).n ?? 0));
             return;
           }
           if (msg.type === 'ttadv') {

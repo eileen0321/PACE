@@ -19,12 +19,15 @@ const PaceLiveActivity = requireOptionalNativeModule<LiveActivityModule>('PaceLi
 
 export const overlayService: OverlayService = {
   supportsSystemOverlay: false,
-  async startSession({ remainingMinutes }) {
+  async startSession() {
+    // 🔴 2026-09-02 사장님("애플 카메라 렌즈 근처에 계속 PACE 시간재생 알림이 떠 다들 이상하게 봐") —
+    //   iOS Live Activity(다이나믹 아일랜드 세션 타이머)를 더 이상 시작하지 않는다. 2026-08-15에
+    //   피드 쪽 시작은 이미 뺐는데(그 주석 참고 — iOS는 앱을 벗어나면 세션이 즉시 끝나 LA가 보일
+    //   기회 자체가 없다) 홈 세션 시작 경로(home.tsx startSession)에 남아 있어 매 세션마다 떴다.
+    //   앱 안에 있는 동안은 상단 "FOCUS ON | Nm" 필로 같은 정보가 이미 보이므로 LA는 순수 잉여다.
+    //   시작은 없애고, 혹시 이전에 남은 유령 LA가 있으면 지금 정리한다.
     if (!PaceLiveActivity) return;
-    const endEpochMs = Date.now() + Math.max(0, remainingMinutes) * 60_000;
-    // 이전 세션이 강제종료 등으로 안 닫혔을 수 있으니 새로 시작 전 정리.
     await PaceLiveActivity.endAll().catch(() => {});
-    await PaceLiveActivity.start({ title: 'Focus Session', endEpochMs }).catch(() => {});
   },
   async updateRemaining(remainingMinutes) {
     // 위젯이 스스로 틱하므로 보통 불필요 — 일시정지/연장 등 실제 종료시각이 바뀔 때만 의미 있음.

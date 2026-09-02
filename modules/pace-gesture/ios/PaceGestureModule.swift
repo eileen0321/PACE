@@ -1111,18 +1111,19 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // frac=0.0078·일관성 1.0·밀도 1.0). 잡음 2칸(합성 60초 ×4종, 4671회)은 일관성·밀도에서 전부 갈렸다.
   // 밀도는 칸 수 2단: 작은 이벤트(≤3칸)는 딱 붙어야(0.9), 큰 이벤트는 느슨하게(0.30) — 단일 0.55는
   // 5~8칸 진짜 손짓의 절반을 떨어뜨렸다("2번 중 1번"의 원인).
-  private let gridFracMin: Double = 0.0078
-  private let gridFracMax: Double = 0.30
-  private let gridDarkenRatio: Double = 0.8
-  private let gridSmallCells: Int = 3
-  private let gridMinDensitySmall: Double = 0.9
-  private let gridMinDensityBig: Double = 0.30
-  // 🔴 2026-09-02 실기기 채증 확정(diag 14:22:25 gridpass cells=2 / 14:23:04 cells=4, 둘 다
-  //   wave_summary hand=0 nohand=36 — 손이 창 전체에 0프레임인데 발화 → 거치/충전 중 "가만있는데
-  //   틱톡 20개 자동 전진"의 직접 원인). 안드 임계(칸수/밀도/일관성)는 한 줄도 안 바꾸고, 격자 축에만
-  //   "최근 손 목격" 전제를 더한다. 진짜 손-스침은 Vision이 최소 몇 틱은 잡아(사장님 graze 사양 3/33)
-  //   lastHandSeenMs가 최근이라 통과하고, 빈 프레임 잡음(손 부재)만 차단된다. 안드 미러 필요(PM.md 기록).
-  private let gridHandRecencyMs: Double = 3000
+  // 🔴 2026-09-03 안드 현재값(PaceHandWaveDetector.kt GROSS_MOTION_*) verbatim 이식 —
+  //   실기기 채증(diag 16:17~16:18) 재확정: iOS가 08-28 스냅샷(하한 2칸 0.0078)에 멈춰 있어
+  //   사장님 실사용(폰 쥠/턱 괴기)에서 2~5칸 미세 변화·폰 움직임(23·29칸)에 오발화 → 자동 전진.
+  //   안드는 08-30/08-31에 같은 문제(2칸 오발화 + 얼굴/폰움직임)를 겪고 ①하한 0.0078→0.05(13칸)
+  //   ②큰이벤트 밀도 0.30→0.15 ③가로세로비 게이트(aspect ≤ 0.9 — 손은 세로로 길다, 얼굴/정면접근은
+  //   가로세로 비슷)로 고쳤다. iOS도 셋을 그대로 이식(안드에 없는 손-부재 게이트·비활성 플래그는 제거).
+  private let gridFracMin: Double = 0.05      // 안드 GROSS_MOTION_CELL_FRACTION (256칸 중 13칸)
+  private let gridFracMax: Double = 0.30      // 안드 GROSS_MOTION_CELL_FRACTION_MAX
+  private let gridDarkenRatio: Double = 0.8   // 안드 GROSS_MOTION_DARKEN_RATIO
+  private let gridSmallCells: Int = 3         // 안드 GROSS_MOTION_SMALL_CELLS
+  private let gridMinDensitySmall: Double = 0.9  // 안드 GROSS_MOTION_MIN_DENSITY_SMALL
+  private let gridMinDensityBig: Double = 0.15   // 안드 GROSS_MOTION_MIN_DENSITY_BIG
+  private let gridMaxAspect: Double = 0.9        // 안드 GROSS_MOTION_MAX_ASPECT (aspect=bw/bh ≤ 0.9 = 세로가 더 길다)
   private var gridHistory: [(t: Double, g: [Double])] = []
 
   private let dipWindowMs: Double = 1200
@@ -1143,9 +1144,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     gridHistory.append((nowMs, grid))
     while let f = gridHistory.first, nowMs - f.t > gridWindowMs { gridHistory.removeFirst() }
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
-    // 손 부재 게이트 — 최근 손 목격이 없으면 격자 발화 금지(위 상수 주석의 채증 근거). 빈 프레임
-    // 잡음(거치/충전 중 조명·그림자)이 2~4칸을 흔들어도 손이 없으면 웨이브가 아니다.
-    guard lastHandSeenMs > 0, nowMs - lastHandSeenMs <= gridHandRecencyMs else { return }
     guard let ref = gridHistory.last(where: { nowMs - $0.t >= gridLagMs }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -1162,15 +1160,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard changed > 0 else { return }
     let fraction = Double(changed) / Double(grid.count)
     let darkenRatio = Double(darkened) / Double(changed)
-    let bbox = Double((maxX - minX + 1) * (maxY - minY + 1))
+    let bw = maxX - minX + 1, bh = maxY - minY + 1
+    let bbox = Double(bw * bh)
     let density = Double(changed) / max(1, bbox)
+    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // 안드 aspect=bw/bh — 손짓은 세로로 길어 ≤0.9, 얼굴/정면접근은 ~1.0
     let consistency = max(darkenRatio, 1 - darkenRatio)
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh {
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
       gridHistory.removeAll()
-      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f", changed, fraction, consistency, density), nowMs)
+      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
     } else if fraction >= gridFracMin * 0.5 {
-      onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f cells=%d", fraction, consistency, density, changed))
+      onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f asp=%.2f cells=%d", fraction, consistency, density, aspect, changed))
     }
   }
 

@@ -28,11 +28,7 @@ struct Sim {
   var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
   var gridHistory: [(t: Double, g: [Double])] = []
   var lastTriggerMs = -10000.0
-  var lastHandSeenMs = 0.0  // 격자 손-부재 게이트용(모듈 미러). 손 스침 케이스는 seeHand()로 최근값 세팅.
   var events: [String] = []
-
-  // 격자 테스트가 "직전에 손이 스쳤다"를 표현하기 위한 헬퍼 — 실기기 Vision이 손을 잡은 시점 모사.
-  mutating func seeHand(t: Double) { lastHandSeenMs = t }
 
   // 크로싱 판정 — processTrack의 해당 블록 미러
   mutating func feedHand(t: Double, x: Double, size: Double) {
@@ -131,7 +127,6 @@ extension Sim {
     gridHistory.append((t, g))
     while let f = gridHistory.first, t - f.t > 700 { gridHistory.removeFirst() }
     guard t - lastTriggerMs > passRefractoryMs else { return }
-    guard lastHandSeenMs > 0, t - lastHandSeenMs <= 3000 else { return }  // 손 부재 게이트(모듈 미러)
     guard let ref = gridHistory.last(where: { t - $0.t >= 180 }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -146,10 +141,12 @@ extension Sim {
     guard changed > 0 else { return }
     let fraction = Double(changed) / Double(g.count)
     let dr = Double(darkened) / Double(changed)
-    let density = Double(changed) / Double(max(1, (maxX - minX + 1) * (maxY - minY + 1)))
+    let bw = maxX - minX + 1, bh = maxY - minY + 1
+    let density = Double(changed) / Double(max(1, bw * bh))
+    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // 안드 aspect=bw/bh ≤ 0.9
     let cons = max(dr, 1 - dr)
-    let densityTh = changed <= 3 ? 0.9 : 0.30
-    if fraction >= 0.0078, fraction <= 0.30, cons >= 0.8, density >= densityTh {
+    let densityTh = changed <= 3 ? 0.9 : 0.15   // 안드 MIN_DENSITY_SMALL/BIG
+    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, aspect <= 0.9 {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
@@ -393,76 +390,75 @@ s27.feedLuma(t: t27, l: 130, m: 80, r: 100); t27 += 100
 for _ in 0..<3 { s27.feedLuma(t: t27, l: 100, m: 100, r: 100); t27 += 80 }
 check("방향 혼합 잡음 무발화", s27.events, fires: 0)
 
-// 28. 격자: 가장자리 스침(뭉친 4칸 어두워짐) — 발화해야 (안드 108스윕의 핵심 케이스)
+// ── 격자(gross-motion) 축: 2026-09-03 안드 현재값 verbatim(하한 0.05·밀도 0.15·aspect≤0.9) ──
+// 안드가 08-30/08-31에 "2칸 오발화 + 얼굴/폰움직임" 실패로 하한을 13칸으로 올리고 가로세로비를 더한
+// 그 모델을 그대로 검증한다. 손짓=세로로 긴 덩어리(aspect≤0.9), 얼굴/폰움직임=정사각(aspect>0.9).
+func fillRect(_ g: inout [Double], gx0: Int, gx1: Int, gy0: Int, gy1: Int, _ v: Double = 100) {
+  for gy in gy0...gy1 { for gx in gx0...gx1 { g[gy * gridN + gx] = v } }
+}
+
+// 28. 진짜 손짓: 세로로 긴 덩어리(2×11=22칸, aspect=0.18) 어두워짐 — 발화해야
 var s28 = Sim()
 var t28 = 0.0
 for _ in 0..<6 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
-for i in [240, 241, 242, 243] { g28[i] = 100 } // 아래쪽 한 줄에 뭉친 4칸
-s28.seeHand(t: t28)
+fillRect(&g28, gx0: 6, gx1: 7, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
-check("격자 가장자리 스침", s28.events, fires: 1, expectContains: ["gridpass"])
+check("격자 세로 손짓 발화", s28.events, fires: 1, expectContains: ["gridpass"])
 
-// 29. 격자: 자동노출 흔들림(전체 256칸 동시 변화) — 상한 0.5로 차단
+// 29. 자동노출 흔들림(전체 256칸) — 상한 0.30 초과로 차단
 var s29 = Sim()
 var t29 = 0.0
 for _ in 0..<6 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
-s29.seeHand(t: t29)
 for _ in 0..<3 { s29.feedGrid(t: t29, g: flatGrid(100)); t29 += 80 }
 check("격자 AE 전체변화 차단", s29.events, fires: 0)
 
-// 30. 격자: 흩어진 잡음(4칸이 사방에 분산 = 밀도 미달) — 차단
+// 30. 흩어진 잡음(4칸 사방 분산) — 하한 0.05 미달 + 밀도 미달로 차단
 var s30 = Sim()
 var t30 = 0.0
 for _ in 0..<6 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
 var g30 = flatGrid(150)
 for i in [0, 60, 130, 255] { g30[i] = 100 }
-s30.seeHand(t: t30)
 for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
 check("격자 분산 잡음 차단", s30.events, fires: 0)
 
-// 31. 격자: 2칸 인접 스침(안드 실기기 실측 케이스) — 발화해야
+// 31. 작은 스침(세로 5칸) — 안드가 버린 "2~5칸 발화": 하한 0.05(13칸) 미달로 차단해야
 var s31 = Sim()
 var t31 = 0.0
 for _ in 0..<6 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
 var g31 = flatGrid(150)
-for i in [244, 245] { g31[i] = 100 }
-s31.seeHand(t: t31)
+fillRect(&g31, gx0: 6, gx1: 6, gy0: 2, gy1: 6)  // 5칸 세로(밀도·aspect는 통과, 하한만 미달)
 for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
-check("격자 2칸 인접 스침", s31.events, fires: 1)
+check("격자 5칸 미달 차단(안드 하한)", s31.events, fires: 0)
 
-// 32. 격자: 2칸 분산 잡음(밀도 0.5) — 차단해야
+// 32. 얼굴 정면 접근: 큰 정사각 덩어리(5×4=20칸, aspect=1.25) — aspect>0.9로 차단해야
 var s32 = Sim()
 var t32 = 0.0
 for _ in 0..<6 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
 var g32 = flatGrid(150)
-g32[10] = 100; g32[13] = 100
-s32.seeHand(t: t32)
+fillRect(&g32, gx0: 6, gx1: 10, gy0: 6, gy1: 9)  // 20칸, bw=5 bh=4 aspect=1.25
 for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
-check("격자 2칸 분산 잡음 차단", s32.events, fires: 0)
+check("격자 얼굴 정사각 차단(aspect)", s32.events, fires: 0)
 
-// 33. 격자: 손 부재 잡음(실기기 채증 2026-09-02 14:22:25 재현) — 31과 동일한 2칸 인접 스침이지만
-//     seeHand() 없음(=wave_summary hand=0 nohand=36). 손이 없으면 발화 금지 — 이게 "가만있는데 20개
-//     자동 전진"의 회귀 방지선. (31은 손 스침이라 발화, 33은 손 부재라 차단 — 유일한 차이가 손 존재)
+// 33. 실기기 채증 회귀(2026-09-02 14:22:25 cells=2 frac=0.008) — 하한 0.05 미달로 차단.
+//     "가만있는데 20개 자동 전진"의 직접 원인이던 2칸 발화가 이제 원천 차단됨을 못박는다.
 var s33 = Sim()
 var t33 = 0.0
 for _ in 0..<6 { s33.feedGrid(t: t33, g: flatGrid(150)); t33 += 80 }
 var g33 = flatGrid(150)
-for i in [244, 245] { g33[i] = 100 }
-for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }  // seeHand 없음 — 손 부재
-check("격자 손부재 잡음 차단(채증회귀)", s33.events, fires: 0)
+for i in [244, 245] { g33[i] = 100 }  // 2칸
+for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }
+check("격자 2칸 채증회귀 차단", s33.events, fires: 0)
 
-// 34. 격자: 손 스침이 오래전(3.2초 전) — 최근성 창(3초) 밖이면 차단. 손을 내린 뒤 한참 있다 생긴
-//     조명 잡음이 격자를 흔들어도 안 넘어가야 한다.
+// 34. 폰 움직임(머리와 함께): 큰 정사각(6×5=30칸, aspect=1.2, cells=29~30) — aspect로 차단.
+//     실기기 16:18 cells=23·29 발화(폰 움직임을 손짓으로 오판)를 막는 선.
 var s34 = Sim()
 var t34 = 0.0
-s34.seeHand(t: 0)  // 손은 t=0에 마지막 목격
-t34 = 3200  // 3.2초 경과 후 잡음(창 3000ms 밖)
 for _ in 0..<6 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
 var g34 = flatGrid(150)
-for i in [244, 245] { g34[i] = 100 }
+fillRect(&g34, gx0: 5, gx1: 10, gy0: 5, gy1: 9)  // 30칸, bw=6 bh=5 aspect=1.2
 for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
-check("격자 손목격 만료 차단", s34.events, fires: 0)
+check("격자 폰움직임 정사각 차단(aspect)", s34.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

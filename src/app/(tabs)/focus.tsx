@@ -616,7 +616,19 @@ export default function FocusScreen() {
                       //   네이티브 함수(startGestureCalibration)가 **안드에만 있다**. iOS는 미구현이라
                       //   startCalibration()이 항상 false→'denied'로 오판정돼 켤 때마다 권한 화면이 떴다.
                       //   iOS 손짓은 자체 문턱으로 동작하고 이 보정값을 읽지도 않으므로 안드에서만 띄운다.
-                      if (v && Platform.OS === 'android') getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
+                      // 🔴 2026-09-03 사장님 지시("보정은 한참 더 해봐야 할 거니까 입력 받는 거
+                      //   켜지 말고") — 출시본에서는 보정 시트를 띄우지 않는다.
+                      //   근거: 5번을 받아 만든 개인 문턱이 실제로 지배하는 축은 checkLumaPass
+                      //   **하나뿐**이다. 격자 모션 축은 GROSS_MOTION_STANDALONE=true 라
+                      //   보정값을 보지 않고 단독으로 발화한다(PaceHandWaveDetector.kt:812/2007).
+                      //   즉 지금 상태로는 "당신의 손짓을 기억합니다"라고 5번을 받아놓고 실제
+                      //   넘김의 상당수는 보정과 무관한 축에서 나온다 — 사용자에게 시간을
+                      //   요구하면서 그만큼 돌려주지 못한다. 격자 축까지 보정 대상에 넣거나
+                      //   문구를 실제 동작에 맞출 때까지 입력 자체를 받지 않는다.
+                      //   ⚠️ 저장된 값을 쓰는 경로(loadCalibration)는 그대로 둔다 — 이미 보정한
+                      //     사용자의 값을 버리지 않기 위해서다. 새로 묻지만 않는다.
+                      //   되살릴 때: 아래 한 줄의 주석을 풀면 된다(다른 변경 없음).
+                      // if (v && Platform.OS === 'android') getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
                       return;
                     }
                     // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.

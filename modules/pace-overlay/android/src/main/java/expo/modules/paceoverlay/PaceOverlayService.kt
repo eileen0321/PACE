@@ -1717,12 +1717,31 @@ class PaceOverlayService : Service() {
      *   · == null(접근성 꺼짐 등)     → 대상 앱이 최근에 포그라운드로 관측됐을 때만 보는 중으로 본다
      *     (performTick의 null 분기와 같은 신선도 기준 POLL_INTERVAL_MS*3)
      */
-    private fun isWatchingNow(): Boolean = when (PaceAccessibilityService.isLikelyPlaying()) {
-      // (lastUsageBasedVisible / lastUsageBasedVisibleAtMs 는 이 companion object의 @Volatile 필드다)
-      true -> true
-      false -> false
-      null -> lastUsageBasedVisible &&
-          SystemClock.elapsedRealtime() - lastUsageBasedVisibleAtMs <= POLL_INTERVAL_MS * 3
+    /**
+     * 🔴 2026-09-03 — 세션을 **미룰 근거**는 isWatchingNow()의 부정이 아니다.
+     *
+     *   내가 어제 넣은 focusSessionAutoStop 가드는 `!isWatchingNow()`면 미뤘는데, 그건
+     *   "안 보고 있다"와 **"보고 있는지 알 수 없다"를 같게 취급**한 것이다. 접근성이 꺼지면
+     *   isLikelyPlaying()이 null이 되고, 그때 usage 기반 관측마저 낡거나 비어 있으면
+     *   isWatchingNow()가 false가 된다 — 실기기 로그로 확인된 상태다:
+     *     "tick skipped decrement — 접근성 미연결이고 대상 앱도 포그라운드가 아님"
+     *   (유튜브가 실제로 전면인데도 그렇게 찍혔다.)
+     *   그 상태에서 미루기만 하면 **포커스 세션이 영영 끝나지 않는다** = 무료 사용자가 광고
+     *   게이트를 통째로 우회한다. 내가 커밋 메시지에 "우회가 되지 않는다"고 썼던 그 일이,
+     *   접근성이 꺼진 기기에서는 실제로 일어난다.
+     *
+     *   → 미루는 것은 **안 보고 있다는 양성 증거가 있을 때만** 한다. 증거가 없으면(모름)
+     *     예전처럼 그대로 타임아웃시킨다. 오차 방향을 "공짜 시간을 주는 쪽"이 아니라
+     *     "원래 동작대로"에 둔다.
+     */
+    private fun isDefinitelyNotWatching(): Boolean = when (PaceAccessibilityService.isLikelyPlaying()) {
+      false -> true   // 재생 아님이 확정됨
+      true -> false
+      // 접근성이 없을 때: usage 관측이 **살아 있으면서**(신선함) 대상 앱이 아니라고 말할 때만
+      // 양성 증거로 인정한다. 한 번도 관측된 적이 없거나(=0) 낡았으면 "모름"이라 미루지 않는다.
+      null -> lastUsageBasedVisibleAtMs > 0L &&
+          SystemClock.elapsedRealtime() - lastUsageBasedVisibleAtMs <= POLL_INTERVAL_MS * 3 &&
+          !lastUsageBasedVisible
     }
 
     /**
@@ -1757,7 +1776,7 @@ class PaceOverlayService : Service() {
       //     그때부터 남은 시간이 정상적으로 흐르고, 0이 되면 이 자리에서 그대로 타임아웃된다.
       //     하루가 바뀌면 restoreFocusSessionTimerIfNeeded가 지난 날짜 마감시각을 폐기한다.
       val self = instance
-      if (self != null && !isWatchingNow()) {
+      if (self != null && isDefinitelyNotWatching()) {
         Log.i("PaceOverlay", "포커스 마감 도달했지만 시청 중이 아님 — 세션을 끝내지 않고 미룬다")
         deferFocusDeadline(self.applicationContext, FOCUS_IDLE_RECHECK_MS)
         return@Runnable
@@ -2703,7 +2722,7 @@ class PaceOverlayService : Service() {
       //   않게 한다(사장님: "본 시간만 차감해야 하는 거 아냐"). autoStop 쪽에도 같은 가드가
       //   있지만(예약이 터지는 순간), 저장된 마감시각 자체도 정확해야 프로세스가 죽었다
       //   살아날 때 restoreFocusSessionTimerIfNeeded가 옳은 값을 복원한다.
-      if (!shouldDecrement && sinceLastMs > 0L) {
+      if (isDefinitelyNotWatching() && sinceLastMs > 0L) {
         deferFocusDeadline(applicationContext, sinceLastMs)
       }
       if (shouldDecrement && elapsedMinutes > 0) {

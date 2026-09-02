@@ -2,14 +2,14 @@
   "expo": {
     "name": "Pace",
     "slug": "Pace",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "scheme": "pace",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "buildNumber": "17",
+      "buildNumber": "18",
       "bundleIdentifier": "com.strides7.pace",
       "appleTeamId": "328BF833XS",
       "infoPlist": {

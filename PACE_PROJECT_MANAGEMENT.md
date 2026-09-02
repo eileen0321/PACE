@@ -10654,3 +10654,8 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 맥 검증: 시뮬 스위트 wave_sim 32/32·matrix·falsepositive·density_tiers·noise_floor 통과, 주입JS 3종 OK, tsc 0 에러, 볼륨 인터럽션 수정 존치(6참조).
 - 기기(Release, 1F1CE7…) 설치·실행 OK. 에뮬(iPhone17 Debug) — 처음 실행 시 **Metro 캐시 stale 레드박스**(옛 expo-system-ui import, 현 소스엔 없음) → `expo start --clear` 재시작으로 해소, 홈·피드(YouTube Shorts 재생) 정상 렌더 확인.
 - iOS PaceGestureModule.swift는 이번 라운드 미변경(안드+JS만) — 시뮬 미러 유효.
+
+### 2026-09-02(Mac/iOS, 2차) — 🟢 안드 남긴 항목 검증 + 신규 커밋(수면감지 상시경로) 시뮬 검증
+- 새 커밋 0494a02: iOS useSleepGuard.ios.ts에 상시 경로 SLEEP_NO_INPUT_ANYTIME_MS=45분 추가(안드 2026-08-15 파리티) — night/anytime 2경로 배선 확인. 틱톡 회귀 되돌림·카메라 권한 "다시 시도" 수정도 반영.
+- MD 안드 요청(08-27 밝기 축) 대사 결과: iOS는 이미 반영 완료 — lumapass 양방향 EMA+3구간 방향일관성(eR.dir==eM.dir==eL.dir), grid consistency=max(darken,1-darken)≥0.8, 스트로크당 1발화(통합 불응 1.2s+발화 시 dip/grid 이력 초기화). nearpass는 렌즈가림(occlusion) 전용이라 어두워짐 유지가 정답.
+- 검증: wave_sim 32/32 + matrix/falsepositive/density_tiers/noise_floor 통과, tsc 0에러, 주입JS 3종 OK. 시뮬(iPhone17 Debug) 부팅 정상(홈 완전 렌더, 레드박스 0). 기기(Release)도 앞서 설치 완료.

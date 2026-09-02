@@ -692,7 +692,7 @@ export default function FocusScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
+  content: { paddingHorizontal: 16, paddingTop: 16, gap: spacing.lg }, // 2026-09-02 24→16: 상용 표준(Apple HIG/Material 16pt)·home과 통일(박스가 좁아 보이던 불일치 해소)
 
   heroCard: { borderRadius: 30, padding: 24, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
   liveTag: { position: 'absolute', top: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: `${colors.primary}33`, borderWidth: 1, borderColor: `${colors.primary}4D`, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },

@@ -444,7 +444,7 @@ function BehaviorRow({ title, subtitle, value, valueColor, last }: { title: stri
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
+  content: { paddingHorizontal: 16, paddingTop: 16, gap: spacing.lg }, // 2026-09-02 24→16: 상용 표준(Apple HIG/Material 16pt)·home과 통일(박스가 좁아 보이던 불일치 해소)
 
   heroCard: { borderRadius: 24, padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSubtle, gap: 8 },
   heroGlow: { position: 'absolute', top: -60, right: -30, width: 192, height: 192, borderRadius: 96, backgroundColor: `${colors.primary}0D` },

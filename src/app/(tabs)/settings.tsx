@@ -700,7 +700,7 @@ function ChevronRow({ title, bordered, onPress }: { title: string; bordered?: bo
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 24, paddingTop: 16, gap: spacing.lg },
+  content: { paddingHorizontal: 16, paddingTop: 16, gap: spacing.lg }, // 2026-09-02 24→16: 상용 표준(Apple HIG/Material 16pt)·home과 통일(박스가 좁아 보이던 불일치 해소)
   screenTitle: { fontSize: 24, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary },
   sectionLabel: { fontSize: 12, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textSecondary, letterSpacing: 1, textTransform: 'uppercase', marginBottom: spacing.sm, paddingHorizontal: spacing.xs },
   // App.tsx SettingsTab.tsx 전 섹션이 카드에 p-5/px-5(20px)를 쓰는데 spacing.lg(24px)로 잘못

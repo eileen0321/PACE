@@ -1890,6 +1890,12 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
   ref
 ) {
   const webRef = useRef<WebView>(null);
+  // 🔴 2026-09-02 사장님("틱톡 특정 영상에서 안 넘어가고 같은 영상만 리플레이 — 손으로 스와이프해도 반복")
+  //   틱톡이 다음 슬라이드를 안 내주면(피드 벽/게이트/네트워크) 합성 스크롤도 실제 스와이프도 못 넘고
+  //   같은 영상이 루프백한다. 6회 실패 후 래치만 풀 뿐 탈출이 없었다 — tt_adv 'stuck'이 연속되면
+  //   피드를 리로드해 새 콘텐츠를 받아 빠져나온다(빈 피드 워치독과 같은 방식, 세션당 3회 상한).
+  const ttStuckCountRef = useRef(0);
+  const ttStuckReloadRef = useRef(0);
   const [ready, setReady] = useState(false);
   // ⚠️ 2026-09-02 되돌림 — 유튜브에 있는 데드맨 워치독을 틱톡에도 이식했다가 **화면이 멈추는**
   //   회귀를 만들었다(사장님 실기기: "focus on 키고 좀있다 꺼지네 그래서 다시 누르니 화면
@@ -2144,6 +2150,17 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
           if (msg.type === 'ttadv') {
             const m = msg as unknown as { st?: string; t?: number };
             diagLog('tt_adv', `${m.st}${m.t != null ? ' t=' + m.t : ''}`);
+            if (m.st === 'moved') { ttStuckCountRef.current = 0; }
+            else if (m.st === 'stuck') {
+              ttStuckCountRef.current += 1;
+              // 3연속 stuck = 이 영상에 갇혔다. 피드를 리로드해 새 콘텐츠로 탈출(세션당 3회).
+              if (ttStuckCountRef.current >= 3 && ttStuckReloadRef.current < 3) {
+                ttStuckReloadRef.current += 1;
+                ttStuckCountRef.current = 0;
+                diagLog('tt_stuck_reload', '#' + ttStuckReloadRef.current);
+                webRef.current?.reload();
+              }
+            }
             return;
           }
           if (msg.type === 'advdrop') {

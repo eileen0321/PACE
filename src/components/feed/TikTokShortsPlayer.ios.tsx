@@ -1589,7 +1589,17 @@ const INJECTED_JS_BEFORE_LOAD = `
           var ttR = 0; try { ttR = parseInt(sessionStorage.getItem('paceTtStallReloads') || '0', 10) || 0; } catch(eTtR) {}
           if (ttR < 3) {
             try { sessionStorage.setItem('paceTtStallReloads', String(ttR + 1)); } catch(eTtR2) {}
-            send({ type: 'ttstall', n: ttR + 1 });
+            // 🔴 리로드 전 원인 채증(Release에서도 남게 ttstall에 실어 보낸다) — '왜 정지하는가' 규명용.
+            var why = '';
+            try {
+              var bt = (document.body.innerText || '').toLowerCase();
+              var marks = ['불러올 수 없', '서버 오류', '오류가 발생', '다시 시도', 'something went wrong', "couldn't load", '로그인', 'log in', 'app에서', '앱에서 열기', 'open app'];
+              for (var mi = 0; mi < marks.length; mi++) { if (bt.indexOf(marks[mi].toLowerCase()) !== -1) { why += '[' + marks[mi] + ']'; } }
+              var vids = document.querySelectorAll('video').length;
+              var rct = v.getBoundingClientRect();
+              why = 'rs=' + v.readyState + ' ns=' + v.networkState + ' ct=' + t.toFixed(1) + ' dur=' + (v.duration||0).toFixed(1) + ' vids=' + vids + ' top=' + rct.top.toFixed(0) + ' h=' + rct.height.toFixed(0) + ' mk=' + (why||'none');
+            } catch(eWhy) { why = 'why-err'; }
+            send({ type: 'ttstall', n: ttR + 1, why: why });
             window.__paceTtStallSince = 0;
             location.reload();
             return;
@@ -2166,7 +2176,8 @@ export const TikTokShortsPlayer = forwardRef<ShortsPlayerHandle, Props>(function
             return;
           }
           if (msg.type === 'ttstall') {
-            diagLog('tt_stall_reload', '#' + ((msg as unknown as { n?: number }).n ?? 0));
+            const m = msg as unknown as { n?: number; why?: string };
+            diagLog('tt_stall_reload', `#${m.n ?? 0} ${m.why ?? ''}`);
             return;
           }
           if (msg.type === 'ttadv') {

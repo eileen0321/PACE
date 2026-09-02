@@ -10659,3 +10659,9 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 새 커밋 0494a02: iOS useSleepGuard.ios.ts에 상시 경로 SLEEP_NO_INPUT_ANYTIME_MS=45분 추가(안드 2026-08-15 파리티) — night/anytime 2경로 배선 확인. 틱톡 회귀 되돌림·카메라 권한 "다시 시도" 수정도 반영.
 - MD 안드 요청(08-27 밝기 축) 대사 결과: iOS는 이미 반영 완료 — lumapass 양방향 EMA+3구간 방향일관성(eR.dir==eM.dir==eL.dir), grid consistency=max(darken,1-darken)≥0.8, 스트로크당 1발화(통합 불응 1.2s+발화 시 dip/grid 이력 초기화). nearpass는 렌즈가림(occlusion) 전용이라 어두워짐 유지가 정답.
 - 검증: wave_sim 32/32 + matrix/falsepositive/density_tiers/noise_floor 통과, tsc 0에러, 주입JS 3종 OK. 시뮬(iPhone17 Debug) 부팅 정상(홈 완전 렌더, 레드박스 0). 기기(Release)도 앞서 설치 완료.
+
+### 2026-09-02(Mac/iOS, 3차) — 🟢 카메라 권한 반복 표시 버그 수정(보정 시트 iOS 오작동)
+- 증상(사장님): 카메라 권한 켜져 있는데 손짓 켤 때마다 "카메라 권한 켜기" 화면이 반복.
+- 원인: GestureCalibrationSheet가 startGestureCalibration 네이티브를 부르는데 **iOS Swift 모듈엔 미구현**(안드 Kotlin PaceOverlayModule에만 있음). startCalibration()이 항상 false→phase='denied'→권한 화면. 보정 저장 불가라 isCalibrated 영구 false → 매번 재표시.
+- 조치: iOS는 손짓이 자체 문턱으로 동작하며 보정값을 읽지 않음(네이티브 grep 0). focus.tsx 트리거를 Platform.OS==='android'로 게이트. iOS 손짓 동작 영향 0. tsc 0에러, 기기 설치 완료.
+- ⏳ 후속(iOS 개인 보정 필요 시): PaceGestureModule.swift에 startGestureCalibration/stopGestureCalibration/onGestureCalibrationSample(깊이 표본 emit) 네이티브 구현 — 별도 작업.

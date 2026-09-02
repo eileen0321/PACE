@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Image, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -54,6 +54,7 @@ export default function FocusScreen() {
   const { settings, update } = useSettingsStore();
   // Play 정책 고지·동의 시트(권한 요청 직전 인앱 고지) — 아래 liveTag onPress 주석 참고.
   const [showAccessibilityDisclosure, setShowAccessibilityDisclosure] = useState(false);
+  const [camDisclosure, setCamDisclosure] = useState(false); // iOS 카메라 권한 거부 안내 팝업
   const { todayUsageMinutes, refresh } = useStatsStore();
   const { extraMinutes: bonusMinutes } = useDailyBonusStore();
   const attendanceHistory = useAttendanceStore((s) => s.history);
@@ -137,9 +138,11 @@ export default function FocusScreen() {
       try { st = gestureMod?.cameraPermissionStatus?.() ?? 'notDetermined'; } catch { st = 'notDetermined'; }
       if (st === 'authorized') { update({ handsFreeGesture: true }); return; }
       if (st === 'denied' || st === 'restricted') {
+        // 🔴 2026-09-02 사장님("설명 팝업도 없이 그냥 설정으로 튄다") — 이미 거부된 권한은 iOS가
+        //   앱 내 재요청을 막아 설정으로 가야만 켤 수 있다(그게 애플 제약). 하지만 **왜 가는지 설명하는
+        //   팝업**을 먼저 띄운다(토스트+즉시 점프 대신). 사용자가 '설정 열기'를 눌러야만 이동한다.
         setCamStatus(st);
-        useToastStore.getState().show(t('focus.cameraNeededToast'));
-        Linking.openSettings().catch(() => {});
+        setCamDisclosure(true);
         return;
       }
       // notDetermined — 시스템 프롬프트. 거부하면(또는 모듈 부재로 요청 불가) 반드시 안내한다.
@@ -669,6 +672,21 @@ export default function FocusScreen() {
       </ScrollView>
 
       {/* Play 정책 고지·동의 시트 — "동의하고 설정 열기"를 눌렀을 때만 설정이 열린다. */}
+      <Modal visible={camDisclosure} transparent animationType="fade" onRequestClose={() => setCamDisclosure(false)}>
+        <Pressable style={styles.camModalOverlay} onPress={() => setCamDisclosure(false)}>
+          <Pressable style={styles.camModalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.camModalTitle}>{t('focus.camDisclosureTitle')}</Text>
+            <Text style={styles.camModalBody}>{t('focus.camDisclosureBody')}</Text>
+            <Pressable style={styles.camModalOpenBtn} onPress={() => { setCamDisclosure(false); Linking.openSettings().catch(() => {}); }}>
+              <Text style={styles.camModalOpenText}>{t('focus.camDisclosureOpen')}</Text>
+            </Pressable>
+            <Pressable style={styles.camModalCancel} onPress={() => setCamDisclosure(false)}>
+              <Text style={styles.camModalCancelText}>{t('settings.cancel')}</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <AccessibilityOnboardingSheet
         visible={showAccessibilityDisclosure}
         onEnable={() => {
@@ -692,6 +710,14 @@ export default function FocusScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  camModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
+  camModalCard: { width: '100%', maxWidth: 340, backgroundColor: colors.card, borderRadius: radius.card, padding: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  camModalTitle: { fontSize: 17, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textPrimary, marginBottom: 8 },
+  camModalBody: { fontSize: 13.5, fontFamily: typography.bodyFontFamilyMedium, color: colors.textSecondary, lineHeight: 20, marginBottom: 18 },
+  camModalOpenBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 13, alignItems: 'center' },
+  camModalOpenText: { color: '#FFFFFF', fontSize: 14.5, fontFamily: typography.bodyFontFamilyExtrabold },
+  camModalCancel: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
+  camModalCancelText: { color: colors.textSecondary, fontSize: 13, fontFamily: typography.bodyFontFamilyBold },
   content: { paddingHorizontal: 16, paddingTop: 16, gap: spacing.lg }, // 2026-09-02 24→16: 상용 표준(Apple HIG/Material 16pt)·home과 통일(박스가 좁아 보이던 불일치 해소)
 
   heroCard: { borderRadius: 30, padding: 24, borderWidth: 1, borderColor: colors.border, gap: spacing.md },

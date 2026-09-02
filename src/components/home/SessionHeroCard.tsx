@@ -84,7 +84,7 @@ export function SessionHeroCard({ minutesWatched, limitMinutes, autoNextEnabled,
 }
 
 const styles = StyleSheet.create({
-  card: { marginHorizontal: 24, marginTop: 16, borderRadius: 28, padding: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  card: { marginHorizontal: 16, marginTop: 16, borderRadius: 28, padding: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   glow: { position: 'absolute', top: -40, right: -40, width: 128, height: 128, borderRadius: 64, backgroundColor: `${colors.primary}0D` },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.md },
   sessionLabel: { fontSize: 10, fontFamily: typography.bodyFontFamilyExtrabold, color: '#818CF8', letterSpacing: 2, textTransform: 'uppercase' },

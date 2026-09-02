@@ -58,7 +58,7 @@ function Tile({ icon, label, value, onPress }: { icon: keyof typeof Feather.glyp
 }
 
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: 24, marginTop: spacing.sm },
+  wrap: { paddingHorizontal: 16, marginTop: spacing.sm }, // 2026-09-02 24→16 정렬(헤더/카드와 통일)
   grid: { flexDirection: 'row', gap: 10 },
   tile: { flex: 1, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSubtle, borderRadius: radius.chip + 4, padding: 14, alignItems: 'center', justifyContent: 'space-between' },
   tilePressed: { opacity: 0.8 },

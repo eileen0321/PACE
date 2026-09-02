@@ -925,7 +925,7 @@ const styles = StyleSheet.create({
     gap: 10,
     // 2026-07-27 사용자 지적 — 타이틀/카드는 전부 24px 인셋인데 이 배너와 아래 두 섹션 라벨만
     // 28px이라 좌우 끝이 안 맞았다. 24로 통일.
-    marginHorizontal: 24,
+    marginHorizontal: 16, // 2026-09-02 24→16 정렬(헤더/카드와 통일)
     marginTop: spacing.sm,
     padding: 14,
     borderRadius: radius.card,

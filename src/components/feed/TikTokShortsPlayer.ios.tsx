@@ -1518,6 +1518,7 @@ const INJECTED_JS_BEFORE_LOAD = `
     var vsrc0 = v.currentSrc || v.src || '';
     if (v !== pollLastVideo || vsrc0 !== pollLastSrc) {
       pollLastVideo = v; pollLastSrc = vsrc0; pollLastT = -1;
+      window.__paceLoopSrc = null; window.__paceLoopCount = 0; // 새 영상 — 루프 데드락 카운터 리셋
       // 🔴 사장님 지적("스와이프 하면 까만화면에 오른쪽 아이콘 나왔다가 전체화면") — 영상은 숨겼는데
       // (sweepHideUndecided) RN이 그리는 좋아요/댓글/북마크/공유 오버레이는 *이전* 영상 값을 그대로
       // 들고 있어서, "검정 화면 + 이전 영상 아이콘"이 잠깐 보이다 새 iconState가 도착하면 아이콘도
@@ -1619,6 +1620,26 @@ const INJECTED_JS_BEFORE_LOAD = `
     } catch(eTtStall) {}
     var nearEnd = t >= v.duration - 0.5;
     var loopedBack = pollLastT > 1 && t < pollLastT - 1;
+    // 🔴 2026-09-02 심박으로 확정한 데드락 수정 — 같은 영상이 loop=0인데도 계속 루프백(재생 끝→처음)
+    //   하는데 ended가 한 번도 안 떴다. markEndedOnce 래치가 한 번 서고(advance 실패) 안 풀려 그 뒤
+    //   모든 루프백이 삼켜졌기 때문. 루프백은 '한 바퀴 완주'의 확정 증거이므로 래치를 풀어 재발화시킨다.
+    //   그리고 **같은 영상에서 2회 이상 루프백 = advance가 확실히 실패** → 리로드로 탈출(세션당 3회).
+    if (loopedBack) {
+      var vsrcLoop = ('' + (v.currentSrc || v.src || '')).slice(-16);
+      if (window.__paceLoopSrc === vsrcLoop) { window.__paceLoopCount = (window.__paceLoopCount || 0) + 1; }
+      else { window.__paceLoopSrc = vsrcLoop; window.__paceLoopCount = 1; }
+      v.__paceEndedNotified = false; // 래치 해제 — 이번 루프백의 ended가 아래에서 다시 나가게
+      if (window.__paceLoopCount >= 2) {
+        var lpR = 0; try { lpR = parseInt(sessionStorage.getItem('paceTtStallReloads') || '0', 10) || 0; } catch(eLp) {}
+        if (lpR < 3) {
+          try { sessionStorage.setItem('paceTtStallReloads', String(lpR + 1)); } catch(eLp2) {}
+          send({ type: 'ttstall', n: lpR + 1, why: 'loopstuck src=' + vsrcLoop + ' loops=' + window.__paceLoopCount + ' dur=' + (v.duration||0).toFixed(1) });
+          window.__paceLoopCount = 0;
+          location.reload();
+          return;
+        }
+      }
+    }
     if ((nearEnd || loopedBack) && markEndedOnce(v)) {
       // 🔴 중간 넘김 채증(2026-08-18) — 어떤 조건이, 어느 영상(뷰포트 위치)에서 발사됐는지 상시 기록.
       try {

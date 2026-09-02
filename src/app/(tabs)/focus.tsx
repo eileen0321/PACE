@@ -598,7 +598,11 @@ export default function FocusScreen() {
                     if (!gestureBlocked) {
                       setGesture(v);
                       // 켜는 순간에만, 그리고 아직 보정한 적 없을 때만 띄운다. 끌 때는 묻지 않는다.
-                      if (v) getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
+                      // 🔴 2026-09-02 사장님("카메라 권한 켜져 있는데 자꾸 권한 켜기로 나온다") — 개인 보정은
+                      //   네이티브 함수(startGestureCalibration)가 **안드에만 있다**. iOS는 미구현이라
+                      //   startCalibration()이 항상 false→'denied'로 오판정돼 켤 때마다 권한 화면이 떴다.
+                      //   iOS 손짓은 자체 문턱으로 동작하고 이 보정값을 읽지도 않으므로 안드에서만 띄운다.
+                      if (v && Platform.OS === 'android') getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
                       return;
                     }
                     // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.

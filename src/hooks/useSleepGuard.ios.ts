@@ -34,6 +34,21 @@ const SLEEP_CONFIRM_AFTER_MS = 5 * 60 * 1000; // 안드 SLEEP_CONFIRM_AFTER_MS �
 const SLEEP_PROMPT_TIMEOUT_MS = 30 * 1000; // 안드 SLEEP_PROMPT_TIMEOUT_MS 패리티
 const SLEEP_WINDOW_START_HOUR = 22;
 const SLEEP_WINDOW_END_HOUR = 9;
+/**
+ * 🔴 2026-09-02 사장님 제보("영상 보다 잠들었는데 수면감지가 안 끄더라" — 충전 중이었고 눕혀져
+ *   있었고 이어폰도 안 꽂혀 있었다) — 보조신호는 두 개나 충족이었는데도 확정이 안 됐다.
+ *   원인은 **밤 시간대(22~09) 게이트**다. 그 시각이 아니면 보조신호가 몇 개든 영원히 확정되지
+ *   않는다.
+ *
+ *   안드로이드는 이 구멍을 2026-08-15에 이미 메웠다(SLEEP_NO_INPUT_ANYTIME_MS = 45분,
+ *   PaceOverlayService.kt) — "낮에 켜두고 나가면 아무것도 안 끊는다"가 그 근거였다.
+ *   그런데 **iOS엔 포팅되지 않았다.** 같은 값으로 맞춰 플랫폼 동작을 일치시킨다.
+ *
+ *   ⚠️ 과탐이 걱정되는 자리지만 문턱이 세 겹이라 그대로 유지된다: 무입력 45분 + 확정대기 5분 +
+ *     팝업 30초 무응답. 깨어 있으면 그 사이 어느 지점에서든 화면을 만지게 되고, 그 순간
+ *     markActivity()가 AWAKE로 되돌린다.
+ */
+const SLEEP_NO_INPUT_ANYTIME_MS = 45 * 60 * 1000;
 // 안드 SLEEP_FLAT_GRAVITY_Z=7.5(m/s², 중력가속도 9.81 기준)를 iOS의 정규화된 중력 벡터(1G=1.0) 비율로 환산.
 const SLEEP_FLAT_GRAVITY_RATIO = 7.5 / 9.81;
 const TICK_MS = 10_000; // 30초 팝업 타임아웃을 너무 늦게 잡지 않을 정도의 해상도.
@@ -104,10 +119,16 @@ export function useSleepGuard({ enabled, onSleep, stillnessMinutes }: { enabled:
         const laidFlat = Math.abs(gz) >= SLEEP_FLAT_GRAVITY_RATIO;
         const charging = modRef.current?.isCharging?.() ?? false;
         const supporting = laidFlat || charging || audioLostRef.current;
-        if (!withinWindow || !supporting) {
-          if (__DEV__) console.log('[sleep] confirm held — window=', withinWindow, 'flat=', laidFlat, 'gz=', gz, 'charging=', charging, 'btGone=', audioLostRef.current);
+        // 안드로이드 evaluateSleepStages와 동일한 2경로 구조 — 둘 중 하나만 통과하면 확정한다.
+        //   · 야간 경로: 밤 시간대 + 보조신호 1개 이상 (기존)
+        //   · 상시 경로: 시간대·보조신호와 무관하게 무입력 45분 (위 SLEEP_NO_INPUT_ANYTIME_MS 주석)
+        const nightPath = withinWindow && supporting;
+        const anytimePath = noInputMs >= SLEEP_NO_INPUT_ANYTIME_MS;
+        if (!nightPath && !anytimePath) {
+          if (__DEV__) console.log('[sleep] confirm held — night=', nightPath, '(window=', withinWindow, 'flat=', laidFlat, 'gz=', gz, 'charging=', charging, 'btGone=', audioLostRef.current, ') anytime=', anytimePath, '(noInputMs=', noInputMs, ')');
           return;
         }
+        if (__DEV__) console.log('[sleep] confirm passed via', nightPath ? 'night' : 'anytime', 'path (noInputMs=', noInputMs, ')');
         promptedAtRef.current = now;
         setStageBoth('prompted');
         if (__DEV__) console.log('[sleep] stage=PROMPTED — "아직 보고 계세요?"');

@@ -1700,7 +1700,68 @@ class PaceOverlayService : Service() {
       e.apply()
     }
 
+    /**
+     * 🔴 2026-09-02 사장님 지시("본 시간만 차감해야 하는 거 아냐? 누가 백그라운드로 시간 다
+     *   소비되면 쓰겠어") — 포커스 세션 마감시각은 **벽시계**였다. setAutoMode(true)가
+     *   postDelayed(durationMs)로 고정 예약하고 마감시각을 그대로 저장하므로, 사용자가 유튜브를
+     *   벗어나 카톡을 보든 화면을 끄든 할당량이 계속 탔다.
+     *
+     *   ⚠️ 일일 사용량(remainingMinutes)은 이미 이 문제를 풀어놨다 — performTick의
+     *     `shouldDecrement`가 "실제 재생 중(isLikelyPlaying) 또는 대상 앱이 포그라운드"일 때만
+     *     차감한다. 포커스 세션만 그 규칙 밖에 남아 있었다. **같은 신호를 그대로 쓴다** —
+     *     판정 로직을 새로 만들면 두 값이 서로 어긋난다.
+     *
+     * 이 함수는 "지금 보고 있는가"를 그 규칙과 동일하게 답한다.
+     *   · isLikelyPlaying() == true  → 보는 중
+     *   · == false                   → 아님(확정)
+     *   · == null(접근성 꺼짐 등)     → 대상 앱이 최근에 포그라운드로 관측됐을 때만 보는 중으로 본다
+     *     (performTick의 null 분기와 같은 신선도 기준 POLL_INTERVAL_MS*3)
+     */
+    private fun isWatchingNow(): Boolean = when (PaceAccessibilityService.isLikelyPlaying()) {
+      // (lastUsageBasedVisible / lastUsageBasedVisibleAtMs 는 이 companion object의 @Volatile 필드다)
+      true -> true
+      false -> false
+      null -> lastUsageBasedVisible &&
+          SystemClock.elapsedRealtime() - lastUsageBasedVisibleAtMs <= POLL_INTERVAL_MS * 3
+    }
+
+    /**
+     * 보지 않은 시간만큼 마감시각을 뒤로 민다 = 안 본 시간은 차감하지 않는다.
+     * Handler 예약도 같이 다시 잡는다 — 안 하면 예약은 원래 시각에 그대로 터진다.
+     */
+    private fun deferFocusDeadline(context: Context, idleMs: Long) {
+      if (idleMs <= 0L) return
+      val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      if (!prefs.getBoolean(PREF_AUTO_MODE, false)) return
+      val deadline = prefs.getLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, 0L)
+      if (deadline <= 0L) return
+      val now = System.currentTimeMillis()
+      // 이미 지난 마감은 여기서 되살리지 않는다 — 그 판정은 autoStop/restore가 하던 대로 한다.
+      if (deadline <= now) return
+      val next = deadline + idleMs
+      prefs.edit().putLong(PREF_FOCUS_SESSION_DEADLINE_AT_MS, next).apply()
+      focusSessionHandler.removeCallbacks(focusSessionAutoStop)
+      focusSessionHandler.postDelayed(focusSessionAutoStop, next - now)
+    }
+
+    /** 안 보는 동안 마감시각을 다시 확인하는 간격 — 세션을 끝내지 않고 미룰 때 쓴다. */
+    private const val FOCUS_IDLE_RECHECK_MS = 60_000L
+
     private val focusSessionAutoStop = Runnable {
+      // 🔴 2026-09-02 — 예약이 터졌더라도 **지금 보고 있지 않으면 세션을 끝내지 않는다.**
+      //   사장님이 겪은 그 상황이 정확히 여기다: 4분 남은 채로 앱을 벗어나 20분 뒤 돌아오면,
+      //   자리에 없는 동안 이 예약이 터져 이미 타임아웃돼 있었다. 안 본 시간으로 세션을 끝내는
+      //   것은 "본 시간만 차감한다"는 규칙과 정면으로 어긋난다.
+      //   → 안 보고 있으면 1분 뒤 다시 확인하도록 미룬다(마감시각도 같이 뒤로 민다).
+      //   ⚠️ 이 미룸이 "무료 무한 시청" 우회가 되지 않는다 — 돌아와서 다시 보기 시작하면
+      //     그때부터 남은 시간이 정상적으로 흐르고, 0이 되면 이 자리에서 그대로 타임아웃된다.
+      //     하루가 바뀌면 restoreFocusSessionTimerIfNeeded가 지난 날짜 마감시각을 폐기한다.
+      val self = instance
+      if (self != null && !isWatchingNow()) {
+        Log.i("PaceOverlay", "포커스 마감 도달했지만 시청 중이 아님 — 세션을 끝내지 않고 미룬다")
+        deferFocusDeadline(self.applicationContext, FOCUS_IDLE_RECHECK_MS)
+        return@Runnable
+      }
       focusSessionTimedOutPending = true
       instance?.let {
         setFocusSessionTimedOutPending(it.applicationContext, true)
@@ -2636,6 +2697,14 @@ class PaceOverlayService : Service() {
         //   틀릴 때는 사용자에게 불리하지 않은 쪽으로 넘어져야 한다(이 파일의 다른 판정들과 같은 원칙).
         null -> lastUsageBasedVisible &&
             SystemClock.elapsedRealtime() - lastUsageBasedVisibleAtMs <= POLL_INTERVAL_MS * 3
+      }
+      // 🔴 2026-09-02 — 포커스 세션 마감시각도 일일 사용량과 **같은 규칙**을 따르게 한다.
+      //   안 보고 있는 동안 흐른 시간만큼 마감시각을 뒤로 밀어, 그 시간이 세션에서 차감되지
+      //   않게 한다(사장님: "본 시간만 차감해야 하는 거 아냐"). autoStop 쪽에도 같은 가드가
+      //   있지만(예약이 터지는 순간), 저장된 마감시각 자체도 정확해야 프로세스가 죽었다
+      //   살아날 때 restoreFocusSessionTimerIfNeeded가 옳은 값을 복원한다.
+      if (!shouldDecrement && sinceLastMs > 0L) {
+        deferFocusDeadline(applicationContext, sinceLastMs)
       }
       if (shouldDecrement && elapsedMinutes > 0) {
         remainingMinutes = (remainingMinutes - elapsedMinutes).coerceAtLeast(0)

@@ -601,7 +601,7 @@ export default function FocusScreen() {
                     )}
                   </View>
                   {camDenied && (
-                    <Text onPress={() => Linking.openSettings().catch(() => {})} style={styles.camDeniedHint}>
+                    <Text onPress={() => setCamDisclosure(true)} style={styles.camDeniedHint}>
                       {t('focus.cameraDeniedHint')}
                     </Text>
                   )}

@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Image, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import Animated, { FadeInDown, FadeOutUp, LinearTransition } from 'react-native-reanimated';
+
+// 🔴 2026-09-04 — 핸즈프리 하위 두 행도 행 전체를 탭 가능하게 만들기 위한 것(마스터 행 주석 참고).
+//   Animated.View 는 onPress 를 받지 않으므로 Pressable 을 애니메이션 대상으로 감싼다 —
+//   기존 entering/exiting/layout 애니메이션과 스타일은 그대로 유지된다.
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -203,6 +208,43 @@ export default function FocusScreen() {
   // 프리미엄 게이팅이 남아, home에서 무료로 켜진 auto-mode를 free 사용자가 Focus 탭에서 "끄려고" 탭하면
   // 페이월로 튕겨 끌 수조차 없는 함정이었다. D9 무료정책에 맞춰 게이트 제거(공용코드 — Android도 동일 적용).
   const onToggleHandsFree = () => { toggleAutoMode(); };
+
+  // 🔴 2026-09-04 사장님 지적("토글이 왜 누르면 아무 반응을 안 해? 끌어야만 하잖아") — 행 전체를
+  //   탭 타겟으로 만들면서, 행의 onPress 와 스위치의 onValueChange 가 **같은 코드**를 타야 한다.
+  //   예전엔 이 로직이 JSX 안에 인라인으로 있어 행에서 재사용할 수 없었다. 분기(잠김 여부, 권한
+  //   안내 경로)가 두 벌이 되면 반드시 어긋나므로 함수로 모은다.
+  const onBluetoothToggle = (v: boolean) => {
+    if (!bluetoothBlocked) { setVolumeSkip(v); return; }
+    if (v) pendingEnableRef.current = 'bluetooth';
+    explainAndOpenSettings('accessibility');
+  };
+  const onGestureToggle = (v: boolean) => {
+    if (!gestureBlocked) {
+      setGesture(v);
+      // 켜는 순간에만, 그리고 아직 보정한 적 없을 때만 띄운다. 끌 때는 묻지 않는다.
+      // 🔴 2026-09-02 사장님("카메라 권한 켜져 있는데 자꾸 권한 켜기로 나온다") — 개인 보정은
+      //   네이티브 함수(startGestureCalibration)가 **안드에만 있다**. iOS는 미구현이라
+      //   startCalibration()이 항상 false→'denied'로 오판정돼 켤 때마다 권한 화면이 떴다.
+      //   iOS 손짓은 자체 문턱으로 동작하고 이 보정값을 읽지도 않으므로 안드에서만 띄운다.
+      // 🔴 2026-09-03 사장님 지시("보정은 한참 더 해봐야 할 거니까 입력 받는 거
+      //   켜지 말고") — 출시본에서는 보정 시트를 띄우지 않는다.
+      //   근거: 5번을 받아 만든 개인 문턱이 실제로 지배하는 축은 checkLumaPass
+      //   **하나뿐**이다. 격자 모션 축은 GROSS_MOTION_STANDALONE=true 라
+      //   보정값을 보지 않고 단독으로 발화한다(PaceHandWaveDetector.kt:812/2007).
+      //   즉 지금 상태로는 "당신의 손짓을 기억합니다"라고 5번을 받아놓고 실제
+      //   넘김의 상당수는 보정과 무관한 축에서 나온다 — 사용자에게 시간을
+      //   요구하면서 그만큼 돌려주지 못한다. 격자 축까지 보정 대상에 넣거나
+      //   문구를 실제 동작에 맞출 때까지 입력 자체를 받지 않는다.
+      //   ⚠️ 저장된 값을 쓰는 경로(loadCalibration)는 그대로 둔다 — 이미 보정한
+      //     사용자의 값을 버리지 않기 위해서다. 새로 묻지만 않는다.
+      //   되살릴 때: 아래 한 줄의 주석을 풀면 된다(다른 변경 없음).
+      // if (v && Platform.OS === 'android') getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
+      return;
+    }
+    // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.
+    if (v) pendingEnableRef.current = 'gesture';
+    explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera');
+  };
 
   // 2026-07-28 사장님 지시("권한 설정을 안했을 때 관련 메뉴들이 disable로 보여야 한다") — 손짓/블루투스
   // 토글이 이전엔 실제 권한 상태와 무관하게 항상 눌리는 것처럼 보였다(눌러도 조용히 안 먹힘, 오늘 밤
@@ -515,8 +557,24 @@ export default function FocusScreen() {
               (사용자 지적 "아코디언으로 내려와야지")이 필요한 하위 손짓/블루투스 행은 블러 없는 별도 패널로
               분리한다 — 이 패널은 layout={LinearTransition}으로 부드럽게 늘어나고 줄어든다(블러가 없어
               매 프레임 다시 그릴 게 없으니 번쩍임 자체가 발생하지 않음). */}
+          {/* 🔴 2026-09-04 사장님 지적("토글이 왜 누르면 아무 반응을 안 해? 끌어야만 하잖아") —
+              실기기 uiautomator로 확정했다. 스위치의 실제 히트영역이 [850,1730][972,1801],
+              즉 **122×71px ≈ 41×24dp**뿐이고 행에는 탭 타겟이 아예 없었다. Material 최소
+              터치 타겟(48dp)의 절반이라 손가락으로 그 안을 매번 맞출 수 없다. 실측:
+                · 스위치 정중앙 탭 → 토글됨
+                · 30px 왼쪽 / 50px 아래 / 행 텍스트 탭 → **전부 무반응**
+              "끌면 된다"도 이걸로 설명된다 — 드래그는 손가락이 이동하다 결국 스위치 안으로
+              들어가서 먹는 것이다. adb 합성 탭은 항상 정중앙을 찍으니 코드만 봐선 정상으로 보였다.
+              → 행 전체를 탭 타겟으로 만든다. 스위치는 pointerEvents="none"으로 두어 같은 탭이
+                두 번 발화하지 않게 하고, 실제 처리는 행의 onPress 하나로 모은다. */}
           <GlassSurface style={styles.card}>
-            <View style={styles.interventionRow}>
+            <Pressable
+              style={styles.interventionRow}
+              onPress={() => setMaster(!masterOn)}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: masterOn }}
+              accessibilityLabel={t('focus.handsFreeMode')}
+            >
               <View style={{ flex: 1 }}>
                 <Text style={styles.interventionTitle}>{t('focus.handsFreeMode')}</Text>
                 <Text style={styles.interventionSub}>{handsFreeMethods}</Text>
@@ -524,11 +582,12 @@ export default function FocusScreen() {
               <Switch
                 value={masterOn}
                 onValueChange={setMaster}
+                pointerEvents="none"
                 trackColor={{ true: colors.primary, false: '#262626' }}
                 thumbColor="#FFFFFF"
                 ios_backgroundColor="#262626"
               />
-            </View>
+            </Pressable>
           </GlassSurface>
           {/* 2026-07-27 사용자 지시 — 핸즈프리를 "마스터 + 손짓/블루투스 개별"로 분리, 안드로이드도 iOS와
               동일하게 손짓 행을 보여준다(예전엔 안드로이드만 네이티브가 마스터에 손짓을 번들해서 숨겨져
@@ -539,11 +598,14 @@ export default function FocusScreen() {
               보여주고 추천 배지를 단다. 손짓은 그 아래로 내림(온보딩 가이드 순서 변경과 통일). */}
           <Animated.View layout={LinearTransition.duration(220)} style={styles.handsFreeExpandWrap}>
             {masterOn && (
-              <Animated.View
+              <AnimatedPressable
                 entering={FadeInDown.duration(180)}
                 exiting={FadeOutUp.duration(160)}
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
+                onPress={() => onBluetoothToggle(!(volumeSkipOn && !bluetoothBlocked))}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: volumeSkipOn && !bluetoothBlocked }}
               >
                 <View style={[styles.handsFreeIcon, bluetoothBlocked && styles.handsFreeRowBlocked]}><RemoteClickIllustration /></View>
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -572,23 +634,23 @@ export default function FocusScreen() {
                 </View>
                 <Switch
                   value={volumeSkipOn && !bluetoothBlocked}
-                  onValueChange={(v) => {
-                    if (!bluetoothBlocked) { setVolumeSkip(v); return; }
-                    if (v) pendingEnableRef.current = 'bluetooth';
-                    explainAndOpenSettings('accessibility');
-                  }}
+                  onValueChange={onBluetoothToggle}
+                  pointerEvents="none"
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              </Animated.View>
+              </AnimatedPressable>
             )}
             {masterOn && (
-              <Animated.View
+              <AnimatedPressable
                 entering={FadeInDown.duration(180).delay(40)}
                 exiting={FadeOutUp.duration(160)}
                 layout={LinearTransition.duration(180)}
                 style={styles.handsFreeSubCard}
+                onPress={() => onGestureToggle(!(gestureOn && !gestureBlocked))}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: gestureOn && !gestureBlocked }}
               >
                 <View style={[styles.handsFreeIcon, gestureBlocked && styles.handsFreeRowBlocked]}><GestureFlickIllustration /></View>
                 <View style={{ flex: 1 }}>
@@ -608,38 +670,13 @@ export default function FocusScreen() {
                 </View>
                 <Switch
                   value={gestureOn && !gestureBlocked}
-                  onValueChange={(v) => {
-                    if (!gestureBlocked) {
-                      setGesture(v);
-                      // 켜는 순간에만, 그리고 아직 보정한 적 없을 때만 띄운다. 끌 때는 묻지 않는다.
-                      // 🔴 2026-09-02 사장님("카메라 권한 켜져 있는데 자꾸 권한 켜기로 나온다") — 개인 보정은
-                      //   네이티브 함수(startGestureCalibration)가 **안드에만 있다**. iOS는 미구현이라
-                      //   startCalibration()이 항상 false→'denied'로 오판정돼 켤 때마다 권한 화면이 떴다.
-                      //   iOS 손짓은 자체 문턱으로 동작하고 이 보정값을 읽지도 않으므로 안드에서만 띄운다.
-                      // 🔴 2026-09-03 사장님 지시("보정은 한참 더 해봐야 할 거니까 입력 받는 거
-                      //   켜지 말고") — 출시본에서는 보정 시트를 띄우지 않는다.
-                      //   근거: 5번을 받아 만든 개인 문턱이 실제로 지배하는 축은 checkLumaPass
-                      //   **하나뿐**이다. 격자 모션 축은 GROSS_MOTION_STANDALONE=true 라
-                      //   보정값을 보지 않고 단독으로 발화한다(PaceHandWaveDetector.kt:812/2007).
-                      //   즉 지금 상태로는 "당신의 손짓을 기억합니다"라고 5번을 받아놓고 실제
-                      //   넘김의 상당수는 보정과 무관한 축에서 나온다 — 사용자에게 시간을
-                      //   요구하면서 그만큼 돌려주지 못한다. 격자 축까지 보정 대상에 넣거나
-                      //   문구를 실제 동작에 맞출 때까지 입력 자체를 받지 않는다.
-                      //   ⚠️ 저장된 값을 쓰는 경로(loadCalibration)는 그대로 둔다 — 이미 보정한
-                      //     사용자의 값을 버리지 않기 위해서다. 새로 묻지만 않는다.
-                      //   되살릴 때: 아래 한 줄의 주석을 풀면 된다(다른 변경 없음).
-                      // if (v && Platform.OS === 'android') getSavedCalibration().then((c) => { if (!isCalibrated(c)) setCalibVisible(true); }).catch(() => {});
-                      return;
-                    }
-                    // 위 pendingEnableRef 주석 참고 — 권한을 받으면 사용자가 원래 하려던 대로 켠다.
-                    if (v) pendingEnableRef.current = 'gesture';
-                    explainAndOpenSettings(!hasAccessibility ? 'accessibility' : 'camera');
-                  }}
+                  onValueChange={onGestureToggle}
+                  pointerEvents="none"
                   trackColor={{ true: colors.primary, false: '#262626' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#262626"
                 />
-              </Animated.View>
+              </AnimatedPressable>
             )}
           </Animated.View>
         </View>

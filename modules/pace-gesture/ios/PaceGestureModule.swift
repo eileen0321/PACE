@@ -1147,7 +1147,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let gridSmallCells: Int = 3         // 안드 GROSS_MOTION_SMALL_CELLS
   private let gridMinDensitySmall: Double = 0.9  // 안드 GROSS_MOTION_MIN_DENSITY_SMALL
   private let gridMinDensityBig: Double = 0.15   // 안드 GROSS_MOTION_MIN_DENSITY_BIG
-  private let gridMaxAspect: Double = 0.9        // 안드 GROSS_MOTION_MAX_ASPECT (aspect=bw/bh ≤ 0.9 = 세로가 더 길다)
+  // 🔴 2026-09-03 실기기 채증(diag 13:06:46~49 사장님 손짓 실패) — **iOS 전면카메라 Y버퍼가 안드 대비
+  //   90° 전치**다. 안드는 같은 "훠이" 손짓을 세로로 긴 띠(aspect 0.45~0.80)로 잡아 aspect≤0.9로 통과시켰는데,
+  //   iOS는 같은 손짓이 **가로로 긴 띠(aspect 2.4~4.3, cons 0.88~1.00)** 로 잡힌다. 안드 값(≤0.9)을 그대로
+  //   쓰면 진짜 손짓이 전부 막힌다. → 안드의 의도(얼굴/정면접근=정사각을 배제)는 유지하되, iOS 좌표계에 맞게
+  //   **정사각 근처(0.9~1.111)만 차단**하고 가로·세로 어느 쪽으로든 긴 띠(손 스윕)는 통과시킨다.
+  private let gridAspectSquareLo: Double = 0.9    // 이 값~Hi 사이(정사각 근처)면 얼굴/정면접근 — 차단
+  private let gridAspectSquareHi: Double = 1.111  // = 1/0.9 (안드 세로 게이트의 전치 대칭)
   private var gridHistory: [(t: Double, g: [Double])] = []
 
   private let dipWindowMs: Double = 1200
@@ -1187,10 +1193,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let bw = maxX - minX + 1, bh = maxY - minY + 1
     let bbox = Double(bw * bh)
     let density = Double(changed) / max(1, bbox)
-    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // 안드 aspect=bw/bh — 손짓은 세로로 길어 ≤0.9, 얼굴/정면접근은 ~1.0
+    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // bw/bh. iOS는 손 스윕이 가로로 길어 큰 값, 얼굴=정사각(~1.0)
+    let notSquare = aspect <= gridAspectSquareLo || aspect >= gridAspectSquareHi  // 정사각(얼굴) 근처만 배제
     let consistency = max(darkenRatio, 1 - darkenRatio)
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
       gridHistory.removeAll()
       fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
     } else if fraction >= gridFracMin * 0.5 {

@@ -143,10 +143,11 @@ extension Sim {
     let dr = Double(darkened) / Double(changed)
     let bw = maxX - minX + 1, bh = maxY - minY + 1
     let density = Double(changed) / Double(max(1, bw * bh))
-    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // 안드 aspect=bw/bh ≤ 0.9
+    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0
+    let notSquare = aspect <= 0.9 || aspect >= 1.111  // iOS: 정사각(얼굴) 근처만 배제, 가로/세로 긴 손 스윕은 통과
     let cons = max(dr, 1 - dr)
     let densityTh = changed <= 3 ? 0.9 : 0.15   // 안드 MIN_DENSITY_SMALL/BIG
-    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, aspect <= 0.9 {
+    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
@@ -397,14 +398,24 @@ func fillRect(_ g: inout [Double], gx0: Int, gx1: Int, gy0: Int, gy1: Int, _ v: 
   for gy in gy0...gy1 { for gx in gx0...gx1 { g[gy * gridN + gx] = v } }
 }
 
-// 28. 진짜 손짓: 세로로 긴 덩어리(2×11=22칸, aspect=0.18) 어두워짐 — 발화해야
+// 28. 진짜 손짓(iOS 실측 재현): 가로로 긴 띠(11×2=22칸, aspect=5.5) 어두워짐 — 발화해야.
+//     실기기 13:06:47 사장님 손짓 = cons 0.88~1.00 · aspect 2.4~4.3 (iOS 버퍼 전치로 가로로 김).
 var s28 = Sim()
 var t28 = 0.0
 for _ in 0..<6 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
-fillRect(&g28, gx0: 6, gx1: 7, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11
+fillRect(&g28, gx0: 3, gx1: 13, gy0: 7, gy1: 8)  // 22칸, bw=11 bh=2, aspect=5.5(가로 스윕)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
-check("격자 세로 손짓 발화", s28.events, fires: 1, expectContains: ["gridpass"])
+check("격자 가로 손짓 발화(iOS)", s28.events, fires: 1, expectContains: ["gridpass"])
+
+// 28b. 세로로 긴 손짓(위아래 훠이, 2×11=22칸 aspect=0.18)도 발화해야 — 방향 무관.
+var s28b = Sim()
+var t28b = 0.0
+for _ in 0..<6 { s28b.feedGrid(t: t28b, g: flatGrid(150)); t28b += 80 }
+var g28b = flatGrid(150)
+fillRect(&g28b, gx0: 7, gx1: 8, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11, aspect=0.18
+for _ in 0..<3 { s28b.feedGrid(t: t28b, g: g28b); t28b += 80 }
+check("격자 세로 손짓 발화(iOS)", s28b.events, fires: 1, expectContains: ["gridpass"])
 
 // 29. 자동노출 흔들림(전체 256칸) — 상한 0.30 초과로 차단
 var s29 = Sim()
@@ -431,12 +442,12 @@ fillRect(&g31, gx0: 6, gx1: 6, gy0: 2, gy1: 6)  // 5칸 세로(밀도·aspect는
 for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
 check("격자 5칸 미달 차단(안드 하한)", s31.events, fires: 0)
 
-// 32. 얼굴 정면 접근: 큰 정사각 덩어리(5×4=20칸, aspect=1.25) — aspect>0.9로 차단해야
+// 32. 얼굴 정면 접근: 정사각 덩어리(5×5=25칸, aspect=1.0) — 정사각 근처(0.9~1.111)라 차단해야
 var s32 = Sim()
 var t32 = 0.0
 for _ in 0..<6 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
 var g32 = flatGrid(150)
-fillRect(&g32, gx0: 6, gx1: 10, gy0: 6, gy1: 9)  // 20칸, bw=5 bh=4 aspect=1.25
+fillRect(&g32, gx0: 6, gx1: 10, gy0: 5, gy1: 9)  // 25칸, bw=5 bh=5 aspect=1.0
 for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
 check("격자 얼굴 정사각 차단(aspect)", s32.events, fires: 0)
 
@@ -450,13 +461,13 @@ for i in [244, 245] { g33[i] = 100 }  // 2칸
 for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }
 check("격자 2칸 채증회귀 차단", s33.events, fires: 0)
 
-// 34. 폰 움직임(머리와 함께): 큰 정사각(6×5=30칸, aspect=1.2, cells=29~30) — aspect로 차단.
+// 34. 폰 움직임(머리와 함께)/정면 접근: 정사각(6×6=36칸, aspect=1.0) — 정사각 근처라 차단.
 //     실기기 16:18 cells=23·29 발화(폰 움직임을 손짓으로 오판)를 막는 선.
 var s34 = Sim()
 var t34 = 0.0
 for _ in 0..<6 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
 var g34 = flatGrid(150)
-fillRect(&g34, gx0: 5, gx1: 10, gy0: 5, gy1: 9)  // 30칸, bw=6 bh=5 aspect=1.2
+fillRect(&g34, gx0: 5, gx1: 10, gy0: 4, gy1: 9)  // 36칸, bw=6 bh=6 aspect=1.0
 for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
 check("격자 폰움직임 정사각 차단(aspect)", s34.events, fires: 0)
 

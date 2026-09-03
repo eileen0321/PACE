@@ -10701,3 +10701,16 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
   occlusion가 다 살아 있음. 실기기 로그 16:18에 T0 cross(net 0.10~0.12)·T0 sweep(0.14~0.21)이 발화(손 든 채 미세 움직임).
   → cross는 사장님 08-25 명시 사양("멀어도 손 스쳐 지나가기")이라 통째로 못 끔. 격자 수정 후 재측정해서 cross/sweep도
   안드처럼 끌지(=완전 안드 정렬) vs iOS 고유 축 유지할지 결정 필요.
+
+### 2026-09-03(Mac/iOS, 긴급) — 🔴 안드 발화 축 전수 대조·정렬 (사장님 "안드가 한거 다 확인하라니까")
+- 안드 PaceHandWaveDetector.kt fireTrigger는 **딱 3곳**: ①lumapass(항상) ②gross-motion/격자(GROSS_MOTION_STANDALONE=true)
+  ③occlusion(OCCLUSION_STANDALONE=false=꺼짐). → 안드가 실제 발화하는 축 = **lumapass + 격자 둘뿐**.
+- iOS는 발화 축이 7개였음: cross·glide·sweep·grid·lumapass·nearpass·occlusion. cross/glide/sweep/nearpass는
+  안드에 **아예 없는 iOS 전용 추가분**(iOS 튜닝 중 늘린 것), occlusion은 안드가 끈 것.
+- 실기기 채증(diag 12:53:34~59, 격자 verbatim 수정 **후**에도 자동 전진 5회) = 전부 cross/glide/sweep 발화.
+  격자는 같은 구간에서 gridnear(차단)로 정상 동작 확인(asp>0.9·cons<0.8로 걸러짐).
+- 조치: iOS도 안드와 동일하게 **lumapass + 격자만 발화**. 나머지 5축(cross/glide/sweep/nearpass/occlusion)
+  단독 발화를 플래그로 차단(계산·재무장·streak·로그 유지, 복원은 각 *Standalone=true). growth 축은 이미 off.
+- 손짓 넘김은 lumapass+격자로 동작(안드 상용과 동일 메커니즘) — 넘김 기능 자체는 유지됨.
+- ⚠️ 안드 세션: iOS가 그동안 안드에 없는 축 5개를 켜두고 있었음. 이 정렬로 "폰 쥔 채 미세 움직임에 자동 전진"
+  근절 기대. cross는 사장님 08-25 사양이었으나 실사용서 노이즈로 판명(안드도 같은 결론).

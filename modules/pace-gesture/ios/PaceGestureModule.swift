@@ -336,6 +336,18 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // — 통과 전용(속도 축 전면 미발화)은 지시를 넓게 잡은 것이었다. 껐어야 할 건 흔들기 축 전체가
   // 아니라 **제자리 떨림**이다. 그래서 false로 되돌리고, 떨림은 아래 glide 진폭 게이트로 거른다.
   private let passOnlyMode = false
+  // 🔴 2026-09-03 안드 발화 축 전수 정렬 — 안드 PaceHandWaveDetector.kt fireTrigger는 딱 3곳:
+  //   ① lumapass(항상 발화)  ② gross-motion/격자(GROSS_MOTION_STANDALONE=true)  ③ occlusion(OCCLUSION_STANDALONE=false=꺼짐)
+  //   즉 안드가 실제 발화하는 축은 **lumapass + 격자 둘뿐**. cross/glide/sweep/nearpass는 안드에 아예 없는
+  //   iOS 전용 추가분이라 안드엔 대응 발화가 없다. 실기기 채증(diag 12:53:34~59, 격자 수정 후에도 자동 전진
+  //   5회)이 전부 cross/glide/sweep(사장님 "카메라 스쳐 지나간 적 없는데/손짓 안 했는데 넘어감").
+  //   → iOS도 안드와 동일하게 lumapass+격자만 발화. 나머지 5축은 단독 발화만 끈다(계산·재무장·streak·로그는
+  //   유지 — 복원은 각 플래그 true). 손짓 넘김은 lumapass+격자로 동작(안드 상용과 동일 메커니즘).
+  private let crossStandalone = false
+  private let glideStandalone = false
+  private let sweepStandalone = false
+  private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
+  private let occlusionStandalone = false  // 안드 OCCLUSION_STANDALONE=false 미러
   // 🔴 2026-08-26 — 방향 무관 발화로 열면서 "갔다 돌아오는 손이 2번 넘김"이 생긴다(시뮬이 잡음).
   // 절대 부호는 자세에 따라 뒤집히므로(오늘 확진) **상대 방향**으로 막는다: 직전 발화와 반대 방향
   // 스트로크가 2초 안에 오면 복귀로 보고 무시. 2초 지나 오는 역방향은 의도적 통과로 인정.
@@ -957,7 +969,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             self.crossLastFireDir = dir
             self.tracks[ti].crossArmed = false // 스트로크당 1발화 — 재무장은 누적 복귀 / 손 소실에서
             self.tracks[ti].crossFireX = c.x
-            self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            if self.crossStandalone {
+              self.fireTrigger(String(format: "T%d cross net=%+.2f size=%.2f need=%.2f spd=%.2f", ti, segNet, handSize, needRange, segSpeed), nowMs, handSize: handSize, trackIdx: ti)
+            } else {
+              self.onDiag(String(format: "cross(안드정렬 차단) T%d net=%+.2f spd=%.2f", ti, segNet, segSpeed))
+            }
             return glideAbs
           }
         }
@@ -1039,7 +1055,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       if glided && glideSpanOk && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].glideStreak = 0
-        self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f straight=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
+        if self.glideStandalone {
+          self.fireTrigger(String(format: "T%d glide band=%@ rel=%.2f abs=%.2f%@ size=%.2f netDx=%+.2f straight=%.2f", ti, band.name, glideRel, glideAbs, glideOverwhelming ? " instant" : "", handSize, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
+        } else {
+          self.onDiag(String(format: "glide(안드정렬 차단) T%d rel=%.2f abs=%.2f", ti, glideRel, glideAbs))
+        }
         return glideAbs
       }
       guard let oldest = self.tracks[ti].sizeHistory.first else { return glideAbs }
@@ -1068,7 +1088,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       if self.tracks[ti].sweepStreak >= band.confirm && !self.passOnlyMode && !reversePass && !oneWayReverse && nowMs > self.speedSuppressUntilMs && nowMs - self.lastTriggerMs > self.refractoryMs {
         self.tracks[ti].sweepStreak = 0
-        self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f straight=%.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
+        if self.sweepStandalone {
+          self.fireTrigger(String(format: "T%d sweep=%.2f rev=%d y=%.2f size=%.2f score=%.2f netDx=%+.2f straight=%.2f", ti, sweep, reversals, c.y, handSize, handScore, netDx700, straight700), nowMs, handSize: handSize, trackIdx: ti)
+        } else {
+          self.onDiag(String(format: "sweep(안드정렬 차단) T%d sweep=%.2f rev=%d", ti, sweep, reversals))
+        }
         return glideAbs
       }
       // 🔴 2026-08-26 06:50 실측(사장님 "왼오 안 되고 오왼에서 되는 게 많은데") — 30초 창 발화 11건 중
@@ -1242,7 +1266,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 어느 순서든 근접 통과로 인정.
           pendingOcclusionWork?.cancel()
           pendingOcclusionWork = nil
-          fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+          if nearpassStandalone {
+            fireTrigger(String(format: "nearpass dip=%.0f bright=%.0f dtLR=%.0f", dip.luma, bright, tL - tR), nowMs)
+          } else {
+            onDiag(String(format: "nearpass(안드정렬 차단) dip=%.0f bright=%.0f", dip.luma, bright))
+          }
           return
         }
       }
@@ -1267,7 +1295,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             paceGLog("[pace-wave] occlusion 발화 취소 — 가림 중 볼륨키 눌림(볼륨 조절 의도)")
             return
           }
-          self.fireTrigger(reason, CFAbsoluteTimeGetCurrent() * 1000)
+          if self.occlusionStandalone {
+            self.fireTrigger(reason, CFAbsoluteTimeGetCurrent() * 1000)
+          } else {
+            self.onDiag("occlusion(안드정렬 차단) " + reason)
+          }
         }
         pendingOcclusionWork = work
         lastTriggerMs = nowMs // 보류 중 재예약 방지(불응 공유)

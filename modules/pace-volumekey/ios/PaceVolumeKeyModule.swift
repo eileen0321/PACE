@@ -659,6 +659,34 @@ public class PaceVolumeKeyModule: Module {
         self.deactivateSessionIfIdle()
       }
     }
+
+    // 🔴 2026-09-03 사장님 지시("무음에서 갑자기 소리나면 놀란다 — 1부터 올라가게") + 웹 조사(애플/상용앱:
+    //   무음스위치 존중, 볼륨키는 실제 볼륨 조절). 무음→소리로 켜는 "첫 전환" 순간에만 시스템 볼륨을 최저
+    //   가청(1/16)으로 내려 소리가 낮게 시작하게 한다. RN이 "직전이 무음이었고 아직 한 번도 소리를 안 켠
+    //   첫 언뮤트"일 때만 부른다 → 이후 볼륨키는 실제 볼륨대로(카메라 가림+볼륨=실볼륨 사양 그대로 유지).
+    Function("startUnmuteAtFloor") {
+      DispatchQueue.main.async {
+        let floor: Float = 0.0625 // 1/16 — 최저 가청(0으로 내리면 KVO 감지가 죽으므로 바닥은 1/16)
+        let createdHere = self.volumeView == nil
+        if createdHere {
+          let mv = MPVolumeView(frame: CGRect(x: -3000, y: -3000, width: 1, height: 1))
+          Self.topWindow()?.addSubview(mv)
+          self.volumeView = mv
+        }
+        self.setSystemVolume(floor)                 // 슬라이더로 실제 시스템 볼륨을 1/16로
+        self.unmuteBaselineVolume = floor           // 우리가 바꾼 값 → 언뮤트 워치가 눌림으로 오인 안 하게
+        self.baseline = floor                       // 개입 중이면 이후 비교 기준도 1/16에서 출발
+        NSLog("PACEVOL startUnmuteAtFloor → \(floor) (createdView=\(createdHere))")
+        if createdHere {                            // 개입(remote)이 만든 뷰가 아니면 값 전파 후 정리
+          let mv = self.volumeView
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard !self.remoteActive else { return } // 그새 개입이 켜져 뷰를 물려받았으면 두기
+            mv?.removeFromSuperview()
+            if self.volumeView === mv { self.volumeView = nil }
+          }
+        }
+      }
+    }
   }
 
   private func setSystemVolume(_ value: Float) {

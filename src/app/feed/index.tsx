@@ -943,6 +943,7 @@ export default function PaceFeedScreen() {
     type WatchMod = {
       startSilentUnmuteWatch(): void;
       stopSilentUnmuteWatch(): void;
+      startUnmuteAtFloor?(): void;
       addListener(event: 'onSilentUnmute', listener: (payload?: { source?: string }) => void): { remove: () => void };
     };
     let mod: WatchMod | null;
@@ -959,6 +960,12 @@ export default function PaceFeedScreen() {
       // 8/15 억제의 전제("리모컨과 구분 불가")가 센서 융합+렌즈가림 판정으로 깨졌다. 폰버튼 조절 =
       // 소리 의도("가리고 눌렀는데 소리 안 됨" 수정).
       if (payload?.source !== 'phonebutton' && volumeKeyRemote && isAutoModeRef.current && recentlyUsedRemote) return;
+      // 🔴 2026-09-03 사장님 지시("무음에서 갑자기 소리나면 놀란다 — 1부터") — 무음이었고 아직 한 번도
+      //   소리를 안 켠 "첫 언뮤트"에서만 시스템 볼륨을 최저(1/16)로 내려 낮게 시작한다. 이후 볼륨키는
+      //   실제 볼륨대로(네이티브 카메라가림+볼륨=실볼륨 사양 유지). getLastKnownSilent가 true여야 = 실제 무음.
+      if (!userSilentOverrideRef.current && getLastKnownSilent() === true) {
+        try { mod!.startUnmuteAtFloor?.(); } catch {}
+      }
       userSilentOverrideRef.current = true;
       setUserSoundOn(true); // 재진입에도 유지(프로세스 전역)
       playerRef.current?.setMuted(false);

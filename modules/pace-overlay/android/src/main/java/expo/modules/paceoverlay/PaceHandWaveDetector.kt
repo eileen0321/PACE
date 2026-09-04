@@ -628,6 +628,39 @@ object PaceHandWaveDetector {
   /** occlusion 단독 발화 허용 여부 — 2026-08-30 현재 꺼둔다(위 발화 지점 주석 참고). */
   private const val OCCLUSION_STANDALONE = false
 
+  /**
+   * 🔴 2026-09-04 사장님 제안("손을 스치는 거 말고 그냥 카메라를 손으로 가리면 넘어가는 건 어때").
+   *
+   * 스침 축들이 오늘 하루 종일 "됐다 안 됐다"를 반복한 원인은 재현성이다 — 속도·거리·각도가
+   * 다 맞아야 한다. 렌즈를 덮는 동작은 실패할 여지가 거의 없다.
+   *
+   * 이 축이 위 셋(gross-motion / lumapass / occlusion)과 다른 점:
+   *   그 셋은 밝기 변화 15~20% 대를 보려다 그림자·조명·사람 지나감과 겹쳤다(8/30 주석 참고).
+   *   렌즈를 손으로 덮으면 60% 이상 떨어진다 — **노이즈 분포에서 완전히 벗어난 영역**이라
+   *   같은 "밝기만 본다"는 축이어도 겹칠 대상이 없다.
+   *
+   * 소등·이불·주머니를 거르는 것은 두 조건이다:
+   *   ① 회복 — 손을 떼면 밝기가 돌아온다. 소등은 계속 어둡다(8/26 실측으로 이미 검증된 근거).
+   *   ② 지속시간 상한 — 손으로 가리는 건 1초 안쪽이고, 엎어놓기/주머니는 훨씬 길다.
+   *     ①만으로는 "엎어놨다 다시 듦"이 걸린다. ②가 그걸 가른다.
+   *
+   * ⚠️ 이 축은 **자체 기준선**을 쓴다. 기존 lumaHistory 는 창이 400ms 뿐이라 1초 넘게 덮으면
+   *   기준선까지 어두워져 하락을 못 본다.
+   */
+  private const val COVER_ENABLED = true
+  /** 가림으로 인정할 최소 하락(기준 대비). 0.40 = 60% 이상 어두워져야 한다. */
+  private const val COVER_DROP_RATIO = 0.40
+  /** 손을 뗐다고 볼 회복 수준(기준 대비). */
+  private const val COVER_RECOVER_RATIO = 0.80
+  /** 너무 짧으면 깜빡임/노이즈다. */
+  private const val COVER_MIN_MS = 150L
+  /** 너무 길면 손이 아니라 엎어놓기·주머니·소등이다. */
+  private const val COVER_MAX_MS = 1200L
+  /** 기준선(밝을 때) 갱신 창 — 가려지지 않은 동안의 최근 밝기를 기준으로 삼는다. */
+  private const val COVER_REF_WINDOW_MS = 3000L
+  /** 덮기 직전 손바닥을 봤어야 하는 창(사장님 사양: 손바닥이 인식되어 가리면). */
+  private const val COVER_PALM_RECENT_MS = 2000L
+
   private const val LUMA_RECOVER_RATIO = 0.9
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -1060,6 +1093,10 @@ object PaceHandWaveDetector {
   private val posHistory = ArrayDeque<Triple<Long, Double, Double>>()
   // (timestamp, averageLuma) 짧은 이력 — occlusion(가려짐) 안전망용, sizeHistory와 동일한 원리.
   private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
+  /** 렌즈 가림 축 상태(위 COVER_* 주석). 자체 기준선을 쓴다 — lumaHistory 는 창이 짧아 못 쓴다. */
+  private val coverRefHistory = ArrayDeque<Pair<Long, Double>>()
+  private var coverStartedAtMs = 0L
+  private var coverRefLuma = 0.0
   // (timestamp, 8x8 격자 평균밝기) — 큰 손짓 축(gross-motion)용. 64개 Int라 메모리도 무시할 만하다.
   private val gridHistory = ArrayDeque<Pair<Long, IntArray>>()
   /** 최근 프레임이 "큰 변화"였는지 기록(지속 환경 모션 판정용). checkGrossMotion 주석 참고. */
@@ -1137,6 +1174,7 @@ object PaceHandWaveDetector {
     lastNearHandAtMs = 0L
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
+    coverRefHistory.clear(); coverStartedAtMs = 0L; coverRefLuma = 0.0 // 가림 축도 초기화
     lastTriggerAtMs = 0L
     cameraBoundAtMs = System.currentTimeMillis()
     firstDetectionDone = false
@@ -1545,6 +1583,7 @@ object PaceHandWaveDetector {
       var gridSum = 0
       for (v in grid) gridSum += v
       val avgLuma = if (grid.isNotEmpty()) gridSum.toDouble() / grid.size else 0.0
+      checkCover(avgLuma, now, onWave)
       checkOcclusion(avgLuma, now, onWave)
       checkGrossMotion(grid, now, onWave)
       // 두 축을 다 본다 — 자세에 따라 어느 쪽이 업라이트의 가로인지 달라진다(위 bandsFromGrid 주석).
@@ -2090,6 +2129,58 @@ object PaceHandWaveDetector {
   // 2026-07-26 사용자 관찰 기반 안전망 — 손 랜드마크 신뢰도와 무관하게, 프레임이 짧은 시간 안에
   // 급격히+충분히 어두워지면(렌즈 앞을 뭔가로 가림) 트리거. sizeHistory/growthRatio와 완전히
   // 같은 원리(윈도우 안 최댓값 대비 현재 비율)를 밝기에 대해 적용.
+  /**
+   * 렌즈를 손으로 덮었다 뗐는가. 위 COVER_* 주석의 설계를 그대로 구현한다.
+   * 가려지지 않은 동안의 밝기를 기준선으로 유지하고, 기준 대비 60% 이상 떨어졌다가
+   * 1.2초 안에 80% 이상으로 돌아오면 한 번의 "가리기"로 본다.
+   */
+  private fun checkCover(luma: Double, now: Long, onWave: () -> Unit) {
+    if (!COVER_ENABLED) return
+    val covering = coverStartedAtMs > 0L
+    // 기준선은 **가려지지 않은 동안만** 갱신한다. 가리는 중에 갱신하면 기준이 같이 어두워져
+    // 하락을 못 본다(기존 lumaHistory 가 400ms 창이라 겪는 문제와 같은 것).
+    if (!covering) {
+      coverRefHistory.addLast(now to luma)
+      while (coverRefHistory.isNotEmpty() && now - coverRefHistory.first().first > COVER_REF_WINDOW_MS) {
+        coverRefHistory.removeFirst()
+      }
+      coverRefLuma = coverRefHistory.maxOfOrNull { it.second } ?: luma
+    }
+    if (coverRefLuma <= 1.0) return // 기준선 자체가 어두우면(소등된 방) 이 축은 판단하지 않는다
+
+    if (!covering) {
+      val palmSeen = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= COVER_PALM_RECENT_MS
+      if (luma <= coverRefLuma * COVER_DROP_RATIO && !palmSeen) {
+        // 깊게 어두워졌는데 손바닥을 본 적이 없다 — 손이 아닐 가능성이 크다(그림자/소등).
+        // 이 로그가 자주 뜨는데 실제로는 손이었다면 창(COVER_PALM_RECENT_MS)이 짧은 것이다.
+        Log.i(TAG, "COVER 무시 — 깊은 하락이나 손바닥 미관측 (마지막 근접손 " + (if (lastNearHandAtMs > 0L) (now - lastNearHandAtMs).toString() + "ms 전" else "없음") + ")")
+      }
+      if (luma <= coverRefLuma * COVER_DROP_RATIO && palmSeen) {
+        coverStartedAtMs = now
+        Log.i(TAG, "COVER 시작 luma=%.1f 기준=%.1f (%.0f%% 하락)".format(luma, coverRefLuma, (1 - luma / coverRefLuma) * 100))
+      }
+      return
+    }
+
+    val heldMs = now - coverStartedAtMs
+    if (luma >= coverRefLuma * COVER_RECOVER_RATIO) {
+      coverStartedAtMs = 0L
+      if (heldMs in COVER_MIN_MS..COVER_MAX_MS) {
+        fireTrigger("cover 가림=${heldMs}ms 기준=%.1f 복귀=%.1f".format(coverRefLuma, luma), onWave)
+      } else {
+        // 너무 짧으면 깜빡임, 너무 길면 엎어놓기/주머니 — 어느 쪽인지 로그로 남긴다.
+        Log.i(TAG, "COVER 무시 가림=${heldMs}ms (허용 $COVER_MIN_MS~$COVER_MAX_MS) 기준=%.1f".format(coverRefLuma))
+      }
+      return
+    }
+    // 아직 어둡다. 상한을 넘으면 손이 아니다 — 기준선을 다시 잡게 상태를 푼다.
+    if (heldMs > COVER_MAX_MS) {
+      coverStartedAtMs = 0L
+      coverRefHistory.clear()
+      Log.i(TAG, "COVER 포기 가림=${heldMs}ms — 손이 아니라 지속 어두움(엎어놓기/주머니/소등)")
+    }
+  }
+
   private fun checkOcclusion(luma: Double, now: Long, onWave: () -> Unit) {
     lastLuma = luma // HB 진단용(위 lastLuma 주석)
     lumaHistory.addLast(now to luma)
@@ -2166,6 +2257,7 @@ object PaceHandWaveDetector {
     dipHistory[0].clear(); dipHistory[1].clear()
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
+    coverRefHistory.clear(); coverStartedAtMs = 0L; coverRefLuma = 0.0 // 가림 축도 초기화
     // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
     // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
     Handler(Looper.getMainLooper()).post { onWave() }

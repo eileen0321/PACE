@@ -525,7 +525,15 @@ object PaceHandWaveDetector {
   //   **틀린 부호를 두 번 넣으면 손짓이 또 통째로 죽는다.** 확정 전까지 0(양방향 허용)으로 둔다 —
   //   사장님 지시는 왼→오만이지만, 아예 안 되는 것보다 양방향이라도 되는 편이 낫다.
   //   부호 확정 후 +1 또는 -1로 고정할 것.
-  private const val TRAVERSE_DIRECTION = 0
+  // 🔴 2026-09-05 사장님 지적("내가 왼쪽에서 오른쪽으로 갈 때만 인식하면 되지 않냐고 했는데
+  //   넌 오른쪽에서 왼쪽 올 때도 했지?") — 맞다. 위 526행이 "부호 확정 후 고정할 것"이라고
+  //   남겨둔 숙제를 이제 한다.
+  //   부호는 위 518행 주석이 확정한다 — **전면 카메라 원본 프레임은 거울상이 아니므로
+  //   사용자 기준 왼→오른쪽이 이미지에서는 x 감소**다. netX < 0 이므로 dir = -1.
+  //   한 방향만 받으면 잡음이 우연히 방향성을 띠어도 절반은 걸러진다.
+  //   ⚠️ 손짓이 통째로 안 되면 부호가 반대라는 뜻이다 — 로그의 "dir=" 값을 보고 +1 로 바꿔라.
+  //     되돌리려면 0(양방향)으로 두면 된다.
+  private const val TRAVERSE_DIRECTION = -1
   /** 속도 축의 역방향 차단 부호. 0 = 차단 끔(부호 미확정). 확정되면 오→왼 쪽 부호를 넣는다. */
   private const val REVERSE_BLOCK_SIGN = 0
 
@@ -798,7 +806,14 @@ object PaceHandWaveDetector {
    *   **손이 아직 한 번도 안 잡힌 첫 손짓**이 막힌 것이었다. 창을 3초로 늘려 되살린다.
    *   막힐 때마다 로그를 남기므로, 3초도 짧으면 그 로그로 확인해 올리면 된다.
    */
-  private const val LUMAPASS_HAND_RECENT_MS = 3000L
+  // 🔴 2026-09-05 실측 반영 — 차단 로그에 "마지막 근접손 3528ms 전"이 찍혔다(진짜 손짓).
+  //   손짓이 클수록 모션블러로 팜 디텍터가 손을 놓쳐(8/21 실측: 크게 흔든 39초간 손 검출 0개)
+  //   "마지막으로 손을 본 시각"이 뒤로 밀린다. 3528ms 를 덮도록 5초로 올린다.
+  //   "마지막 근접손 없음" 케이스는 창을 늘려도 그대로 막히므로 오탐 방어는 유지된다.
+  private const val LUMAPASS_HAND_RECENT_MS = 5000L
+
+  /** lumapass 도 사용자 왼→오(fwd)만 인정할지. 위 발화 지점 주석 참고. */
+  private const val LUMAPASS_FORWARD_ONLY = true
   private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
@@ -878,6 +893,20 @@ object PaceHandWaveDetector {
   private const val GROSS_ACTIVITY_WINDOW_MS = 2500L
   private const val GROSS_ACTIVITY_MIN_SAMPLES = 12
   private const val GROSS_SUSTAINED_RATIO = 0.45
+
+  /**
+   * 🔴 2026-09-05 사장님 실기기("손을 들기만 해도 넘어가는 건") — 이 축은 **바뀐 칸 수**만 세고
+   * 어느 방향으로 움직였는지는 보지 않는다. 손을 들면 화면 일부가 통째로 바뀌므로 그대로 걸린다.
+   * 손짓의 정의는 "가로로 스쳐 지나감"이므로, 바뀐 영역의 중심이 **가로로** 이동했어야 한다.
+   *   손 들기 → 세로 이동이 크다 (거부)
+   *   스침    → 가로 이동이 크다 (통과)
+   * 격자가 16칸이므로 2칸(=화면 폭의 12.5%)을 최소 이동으로 둔다. 그보다 작으면 제자리다.
+   */
+  private const val GROSS_MIN_DX_CELLS = 2.0
+  /** 가로가 세로보다 이만큼 우세해야 한다(손 들기의 세로 이동을 거른다). */
+  private const val GROSS_DX_OVER_DY = 1.5
+  /** 중심 이동을 재는 창. 손짓 한 번(≈0.4초)을 담되 그보다 길면 무관한 움직임이 섞인다. */
+  private const val GROSS_CENTROID_WINDOW_MS = 600L
 
   // 🔴 2026-08-31 — **얼굴 접근을 면적으로 가른다.** 사장님 지적 "얼굴로도 넘어가는데".
 
@@ -1097,6 +1126,7 @@ object PaceHandWaveDetector {
   private val glideHitTimes = ArrayDeque<Long>()
   /** 마지막으로 NEAR 밴드 크기의 손을 본 시각 — luma 완화 게이트용(LUMA_*_NEAR 주석 참고). */
   @Volatile private var lastNearHandAtMs = 0L
+  @Volatile private var lastHandSize = 0.0
   private var awaitingRearm = false
   private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
@@ -1115,6 +1145,8 @@ object PaceHandWaveDetector {
   private val gridHistory = ArrayDeque<Pair<Long, IntArray>>()
   /** 최근 프레임이 "큰 변화"였는지 기록(지속 환경 모션 판정용). checkGrossMotion 주석 참고. */
   private val grossActivity = ArrayDeque<Pair<Long, Boolean>>()
+  /** 바뀐 영역 중심의 최근 이력 (시각, x, y) — 가로 이동 판정용(위 GROSS_MIN_DX_CELLS 주석). */
+  private val grossCentroids = ArrayDeque<Triple<Long, Double, Double>>()
 
   // 2026-07-24: 트랜지티브로 딸려온 androidx.lifecycle이 LifecycleOwner를 순수 Java
   // 인터페이스(getLifecycle())로 노출하던 시절엔 `override val lifecycle` 프로퍼티 문법이 안 먹혀서
@@ -1186,8 +1218,10 @@ object PaceHandWaveDetector {
     sweepHitTimes.clear()
     glideHitTimes.clear()
     lastNearHandAtMs = 0L
+    lastHandSize = 0.0
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
+    grossCentroids.clear()
     coverRefHistory.clear(); coverStartedAtMs = 0L; coverRefLuma = 0.0 // 가림 축도 초기화
     lastTriggerAtMs = 0L
     cameraBoundAtMs = System.currentTimeMillis()
@@ -1862,6 +1896,14 @@ object PaceHandWaveDetector {
     val fwd = tR < tM && tM < tL   // 오른쪽부터 꺼짐
     val bwd = tL < tM && tM < tR   // 왼쪽부터 꺼짐
     if (!fwd && !bwd) return
+    // 🔴 2026-09-05 사장님 지시(왼→오만 인식) — traverse 축과 같은 이유로 이 축도 한 방향만 받는다.
+    //   부호 근거는 518행 주석: 사용자 왼→오는 이미지에서 x 감소 → 이미지 오른쪽 구간이 먼저
+    //   어두워진다 → tR < tM < tL = fwd. 따라서 fwd 만 인정한다.
+    //   ⚠️ 손짓이 통째로 안 되면 부호가 반대다 — bwd 로 바꾸거나 이 블록을 지우면 양방향으로 돌아간다.
+    if (LUMAPASS_FORWARD_ONLY && !fwd) {
+      Log.i(TAG, "LUMAPASS 차단 — 역방향(오→왼) 순서=L-M-R")
+      return
+    }
     val span = if (fwd) tL - tR else tR - tL
     if (span < LUMAPASS_MIN_SPAN_MS || span > LUMAPASS_MAX_SPAN_MS) return
 
@@ -2114,6 +2156,20 @@ object PaceHandWaveDetector {
     val bw = maxX - minX + 1
     val bh = maxY - minY + 1
     val aspect = if (bh > 0) bw.toDouble() / bh else 0.0
+    // 바뀐 영역의 중심이 최근 창에서 가로로 얼마나 옮겨갔는가(위 GROSS_MIN_DX_CELLS 주석).
+    val cx = (minX + maxX) / 2.0
+    val cy = (minY + maxY) / 2.0
+    grossCentroids.addLast(Triple(now, cx, cy))
+    while (grossCentroids.isNotEmpty() && now - grossCentroids.first().first > GROSS_CENTROID_WINDOW_MS) {
+      grossCentroids.removeFirst()
+    }
+    val dx = if (grossCentroids.size >= 2) {
+      (grossCentroids.maxOf { it.second } - grossCentroids.minOf { it.second })
+    } else 0.0
+    val dy = if (grossCentroids.size >= 2) {
+      (grossCentroids.maxOf { it.third } - grossCentroids.minOf { it.third })
+    } else 0.0
+    val movedHorizontally = dx >= GROSS_MIN_DX_CELLS && dx >= dy * GROSS_DX_OVER_DY
     val consistency = kotlin.math.max(darkenRatio, 1.0 - darkenRatio)
     val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
@@ -2144,6 +2200,11 @@ object PaceHandWaveDetector {
     //   (8/30 주석이 이 축을 포함해 셋을 "판별 조건이 밝기 크기 하나뿐"이라고 지목했다 —
     //    손 관측이 그 빠진 근거를 채운다.)
     if (ok && GROSS_MOTION_STANDALONE) {
+      if (!movedHorizontally) {
+        Log.i(TAG, "gross-motion 차단 — 가로 이동 부족 dx=%.1f dy=%.1f (필요 dx>=%.1f, dx>=dy*%.1f) cells=$changed"
+          .format(dx, dy, GROSS_MIN_DX_CELLS, GROSS_DX_OVER_DY))
+        return
+      }
       val handSeenGm = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= LUMAPASS_HAND_RECENT_MS
       if (!handSeenGm) {
         Log.i(TAG, "gross-motion 차단 — 손 미관측 (마지막 근접손 " +
@@ -2282,6 +2343,28 @@ object PaceHandWaveDetector {
   private fun fireTrigger(reason: String, onWave: () -> Unit) {
     val now = System.currentTimeMillis()
     if (now - lastTriggerAtMs <= REFRACTORY_MS) return
+    // 🔴 2026-09-05 사장님 실기기("왜 방금 안 되다가 마지막에 한 번 손짓에 두 개 넘어간 거야") —
+    //   로그가 원인을 그대로 보여줬다:
+    //     00:28:03.181 WAVE detected (gross-motion ...)
+    //     00:28:04.449 WAVE detected 지연=416ms by=traverse(...)
+    //   **한 번의 손짓을 두 축이 시차를 두고 각각 보고**했다. 간격 1268ms 로 불응시간(1200ms)을
+    //   68ms 차이로 빠져나갔다. 손 랜드마크 축은 추론 지연(로그의 지연=416ms)이 있어 격자보다
+    //   늦게 도착하므로 이 시차는 구조적이다.
+    //
+    //   ⚠️ 불응시간을 늘리는 것은 답이 아니다 — 사장님 지적대로 **연속 손짓이 죽는다**.
+    //     "직전과 다른 축이면 무시"도 답이 아니다 — 어느 축이 잡을지는 팜 디텍터가 그 순간
+     //     손을 잡았는지에 달려 사실상 무작위라, 연속 손짓 두 번이 서로 다른 축에 걸리면
+    //     두 번째가 죽는다.
+    //
+    //   → 시간이나 축이 아니라 **"동작이 끝났다 다시 시작했는가"**로 가른다. 그 판정은 이미
+    //     이 파일에 있다(awaitingRearm — 손이 작아지거나 사라지면 풀린다). 지금까지 손 랜드마크
+    //     경로에서만 쓰였는데, 밝기 축도 같은 게이트를 공유하게 한다.
+    //     같은 동작의 중복 보고는 손이 아직 커져 있는 동안 오므로 막히고, 진짜 두 번째 손짓은
+    //     손이 한 번 빠진 뒤에 오므로 통과한다 — 연속 손짓이 죽지 않는다.
+    if (awaitingRearm) {
+      Log.i(TAG, "WAVE 중복 무시 ($reason) — 아직 재무장 전(직전 발화 ${now - lastTriggerAtMs}ms 전, 손크기 $lastHandSize <= $rearmBelowSize 이어야 함)")
+      return
+    }
     // 2026-08-15 — 렌즈 가림도 사람이 앞에 있을 때만 인정한다. 이불이 덮이거나 폰이 엎어져도
     // 밝기는 똑같이 급감하는데, 그건 "다음 영상"이 아니라 오히려 아무도 안 본다는 신호다.
     if (!shouldTrustHandSignal(now)) {
@@ -2301,6 +2384,7 @@ object PaceHandWaveDetector {
     dipHistory[0].clear(); dipHistory[1].clear()
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
+    grossCentroids.clear()
     coverRefHistory.clear(); coverStartedAtMs = 0L; coverRefLuma = 0.0 // 가림 축도 초기화
     // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
     // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
@@ -2506,6 +2590,7 @@ object PaceHandWaveDetector {
 
     // ── 🟢 2026-08-20 신규: 거리 밴드 + glide(2D 순간 속도) ──
     if (handSize >= NEAR_BAND_HAND_SIZE) lastNearHandAtMs = now
+    lastHandSize = handSize // 재무장 기준(아래 fireTrigger) — 밝기 축은 손 크기를 모르므로 여기 값을 쓴다
     val band = when {
       handSize >= NEAR_BAND_HAND_SIZE -> "near"
       handSize >= MID_BAND_HAND_SIZE -> "mid"
@@ -2815,7 +2900,17 @@ object PaceHandWaveDetector {
     val growthFires = approachAxesEnabled && (grew || grewFast)
     // 손 크기가 일정해야 스침이다(위 SIZE_STABLE_MAX_GROWTH 주석). 크게 커진 프레임은 다가옴이라
     // 가로 이동 축이 통과했더라도 발화하지 않는다 — 다가오면서 손이 옆으로 흔들리는 경우를 막는다.
-    val sizeStable = growthRatio <= SIZE_STABLE_MAX_GROWTH
+    // 🔴 2026-09-05 실기기 로그로 이 게이트가 **진짜 손짓을 막고 있는 것**을 확인했다.
+    //   00:37:09 다가옴으로 차단 growth=1.7483(th=1.25) sweep=0.7179  ← sweep 0.72 = 가로로 잘 지나간 손짓
+    //   같은 손짓 한 번 안에서 handSize 가 이렇게 요동친다(연속 프레임 실측):
+    //     0.222 0.258 0.262 0.200 0.295 0.218 0.203 0.197 0.201
+    //   최대/최소 비율만 1.5 다. 손이 다가온 게 아니라 **팜 디텍터의 크기 추정이 프레임마다
+    //   흔들리는 것**이다. 즉 내가 어제 정한 1.25 는 측정 잡음보다 작은 값이었다 —
+    //   로그 세 건(1.09/1.35/1.40)만 보고 그 사이에 선을 그었는데 그 셋이 잡음 분포 한복판이었다.
+    //   이 파일이 아홉 번 경고한 "검열된 데이터로 임계값 만지기"를 내가 열 번째로 한 것이다.
+    //   → 끈다. 다가옴 오탐은 grew/grewFast 축을 발화에서 뺀 것으로 이미 막혀 있다(그게 실제
+    //     발화 경로였다). 되살리려면 잡음 분포부터 재라 — 1.5 보다 확실히 큰 값이어야 한다.
+    val sizeStable = true // (SIZE_STABLE_MAX_GROWTH 게이트 비활성 — 위 주석)
     if (!sizeStable && (swept || glideFires || traversed) && pastRefractory && handFresh) {
       Log.i(TAG, "다가옴으로 차단 growth=$growthRatio(th=$SIZE_STABLE_MAX_GROWTH) sweep=$sweepRatio size=$handSize")
     }

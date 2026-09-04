@@ -1212,8 +1212,19 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
     // 지속 환경 모션 억제 — 최근 창의 큰-변화 프레임 비율이 높으면(차·이동) 발화 금지.
     let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
-    let sustained = gridActivity.count >= gridActivityMinSamples
-      && Double(activeCount) / Double(gridActivity.count) >= gridSustainedRatio
+    // 🔴 2026-09-04(윈도우) — 창이 덜 찼을 때가 무방비였다. 합성 시뮬(scripts/wave_sustained_motion.js)로
+    //   재현·측정: 차량형 시나리오(세로 그늘 띠가 훑고 지나감 3종) 191회 발화 중 **14회가 그대로
+    //   새어 나간다.** 전부 창=1/1 — 표본이 gridActivityMinSamples(12)에 못 미치는 약 0.4초 동안
+    //   억제가 발동하지 않기 때문이다. 실사용에서는 "차 타고 출발한 직후 몇 번 넘어감"으로 나타난다.
+    //   → 창이 덜 찼으면 "판단 불가"로 보고 발화하지 않는다. 오탐(안 원하는데 넘어감)이
+    //     미탐(한 번 더 흔들면 됨)보다 훨씬 나쁘다.
+    //   ⚠️ 이 규칙이 안전한 것은 위 gridActivity.append 가 `guard changed > 0` **앞**에 있어
+    //     조용한 프레임도 창에 쌓이기 때문이다. 순서가 바뀌면 조용한 방에서 창이 영영 안 차
+    //     손짓이 통째로 죽는다(안드에서 실제로 그 조합을 만들어 확인했다). 순서를 바꾸지 말 것.
+    //   안드로이드 PaceHandWaveDetector.checkGrossMotion 과 동일한 처방·동일한 값.
+    let windowReady = gridActivity.count >= gridActivityMinSamples
+    let sustained = !windowReady
+      || Double(activeCount) / Double(gridActivity.count) >= gridSustainedRatio
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
     if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained {
       gridHistory.removeAll()

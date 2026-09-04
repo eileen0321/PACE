@@ -27,6 +27,7 @@ struct Sim {
   var brightRefAll = 0.0, brightRefL = 0.0, brightRefM = 0.0, brightRefR = 0.0
   var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
   var gridHistory: [(t: Double, g: [Double])] = []
+  var gridActivity: [(t: Double, a: Bool)] = []  // 지속 환경 모션(차·이동) 억제용(모듈 미러)
   var lastTriggerMs = -10000.0
   var events: [String] = []
 
@@ -126,7 +127,6 @@ extension Sim {
   mutating func feedGrid(t: Double, g: [Double]) {
     gridHistory.append((t, g))
     while let f = gridHistory.first, t - f.t > 700 { gridHistory.removeFirst() }
-    guard t - lastTriggerMs > passRefractoryMs else { return }
     guard let ref = gridHistory.last(where: { t - $0.t >= 180 }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -138,8 +138,11 @@ extension Sim {
         changed += 1; if d < 0 { darkened += 1 }
       }
     }
+    let fractionAll = Double(changed) / Double(g.count)
+    gridActivity.append((t, fractionAll >= 0.05))   // 매 프레임 큰-변화 여부 기록(모듈 미러)
+    while let f = gridActivity.first, t - f.t > 2500 { gridActivity.removeFirst() }
     guard changed > 0 else { return }
-    let fraction = Double(changed) / Double(g.count)
+    let fraction = fractionAll
     let dr = Double(darkened) / Double(changed)
     let bw = maxX - minX + 1, bh = maxY - minY + 1
     let density = Double(changed) / Double(max(1, bw * bh))
@@ -147,7 +150,10 @@ extension Sim {
     let notSquare = aspect <= 0.9 || aspect >= 1.111  // iOS: 정사각(얼굴) 근처만 배제, 가로/세로 긴 손 스윕은 통과
     let cons = max(dr, 1 - dr)
     let densityTh = changed <= 3 ? 0.9 : 0.15   // 안드 MIN_DENSITY_SMALL/BIG
-    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare {
+    let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
+    let sustained = gridActivity.count >= 12 && Double(activeCount) / Double(gridActivity.count) >= 0.45
+    guard t - lastTriggerMs > passRefractoryMs else { return }
+    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare, !sustained {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
@@ -470,6 +476,29 @@ var g34 = flatGrid(150)
 fillRect(&g34, gx0: 5, gx1: 10, gy0: 4, gy1: 9)  // 36칸, bw=6 bh=6 aspect=1.0
 for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
 check("격자 폰움직임 정사각 차단(aspect)", s34.events, fires: 0)
+
+// 35. 차/이동 지속 모션(실기기 채증 2026-09-04 23:11~12, 손짓 없이 gridpass 20+회) — 억제해야.
+//     정사각 변화(발화 조건 미달이나 active)로 창을 채워 sustained 성립 → 이후 진짜 밴드도 억제.
+var s35 = Sim()
+var t35 = 0.0
+for k in 0..<16 {
+  var g = flatGrid(150)
+  if k % 2 == 0 { for gy in 6...10 { for gx in 6...10 { g[gy * gridN + gx] = 100 } } } // 5x5 정사각(지속 변화)
+  s35.feedGrid(t: t35, g: g); t35 += 80
+}
+var gb35 = flatGrid(150)
+fillRect(&gb35, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 가로 밴드(평소엔 발화할 손짓 모양)
+for _ in 0..<3 { s35.feedGrid(t: t35, g: gb35); t35 += 80 }
+check("격자 차-지속모션 억제(채증)", s35.events, fires: 0)
+
+// 36. 조용하다가 단일 손 스윕 1회 — 지속모션 아님 → 발화해야(정상 손짓 보존 확인).
+var s36 = Sim()
+var t36 = 0.0
+for _ in 0..<8 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(active=false)
+var gb36 = flatGrid(150)
+fillRect(&gb36, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
+for _ in 0..<3 { s36.feedGrid(t: t36, g: gb36); t36 += 80 }
+check("격자 조용후 단일스윕 발화", s36.events, fires: 1, expectContains: ["gridpass"])
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

@@ -1155,6 +1155,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let gridAspectSquareLo: Double = 0.9    // 이 값~Hi 사이(정사각 근처)면 얼굴/정면접근 — 차단
   private let gridAspectSquareHi: Double = 1.111  // = 1/0.9 (안드 세로 게이트의 전치 대칭)
   private var gridHistory: [(t: Double, g: [Double])] = []
+  // 🔴 2026-09-04 실기기 채증(diag 23:11~23:12 차 안, 손짓 없이 gridpass 20+회 연속 발화) — 차가
+  //   움직이며 햇빛/그늘/풍경이 프레임 전체를 균일하게 바꿔 격자가 "손 스윕"으로 오판. 손짓은 짧은 1회
+  //   전환이지만 차/이동은 **매 프레임 지속적**으로 크게 변한다. 최근 창에서 큰 변화 프레임 비율이 높으면
+  //   (=지속 환경 모션) 격자 발화를 억제한다. 한 번의 손 스윕(≈0.4s, 몇 프레임)은 비율이 낮아 통과.
+  private let gridActivityWindowMs: Double = 2500
+  private let gridActivityMinSamples: Int = 12
+  private let gridSustainedRatio: Double = 0.45
+  private var gridActivity: [(t: Double, a: Bool)] = []
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1173,7 +1181,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private func checkGridMotion(_ grid: [Double], _ nowMs: Double) {
     gridHistory.append((nowMs, grid))
     while let f = gridHistory.first, nowMs - f.t > gridWindowMs { gridHistory.removeFirst() }
-    guard nowMs - lastTriggerMs > passRefractoryMs else { return }
+    // ⚠️ 활동 추적은 refractory와 무관하게 **매 프레임** 돌아야 한다(불응 중에도 환경 변화를 봐야 차 감지).
+    //   그래서 refractory 가드를 changed 계산 뒤, 발화 직전으로 옮겼다.
     guard let ref = gridHistory.last(where: { nowMs - $0.t >= gridLagMs }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -1187,8 +1196,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         if d < 0 { darkened += 1 }
       }
     }
+    let fractionAll = Double(changed) / Double(grid.count)
+    // 지속 환경 모션 추적 — 이 프레임이 "큰 변화"였는지 기록(발화 여부와 무관, 매 프레임).
+    gridActivity.append((nowMs, fractionAll >= gridFracMin))
+    while let f = gridActivity.first, nowMs - f.t > gridActivityWindowMs { gridActivity.removeFirst() }
     guard changed > 0 else { return }
-    let fraction = Double(changed) / Double(grid.count)
+    let fraction = fractionAll
     let darkenRatio = Double(darkened) / Double(changed)
     let bw = maxX - minX + 1, bh = maxY - minY + 1
     let bbox = Double(bw * bh)
@@ -1197,9 +1210,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let notSquare = aspect <= gridAspectSquareLo || aspect >= gridAspectSquareHi  // 정사각(얼굴) 근처만 배제
     let consistency = max(darkenRatio, 1 - darkenRatio)
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
+    // 지속 환경 모션 억제 — 최근 창의 큰-변화 프레임 비율이 높으면(차·이동) 발화 금지.
+    let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
+    let sustained = gridActivity.count >= gridActivityMinSamples
+      && Double(activeCount) / Double(gridActivity.count) >= gridSustainedRatio
+    guard nowMs - lastTriggerMs > passRefractoryMs else { return }
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained {
       gridHistory.removeAll()
       fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+    } else if sustained, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
+      onDiag(String(format: "gridsuppress(지속모션 %d/%d) cells=%d frac=%.3f asp=%.2f", activeCount, gridActivity.count, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {
       onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f asp=%.2f cells=%d", fraction, consistency, density, aspect, changed))
     }

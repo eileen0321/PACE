@@ -1948,7 +1948,8 @@ object PaceHandWaveDetector {
         if (d < 0) darkened++
       }
     }
-    if (changed == 0) return
+    // ⚠️ 기록은 changed==0(조용한 프레임)도 포함해야 한다 — 아래 sustainedMotion 주석 ② 참고.
+    //   그래서 fraction 계산과 창 갱신을 조기반환보다 **앞**에 둔다.
     val fraction = changed.toDouble() / grid.size
     // 🔴 2026-09-04 — 맥이 iOS 에 넣은 지속 환경 모션 억제(0590def)를 안드로 이식한다.
     //   맥 채증(diag 23:11~23:12 차 안): **손짓 없이 gridpass 20+회 연속 발화**(cons 0.81~1.00).
@@ -1965,8 +1966,24 @@ object PaceHandWaveDetector {
       grossActivity.removeFirst()
     }
     val activeCount = grossActivity.count { it.second }
-    val sustainedMotion = grossActivity.size >= GROSS_ACTIVITY_MIN_SAMPLES &&
+    // 🔴 2026-09-04(2차) 합성 시뮬(scripts/wave_sustained_motion.js)로 구멍 두 개를 찾아 고쳤다.
+    //   ① 창이 덜 찼을 때 무방비 — 차량 모션이 시작된 직후 표본이 12개에 못 미치는 약 0.4초가
+    //      그대로 새어 나갔다(1차 억제 적용 후에도 14회 발화, 전부 창=1/1). 실사용에서는
+    //      "차 타고 출발한 직후 몇 번 넘어감"으로 나타난다. → 모르면 발화하지 않는다.
+    //      오탐(안 원하는데 넘어감)이 미탐(한 번 더 흔들면 됨)보다 훨씬 나쁘다 — 이 파일의
+    //      다른 판정들과 같은 원칙이다.
+    //   ② ①만 넣으면 조용한 방에서 손짓이 통째로 죽는다. 아래 기록이 changed==0 조기반환
+    //      뒤에 있으면 조용한 프레임이 창에 안 쌓여 12표본이 영영 안 차기 때문이다.
+    //      조용한 프레임은 "지속 모션이 아니다"라는 증거이므로 변화 0인 프레임도 기록한다
+    //      (그래서 위 addLast 를 changed 조기반환보다 앞에 둔다).
+    //   시뮬 결과: 차량 3종 191회 발화 → 0회(전부 억제), 손짓은 5회 → 10회로 오히려 늘고 억제 0회.
+    //   손짓일 때 창은 1/56(1.8%)이라 문턱 45%에 한참 못 미친다 — 두 상황이 확실히 갈린다.
+    val windowReady = grossActivity.size >= GROSS_ACTIVITY_MIN_SAMPLES
+    val sustainedMotion = !windowReady ||
       activeCount.toDouble() / grossActivity.size >= GROSS_SUSTAINED_RATIO
+
+    // 변화가 하나도 없으면 여기서 끝 — 창에는 이미 "조용함"으로 기록됐다.
+    if (changed == 0) return
     val darkenRatio = darkened.toDouble() / changed
     // 🔴 2026-08-27 — 사장님 "손 높이·크기에 따라 안 되고, 랜덤하게 되고 안 되고가 갈린다."
     //   증상을 하나씩 쫓지 않고 **조건 조합 108개를 합성으로 전수** 돌려서 원인을 찾았다

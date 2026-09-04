@@ -151,7 +151,9 @@ extension Sim {
     let cons = max(dr, 1 - dr)
     let densityTh = changed <= 3 ? 0.9 : 0.15   // 안드 MIN_DENSITY_SMALL/BIG
     let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
-    let sustained = gridActivity.count >= 12 && Double(activeCount) / Double(gridActivity.count) >= 0.45
+    // 창 미충족 시 무방비 방지(모듈 3ea77de 미러) — 창이 덜 찼으면 판단불가로 보고 억제.
+    let windowReady = gridActivity.count >= 12
+    let sustained = !windowReady || Double(activeCount) / Double(gridActivity.count) >= 0.45
     guard t - lastTriggerMs > passRefractoryMs else { return }
     if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare, !sustained {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
@@ -408,7 +410,7 @@ func fillRect(_ g: inout [Double], gx0: Int, gx1: Int, gy0: Int, gy1: Int, _ v: 
 //     실기기 13:06:47 사장님 손짓 = cons 0.88~1.00 · aspect 2.4~4.3 (iOS 버퍼 전치로 가로로 김).
 var s28 = Sim()
 var t28 = 0.0
-for _ in 0..<6 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
+for _ in 0..<13 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
 fillRect(&g28, gx0: 3, gx1: 13, gy0: 7, gy1: 8)  // 22칸, bw=11 bh=2, aspect=5.5(가로 스윕)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
@@ -417,7 +419,7 @@ check("격자 가로 손짓 발화(iOS)", s28.events, fires: 1, expectContains: 
 // 28b. 세로로 긴 손짓(위아래 훠이, 2×11=22칸 aspect=0.18)도 발화해야 — 방향 무관.
 var s28b = Sim()
 var t28b = 0.0
-for _ in 0..<6 { s28b.feedGrid(t: t28b, g: flatGrid(150)); t28b += 80 }
+for _ in 0..<13 { s28b.feedGrid(t: t28b, g: flatGrid(150)); t28b += 80 }
 var g28b = flatGrid(150)
 fillRect(&g28b, gx0: 7, gx1: 8, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11, aspect=0.18
 for _ in 0..<3 { s28b.feedGrid(t: t28b, g: g28b); t28b += 80 }
@@ -426,14 +428,14 @@ check("격자 세로 손짓 발화(iOS)", s28b.events, fires: 1, expectContains:
 // 29. 자동노출 흔들림(전체 256칸) — 상한 0.30 초과로 차단
 var s29 = Sim()
 var t29 = 0.0
-for _ in 0..<6 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
+for _ in 0..<13 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
 for _ in 0..<3 { s29.feedGrid(t: t29, g: flatGrid(100)); t29 += 80 }
 check("격자 AE 전체변화 차단", s29.events, fires: 0)
 
 // 30. 흩어진 잡음(4칸 사방 분산) — 하한 0.05 미달 + 밀도 미달로 차단
 var s30 = Sim()
 var t30 = 0.0
-for _ in 0..<6 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
+for _ in 0..<13 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
 var g30 = flatGrid(150)
 for i in [0, 60, 130, 255] { g30[i] = 100 }
 for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
@@ -442,7 +444,7 @@ check("격자 분산 잡음 차단", s30.events, fires: 0)
 // 31. 작은 스침(세로 5칸) — 안드가 버린 "2~5칸 발화": 하한 0.05(13칸) 미달로 차단해야
 var s31 = Sim()
 var t31 = 0.0
-for _ in 0..<6 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
+for _ in 0..<13 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
 var g31 = flatGrid(150)
 fillRect(&g31, gx0: 6, gx1: 6, gy0: 2, gy1: 6)  // 5칸 세로(밀도·aspect는 통과, 하한만 미달)
 for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
@@ -451,7 +453,7 @@ check("격자 5칸 미달 차단(안드 하한)", s31.events, fires: 0)
 // 32. 얼굴 정면 접근: 정사각 덩어리(5×5=25칸, aspect=1.0) — 정사각 근처(0.9~1.111)라 차단해야
 var s32 = Sim()
 var t32 = 0.0
-for _ in 0..<6 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
+for _ in 0..<13 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
 var g32 = flatGrid(150)
 fillRect(&g32, gx0: 6, gx1: 10, gy0: 5, gy1: 9)  // 25칸, bw=5 bh=5 aspect=1.0
 for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
@@ -461,7 +463,7 @@ check("격자 얼굴 정사각 차단(aspect)", s32.events, fires: 0)
 //     "가만있는데 20개 자동 전진"의 직접 원인이던 2칸 발화가 이제 원천 차단됨을 못박는다.
 var s33 = Sim()
 var t33 = 0.0
-for _ in 0..<6 { s33.feedGrid(t: t33, g: flatGrid(150)); t33 += 80 }
+for _ in 0..<13 { s33.feedGrid(t: t33, g: flatGrid(150)); t33 += 80 }
 var g33 = flatGrid(150)
 for i in [244, 245] { g33[i] = 100 }  // 2칸
 for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }
@@ -471,7 +473,7 @@ check("격자 2칸 채증회귀 차단", s33.events, fires: 0)
 //     실기기 16:18 cells=23·29 발화(폰 움직임을 손짓으로 오판)를 막는 선.
 var s34 = Sim()
 var t34 = 0.0
-for _ in 0..<6 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
+for _ in 0..<13 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
 var g34 = flatGrid(150)
 fillRect(&g34, gx0: 5, gx1: 10, gy0: 4, gy1: 9)  // 36칸, bw=6 bh=6 aspect=1.0
 for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
@@ -494,7 +496,7 @@ check("격자 차-지속모션 억제(채증)", s35.events, fires: 0)
 // 36. 조용하다가 단일 손 스윕 1회 — 지속모션 아님 → 발화해야(정상 손짓 보존 확인).
 var s36 = Sim()
 var t36 = 0.0
-for _ in 0..<8 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(active=false)
+for _ in 0..<13 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(active=false)
 var gb36 = flatGrid(150)
 fillRect(&gb36, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
 for _ in 0..<3 { s36.feedGrid(t: t36, g: gb36); t36 += 80 }

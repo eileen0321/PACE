@@ -489,7 +489,7 @@ export default function SettingsScreen() {
                 <Text style={styles.resetTitle}>{t('settings.resetSettings')}</Text>
                 <Text style={styles.rowSubtitle}>{t('settings.resetSettingsDesc')}</Text>
               </View>
-              <Pressable style={styles.resetIconBtn} onPress={() => setShowResetConfirm(true)}>
+              <Pressable style={styles.resetIconBtn} hitSlop={10} onPress={() => setShowResetConfirm(true)}>
                 <Feather name="refresh-cw" size={16} color={colors.dangerLight} />
               </Pressable>
             </View>
@@ -503,7 +503,7 @@ export default function SettingsScreen() {
                   <Text style={styles.deleteAccountTitle}>{t('settings.deleteAccount')}</Text>
                   <Text style={styles.rowSubtitle}>{t('settings.deleteAccountDesc')}</Text>
                 </View>
-                <Pressable style={styles.deleteAccountIconBtn} onPress={() => setShowDeleteConfirm(true)}>
+                <Pressable style={styles.deleteAccountIconBtn} hitSlop={10} onPress={() => setShowDeleteConfirm(true)}>
                   <Feather name="trash-2" size={16} color={colors.danger} />
                 </Pressable>
               </View>
@@ -679,13 +679,21 @@ function DefaultRow({ title, desc, value, onPress, bordered }: { title: string; 
 
 function NotifRow({ title, desc, value, onChange, bordered }: { title: string; desc: string; value: boolean; onChange: (v: boolean) => void; bordered?: boolean }) {
   return (
-    <View style={[styles.row, styles.notifRow, bordered && styles.rowBordered]}>
+    // 🔴 2026-09-04 — focus.tsx 와 같은 결함(스위치 히트영역 41dp, 행에는 탭 타겟 없음).
+    //   이 컴포넌트는 알림 토글 3곳이 공유하므로 여기 한 번 고치면 셋 다 낫는다.
+    <Pressable
+      style={[styles.row, styles.notifRow, bordered && styles.rowBordered]}
+      onPress={() => onChange(!value)}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      accessibilityLabel={title}
+    >
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.rowSubtitle}>{desc}</Text>
       </View>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primary, false: '#262626' }} thumbColor="#FFFFFF" ios_backgroundColor="#262626" />
-    </View>
+      <Switch value={value} onValueChange={onChange} pointerEvents="none" trackColor={{ true: colors.primary, false: '#262626' }} thumbColor="#FFFFFF" ios_backgroundColor="#262626" />
+    </Pressable>
   );
 }
 

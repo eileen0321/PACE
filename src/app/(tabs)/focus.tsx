@@ -209,6 +209,26 @@ export default function FocusScreen() {
   // 페이월로 튕겨 끌 수조차 없는 함정이었다. D9 무료정책에 맞춰 게이트 제거(공용코드 — Android도 동일 적용).
   const onToggleHandsFree = () => { toggleAutoMode(); };
 
+  // 행 전체 탭을 위해 인라인 핸들러를 추출(위 2026-09-04 주석과 같은 이유).
+  const onBreakToggle = (v: boolean) => {
+    const nextInterval = v ? DEFAULT_SETTINGS.breakIntervalMinutes : 0;
+    update({ breakIntervalMinutes: nextInterval });
+    // 2026-07-27 감사 발견 — settings.tsx의 같은 필드(Breaks & Sleep Detection 카드)는
+    // pushLiveSessionConfig()로 이미 도는 세션에 즉시 반영되도록 고쳐졌는데, 같은
+    // breakIntervalMinutes를 바꾸는 이 화면의 스위치는 update()만 호출해 다음 세션까지
+    // 반영이 안 되는 불일치가 있었다 — 같은 라이브 경로를 여기서도 호출해 통일.
+    if (Platform.OS === 'android') {
+      const s = useSettingsStore.getState().settings;
+      bluetoothService.updateLiveSessionConfig({
+        breakIntervalMinutes: nextInterval,
+        notifyRemaining: s.notifyRemaining,
+        notifyLimit: s.notifyLimit,
+        notifyBreak: s.notifyBreak,
+        hardBlockMode: s.hardBlockMode,
+      }).catch(() => {});
+    }
+  };
+
   // 🔴 2026-09-04 사장님 지적("토글이 왜 누르면 아무 반응을 안 해? 끌어야만 하잖아") — 행 전체를
   //   탭 타겟으로 만들면서, 행의 onPress 와 스위치의 onValueChange 가 **같은 코드**를 타야 한다.
   //   예전엔 이 로직이 JSX 안에 인라인으로 있어 행에서 재사용할 수 없었다. 분기(잠김 여부, 권한
@@ -514,36 +534,28 @@ export default function FocusScreen() {
             덮어써서 값이 흐트러졌다 — 라벨을 실제값으로 표시하고, 토글 ON 시에도 기본값(20)으로
             통일해 최소한 다른 화면과 어긋나지 않게 정정. */}
         <GlassSurface style={styles.card}>
-          <View style={styles.interventionRow}>
+          {/* 🔴 2026-09-04 — 핸즈프리 행들과 같은 결함(스위치 히트영역 41dp, 행에 탭 타겟 없음).
+              전수 확인 중 발견해 같이 고친다. */}
+          <Pressable
+            style={styles.interventionRow}
+            onPress={() => onBreakToggle(!(settings.breakIntervalMinutes > 0))}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: settings.breakIntervalMinutes > 0 }}
+            accessibilityLabel={t('focus.breakReminder')}
+          >
             <View>
               <Text style={styles.interventionTitle}>{t('focus.breakReminder')}</Text>
               <Text style={styles.interventionSub}>{t('focus.everyNMinutes', { n: settings.breakIntervalMinutes || DEFAULT_SETTINGS.breakIntervalMinutes })}</Text>
             </View>
             <Switch
               value={settings.breakIntervalMinutes > 0}
-              onValueChange={(v) => {
-                const nextInterval = v ? DEFAULT_SETTINGS.breakIntervalMinutes : 0;
-                update({ breakIntervalMinutes: nextInterval });
-                // 2026-07-27 감사 발견 — settings.tsx의 같은 필드(Breaks & Sleep Detection 카드)는
-                // pushLiveSessionConfig()로 이미 도는 세션에 즉시 반영되도록 고쳐졌는데, 같은
-                // breakIntervalMinutes를 바꾸는 이 화면의 스위치는 update()만 호출해 다음 세션까지
-                // 반영이 안 되는 불일치가 있었다 — 같은 라이브 경로를 여기서도 호출해 통일.
-                if (Platform.OS === 'android') {
-                  const s = useSettingsStore.getState().settings;
-                  bluetoothService.updateLiveSessionConfig({
-                    breakIntervalMinutes: nextInterval,
-                    notifyRemaining: s.notifyRemaining,
-                    notifyLimit: s.notifyLimit,
-                    notifyBreak: s.notifyBreak,
-                    hardBlockMode: s.hardBlockMode,
-                  }).catch(() => {});
-                }
-              }}
+              onValueChange={onBreakToggle}
+              pointerEvents="none"
               trackColor={{ true: colors.primary, false: '#262626' }}
               thumbColor="#FFFFFF"
               ios_backgroundColor="#262626"
             />
-          </View>
+          </Pressable>
         </GlassSurface>
 
         {/* 2026-07-27 사용자 지시 — 손짓/볼륨키/블루투스 리모컨 등 핸즈프리 관련 상태를 한곳에 모음.

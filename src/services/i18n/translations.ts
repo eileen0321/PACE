@@ -592,7 +592,7 @@ export const translations = {
       handWaveLabel: 'Hand wave',
       // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
       // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
-      handWaveHint: 'Sweep your open hand across the camera, left to right — keep it the same distance, do not push it toward the lens. A still hand will not register.',
+      handWaveHint: 'Experimental — still being tuned, so it can miss or fire on its own. Sweep your open hand across the camera left to right, keeping the same distance (do not push it toward the lens). The Bluetooth remote is the reliable way to skip.',
       bluetoothRemoteLabel: 'Bluetooth remote',
       // 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓엔 힌트 문구가
       // 있었는데 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지, 뭘 눌러야 하는지" 정보가 부족했다.
@@ -605,6 +605,7 @@ export const translations = {
       volumeCoverHintIOS: 'To adjust volume while the remote is active: cover the front camera with your hand and press the volume buttons — they will change the volume instead of skipping videos.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: 'Recommended',
+      experimental: 'Beta',
       nextShort: 'Next Short',
       handsFreeModeLabel: 'Hands-free mode',
       staysOnLabel: 'Stays on for your Focus Session',
@@ -1128,7 +1129,7 @@ export const translations = {
       handWaveLabel: '손짓',
       // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
       // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
-      handWaveHint: '편 손을 카메라 앞에서 왼쪽에서 오른쪽으로 스치듯 지나가세요. 거리는 그대로 두고 카메라 쪽으로 밀지 않아야 해요. 가만히 있으면 인식되지 않습니다.',
+      handWaveHint: '실험 기능이라 아직 튜닝 중입니다 — 안 잡히거나 저절로 넘어갈 수 있어요. 편 손을 카메라 앞에서 왼쪽에서 오른쪽으로, 거리는 그대로 두고 스치듯 지나가세요(카메라 쪽으로 밀지 않기). 확실하게 넘기려면 블루투스 리모컨을 쓰세요.',
       bluetoothRemoteLabel: '블루투스 리모컨',
       // 2026-08-01 — 사용자 지시("설명 좀더 상세히") → 바로 다음 지적("너무 길어", "좀 적당히
       // 조절을 못하냐") — 손짓 hint와 길이가 맞게 한 문장으로 줄였다.
@@ -1137,6 +1138,7 @@ export const translations = {
       volumeCoverHintIOS: '리모컨 사용 중 소리 크기를 바꾸려면: 앞면 카메라를 손으로 가린 채 볼륨 버튼을 누르세요 — 영상이 넘어가지 않고 볼륨만 조절돼요.',
       // 2026-07-28 사장님 지시("손짓이 너무 부정확해") — 정확도 이슈로 블루투스 리모컨을 추천 방식으로 승격.
       recommended: '추천',
+      experimental: '실험 중',
       nextShort: '다음 영상',
       handsFreeModeLabel: '핸즈프리 모드',
       staysOnLabel: 'Focus Session 동안 계속 유지',

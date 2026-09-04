@@ -668,9 +668,17 @@ export default function FocusScreen() {
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={[styles.interventionTitle, gestureBlocked && styles.handsFreeRowBlocked]}>{t('handsFreeSheet.handWaveLabel')}</Text>
-                    {gestureBlocked && (
+                    {gestureBlocked ? (
                       <View style={styles.permissionNeededBadge}>
                         <Text style={styles.permissionNeededBadgeText}>{t('focus.permissionNeeded')}</Text>
+                      </View>
+                    ) : (
+                      /* 🔴 2026-09-05 사장님 결정("포커스 온은 자동 넘기기로 하고 불안정한 손짓이
+                         된다고 하고 튜닝을 계속 해야 할 듯") — 손짓을 확정 기능처럼 보이게 두면
+                         사용자는 "안 되는 앱"으로 기억한다. 실제 상태를 그대로 표시한다.
+                         블루투스 행의 "추천" 배지와 짝을 이룬다. */
+                      <View style={styles.experimentalBadge}>
+                        <Text style={styles.experimentalBadgeText}>{t('handsFreeSheet.experimental')}</Text>
                       </View>
                     )}
                   </View>
@@ -789,6 +797,8 @@ const styles = StyleSheet.create({
   liveTagWarning: { backgroundColor: '#F5A52433', borderColor: '#F5A5244D' },
   liveDotWarning: { backgroundColor: '#F5A524' },
   liveTagTextWarning: { color: '#F5A524' },
+  experimentalBadge: { backgroundColor: `${colors.textTertiary}22`, borderWidth: 1, borderColor: `${colors.textTertiary}44`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  experimentalBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase' },
   recommendedBadge: { backgroundColor: `${colors.successLight}26`, borderWidth: 1, borderColor: `${colors.successLight}4D`, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
   recommendedBadgeText: { fontSize: 9, fontFamily: typography.bodyFontFamilyExtrabold, color: colors.successLight, letterSpacing: 0.4, textTransform: 'uppercase' },
   // 2026-07-28 사장님 지시 — 권한 없을 때 관련 토글을 흐리게(disable처럼 보이게) 표시.

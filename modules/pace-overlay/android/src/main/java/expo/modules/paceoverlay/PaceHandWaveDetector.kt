@@ -647,7 +647,12 @@ object PaceHandWaveDetector {
    * ⚠️ 이 축은 **자체 기준선**을 쓴다. 기존 lumaHistory 는 창이 400ms 뿐이라 1초 넘게 덮으면
    *   기준선까지 어두워져 하락을 못 본다.
    */
-  private const val COVER_ENABLED = true
+  // 🔴 2026-09-05 사장님 지시("왜 두 번씩 넘어가 손바닥 한 번에", "이전 손짓으로 다시 원복해") —
+  //   되돌린다. 한 번의 가리기로 두 번 넘어간 원인은 축이 겹쳐서다: 손이 렌즈로 다가오는 동안
+  //   격자/lumapass 가 먼저 발화하고, 덮은 뒤 뗄 때 cover 가 또 발화한다. 불응시간(1.2초)보다
+  //   간격이 벌어지면 둘 다 통과한다. 한 동작을 여러 축이 각자 판정하는 구조의 문제다.
+  //   코드는 남겨둔다 — AE 를 잠그면(자동노출이 지금 60% 하락을 21% 로 지운다) 다시 볼 만하다.
+  private const val COVER_ENABLED = false
   /** 가림으로 인정할 최소 하락(기준 대비). 0.40 = 60% 이상 어두워져야 한다. */
   private const val COVER_DROP_RATIO = 0.40
   /** 손을 뗐다고 볼 회복 수준(기준 대비). */
@@ -660,6 +665,8 @@ object PaceHandWaveDetector {
   private const val COVER_REF_WINDOW_MS = 3000L
   /** 덮기 직전 손바닥을 봤어야 하는 창(사장님 사양: 손바닥이 인식되어 가리면). */
   private const val COVER_PALM_RECENT_MS = 2000L
+
+  // (LUMAPASS_HAND_RECENT_MS 는 아래에 이미 선언돼 있다 — 중복 선언 금지)
 
   private const val LUMA_RECOVER_RATIO = 0.9
 
@@ -784,7 +791,14 @@ object PaceHandWaveDetector {
    * span 만으로는 못 막는다: A·B 가 1ms, B·C 가 99ms 여도 span 은 100ms 다.
    */
   /** 통과 시점 기준 "최근에 손이 보였는가"의 창. 위 발화 지점 주석 참고. */
-  private const val LUMAPASS_HAND_RECENT_MS = 1200L
+  /**
+   * 밝기 기반 축(lumapass / gross-motion)이 "손을 봤다"고 인정하는 창.
+   * 🔴 2026-09-05 — 8/30 에 1200ms 로 넣었다가 사장님께 "이런 가드를 넣으니까 첫 손짓이
+   *   안 되는 거 아냐"라고 지적받아 사용처를 뺐다. 그때 실패의 원인은 창이 짧아서
+   *   **손이 아직 한 번도 안 잡힌 첫 손짓**이 막힌 것이었다. 창을 3초로 늘려 되살린다.
+   *   막힐 때마다 로그를 남기므로, 3초도 짧으면 그 로그로 확인해 올리면 된다.
+   */
+  private const val LUMAPASS_HAND_RECENT_MS = 3000L
   private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
@@ -1892,6 +1906,24 @@ object PaceHandWaveDetector {
     hist.clear()
         lumaPassFiredThisFrame = true
     Log.i(TAG, "LUMAPASS 축=$axisName 순서=${if (fwd) "A→B→C" else "C→B→A"} span=${span.toInt()}ms ref=${ref[0].toInt()}/${ref[1].toInt()}/${ref[2].toInt()}")
+    // 🔴 2026-09-05 사장님 실기기("방금 렌즈 안 덮고 손바닥도 안 보였는데 넘어갔는데") —
+    //   그 발화가 이 축이었다. 직전 관측값이 "현재 0.96", 즉 **밝기 4% 하락**으로 발화했다.
+    //   4%는 자동노출 흔들림·화면 내용 변화와 완전히 겹치는 크기다.
+    //   8/30 에 이 축만 단독 발화로 남긴 근거는 "세 구간이 순서대로 어두워질 것을 요구하므로
+    //   구조적 판별 근거가 있다"였는데, 실측이 그 가정을 깼다 — 순서 조건은 4% 잡음 세 개가
+    //   우연히 줄지어도 성립한다. 순서만으로는 손을 구분하지 못한다.
+    //   → **손을 실제로 본 적이 있을 때만** 인정한다. 밝기만으로는 발화하지 않는다.
+    //   ⚠️ 8/30 에 이 축에 "최근 1.2초 안에 손" 가드를 넣었다가 사장님께 "이런 가드를 넣으니까
+    //     첫 손짓이 안 되는 거 아냐"라고 지적받아 뺐다. 그때 실패의 원인은 창이 1.2초로 짧아
+    //     **손이 아직 한 번도 안 잡힌 첫 손짓**이 막힌 것이었다. 이번엔 창을 3초로 두고,
+    //     막힐 때마다 로그를 남겨 그 창이 실제로 짧은지 측정 가능하게 한다.
+    val handSeen = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= LUMAPASS_HAND_RECENT_MS
+    if (!handSeen) {
+      Log.i(TAG, "LUMAPASS 차단 — 손 미관측 (마지막 근접손 " +
+        (if (lastNearHandAtMs > 0L) (now - lastNearHandAtMs).toString() + "ms 전" else "없음") +
+        ", 허용 ${LUMAPASS_HAND_RECENT_MS}ms)")
+      return
+    }
     fireTrigger("lumapass 축=$axisName ${if (fwd) "A→B→C" else "C→B→A"} span=${span.toInt()}ms", onWave)
   }
 
@@ -2106,7 +2138,19 @@ object PaceHandWaveDetector {
       Log.i(TAG, "gross-motion 억제(지속모션 $activeCount/${grossActivity.size}) cells=$changed frac=$fraction")
       return
     }
+    // 🔴 2026-09-05 사장님 실기기("지금 넘어간 건 뭐야", "5번이나") — 그 발화들이 이 축이었다.
+    //   cells=22/256(8.6%) 밝기 변화로 손 없이 발화했다. lumapass 와 같은 처방을 적용한다:
+    //   밝기만 보는 축은 **손을 실제로 본 적이 있을 때만** 인정한다.
+    //   (8/30 주석이 이 축을 포함해 셋을 "판별 조건이 밝기 크기 하나뿐"이라고 지목했다 —
+    //    손 관측이 그 빠진 근거를 채운다.)
     if (ok && GROSS_MOTION_STANDALONE) {
+      val handSeenGm = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= LUMAPASS_HAND_RECENT_MS
+      if (!handSeenGm) {
+        Log.i(TAG, "gross-motion 차단 — 손 미관측 (마지막 근접손 " +
+          (if (lastNearHandAtMs > 0L) (now - lastNearHandAtMs).toString() + "ms 전" else "없음") +
+          ", 허용 ${LUMAPASS_HAND_RECENT_MS}ms) cells=$changed frac=$fraction")
+        return
+      }
       fireTrigger(
         "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density 가로세로=$aspect lag=${now - ref.first}ms",
         onWave

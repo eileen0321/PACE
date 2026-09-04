@@ -811,6 +811,11 @@ object PaceHandWaveDetector {
    */
   private const val GROSS_MOTION_STANDALONE = true
 
+  /** 지속 환경 모션(차량 이동 등) 억제 — 위 checkGrossMotion 주석 참고. iOS 와 동일 값. */
+  private const val GROSS_ACTIVITY_WINDOW_MS = 2500L
+  private const val GROSS_ACTIVITY_MIN_SAMPLES = 12
+  private const val GROSS_SUSTAINED_RATIO = 0.45
+
   // 🔴 2026-08-31 — **얼굴 접근을 면적으로 가른다.** 사장님 지적 "얼굴로도 넘어가는데".
 
   //   실기기 발화를 크기순으로 보면 두 무리로 갈린다:
@@ -1041,6 +1046,8 @@ object PaceHandWaveDetector {
   private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
   // (timestamp, 8x8 격자 평균밝기) — 큰 손짓 축(gross-motion)용. 64개 Int라 메모리도 무시할 만하다.
   private val gridHistory = ArrayDeque<Pair<Long, IntArray>>()
+  /** 최근 프레임이 "큰 변화"였는지 기록(지속 환경 모션 판정용). checkGrossMotion 주석 참고. */
+  private val grossActivity = ArrayDeque<Pair<Long, Boolean>>()
 
   // 2026-07-24: 트랜지티브로 딸려온 androidx.lifecycle이 LifecycleOwner를 순수 Java
   // 인터페이스(getLifecycle())로 노출하던 시절엔 `override val lifecycle` 프로퍼티 문법이 안 먹혀서
@@ -1113,6 +1120,7 @@ object PaceHandWaveDetector {
     glideHitTimes.clear()
     lastNearHandAtMs = 0L
     gridHistory.clear()
+    grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
     lastTriggerAtMs = 0L
     cameraBoundAtMs = System.currentTimeMillis()
     firstDetectionDone = false
@@ -1942,6 +1950,23 @@ object PaceHandWaveDetector {
     }
     if (changed == 0) return
     val fraction = changed.toDouble() / grid.size
+    // 🔴 2026-09-04 — 맥이 iOS 에 넣은 지속 환경 모션 억제(0590def)를 안드로 이식한다.
+    //   맥 채증(diag 23:11~23:12 차 안): **손짓 없이 gridpass 20+회 연속 발화**(cons 0.81~1.00).
+    //   차가 움직이며 햇빛·그늘·풍경이 프레임 전체를 균일하게 바꿔 격자가 "손 스윕"으로 오판한다.
+    //   안드는 이 축이 GROSS_MOTION_STANDALONE=true 로 **단독 발화**하는데 그 방어가 통째로 없었다
+    //   — 즉 차 안에서 같은 증상이 그대로 난다(플랫폼 패리티 구멍).
+    //   가르는 근거: 손짓은 짧은 1회 전환(≈0.4초, 몇 프레임)이라 최근 창에서 큰-변화 프레임 비율이
+    //   낮다. 차/이동은 **매 프레임 지속**이라 비율이 높다. 값은 iOS 와 동일하게 맞춘다
+    //   (2.5초 창 / 최소 12표본 / 45%) — 두 플랫폼이 다른 문턱을 쓰면 같은 증상이 한쪽에만 남는다.
+    //   ⚠️ 이 기록은 발화 여부·불응시간과 무관하게 **매 프레임** 돌아야 한다. 불응 중에도 환경이
+    //     계속 변하는지 봐야 차를 감지할 수 있다(맥 주석과 같은 이유).
+    grossActivity.addLast(now to (fraction >= GROSS_MOTION_CELL_FRACTION))
+    while (grossActivity.isNotEmpty() && now - grossActivity.first().first > GROSS_ACTIVITY_WINDOW_MS) {
+      grossActivity.removeFirst()
+    }
+    val activeCount = grossActivity.count { it.second }
+    val sustainedMotion = grossActivity.size >= GROSS_ACTIVITY_MIN_SAMPLES &&
+      activeCount.toDouble() / grossActivity.size >= GROSS_SUSTAINED_RATIO
     val darkenRatio = darkened.toDouble() / changed
     // 🔴 2026-08-27 — 사장님 "손 높이·크기에 따라 안 되고, 랜덤하게 되고 안 되고가 갈린다."
     //   증상을 하나씩 쫓지 않고 **조건 조합 108개를 합성으로 전수** 돌려서 원인을 찾았다
@@ -2004,6 +2029,11 @@ object PaceHandWaveDetector {
     //   ⚠️ 되살리려면 08-21 과 같은 방식으로 재라 — diagEnabled 로 20분 이상,
     //     "가만히 있는 구간"을 포함해 전수 기록하고 문턱별 통과 프레임 수 표를 만들 것.
     //     계산과 로그는 그대로 두므로 그 측정은 지금도 할 수 있다.
+    if (sustainedMotion && ok) {
+      // 조건은 다 맞지만 지속 환경 모션이라 억제 — 물증을 남긴다(맥의 gridsuppress 로그와 같은 목적).
+      Log.i(TAG, "gross-motion 억제(지속모션 $activeCount/${grossActivity.size}) cells=$changed frac=$fraction")
+      return
+    }
     if (ok && GROSS_MOTION_STANDALONE) {
       fireTrigger(
         "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density 가로세로=$aspect lag=${now - ref.first}ms",
@@ -2102,6 +2132,7 @@ object PaceHandWaveDetector {
     lumaHistory.clear()
     dipHistory[0].clear(); dipHistory[1].clear()
     gridHistory.clear()
+    grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
     // PaceSnapDetector와 동일한 이유로 메인 Looper에서 후속 스와이프를 호출한다(백그라운드
     // 스레드에서 dispatchGesture 계열 호출 시 큐잉/지연되는 문제가 실기기에서 확인된 바 있음).
     Handler(Looper.getMainLooper()).post { onWave() }

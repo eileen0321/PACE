@@ -592,7 +592,7 @@ export const translations = {
       handWaveLabel: 'Hand wave',
       // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
       // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
-      handWaveHint: 'Push your open hand toward the camera in one motion — a still hand won\'t register, and detection isn\'t always accurate.',
+      handWaveHint: 'Sweep your open hand across the camera, left to right — keep it the same distance, do not push it toward the lens. A still hand will not register.',
       bluetoothRemoteLabel: 'Bluetooth remote',
       // 2026-08-01 사용자 지시("블루투스 리모컨에 대한 설명 좀더 상세히") — 손짓엔 힌트 문구가
       // 있었는데 블루투스 리모컨엔 없어서 "어떤 리모컨이 되는지, 뭘 눌러야 하는지" 정보가 부족했다.
@@ -1128,7 +1128,7 @@ export const translations = {
       handWaveLabel: '손짓',
       // 2026-08-01 사용자 지시("손짓은 너무 길잖아 좀더 다듬고") — 40cm/15cm 같은 수치 안내는 뺐지만,
       // "가끔 안 잡힐 수 있다"는 정확도 caveat은 사용자가 다시 넣어달라고 해서 짧게라도 유지한다.
-      handWaveHint: '편 손을 카메라 쪽으로 한 번에 훠이 밀어보세요. 가만히 있으면 인식이 안 되고, 가끔 안 잡힐 수도 있어요.',
+      handWaveHint: '편 손을 카메라 앞에서 왼쪽에서 오른쪽으로 스치듯 지나가세요. 거리는 그대로 두고 카메라 쪽으로 밀지 않아야 해요. 가만히 있으면 인식되지 않습니다.',
       bluetoothRemoteLabel: '블루투스 리모컨',
       // 2026-08-01 — 사용자 지시("설명 좀더 상세히") → 바로 다음 지적("너무 길어", "좀 적당히
       // 조절을 못하냐") — 손짓 hint와 길이가 맞게 한 문장으로 줄였다.

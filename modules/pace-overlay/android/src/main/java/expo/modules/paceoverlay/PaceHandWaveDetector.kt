@@ -198,6 +198,22 @@ object PaceHandWaveDetector {
   //   growth>1.20 단독            → 21건 회수, 오탐 15.3%
   // 평소의 느린 손 움직임(오탐의 대부분)이 속도 조건에서 걸러지기 때문이다.
   private const val SPEED_ASSIST_GROWTH_THRESHOLD = 1.40
+
+  /**
+   * 🔴 2026-09-04 사장님 지시("다가오는 걸 빼고 스쳐 지나가는 것만 하면", "손 크기는 일정하다고 해").
+   *
+   * 스쳐 지나가는 손은 카메라와의 거리가 거의 안 변하므로 **크기가 일정**하다. 다가오는 손은
+   * 커진다. 그래서 growthRatio 는 손짓의 증거가 아니라 **다가옴의 증거**다.
+   *
+   * 실기기 로그(23:18~23:19) — 사장님이 "손 가까이만 가도 넘어간다"고 하신 그 발화들:
+   *   오탐(다가옴): growth=1.3523 / growth=1.4041
+   *   진짜 손짓   : growth=1.0893
+   * 두 분포가 갈려 있고 그 사이가 비어 있다. 1.25 를 그 사이에 둔다.
+   *
+   * ⚠️ 이 값은 **라벨된 표본이 아니라 위 세 건**으로 정했다. 표본이 늘면 다시 재야 한다.
+   *   다만 방향은 확실하다 — 크기가 크게 늘어난 프레임은 스침이 아니다.
+   */
+  private const val SIZE_STABLE_MAX_GROWTH = 1.25
   // 2026-08-03 실기기 재측정으로 0.3 → 0.25. 근거: 사장님 실사용 로그에서 growth는 1.20을 넘겼는데
   // 속도만 미달해 놓친 4건이 **전부 정확히 0.278**이었다(0.3 바로 아래에 몰림). 0.25면 그 4건이 전부
   // 회수되고, 그 아래로 더 내려도 추가 회수가 없다(0.20/0.15에서도 회수 4건으로 동일) — 즉 0.25가
@@ -2651,7 +2667,23 @@ object PaceHandWaveDetector {
     //   ⚠️ lumapass 는 이 게이트를 안 탄다 — 손 랜드마크가 없어도 도는 축이라
     //     handAppearedAtMs 가 의미를 갖지 않는다.
     val handFresh = handAppearedAtMs > 0L && now - handAppearedAtMs <= HAND_FRESH_MAX_MS
-    if ((((grew || swept || grewFast || glideFires) && !oneWayReverse) || traversed) && pastRefractory && handFresh) {
+    // 🔴 2026-09-04 사장님 지시 — 다가옴 축을 발화에서 뺀다.
+    //   grew(growthRatio>1.60)와 grewFast(커지면서 빠름)는 둘 다 **손이 커졌다**를 근거로 삼는데,
+    //   그건 스쳐 지나감이 아니라 다가옴의 signature 다. 실기기 로그에서 사장님이 지적한 오탐
+    //   두 건이 정확히 이 경로였다(growth=1.3523 / 1.4041, 후자는 grewFast 문턱 1.40 을 막 넘김).
+    //   남기는 축은 전부 **가로 이동**을 보는 것들이다: swept(가로 진폭) / glide(가로 활공) /
+    //   traverse(순 가로 변위). 손짓의 정의가 "스쳐 지나감"이므로 이쪽이 맞다.
+    //   ⚠️ 되살리려면 아래 두 값을 true 로. 다만 되살리기 전에 라벨된 표본으로 growth 분포를
+    //     먼저 재라 — 이 파일이 아홉 번 반복한 실패가 정확히 "표본 없이 문턱 만지기"다.
+    val approachAxesEnabled = false
+    val growthFires = approachAxesEnabled && (grew || grewFast)
+    // 손 크기가 일정해야 스침이다(위 SIZE_STABLE_MAX_GROWTH 주석). 크게 커진 프레임은 다가옴이라
+    // 가로 이동 축이 통과했더라도 발화하지 않는다 — 다가오면서 손이 옆으로 흔들리는 경우를 막는다.
+    val sizeStable = growthRatio <= SIZE_STABLE_MAX_GROWTH
+    if (!sizeStable && (swept || glideFires || traversed) && pastRefractory && handFresh) {
+      Log.i(TAG, "다가옴으로 차단 growth=$growthRatio(th=$SIZE_STABLE_MAX_GROWTH) sweep=$sweepRatio size=$handSize")
+    }
+    if (((((growthFires || swept || glideFires) && !oneWayReverse) || traversed) && sizeStable) && pastRefractory && handFresh) {
       val by = when {
         traversed -> "traverse(dir=$traverseDir)"
         glideFires -> "glide"

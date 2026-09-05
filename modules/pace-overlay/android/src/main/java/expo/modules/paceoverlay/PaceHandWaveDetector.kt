@@ -354,6 +354,8 @@ object PaceHandWaveDetector {
   //   ⚠️ 이 환산은 앵커 두 점으로 맞춘 근사다. 다음 실기기 세션에서 DIAG의 band=/size= 로그로
   //     밴드별 분포를 다시 뽑아 경계를 재확인할 것(이 파일의 기존 경고와 같은 절차).
   /** 이 이상이면 손이 렌즈 코앞(≈10~15cm) — "확실한 손짓"이라 가장 관대하게 본다. */
+  /** handSize 중앙값 필터 표본 수(위 handSizeRaw 주석). 5프레임 ≈ 0.15초. */
+  private const val HAND_SIZE_MEDIAN_N = 5
   private const val NEAR_BAND_HAND_SIZE = 0.20
   /** 이 이상이면 사장님이 말한 사거리(≈20cm) 안 — 표준 임계값. 미만은 사거리 밖이라 보수적으로. */
   private const val MID_BAND_HAND_SIZE = 0.135
@@ -533,7 +535,14 @@ object PaceHandWaveDetector {
   //   한 방향만 받으면 잡음이 우연히 방향성을 띠어도 절반은 걸러진다.
   //   ⚠️ 손짓이 통째로 안 되면 부호가 반대라는 뜻이다 — 로그의 "dir=" 값을 보고 +1 로 바꿔라.
   //     되돌리려면 0(양방향)으로 두면 된다.
-  private const val TRAVERSE_DIRECTION = -1
+  // 🔴 2026-09-05 실측으로 부호 정정 — 내가 518행 거울 설명을 반대로 적용했다.
+  //   사장님이 왼→오로 하실 때 실제로 통과한 lumapass 발화 3건이 전부 A→B→C 였다.
+  //   즉 사용자 왼→오 = netX > 0 = dir +1 이다.
+  // 🔴 2026-09-05 되돌림 — 방향 고정을 시도했으나 두 부호 모두에서 "역방향" 차단이 대량으로
+  //   찍혔다(+1 로 8회, -1 로 19회). 사장님 손짓이 매번 같은 부호로 나오지 않는다는 뜻이다.
+  //   부호를 확정할 근거가 없는 상태에서 한쪽만 받으면 절반이 죽는다 — 양방향으로 되돌린다.
+  //   확정하려면 "왼→오만 10회" 같은 라벨된 표본에서 dir 분포를 봐야 한다.
+  private const val TRAVERSE_DIRECTION = 0
   /** 속도 축의 역방향 차단 부호. 0 = 차단 끔(부호 미확정). 확정되면 오→왼 쪽 부호를 넣는다. */
   private const val REVERSE_BLOCK_SIGN = 0
 
@@ -813,7 +822,7 @@ object PaceHandWaveDetector {
   private const val LUMAPASS_HAND_RECENT_MS = 5000L
 
   /** lumapass 도 사용자 왼→오(fwd)만 인정할지. 위 발화 지점 주석 참고. */
-  private const val LUMAPASS_FORWARD_ONLY = true
+  private const val LUMAPASS_FORWARD_ONLY = false // 위 TRAVERSE_DIRECTION 주석과 같은 이유로 되돌림
   private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
@@ -1127,6 +1136,7 @@ object PaceHandWaveDetector {
   /** 마지막으로 NEAR 밴드 크기의 손을 본 시각 — luma 완화 게이트용(LUMA_*_NEAR 주석 참고). */
   @Volatile private var lastNearHandAtMs = 0L
   @Volatile private var lastHandSize = 0.0
+  private val handSizeSamples = ArrayDeque<Double>()
   private var awaitingRearm = false
   private var rearmBelowSize = 0.0
   // (timestamp, handSize) 짧은 이력 — GROWTH_WINDOW_MS 안에서의 성장 배수만 보면 되므로 아주 작은 링버퍼로 충분.
@@ -1219,6 +1229,7 @@ object PaceHandWaveDetector {
     glideHitTimes.clear()
     lastNearHandAtMs = 0L
     lastHandSize = 0.0
+    handSizeSamples.clear()
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
     grossCentroids.clear()
@@ -1317,7 +1328,7 @@ object PaceHandWaveDetector {
         }
         cameraProvider = provider
 
-        fun buildAnalysis(useFixed30FpsAe: Boolean): ImageAnalysis = ImageAnalysis.Builder()
+        fun buildAnalysis(aeFps: Int): ImageAnalysis = ImageAnalysis.Builder()
           // 🔴 2026-08-21 — 320x240에서 손이 화면의 20%면 팜 영역이 **48px**밖에 안 된다. 거기에
           //   모션블러까지 겹치면 palm detector가 못 찾는다(위 setMinHandDetectionConfidence 주석의
           //   실측: nohand 84.5%). 얼굴은 정지 상태라 이 해상도로도 잡히지만 손은 안 잡힌다.
@@ -1373,12 +1384,12 @@ object PaceHandWaveDetector {
             //     밝기는 ISO로 보상되어 노이즈가 늘지만, 팜 디텍터에는 노이즈보다 블러가 훨씬 치명적이다.
             //   ⚠️ 기기가 [30,30]을 지원하지 않으면 bindToLifecycle이 예외를 던진다 — 그러면 손짓이
             //     통째로 죽으므로, 아래 바인딩부에서 실패 시 이 옵션 없이 한 번 더 시도한다.
-            if (useFixed30FpsAe) {
+            if (aeFps > 0) {
               try {
                 androidx.camera.camera2.interop.Camera2Interop.Extender(builder)
                   .setCaptureRequestOption(
                     android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                    android.util.Range(30, 30)
+                    android.util.Range(aeFps, aeFps)
                   )
               } catch (e: Exception) {
                 Log.w(TAG, "Camera2Interop AE 설정 실패 — 기본 노출로 진행", e)
@@ -1387,8 +1398,8 @@ object PaceHandWaveDetector {
           }
           .build()
 
-        fun attachAndBind(useFixed30FpsAe: Boolean) {
-          val analysis = buildAnalysis(useFixed30FpsAe)
+        fun attachAndBind(aeFps: Int) {
+          val analysis = buildAnalysis(aeFps)
           analysisExecutor?.let { executor ->
             analysis.setAnalyzer(executor) { proxy -> analyzeFrame(proxy, onWave) }
           }
@@ -1399,19 +1410,33 @@ object PaceHandWaveDetector {
           provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, analysis)
         }
 
+        // 🔴 2026-09-05 사장님 실기기 10회 중 1회 성공 — 실패 9건이 전부 gross-motion near-miss 였고,
+        //   성공한 1건만 손 랜드마크(traverse)로 잡혔다. 즉 문턱이 아니라 **팜 디텍터가 손을 못 잡는 것**이
+        //   병목이다. 8/21 실측이 이미 원인을 적어뒀다 — "크고 빠른 손짓일수록 모션블러로 팜 디텍터가
+        //   손을 아예 못 찾는다(크게 흔든 39초: 손 검출 0개)".
+        //   → 노출시간을 더 짧게 만들어 블러를 줄인다. AE 목표 fps 하한을 30 → 60 으로 올리면
+        //     노출이 ~16ms 이하로 묶인다(30fps 는 ~33ms). 문턱은 하나도 건드리지 않는다.
+        //   ⚠️ 60fps 를 지원하지 않는 기기가 많으므로 60 → 30 → 옵션없음 3단으로 떨어진다.
+        //     예외는 옵션을 붙이는 시점이 아니라 **실제 바인딩 시점**에 난다(8/21 기록).
         try {
-          attachAndBind(true)
-          Log.i(TAG, "camera bound, watching for hand-wave (고정30fpsAE=on)")
-        } catch (e: Exception) {
+          attachAndBind(60)
+          Log.i(TAG, "camera bound, watching for hand-wave (고정AE=60fps — 블러 최소)")
+        } catch (e60: Exception) {
+          Log.w(TAG, "60fps AE 바인딩 실패 — 30fps 로 재시도", e60)
+          try {
+            attachAndBind(30)
+            Log.i(TAG, "camera bound, watching for hand-wave (고정AE=30fps)")
+          } catch (e: Exception) {
           // 🔴 2026-08-21 — [30,30] AE 범위를 지원하지 않는 기기는 옵션을 붙이는 시점이 아니라
           //   **실제 바인딩 시점에** 예외를 던진다. 그대로 두면 손짓이 통째로 죽으므로 이 옵션만
           //   빼고 정확히 한 번 다시 시도한다(블러 개선은 못 받지만 기능은 살아남는다).
           //   ⚠️ start()를 재귀 호출하면 안 된다 — handLandmarker/executor를 닫지 않고 새로 만들어
           //     누수 + 이 파일이 기록한 SIGSEGV 경로(닫히는 중인 landmarker 접근)를 되살린다.
           //     그래서 카메라 유스케이스만 다시 만들어 붙인다.
-          Log.w(TAG, "고정 30fps AE 바인딩 실패 — 기본 노출로 재시도", e)
-          attachAndBind(false)
-          Log.i(TAG, "camera bound, watching for hand-wave (고정30fpsAE=off)")
+            Log.w(TAG, "고정 30fps AE 바인딩도 실패 — 기본 노출로 재시도", e)
+            attachAndBind(0)
+            Log.i(TAG, "camera bound, watching for hand-wave (고정AE=off)")
+          }
         }
       } catch (e: Exception) {
         // 카메라가 다른 앱(예: 통화)에 물려있거나 기기가 거부하는 경우 등 — running=false만 하고
@@ -1900,8 +1925,9 @@ object PaceHandWaveDetector {
     //   부호 근거는 518행 주석: 사용자 왼→오는 이미지에서 x 감소 → 이미지 오른쪽 구간이 먼저
     //   어두워진다 → tR < tM < tL = fwd. 따라서 fwd 만 인정한다.
     //   ⚠️ 손짓이 통째로 안 되면 부호가 반대다 — bwd 로 바꾸거나 이 블록을 지우면 양방향으로 돌아간다.
-    if (LUMAPASS_FORWARD_ONLY && !fwd) {
-      Log.i(TAG, "LUMAPASS 차단 — 역방향(오→왼) 순서=L-M-R")
+    // 실측 정정(위 TRAVERSE_DIRECTION 주석) — 사용자 왼→오는 A→B→C(bwd) 로 나온다.
+    if (LUMAPASS_FORWARD_ONLY && !bwd) {
+      Log.i(TAG, "LUMAPASS 차단 — 역방향 순서=R-M-L")
       return
     }
     val span = if (fwd) tL - tR else tR - tL
@@ -2169,7 +2195,15 @@ object PaceHandWaveDetector {
     val dy = if (grossCentroids.size >= 2) {
       (grossCentroids.maxOf { it.third } - grossCentroids.minOf { it.third })
     } else 0.0
-    val movedHorizontally = dx >= GROSS_MIN_DX_CELLS && dx >= dy * GROSS_DX_OVER_DY
+    // 🔴 2026-09-05 실측 — 가로/세로 비율로는 못 가른다. 진짜 손짓의 실측값:
+    //     dx=5.0 dy=6.0 / dx=5.0 dy=5.5 / dx=4.0 dy=6.5 / dx=3.5 dy=2.5
+    //   팔이 호를 그리므로 세로 성분이 가로만큼 크다 — 수평으로 정확히 긋는 사람은 없다.
+    //   반면 dx 절대값은 확실히 갈린다: 손 들기 0.5~1.5 / 손짓 3.5~5.0.
+    //   → 비율 조건은 버리고 dx 절대값만 본다(문턱은 그 사이인 3.0).
+    // 🔴 2026-09-05 되돌림 — dx 문턱을 3.0 으로 올렸다가 진짜 손짓을 막았다(실측 dx=2.0 dy=0.5,
+    //   dx=2.5 dy=2.5 가 차단됨). 앞선 표본이 이미 다른 게이트에 막힌 상태에서 나온 것이라
+    //   분포가 왜곡돼 있었다 — 같은 실수를 반복했다. 원래 값(2.0)으로 되돌린다.
+    val movedHorizontally = dx >= GROSS_MIN_DX_CELLS
     val consistency = kotlin.math.max(darkenRatio, 1.0 - darkenRatio)
     val ok = fraction >= GROSS_MOTION_CELL_FRACTION &&
       fraction <= GROSS_MOTION_CELL_FRACTION_MAX &&
@@ -2540,7 +2574,22 @@ object PaceHandWaveDetector {
     if (landmarks.size <= 9) return
     val wrist = landmarks[0]
     val middleMcp = landmarks[9]
-    val handSize = hypot((wrist.x() - middleMcp.x()).toDouble(), (wrist.y() - middleMcp.y()).toDouble())
+    val handSizeRaw = hypot((wrist.x() - middleMcp.x()).toDouble(), (wrist.y() - middleMcp.y()).toDouble())
+    // 🔴 2026-09-05 실기기 표본 173개로 확정 — 이 값 자체가 크게 흔들린다.
+    //   중앙값 0.184, 하위10% 0.151, 상위10% 0.232, 최소 0.020(순간 오검출).
+    //   같은 손짓 한 번 안의 연속 프레임: 0.222 0.258 0.262 0.200 0.295 0.218 0.203 0.197 0.201
+    //   그런데 이 값을 쓰는 곳이 전부 **문턱 판정**이다:
+    //     · 밴드 경계 NEAR_BAND_HAND_SIZE=0.20 이 분포 한복판(중앙값 0.184 바로 위)이라
+    //       밴드가 프레임마다 NEAR↔MID 를 오가고, 그때마다 bandMult/bandConfirm 이 바뀌어
+    //       **같은 손짓이 프레임에 따라 다른 문턱으로 판정된다.**
+    //     · sweep = 가로진폭 / handSize, glideR = 속도 / handSize — 분모가 1.5배 흔들린다.
+    //   사장님이 계속 겪은 "될 때 되고 안 될 때 안 되는" 패턴의 구조적 원인이다.
+    //   → 문턱을 만지지 않고 **입력 신호의 잡음을 줄인다.** 최근 표본의 중앙값을 쓴다.
+    //     평균이 아니라 중앙값인 이유: 위 최소 0.020 같은 순간 오검출에 끌려가지 않는다.
+    //     창이 짧아야 손이 실제로 다가오는 변화는 그대로 따라간다(5프레임 ≈ 0.15초).
+    handSizeSamples.addLast(handSizeRaw)
+    while (handSizeSamples.size > HAND_SIZE_MEDIAN_N) handSizeSamples.removeFirst()
+    val handSize = handSizeSamples.sorted()[handSizeSamples.size / 2]
     if (handSize < MIN_HAND_SIZE) {
       val nowMs = System.currentTimeMillis()
       if (nowMs - lastSmallHandLogAtMs >= SMALL_HAND_LOG_INTERVAL_MS) {

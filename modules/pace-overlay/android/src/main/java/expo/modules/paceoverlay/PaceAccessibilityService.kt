@@ -247,6 +247,21 @@ class PaceAccessibilityService : AccessibilityService() {
     // 그보다 넉넉히 잡는다 — 이보다 짧으면 "안 먹힌 것"과 "아직 반영이 안 된 것"을 구분 못 한다.
     private const val NEAR_END_REFIRE_GAP_MS = 4_000L
     private const val SWIPE_FLING_MS = 160L
+
+    /**
+     * 🔴 2026-09-05 실기기 — 손짓 8회가 전부 정상 발화·정상 dispatch(accepted=true, onCompleted)
+     * 됐는데 **틱톡 화면이 안 넘어갔다.** 감지기가 아니라 스와이프가 안 먹히는 것이었다.
+     *
+     * 위 SWIPE_FLING_MS/경로는 **유튜브의 이중 넘김을 막으려고 일부러 약하게** 만든 값이다
+     * (0.70h→0.40h/120ms ≈ 5,800px/s → 0.70h→0.45h/160ms ≈ 3,600px/s, 38% 느림 + 거리도 축소).
+     * 그 약화가 틱톡에도 그대로 적용되고 있었다. 틱톡은 유튜브보다 강한 플링을 요구한다.
+     *
+     * → 앱별로 나눈다. 유튜브 동작은 **한 글자도 바뀌지 않는다**(이중 넘김 수정이 그대로 유지된다).
+     *   틱톡만 예전 값 수준으로 되돌린다.
+     */
+    private const val SWIPE_FLING_MS_TIKTOK = 120L
+    private const val SWIPE_START_RATIO_TIKTOK = 0.75f
+    private const val SWIPE_END_RATIO_TIKTOK = 0.35f
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
     private const val MAX_SINGLE_VIDEO_MS = 90_000L
@@ -1777,11 +1792,18 @@ fun isLikelyPlaying(): Boolean? {
     //   (약 50dp/s)보다는 여전히 훨씬 위라 드래그로 오인될 여지는 없다.
     //   ⚠️ 다시 만질 일이 생기면 두 방향을 같이 보라 — 너무 빠르면 두 칸, 너무 느리면
     //     중간에 걸리거나 되돌아간다(08-12 주석의 실측 근거).
+    // 틱톡만 강한 플링(위 SWIPE_*_TIKTOK 주석). 나머지 앱은 기존 값 그대로.
+    val isTikTok = currentForegroundPackage?.contains("ugc.trill") == true ||
+      currentForegroundPackage?.contains("zhiliaoapp.musically") == true
+    val startR = if (isTikTok) SWIPE_START_RATIO_TIKTOK else 0.70f
+    val endR = if (isTikTok) SWIPE_END_RATIO_TIKTOK else 0.45f
+    val durMs = if (isTikTok) SWIPE_FLING_MS_TIKTOK else SWIPE_FLING_MS
     val path = Path().apply {
-      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.70f)
-      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * 0.45f)
+      moveTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * startR)
+      lineTo(bounds.centerX().toFloat(), bounds.top + bounds.height() * endR)
     }
-    dispatchSwipe(path, SWIPE_FLING_MS)
+    Log.i("PaceAccessibility", "swipe ${if (isTikTok) "틱톡(강)" else "기본"} ${startR}h→${endR}h ${durMs}ms fg=$currentForegroundPackage")
+    dispatchSwipe(path, durMs)
   }
 
   // Bluetooth Previous 전용(2026-07-19) — performSwipeUp의 역방향(창 상단→하단, 이전 영상).

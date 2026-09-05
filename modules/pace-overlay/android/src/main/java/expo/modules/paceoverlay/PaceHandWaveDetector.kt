@@ -606,7 +606,11 @@ object PaceHandWaveDetector {
   // 손이 안 작아지고 계속 카메라 앞에 머무는 극단적인 경우를 위한 안전판(무한정 재무장 안 되는 것 방지).
   // 위와 같은 이유로 3초 → 1.5초. REFRACTORY_MS(1.2초)와 함께 "연속 손짓의 최소 간격"을 정하는데,
   // 3초는 체감상 너무 길어 반응이 없는 것처럼 느껴졌다.
-  private const val REARM_TIMEOUT_MS = 1500L
+  /** 재무장 최소 대기 — 축 간 시차로 인한 중복 발화를 막는다(위 재무장 주석). */
+  private const val REARM_MIN_MS = 1800L
+  // 🔴 2026-09-05 — REARM_MIN_MS(1800) 보다 짧으면 이 타임아웃이 먼저 재무장을 풀어버려
+  //   최소 대기가 무효가 된다. 실측 중복 간격 최대 1.50초를 확실히 덮도록 2.2초로 올린다.
+  private const val REARM_TIMEOUT_MS = 2200L
 
   // 2026-07-26 사용자 관찰("손모양이 아니여도 카메라만 가리면 넘어가는듯") — MediaPipe 손 랜드마크
   // 신뢰도(0.5)가 빠른 움직임/블러에서 프레임을 놓치는 경우의 안전망. 손 랜드마크와 별개로 Y평면
@@ -902,6 +906,8 @@ object PaceHandWaveDetector {
   private const val GROSS_ACTIVITY_WINDOW_MS = 2500L
   private const val GROSS_ACTIVITY_MIN_SAMPLES = 12
   private const val GROSS_SUSTAINED_RATIO = 0.45
+  /** 지속모션 억제 사용 여부 — 2026-09-05 실내 손짓을 막아 끔(위 발화 지점 주석). */
+  private const val SUSTAINED_SUPPRESS_ENABLED = false
 
   /**
    * 🔴 2026-09-05 사장님 실기기("손을 들기만 해도 넘어가는 건") — 이 축은 **바뀐 칸 수**만 세고
@@ -2223,7 +2229,16 @@ object PaceHandWaveDetector {
     //   ⚠️ 되살리려면 08-21 과 같은 방식으로 재라 — diagEnabled 로 20분 이상,
     //     "가만히 있는 구간"을 포함해 전수 기록하고 문턱별 통과 프레임 수 표를 만들 것.
     //     계산과 로그는 그대로 두므로 그 측정은 지금도 할 수 있다.
-    if (sustainedMotion && ok) {
+    // 🔴 2026-09-05 실기기에서 이 억제가 **실내 손짓을 막는 것**을 확인했다.
+    //   차단 집계: 억제(지속모션) 100회 / near-miss 133 / 가로이동부족 30 / 손미관측 13
+    //   원인: 조건이 "최근 2.5초 창에서 큰 변화 프레임 45% 이상"인데, 손짓이 안 될 때
+    //   사장님이 **연속으로 반복해서** 흔드시면 그 창이 큰 변화로 채워진다. 창 안에서는
+    //   차량 주행과 연속 손짓이 구분되지 않는다 — 즉 **안 될수록 더 안 되는 구조**를 내가 만들었다.
+    //   (시뮬로 검증할 때 쓴 손짓 시나리오는 150프레임에 1~2회뿐이라 이 경우가 안 나왔다.)
+    //   → 끈다. 차 안 방어는 아래 손 관측 게이트가 담당한다 — 차에서는 손을 안 흔드니
+    //     "손 미관측"으로 걸린다. 밝기 패턴이 아니라 "손이 있었나"를 보므로 그쪽이 더 정확하다.
+    //   되살리려면 연속 손짓과 주행을 가를 다른 근거부터 찾아야 한다(창 길이만으로는 못 가른다).
+    if (SUSTAINED_SUPPRESS_ENABLED && sustainedMotion && ok) {
       // 조건은 다 맞지만 지속 환경 모션이라 억제 — 물증을 남긴다(맥의 gridsuppress 로그와 같은 목적).
       Log.i(TAG, "gross-motion 억제(지속모션 $activeCount/${grossActivity.size}) cells=$changed frac=$fraction")
       return
@@ -2602,7 +2617,17 @@ object PaceHandWaveDetector {
     val now = System.currentTimeMillis()
 
     if (awaitingRearm) {
-      if (handSize <= rearmBelowSize || now - lastTriggerAtMs > REARM_TIMEOUT_MS) {
+      // 🔴 2026-09-05 실기기 — 한 번의 손짓에 축이 연달아 발화한다. 실측 간격:
+      //   16.772 gross-motion → 18.062 lumapass(1.29초) → 19.359 lumapass(1.30초)
+      //   23.322 gross-motion → 24.821 lumapass(1.50초)
+      //   전부 불응시간(1.2초)을 아슬아슬하게 넘겨 통과했다. 재무장 게이트도 못 막았는데
+      //   (WAVE 중복 무시 0건) **손을 흔들고 내리면 즉시 크기가 줄어 재무장이 바로 풀리기**
+      //   때문이다. 그 직후 다른 축이 뒤늦게(추론 지연) 발화한다.
+      //   → 크기 조건에 **최소 시간**을 겹친다. 손이 작아졌어도 REARM_MIN_MS 가 안 지났으면
+      //     재무장하지 않는다. 실측 최대 1.50초를 덮도록 1.8초.
+      //   연속 손짓은 손을 다시 들어 흔드는 데 그보다 오래 걸리므로 죽지 않는다.
+      val sinceTrigger = now - lastTriggerAtMs
+      if ((handSize <= rearmBelowSize && sinceTrigger >= REARM_MIN_MS) || sinceTrigger > REARM_TIMEOUT_MS) {
         // 2026-08-02 진단 — 재무장이 "크기 축소"로 풀렸는지 "타임아웃"으로 풀렸는지 구분해야
         // 손짓 반응성 문제의 원인을 계속 추적할 수 있다(트리거당 1줄이라 스팸 아님).
         Log.d(TAG, "rearmed after ${now - lastTriggerAtMs}ms by=${if (handSize <= rearmBelowSize) "shrink" else "timeout"} size=$handSize needed<=$rearmBelowSize")

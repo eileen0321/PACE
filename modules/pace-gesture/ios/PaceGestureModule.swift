@@ -256,7 +256,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 2026-08-18(3차) — 0.13 하향은 실수였다(안드 파일의 경고 "이 값을 만지려면 '가만히' 구간을 함께
   // 재라"를 정확히 어김). 실기기 재현: 손을 들고만 있어도 1~2초마다 오발화(가만히 든 손의 흔들림
   // 실측 최대 0.185 > 0.13). 안드 검증값 0.16으로 복원 — 약한 손짓(0.17~0.24)은 여전히 통과.
-  private let sweepRatioThreshold: Double = 0.16
+  private let sweepRatioThreshold: Double = 0.8  // 🔴 2026-09-06 채증: 손짓 sweep 1.3~1.6 / 손들고가만히 0.3~0.5 사이
   private let sweepConfirmFrames: Int = 2           // 안드 SWEEP_CONFIRM_FRAMES(밴드 확정프레임이 우선)
   // 🔴 2026-08-21 안드 실측 이식(1899cf3 §1) — 거리 밴드: 신호(손의 물리 속도)는 거리 무관이지만
   // 노이즈(랜드마크 지터)는 1/handSize로 멀수록 폭증 → SNR이 거리마다 다른데 문턱이 하나였던 것이
@@ -353,12 +353,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   추적하는 cross 축만이 "몸 틀면 안 됨/손 없으면 안 됨"을 보장한다. cross ON(추적손+가로변위+속도+
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
-  private let captureMode = true
+  private let captureMode = false
   private let crossStandalone = false
   private let glideStandalone = false
-  private let sweepStandalone = false
+  private let sweepStandalone = true  // 🔴 2026-09-06 채증 확정 — 사장님 손짓=왕복(sweep 1.3~1.6), sweep 축이 정답
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
   private let occlusionStandalone = false  // 안드 OCCLUSION_STANDALONE=false 미러
+  private let lumapassStandalone = false  // 🔴 2026-09-06 채증 — luma 축은 사장님 손(0.15~0.17) NEAR게이트에 대부분 막히고 얼굴/몸 리스크. sweep 축으로 일원화.
   // 🔴 2026-08-26 — 방향 무관 발화로 열면서 "갔다 돌아오는 손이 2번 넘김"이 생긴다(시뮬이 잡음).
   // 절대 부호는 자세에 따라 뒤집히므로(오늘 확진) **상대 방향**으로 막는다: 직전 발화와 반대 방향
   // 스트로크가 2초 안에 오면 복귀로 보고 무시. 2초 지나 오는 역방향은 의도적 통과로 인정.
@@ -1195,7 +1196,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastGridFireDir: Int = 0
   // 🔴 2026-09-06(5차) 격자 단독 발화 OFF — 몸/조명/장면 변화 오발화의 근원(로그 dir=0 발화). 손 추적하는
   //   cross 축으로 대체(위 crossStandalone 주석). 계산·진단은 유지(복원은 true).
-  private let gridStandaloneEnabled = true
+  private let gridStandaloneEnabled = false  // 🔴 2026-09-06 채증 — 격자(luma)는 손짓 판별 부적합, sweep 축으로 대체
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1311,13 +1312,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         let tR3 = eR.at, tM3 = eM.at, tL3 = eL.at
         if tR3 < tM3, tM3 < tL3, tL3 - tR3 >= 80, tL3 - tR3 <= 900 {
           dipHistory.removeAll()
-          fireTrigger(String(format: "lumapass span=%.0f", tL3 - tR3), nowMs)
+          if lumapassStandalone { fireTrigger(String(format: "lumapass span=%.0f", tL3 - tR3), nowMs) }
           return
         }
         if tL3 < tM3, tM3 < tR3, tR3 - tL3 >= 80, tR3 - tL3 <= 900 {
           // 방향 무관 발화(2026-08-26 부호 뒤집힘 확진) — 역순도 통과로 인정.
           dipHistory.removeAll()
-          fireTrigger(String(format: "lumapass(rev) span=%.0f", tR3 - tL3), nowMs)
+          if lumapassStandalone { fireTrigger(String(format: "lumapass(rev) span=%.0f", tR3 - tL3), nowMs) }
           return
         }
       }

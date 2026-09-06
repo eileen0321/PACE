@@ -259,9 +259,14 @@ class PaceAccessibilityService : AccessibilityService() {
      * → 앱별로 나눈다. 유튜브 동작은 **한 글자도 바뀌지 않는다**(이중 넘김 수정이 그대로 유지된다).
      *   틱톡만 예전 값 수준으로 되돌린다.
      */
-    private const val SWIPE_FLING_MS_TIKTOK = 120L
-    private const val SWIPE_START_RATIO_TIKTOK = 0.75f
-    private const val SWIPE_END_RATIO_TIKTOK = 0.35f
+    // 🔴 2026-09-06 실측 — 0.75h→0.35h/120ms 로도 이 기기의 틱톡은 안 넘어갔다.
+    //   adb 로 **직접** 같은 스와이프를 넣어도 안 넘어갔고(PACE 코드 문제가 아님을 확정),
+    //   0.86h→0.26h/100ms 로 넣으니 넘어갔다. 그 실측값으로 맞춘다.
+    //   ⚠️ 사진 캐러셀 게시물(하단에 점 여러 개)은 위 스와이프로 안 넘어가는 것이 틱톡 정상
+    //     동작이다 — 그 화면에서 안 넘어가는 것은 버그가 아니다.
+    private const val SWIPE_FLING_MS_TIKTOK = 100L
+    private const val SWIPE_START_RATIO_TIKTOK = 0.86f
+    private const val SWIPE_END_RATIO_TIKTOK = 0.26f
     // 한 영상에 머물 수 있는 최대 시간. 넘으면 진행률과 무관하게 넘긴다(위 over-stay 주석 참고).
     // 90초 — 일반 숏폼(15~60초)은 절대 중간에 안 끊기고 비정상적으로 긴 것만 잘린다.
     private const val MAX_SINGLE_VIDEO_MS = 90_000L

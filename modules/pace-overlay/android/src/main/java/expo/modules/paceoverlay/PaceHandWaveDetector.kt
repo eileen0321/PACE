@@ -150,7 +150,16 @@ object PaceHandWaveDetector {
   //   재무장이 shrink로 풀리는지 timeout으로 풀리는지 실측("rearmed after …ms by=") 없이 만지면
   //   지금까지 아홉 번 반복한 실패를 열 번째로 반복하는 것이다. 그 로그는 릴리즈 빌드에도
   //   남으므로, 다음 실사용 세션에서 logcat만 받으면 바로 확정된다.
-  private const val REFRACTORY_MS = 1200L
+  // 🔴 2026-09-06 실측 — 방향 고정 후에도 남은 이중 넘김은 **같은 방향으로 축이 연달아 발화**하는
+  //   경우였다. 실기기 로그가 패턴을 그대로 보여준다(전부 gross-motion → traverse 순서):
+  //     10.211 gross(dir=1) → 11.431 traverse(dir=1)   1.22초
+  //     15.674 gross(dir=1) → 16.919 traverse(dir=1)   1.25초
+  //     21.239 gross(dir=1) → 22.447 traverse(dir=1)   1.21초
+  //   한 번의 손짓을 격자가 먼저 잡고, 손 랜드마크가 추론 지연 때문에 1.2초 뒤 또 잡는다.
+  //   불응이 정확히 1200ms 라 10~50ms 차이로 빠져나갔다.
+  //   → 1600ms 로 올려 확실히 덮는다. 같은 로그의 **진짜 손짓 간격은 2.0~2.4초**
+  //     (04.016 → 05.760 → 08.178 → 10.211)라 연속 손짓은 죽지 않는다.
+  private const val REFRACTORY_MS = 1600L
   // 진단 하트비트 주기(2026-08-05) — 프레임이 계속 들어오는지 확인용.
   private const val HEARTBEAT_MS = 3000L
   // 손 크기(손목~중지 뿌리 거리, 정규화 좌표계 0~1)가 이 윈도우 안에서 이 배수 이상 커지면
@@ -542,7 +551,20 @@ object PaceHandWaveDetector {
   //   찍혔다(+1 로 8회, -1 로 19회). 사장님 손짓이 매번 같은 부호로 나오지 않는다는 뜻이다.
   //   부호를 확정할 근거가 없는 상태에서 한쪽만 받으면 절반이 죽는다 — 양방향으로 되돌린다.
   //   확정하려면 "왼→오만 10회" 같은 라벨된 표본에서 dir 분포를 봐야 한다.
-  private const val TRAVERSE_DIRECTION = 0
+  /**
+   * 🔴 2026-09-06 **라벨된 측정으로 부호 확정.** 사장님이 왼→오로만 하신 4건이 전부 일치했다:
+   *   09:19:25 dir=1 / 09:19:34 dir=1 / 09:19:39 dir=1 / 09:19:45 dir=1   (반대 부호 0건)
+   * → 사용자 왼→오 = dir +1.
+   *
+   * 이 값을 앞서 두 번 **코드 주석만 보고 추측**했다가 두 번 다 틀렸다(518행의 거울 설명을
+   * 잘못 적용). 세 번째는 측정으로만 정한다 — 그것이 이 파일이 아홉 번 경고한 실패를 피하는
+   * 유일한 방법이다.
+   *
+   * 되돌아오는 오→왼 손이 또 발화하던 문제(사장님: "한 번에 4번 넘어갔어")가 이걸로 걸린다.
+   * 실측 왕복 패턴: dir=1 → dir=-1 → dir=1 이 1.3~1.7초 간격으로 번갈아 나왔다.
+   */
+  private const val WAVE_DIRECTION = 1
+  private const val TRAVERSE_DIRECTION = WAVE_DIRECTION
   /** 속도 축의 역방향 차단 부호. 0 = 차단 끔(부호 미확정). 확정되면 오→왼 쪽 부호를 넣는다. */
   private const val REVERSE_BLOCK_SIGN = 0
 
@@ -826,7 +848,10 @@ object PaceHandWaveDetector {
   private const val LUMAPASS_HAND_RECENT_MS = 5000L
 
   /** lumapass 도 사용자 왼→오(fwd)만 인정할지. 위 발화 지점 주석 참고. */
-  private const val LUMAPASS_FORWARD_ONLY = false // 위 TRAVERSE_DIRECTION 주석과 같은 이유로 되돌림
+  // ⚠️ lumapass 는 이번 라벨 측정(왼→오 4건)에서 **한 건도 발화하지 않아** 순서-부호 대응을
+  //   확정하지 못했다. 확정 못 한 것을 추측으로 고정하지 않는다 — 앞서 두 번 그렇게 틀렸다.
+  //   gross-motion 이 방향을 갖게 됐으므로 되돌아오는 손의 상당수는 그쪽에서 걸린다.
+  private const val LUMAPASS_FORWARD_ONLY = false
   private const val LUMAPASS_MIN_GAP_MS = 30.0
   private const val LUMAPASS_MIN_SPAN_MS = 100.0
   // 🔴 2026-08-30 — 900ms 는 너무 관대했다. 사장님 실제 손짓의 span 은 172·222·335·351ms 인데
@@ -1142,6 +1167,8 @@ object PaceHandWaveDetector {
   /** 마지막으로 NEAR 밴드 크기의 손을 본 시각 — luma 완화 게이트용(LUMA_*_NEAR 주석 참고). */
   @Volatile private var lastNearHandAtMs = 0L
   @Volatile private var lastHandSize = 0.0
+  /** 세션당 1회 첫 손짓 예외를 썼는가(위 neverSawHand 주석). */
+  @Volatile private var firstWaveGraceUsed = false
   private val handSizeSamples = ArrayDeque<Double>()
   private var awaitingRearm = false
   private var rearmBelowSize = 0.0
@@ -1235,6 +1262,7 @@ object PaceHandWaveDetector {
     glideHitTimes.clear()
     lastNearHandAtMs = 0L
     lastHandSize = 0.0
+    firstWaveGraceUsed = false
     handSizeSamples.clear()
     gridHistory.clear()
     grossActivity.clear() // 지속모션 창도 같이 비운다 — 이전 세션 잔재가 새 세션을 억제하면 안 된다
@@ -1425,10 +1453,16 @@ object PaceHandWaveDetector {
         //   ⚠️ 60fps 를 지원하지 않는 기기가 많으므로 60 → 30 → 옵션없음 3단으로 떨어진다.
         //     예외는 옵션을 붙이는 시점이 아니라 **실제 바인딩 시점**에 난다(8/21 기록).
         try {
-          attachAndBind(60)
-          Log.i(TAG, "camera bound, watching for hand-wave (고정AE=60fps — 블러 최소)")
+          // 🔴 2026-09-05 되돌림 — 60fps 로 붙은 상태에서 **손 검출이 0** 이었다.
+          //   실기기 HB: out=373 nohand=373 (처리한 모든 프레임에서 손 0개), 얼굴은 정상 검출.
+          //   차단 집계도 "손 미관측" 20회로 1위. 노출을 짧게 하면 블러는 줄지만 **어두워지고
+          //   ISO 노이즈가 늘어** 팜 디텍터가 손을 아예 못 찾는다 — 실내에서는 그 대가가 이득보다 크다.
+          //   (infer=13~102ms 로 추론은 정상이었으니 모델이 아니라 입력 화질 문제다.)
+          //   30fps 로 되돌린다. 블러 개선이 필요하면 노출이 아니라 다른 수단을 찾아야 한다.
+          attachAndBind(30)
+          Log.i(TAG, "camera bound, watching for hand-wave (고정AE=30fps)")
         } catch (e60: Exception) {
-          Log.w(TAG, "60fps AE 바인딩 실패 — 30fps 로 재시도", e60)
+          Log.w(TAG, "30fps AE 바인딩 실패 — 재시도", e60)
           try {
             attachAndBind(30)
             Log.i(TAG, "camera bound, watching for hand-wave (고정AE=30fps)")
@@ -2195,6 +2229,18 @@ object PaceHandWaveDetector {
     while (grossCentroids.isNotEmpty() && now - grossCentroids.first().first > GROSS_CENTROID_WINDOW_MS) {
       grossCentroids.removeFirst()
     }
+    // 🔴 2026-09-05 사장님 지적("왼→오만 되어야 하는데 되돌아오는 오→왼 손에도 넘어가") —
+    //   맞다. 그리고 발화 20건 중 14건이 이 축인데 **이 축은 방향 정보를 아예 안 만들고 있었다**
+    //   (dx 를 최대-최소 절대값으로만 썼다). traverse/lumapass 만 방향을 고정해봐야 전체의
+    //   30% 만 걸러지고 되돌아오는 손은 이 축으로 그대로 통과한다.
+    //   → 중심이 **어느 쪽으로** 갔는지(부호)를 계산한다. 처음 표본 대비 마지막 표본의 변화다.
+    //   ⚠️ 지금은 로그만 남기고 차단하지 않는다. 부호가 사용자 기준 어느 방향인지는 코드로
+    //     단정할 수 없다(전면 카메라 거울 여부로 이미 두 번 틀렸다). 왼→오만 하는 라벨된
+    //     측정으로 세 축의 부호를 한 번에 확정한 뒤 고정한다.
+    val dxSigned = if (grossCentroids.size >= 2) {
+      grossCentroids.last().second - grossCentroids.first().second
+    } else 0.0
+    val grossDir = if (dxSigned > 0) 1 else if (dxSigned < 0) -1 else 0
     val dx = if (grossCentroids.size >= 2) {
       (grossCentroids.maxOf { it.second } - grossCentroids.minOf { it.second })
     } else 0.0
@@ -2249,12 +2295,31 @@ object PaceHandWaveDetector {
     //   (8/30 주석이 이 축을 포함해 셋을 "판별 조건이 밝기 크기 하나뿐"이라고 지목했다 —
     //    손 관측이 그 빠진 근거를 채운다.)
     if (ok && GROSS_MOTION_STANDALONE) {
+      // 🔴 2026-09-06 — 측정으로 확정한 방향만 인정한다(위 WAVE_DIRECTION 주석).
+      //   되돌아오는 오→왼 손이 여기서 걸린다.
+      if (grossDir != 0 && grossDir != WAVE_DIRECTION) {
+        Log.i(TAG, "gross-motion 차단 — 역방향 dir=$grossDir (인정=$WAVE_DIRECTION) cells=$changed")
+        return
+      }
       if (!movedHorizontally) {
         Log.i(TAG, "gross-motion 차단 — 가로 이동 부족 dx=%.1f dy=%.1f (필요 dx>=%.1f, dx>=dy*%.1f) cells=$changed"
           .format(dx, dy, GROSS_MIN_DX_CELLS, GROSS_DX_OVER_DY))
         return
       }
-      val handSeenGm = lastNearHandAtMs > 0L && now - lastNearHandAtMs <= LUMAPASS_HAND_RECENT_MS
+      // 🔴 2026-09-06 사장님("왜 첫 번째 왼→오는 안 되고 두 번째만 되") — 실측 차단 집계에서
+      //   "손 미관측" 15회가 1위였다. 세션 첫 손짓 때는 팜 디텍터가 아직 손을 한 번도 못 잡은
+      //   상태라 이 게이트가 막고, 두 번째부터는 손이 잡혀 5초 창에 들어오니 통과한다.
+      //   8/30 에 사장님이 "이런 가드를 넣으니까 첫 손짓이 안 되는 거 아냐"라고 지적한 바로 그것이다.
+      //   창을 3초→5초로 늘렸는데도 **한 번도 안 본 상태**는 창 길이와 무관하게 막힌다.
+      //   → 세션에서 손을 아직 한 번도 못 봤으면 첫 발화 한 번만 통과시킨다. 그 뒤로는 정상 작동.
+      //     오탐 위험은 세션당 1회로 제한된다.
+      val neverSawHand = lastNearHandAtMs == 0L && !firstWaveGraceUsed
+      if (neverSawHand) {
+        firstWaveGraceUsed = true
+        Log.i(TAG, "gross-motion 첫 손짓 예외 — 손을 아직 한 번도 못 봄(세션당 1회만 허용)")
+      }
+      val handSeenGm = neverSawHand ||
+        (lastNearHandAtMs > 0L && now - lastNearHandAtMs <= LUMAPASS_HAND_RECENT_MS)
       if (!handSeenGm) {
         Log.i(TAG, "gross-motion 차단 — 손 미관측 (마지막 근접손 " +
           (if (lastNearHandAtMs > 0L) (now - lastNearHandAtMs).toString() + "ms 전" else "없음") +
@@ -2262,7 +2327,7 @@ object PaceHandWaveDetector {
         return
       }
       fireTrigger(
-        "gross-motion cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density 가로세로=$aspect lag=${now - ref.first}ms",
+        "gross-motion dir=$grossDir(dxSigned=${"%.1f".format(dxSigned)}) cells=$changed/${grid.size} frac=$fraction 일관성=$consistency 밀도=$density 가로세로=$aspect lag=${now - ref.first}ms",
         onWave
       )
     } else if (fraction >= GROSS_MOTION_CELL_FRACTION * 0.5) {

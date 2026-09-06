@@ -982,6 +982,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
       }
+      // 🔴 2026-09-06 격자 returndrop용 — 손의 최근 x 순이동 방향 기록(리턴 스트로크 판별).
+      if let firstX = self.tracks[ti].xHistory.first?.x, let lastX = self.tracks[ti].xHistory.last?.x, handSize > 0 {
+        let netX = (lastX - firstX) / handSize
+        if abs(netX) >= self.gridDirMinNetX { self.handDirSign = netX > 0 ? 1 : -1; self.handDirAtMs = nowMs }
+      }
       // 왕복 반전 조건(채증 사진 기반 — 턱 괸 손의 한 방향 드리프트 차단, 진짜 "훠이"는 반전 ≥1회)
       var reversals = 0
       if handSize > 0, self.tracks[ti].xHistory.count >= 3 {
@@ -1161,6 +1166,15 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   기준이 "밝기 변화 크기" 하나뿐이라 손 없이도(차·조명·얼굴) 발화한다. **실제 손을 최근 3초 내
   //   본 적 있을 때만** 인정한다. 차/조명 방어는 안드처럼 이 게이트가 담당(내 지속모션·가로이동 게이트 제거).
   private let lumapassHandRecentMs: Double = 3000
+  // 🔴 2026-09-06(4차) 사장님 "안드는 오왼 반응 안 하는데 넌 왜 넘어가냐" — 격자는 방향 무관이라 왕복
+  //   둘 다 발화(리턴 스트로크도 넘어감). 안드 cross의 returndrop 이식: 손 x 이동 방향을 추적해 **직전
+  //   발화의 반대 방향 스트로크(=되돌아오는 손)를 1회 무시**한다(상대 방향이라 절대 부호 추측 불필요,
+  //   1회 소비 후 리셋=자가복구). "한 동작 한 발화". 랜드마크 손 x변위 사용(격자 중심 방향은 안드도 불신).
+  private let gridReturnWindowMs: Double = 2500
+  private let gridDirMinNetX: Double = 0.4   // 방향 확정에 필요한 손 x순이동(손크기 정규화) — 실측 스윕 maxSweep 0.65
+  private var handDirSign: Int = 0
+  private var handDirAtMs: Double = 0
+  private var lastGridFireDir: Int = 0
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1210,8 +1224,17 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 손-확인 게이트(안드 fe2c279) — 최근 손 관측 없으면 밝기만으로 발화 금지(차·조명·얼굴). 차 방어는 안드처럼 이것으로.
     let handSeen = lastHandSeenMs > 0 && nowMs - lastHandSeenMs <= lumapassHandRecentMs
     if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect, handSeen {
+      // returndrop — 직전 발화의 반대 방향(=되돌아오는 손)이면 1회 무시(안드 cross 이식). 1회 소비 후 리셋.
+      let curDir = (nowMs - handDirAtMs <= 600) ? handDirSign : 0
+      if curDir != 0, curDir == -lastGridFireDir, nowMs - lastTriggerMs < gridReturnWindowMs {
+        lastGridFireDir = 0
+        gridHistory.removeAll()
+        onDiag(String(format: "gridreturn(리턴 스트로크 무시) dir=%d cells=%d", curDir, changed))
+        return
+      }
       gridHistory.removeAll()
-      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+      if curDir != 0 { lastGridFireDir = curDir }
+      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f dir=%d", changed, fraction, consistency, density, aspect, curDir), nowMs)
     } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
       onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {

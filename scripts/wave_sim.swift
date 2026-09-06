@@ -29,10 +29,15 @@ struct Sim {
   var gridHistory: [(t: Double, g: [Double])] = []
   var lastTriggerMs = -10000.0
   var lastHandSeenMs = -100000.0  // 손-확인 게이트(안드 fe2c279)용 — 밝기 축은 최근 손 관측 있을 때만 발화
+  var handDirSign = 0            // returndrop용 손 x이동 방향(모듈 미러)
+  var handDirAtMs = -100000.0
+  var lastGridFireDir = 0
   var events: [String] = []
 
   // 실기기 Vision이 손을 잡은 시점 모사 — 밝기 축(격자/lumapass) 발화의 전제.
   mutating func seeHand(t: Double) { lastHandSeenMs = t }
+  // 손 x이동 방향 모사 — returndrop(리턴 스트로크 무시) 판별용.
+  mutating func seeHandDir(t: Double, sign: Int) { handDirSign = sign; handDirAtMs = t }
 
   // 크로싱 판정 — processTrack의 해당 블록 미러
   mutating func feedHand(t: Double, x: Double, size: Double) {
@@ -152,7 +157,12 @@ extension Sim {
     let handSeen = t - lastHandSeenMs <= 3000  // 손-확인 게이트(모듈 미러) — 차/조명 방어
     guard t - lastTriggerMs > passRefractoryMs else { return }
     if fraction >= 0.05, fraction <= 0.30, cons >= 0.6, density >= densityTh, aspect <= 0.9, handSeen {
-      gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
+      let curDir = (t - handDirAtMs <= 600) ? handDirSign : 0
+      if curDir != 0, curDir == -lastGridFireDir, t - lastTriggerMs < 2500 {
+        lastGridFireDir = 0; gridHistory.removeAll(); events.append("gridreturn"); return
+      }
+      gridHistory.removeAll(); if curDir != 0 { lastGridFireDir = curDir }
+      lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
 }
@@ -507,6 +517,22 @@ fillRect(&gb37, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 가로 밴드(손짓 모양)
 for _ in 0..<3 { s37.feedGrid(t: t37, g: gb37); t37 += 80 }
 check("격자 손미관측 차단(안드 fe2c279)", s37.events, fires: 0)
 
+
+// 39. returndrop — 왼→오(dir+1) 발화 후 되돌아오는 오→왼(dir-1)은 무시(한 동작 한 발화).
+//     사장님 "안드는 오왼 반응 안 함". 두 스트로크 다 격자 조건 충족하지만 리턴만 억제.
+var s39 = Sim()
+var t39 = 0.0
+s39.seeHand(t: 0)
+for _ in 0..<13 { s39.feedGrid(t: t39, g: flatGrid(150)); t39 += 80 } // 창 채움
+var gbF = flatGrid(150); fillRect(&gbF, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 가로 밴드(왼→오)
+s39.seeHand(t: t39); s39.seeHandDir(t: t39, sign: 1)
+for _ in 0..<3 { s39.feedGrid(t: t39, g: gbF); t39 += 80 }  // 왼→오 발화
+t39 += 1400 // 리턴까지 텀(불응 1.2s 밖, returndrop 창 2.5s 안)
+for _ in 0..<3 { s39.feedGrid(t: t39, g: flatGrid(150)); t39 += 80 } // 조용
+var gbR = flatGrid(150); fillRect(&gbR, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
+s39.seeHand(t: t39); s39.seeHandDir(t: t39, sign: -1) // 오→왼(반대 방향)
+for _ in 0..<3 { s39.feedGrid(t: t39, g: gbR); t39 += 80 }
+check("격자 returndrop(리턴 오왼 무시)", s39.events, fires: 1, expectContains: ["gridreturn"])
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

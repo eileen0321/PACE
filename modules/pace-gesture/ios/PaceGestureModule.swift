@@ -982,6 +982,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
       }
+      // 🔴 2026-09-06 격자 가로-스윕 확인용 — 손이 실제로 가로로 움직인 시각 기록(격자 발화 게이트).
+      if sweep >= self.gridLateralSweepMin { self.lastLateralSweepMs = nowMs }
       // 왕복 반전 조건(채증 사진 기반 — 턱 괸 손의 한 방향 드리프트 차단, 진짜 "훠이"는 반전 ≥1회)
       var reversals = 0
       if handSize > 0, self.tracks[ti].xHistory.count >= 3 {
@@ -1173,7 +1175,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   lumapass(L→M→R 순차 = 가로 스윕만, 정면 동시변화는 순서조건서 탈락)로 감지를 일원화한다.
   //   → 격자 단독 발화를 끈다(계산·진단은 유지, 복원은 이 플래그 true). 안드는 격자를 켜두지만 iOS는
   //   사장님 사양("스윕만 넘김")에 맞춘다 — 격자는 정면 접근을 못 걸러 이 사양과 상충.
-  private let gridStandaloneEnabled = false
+  // 🔴 2026-09-06(2차) 사장님 "왜 안 돼" — 채증(diag 05:59 maxSweep=1.35 = 진짜 가로 스윕인데 안 잡힘):
+  //   격자를 통째로 끄니 진짜 스윕도 죽었다. 격자를 다시 켜되 **랜드마크 가로 이동(sweep=x범위/손크기)이
+  //   최근 있을 때만** 발화한다 — 정면 접근(가로 이동 없음, sweep 낮음)은 차단, 가로 스윕(sweep 큼)은 통과.
+  //   단일 스와이프(반전 0회)도 잡으려 sweep 축(반전 필요)이 아니라 raw sweep 값을 쓴다.
+  private let gridStandaloneEnabled = true
+  private let gridLateralSweepMin: Double = 0.6   // 최근 이 이상 가로 이동 있어야 격자 발화(홀딩 지터 ~0.2, 실스윕 1.0+)
+  private let gridLateralWindowMs: Double = 900
+  private var lastLateralSweepMs: Double = 0
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1239,13 +1248,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 손-확인 게이트(안드 fe2c279 이식) — 최근 실제 손 관측이 없으면 밝기만으로 발화 금지(차·조명·얼굴).
     let handSeen = lastHandSeenMs > 0 && nowMs - lastHandSeenMs <= lumapassHandRecentMs
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained, handSeen {
+    let lateralSweep = nowMs - lastLateralSweepMs <= gridLateralWindowMs  // 최근 가로 이동 있었나(정면 접근 배제)
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained, handSeen, gridStandaloneEnabled, lateralSweep {
       gridHistory.removeAll()
-      if gridStandaloneEnabled {
-        fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
-      } else {
-        onDiag(String(format: "grid(정면접근 차단·스윕전용) cells=%d frac=%.3f asp=%.2f", changed, fraction, aspect))
-      }
+      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+    } else if handSeen, !lateralSweep, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained {
+      onDiag(String(format: "grid(정면접근 차단·가로이동 없음) cells=%d frac=%.3f asp=%.2f", changed, fraction, aspect))
     } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
       onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
     } else if sustained, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {

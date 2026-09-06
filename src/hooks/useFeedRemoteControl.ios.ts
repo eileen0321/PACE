@@ -71,6 +71,10 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
     if (text.startsWith('camprobe') || text.startsWith('campixel')) { diagLog('cam_probe', text); return; } // 해상도·회전 원격 검증
     if (text.startsWith('returndrop')) { diagLog('return_drop', text); return; } // 복귀 스트로크 무시
     if (text.startsWith('gridnear')) { diagLog('grid_near', text); return; } // 격자 축 근접 미달 — 현장 캘리브레이션용
+    // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 수치를 그대로 저장(화이트리스트 통과).
+    if (text.startsWith('capH')) { diagLog('capH', text); return; }
+    if (text.startsWith('capG')) { diagLog('capG', text); return; }
+    if (text.startsWith('capFIRE')) { diagLog('capFIRE', text); return; }
     if (text.startsWith('no hand')) a.noHandTicks += 1;
     else if (text.includes('cam interrupted')) a.camInt += 1;
     else if (text.includes('WAVE')) { a.waves += 1; diagLog('wave_fire', text); } // 발화 사유(축+수치)까지 물증에

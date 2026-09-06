@@ -10781,3 +10781,15 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
 - 시뮬 38/38(returndrop 리턴 무시 신규). tsc 0.
 - ⚠️ 절대 방향(왼→오만, 오→왼 단독도 차단)까지 원하면 랜드마크 부호 확정 필요(안드도 미확정, 0=양방향).
   returndrop은 "리턴 억제"라 왕복 손짓의 이중 넘김을 잡는다. 단독 오→왼은 아직 발화(첫 스트로크).
+
+### 2026-09-06(5차) — 🔴 근본 전환: 격자(luma) OFF, cross(손 추적) ON — "몸만 틀어도/손 없이/4번 넘어감"
+- 채증(diag 07:14~15): 모든 발화가 gridpass·dir=0(손 방향 미검출인데 발화). 사장님 "몸만 틀면 손없어도
+  넘어가, 한 손짓에 4번". 결론: **격자는 luma 차이만 봐서 손짓 vs 몸/조명/장면을 원리적으로 구분 불가.**
+  손확인 게이트(3s)도 직전에 손 한 번 보이면 그 뒤 몸턴 luma를 통과시킴.
+- 조치: 격자 단독발화 OFF(gridStandaloneEnabled=false). **실제 손을 추적하는 cross 축 ON**(crossStandalone=true):
+  추적손(crossMinHandSize 0.08)+가로변위(needRange)+속도 게이트라 몸턴/조명/손없음엔 발화 안 함. 스트로크당
+  1회(crossArmed 재무장) + returndrop(리턴 반대방향 2s 무시) 내장 = 한 동작 한 발화.
+- lumapass는 유지(로그상 몸턴에 미발화 + L→M→R 순차 특이성 + 손확인 게이트, 스윕 백업). nearpass/occlusion/
+  glide/sweep는 OFF 유지. grid 계산·진단은 유지(복원은 플래그).
+- 시뮬 38/38(격자 OFF 반영, cross 발화/재무장/returndrop 검증). tsc 0.
+- ⚠️ cross가 사장님 스윕을 잘 잡는지 실기기 확인 필요(Vision 추적 의존). 놓치면 cross 게이트 완화로 튜닝.

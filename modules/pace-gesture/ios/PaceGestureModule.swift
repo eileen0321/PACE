@@ -343,7 +343,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   5회)이 전부 cross/glide/sweep(사장님 "카메라 스쳐 지나간 적 없는데/손짓 안 했는데 넘어감").
   //   → iOS도 안드와 동일하게 lumapass+격자만 발화. 나머지 5축은 단독 발화만 끈다(계산·재무장·streak·로그는
   //   유지 — 복원은 각 플래그 true). 손짓 넘김은 lumapass+격자로 동작(안드 상용과 동일 메커니즘).
-  private let crossStandalone = false
+  // 🔴 2026-09-06(5차) 사장님 "몸만 틀면 손없어도 넘어가 / 한 손짓에 4번" — 격자(luma) 축은 손짓과
+  //   몸/조명/장면 변화를 원리적으로 구분 못 한다(로그 전부 dir=0 = 손 방향 미검출인데 발화). 실제 손을
+  //   추적하는 cross 축만이 "몸 틀면 안 됨/손 없으면 안 됨"을 보장한다. cross ON(추적손+가로변위+속도+
+  //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
+  private let crossStandalone = true
   private let glideStandalone = false
   private let sweepStandalone = false
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
@@ -1175,6 +1179,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var handDirSign: Int = 0
   private var handDirAtMs: Double = 0
   private var lastGridFireDir: Int = 0
+  // 🔴 2026-09-06(5차) 격자 단독 발화 OFF — 몸/조명/장면 변화 오발화의 근원(로그 dir=0 발화). 손 추적하는
+  //   cross 축으로 대체(위 crossStandalone 주석). 계산·진단은 유지(복원은 true).
+  private let gridStandaloneEnabled = false
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1234,7 +1241,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       }
       gridHistory.removeAll()
       if curDir != 0 { lastGridFireDir = curDir }
-      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f dir=%d", changed, fraction, consistency, density, aspect, curDir), nowMs)
+      if gridStandaloneEnabled {
+        fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f dir=%d", changed, fraction, consistency, density, aspect, curDir), nowMs)
+      } else {
+        onDiag(String(format: "grid(off·cross대체) cells=%d frac=%.3f asp=%.2f dir=%d", changed, fraction, aspect, curDir))
+      }
     } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
       onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {

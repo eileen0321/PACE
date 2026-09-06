@@ -355,7 +355,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
   private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프 → cross 축
-  private let crossWaveDir: Double = 1  // 🔴 2026-09-06 채증 방향: 왼→오=segNet 양수(+)만 발화. -1=반대, 0=양방향.
+  private let crossWaveDir: Double = 0  // 🔴 2026-09-06 방향 게이트 OFF — 채증으로 부호 뒤집힘 확인(왼→오가 +에서 -로). 안드처럼 양방향+returndrop.
   private let glideStandalone = false
   private let sweepStandalone = false  // 🔴 2026-09-06 채증 재확인: 손짓이 단방향(반전0)이라 sweep 축(반전≥1 요구)은 부적합 → cross로 전환
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단

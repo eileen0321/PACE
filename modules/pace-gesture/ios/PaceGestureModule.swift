@@ -880,11 +880,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         for i in 1..<max(1, win700.count) { gross700 += abs(win700[i].x - win700[i - 1].x) }
         straight700 = gross700 > 1e-6 ? abs(netDx700) / gross700 : 0.0
       }
-      // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 손 수치(발화 없음, captureMode). netDx700 부호가 방향.
-      if self.captureMode {
-        self.onDiag(String(format: "capH size=%.2f x=%.2f netdx=%+.2f sweep=%.2f straight=%.2f score=%.2f near=%d",
-                            handSize, c.x, netDx700, sweep, straight700, handScore, handSize >= self.nearBandHandSize ? 1 : 0))
-      }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
         // 재무장 판정(스트로크당 1발화) — HandTrack.crossFireX 주석의 두 경로. 둘 다 "스트로크가
@@ -999,6 +994,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       var sweep = 0.0
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
+      }
+      // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 손 수치(발화 없음). netDx700 부호가 방향.
+      if self.captureMode {
+        self.onDiag(String(format: "capH size=%.2f x=%.2f netdx=%+.2f sweep=%.2f straight=%.2f score=%.2f near=%d",
+                            handSize, c.x, netDx700, sweep, straight700, handScore, handSize >= self.nearBandHandSize ? 1 : 0))
       }
       // 🔴 2026-09-06 격자 returndrop용 — 손의 최근 x 순이동 방향 기록(리턴 스트로크 판별).
       if let firstX = self.tracks[ti].xHistory.first?.x, let lastX = self.tracks[ti].xHistory.last?.x, handSize > 0 {

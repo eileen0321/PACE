@@ -1167,6 +1167,13 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   기준이 "밝기 변화 크기" 하나뿐이라 손 없이도(차·조명·얼굴) 발화한다. **실제 손을 최근 3초 내
   //   본 적 있을 때만** 인정한다(밝기만으로는 발화 안 함). iOS는 Vision 손 관측을 lastHandSeenMs로 추적.
   private let lumapassHandRecentMs: Double = 3000
+  // 🔴 2026-09-06 사장님 지적("왼→오로 안 움직이고 앞에서만 움직였는데 넘어가") — 채증(diag 04:48
+  //   wave_summary maxGrowth=2.44 = 손이 앞으로 다가옴): 격자 축(gross-motion)은 방향 무관이라 손이
+  //   앞에 오기만 해도(접근/정면) 밝기 변화로 발화한다. 손짓(가로 스윕)과 구분 불가. iOS는 방향성 있는
+  //   lumapass(L→M→R 순차 = 가로 스윕만, 정면 동시변화는 순서조건서 탈락)로 감지를 일원화한다.
+  //   → 격자 단독 발화를 끈다(계산·진단은 유지, 복원은 이 플래그 true). 안드는 격자를 켜두지만 iOS는
+  //   사장님 사양("스윕만 넘김")에 맞춘다 — 격자는 정면 접근을 못 걸러 이 사양과 상충.
+  private let gridStandaloneEnabled = false
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1234,7 +1241,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
     if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained, handSeen {
       gridHistory.removeAll()
-      fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+      if gridStandaloneEnabled {
+        fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+      } else {
+        onDiag(String(format: "grid(정면접근 차단·스윕전용) cells=%d frac=%.3f asp=%.2f", changed, fraction, aspect))
+      }
     } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
       onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
     } else if sustained, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {

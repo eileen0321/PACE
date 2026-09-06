@@ -127,6 +127,7 @@ struct Sim {
 }
 
 let gridN = 16
+let gridStandaloneEnabled = false  // 🔴 2026-09-06 격자 정면접근 차단(스윕 전용, lumapass가 담당) — 모듈 미러
 extension Sim {
   mutating func feedGrid(t: Double, g: [Double]) {
     gridHistory.append((t, g))
@@ -161,7 +162,8 @@ extension Sim {
     let handSeen = t - lastHandSeenMs <= 3000  // 손-확인 게이트(모듈 미러)
     guard t - lastTriggerMs > passRefractoryMs else { return }
     if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare, !sustained, handSeen {
-      gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
+      gridHistory.removeAll()
+      if gridStandaloneEnabled { lastTriggerMs = t; events.append("FIRE gridpass") }  // 격자 단독발화 off(모듈 미러) — 스윕은 lumapass 담당
     }
   }
 }
@@ -423,7 +425,7 @@ for _ in 0..<13 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
 fillRect(&g28, gx0: 3, gx1: 13, gy0: 7, gy1: 8)  // 22칸, bw=11 bh=2, aspect=5.5(가로 스윕)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
-check("격자 가로 손짓 발화(iOS)", s28.events, fires: 1, expectContains: ["gridpass"])
+check("격자 단독발화 off(스윕은 lumapass)", s28.events, fires: 0)  // 격자 정면접근 차단으로 단독발화 끔
 
 // 28b. 세로로 긴 손짓(위아래 훠이, 2×11=22칸 aspect=0.18)도 발화해야 — 방향 무관.
 var s28b = Sim()
@@ -433,7 +435,7 @@ for _ in 0..<13 { s28b.feedGrid(t: t28b, g: flatGrid(150)); t28b += 80 }
 var g28b = flatGrid(150)
 fillRect(&g28b, gx0: 7, gx1: 8, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11, aspect=0.18
 for _ in 0..<3 { s28b.feedGrid(t: t28b, g: g28b); t28b += 80 }
-check("격자 세로 손짓 발화(iOS)", s28b.events, fires: 1, expectContains: ["gridpass"])
+check("격자 단독발화 off(세로)", s28b.events, fires: 0)
 
 // 29. 자동노출 흔들림(전체 256칸) — 상한 0.30 초과로 차단
 var s29 = Sim()
@@ -518,7 +520,7 @@ for _ in 0..<13 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(
 var gb36 = flatGrid(150)
 fillRect(&gb36, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
 for _ in 0..<3 { s36.feedGrid(t: t36, g: gb36); t36 += 80 }
-check("격자 조용후 단일스윕 발화", s36.events, fires: 1, expectContains: ["gridpass"])
+check("격자 단독발화 off(조용후 스윕)", s36.events, fires: 0)
 
 // 37. 손 미관측 환경(차·조명 변화인데 Vision이 손을 못 봄) — 손-확인 게이트로 격자 차단(안드 fe2c279).
 //     seeHand 호출 없음 = lastHandSeenMs 없음. 진짜 손짓 모양(가로 밴드)이어도 손 없으면 발화 금지.

@@ -131,7 +131,7 @@ struct Sim {
 }
 
 let gridN = 16
-let gridStandaloneEnabled = false  // 🔴 2026-09-06(5차) 격자 OFF — 몸/조명 오발화 근원, cross(손추적)로 대체 (모듈 미러)
+let gridStandaloneEnabled = true  // 🔴 2026-09-06(6차) 격자 ON 복귀 — 안드처럼(lumapass+격자), 게이트를 NEAR 손으로 조임 (모듈 미러)
 extension Sim {
   mutating func feedGrid(t: Double, g: [Double]) {
     gridHistory.append((t, g))
@@ -425,7 +425,7 @@ for _ in 0..<13 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
 fillRect(&g28, gx0: 3, gx1: 13, gy0: 7, gy1: 8)  // 22칸, bw=11 bh=2, aspect=5.5(가로 스윕)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
-check("격자 OFF(cross 대체)", s28.events, fires: 0)
+check("격자 NEAR손 가로 스윕 발화", s28.events, fires: 1, expectContains: ["gridpass"])
 
 // 28b. 세로로 긴 손짓(위아래 훠이, 2×11=22칸 aspect=0.18)도 발화해야 — 방향 무관.
 var s28b = Sim()
@@ -506,7 +506,7 @@ for _ in 0..<13 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(
 var gb36 = flatGrid(150)
 fillRect(&gb36, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
 for _ in 0..<3 { s36.feedGrid(t: t36, g: gb36); t36 += 80 }
-check("격자 OFF(단일스윕도 grid는 무발화)", s36.events, fires: 0)
+check("격자 조용후 단일스윕 발화", s36.events, fires: 1, expectContains: ["gridpass"])
 
 // 37. 손 미관측 환경(차·조명 변화인데 Vision이 손을 못 봄) — 손-확인 게이트로 격자 차단(안드 fe2c279).
 //     seeHand 호출 없음 = lastHandSeenMs 없음. 진짜 손짓 모양(가로 밴드)이어도 손 없으면 발화 금지.
@@ -533,7 +533,7 @@ for _ in 0..<3 { s39.feedGrid(t: t39, g: flatGrid(150)); t39 += 80 } // 조용
 var gbR = flatGrid(150); fillRect(&gbR, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
 s39.seeHand(t: t39); s39.seeHandDir(t: t39, sign: -1) // 오→왼(반대 방향)
 for _ in 0..<3 { s39.feedGrid(t: t39, g: gbR); t39 += 80 }
-check("격자 OFF(returndrop 로직 유지·무발화)", s39.events, fires: 0)
+check("격자 returndrop(리턴 오왼 무시)", s39.events, fires: 1, expectContains: ["gridreturn"])
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

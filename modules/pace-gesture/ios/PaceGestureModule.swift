@@ -230,6 +230,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastTriggerMs: Double = 0
   private var lastProcessedMs: Double = 0
   private var lastHandSeenMs: Double = 0 // 손이 마지막으로 보인 시각 — "부재→근접 등장" 안전망용
+  // 🔴 2026-09-06(6차) 안드 NEAR_BAND_HAND_SIZE=0.20 이식 — 안드는 밝기 축(격자/lumapass) 게이트를
+  //   "아무 손"이 아니라 **가까운(큰) 손(≥0.20)** 최근 관측으로만 연다(lastNearHandAtMs). iOS는 아무 손/
+  //   얼굴 옆 작은 손에도 열려 "손만 들어도/얼굴 보여도 넘어감"이 났다. 게이트를 NEAR 손으로 조인다.
+  private let nearBandHandSize: Double = 0.20
+  private var lastNearHandSeenMs: Double = 0
   private var paused = false // 영상 전환 중 추론 일시정지(카메라는 유지) — setPaused로 토글
   private var lastFrameAt: TimeInterval = 0 // 워치독용
   private var watchdog: Timer?
@@ -347,7 +352,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   몸/조명/장면 변화를 원리적으로 구분 못 한다(로그 전부 dir=0 = 손 방향 미검출인데 발화). 실제 손을
   //   추적하는 cross 축만이 "몸 틀면 안 됨/손 없으면 안 됨"을 보장한다. cross ON(추적손+가로변위+속도+
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
-  private let crossStandalone = true
+  private let crossStandalone = false
   private let glideStandalone = false
   private let sweepStandalone = false
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
@@ -507,7 +512,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   func setPaused(_ p: Bool) {
     queue.async {
       self.paused = p
-      if !p { self.tracks = [HandTrack(), HandTrack()]; self.lumaHistory.removeAll(); self.lastHandSeenMs = 0; self.stillnessStartMs = 0 } // 정지시계 리셋(01:30 낡은 시계로 burst 즉시해제 연발)
+      if !p { self.tracks = [HandTrack(), HandTrack()]; self.lumaHistory.removeAll(); self.lastHandSeenMs = 0; self.lastNearHandSeenMs = 0; self.stillnessStartMs = 0 } // 정지시계 리셋(01:30 낡은 시계로 burst 즉시해제 연발)
     }
   }
 
@@ -809,6 +814,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         return 0.05 // 폰 취급 중 — 정지 아님으로 취급
       }
       let handSize = c.size
+      // NEAR 손 게이트(안드 NEAR_BAND_HAND_SIZE) — 가까운 큰 손일 때만 밝기 축 게이트를 연다(얼굴/작은손 배제).
+      if handSize >= self.nearBandHandSize { self.lastNearHandSeenMs = nowMs }
       let handScore = c.score
       // 트랙 갱신
       self.tracks[ti].lastX = c.x; self.tracks[ti].lastY = c.y; self.tracks[ti].lastSeenMs = nowMs
@@ -1181,7 +1188,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var lastGridFireDir: Int = 0
   // 🔴 2026-09-06(5차) 격자 단독 발화 OFF — 몸/조명/장면 변화 오발화의 근원(로그 dir=0 발화). 손 추적하는
   //   cross 축으로 대체(위 crossStandalone 주석). 계산·진단은 유지(복원은 true).
-  private let gridStandaloneEnabled = false
+  private let gridStandaloneEnabled = true
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1229,7 +1236,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let consistency = max(darkenRatio, 1 - darkenRatio)
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
     // 손-확인 게이트(안드 fe2c279) — 최근 손 관측 없으면 밝기만으로 발화 금지(차·조명·얼굴). 차 방어는 안드처럼 이것으로.
-    let handSeen = lastHandSeenMs > 0 && nowMs - lastHandSeenMs <= lumapassHandRecentMs
+    let handSeen = lastNearHandSeenMs > 0 && nowMs - lastNearHandSeenMs <= lumapassHandRecentMs
     if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect, handSeen {
       // returndrop — 직전 발화의 반대 방향(=되돌아오는 손)이면 1회 무시(안드 cross 이식). 1회 소비 후 리셋.
       let curDir = (nowMs - handDirAtMs <= 600) ? handDirSign : 0
@@ -1247,7 +1254,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         onDiag(String(format: "grid(off·cross대체) cells=%d frac=%.3f asp=%.2f dir=%d", changed, fraction, aspect, curDir))
       }
     } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
-      onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
+      onDiag(String(format: "gridblock(근접손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastNearHandSeenMs > 0 ? nowMs - lastNearHandSeenMs : -1, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {
       onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f asp=%.2f cells=%d", fraction, consistency, density, aspect, changed))
     }
@@ -1272,7 +1279,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
     // 손-확인 게이트(안드 fe2c279) — lumapass도 밝기만 보는 축이라 최근 손 관측 없으면 발화 금지.
     if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6,
-       lastHandSeenMs > 0, nowMs - lastHandSeenMs <= lumapassHandRecentMs,
+       lastNearHandSeenMs > 0, nowMs - lastNearHandSeenMs <= lumapassHandRecentMs,
        let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
       // 🔴 2026-08-27 안드 실측 이식(0984254 — "손은 어두워지지 않는다, 밝아진다"): 어두운 배경(천장)
       // 앞을 화면 불빛 받은 손이 지나가면 밝기가 **올라간다**. 어두워짐만 보던 기존 onset은 그 통과를

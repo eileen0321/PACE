@@ -10793,3 +10793,12 @@ iOS는 세 축이 전부 **어두워짐(dip)만** 인정한다:
   glide/sweep는 OFF 유지. grid 계산·진단은 유지(복원은 플래그).
 - 시뮬 38/38(격자 OFF 반영, cross 발화/재무장/returndrop 검증). tsc 0.
 - ⚠️ cross가 사장님 스윕을 잘 잡는지 실기기 확인 필요(Vision 추적 의존). 놓치면 cross 게이트 완화로 튜닝.
+
+### 2026-09-06(6차) — 🔴 안드처럼 원복 + NEAR 손 게이트 — "손만 들어도/얼굴만 보여도 넘어감"
+- 사장님 "안드처럼 한 거 맞아?" — 안드는 cross 단독발화 안 함(lumapass+격자만). 5차의 cross ON은 안드와 반대였음. 되돌림.
+- "손만 들어도/얼굴만 보여도 넘어감" 원인: iOS 손확인 게이트가 **아무 손/얼굴옆 작은손**에도 열림(lastHandSeenMs를
+  아무 트랙에나 세팅). 안드는 **NEAR_BAND_HAND_SIZE=0.20(가까운 큰 손)** 일 때만 lastNearHandAtMs를 연다.
+- 조치: cross OFF(안드처럼), 격자 ON. 밝기 축(격자·lumapass) 게이트를 **lastNearHandSeenMs(handSize≥0.20)** 로
+  교체 — 얼굴/작은손/몸턴/조명은 게이트 안 열림. 격자는 방향 무관이라 왼오·오왼 대칭(cross의 방향 비대칭 제거).
+- 결과 축: lumapass + 격자(NEAR 게이트 + aspect + 일관성0.6 + returndrop). 안드 구성과 동일 + NEAR 게이트.
+- 시뮬 38/38. tsc 0.

@@ -352,6 +352,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   몸/조명/장면 변화를 원리적으로 구분 못 한다(로그 전부 dir=0 = 손 방향 미검출인데 발화). 실제 손을
   //   추적하는 cross 축만이 "몸 틀면 안 됨/손 없으면 안 됨"을 보장한다. cross ON(추적손+가로변위+속도+
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
+  // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
+  private let captureMode = true
   private let crossStandalone = false
   private let glideStandalone = false
   private let sweepStandalone = false
@@ -878,6 +880,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         for i in 1..<max(1, win700.count) { gross700 += abs(win700[i].x - win700[i - 1].x) }
         straight700 = gross700 > 1e-6 ? abs(netDx700) / gross700 : 0.0
       }
+      // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 손 수치(발화 없음, captureMode). netDx700 부호가 방향.
+      if self.captureMode {
+        self.onDiag(String(format: "capH size=%.2f x=%.2f netdx=%+.2f sweep=%.2f straight=%.2f score=%.2f near=%d",
+                            handSize, c.x, netDx700, sweep, straight700, handScore, handSize >= self.nearBandHandSize ? 1 : 0))
+      }
       // 크로싱 축(2026-08-25 사장님 사양, 상단 crossWindowMs 주석) — 50cm 상한 통과 목격만 전역 기록.
       if handSize >= self.crossMinHandSize {
         // 재무장 판정(스트로크당 1발화) — HandTrack.crossFireX 주석의 두 경로. 둘 다 "스트로크가
@@ -1237,6 +1244,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
     // 손-확인 게이트(안드 fe2c279) — 최근 손 관측 없으면 밝기만으로 발화 금지(차·조명·얼굴). 차 방어는 안드처럼 이것으로.
     let handSeen = lastNearHandSeenMs > 0 && nowMs - lastNearHandSeenMs <= lumapassHandRecentMs
+    // 🔴 2026-09-06 채증 모드 — 프레임별 그리드 수치(라벨 튜닝용). 활동 있을 때만(frac≥floor절반).
+    if captureMode, fraction >= gridFracMin * 0.5 {
+      onDiag(String(format: "capG cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f near=%d", changed, fraction, consistency, density, aspect, handSeen ? 1 : 0))
+    }
     if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect, handSeen {
       // returndrop — 직전 발화의 반대 방향(=되돌아오는 손)이면 1회 무시(안드 cross 이식). 1회 소비 후 리셋.
       let curDir = (nowMs - handDirAtMs <= 600) ? handDirSign : 0
@@ -1377,6 +1388,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 발화 시 모든 트랙 이력 초기화(같은 물리 제스처를 두 트랙이 나눠 본 경우의 이중 발화 방지),
   // 재무장은 발화한 트랙에만 건다(다른 손은 자유).
   private func fireTrigger(_ reason: String, _ nowMs: Double, handSize: Double = 0, trackIdx: Int = -1) {
+    // 🔴 2026-09-06 채증 모드 — 발화(넘김)는 안 하고 "무엇이 발화할 뻔했는지"만 로깅한다(라벨 튜닝용).
+    if captureMode { onDiag("capFIRE " + reason); return }
     lastTriggerMs = nowMs
     lumaHistory.removeAll()
     // ⚠️ xHistory는 비우지 않는다(2026-08-21) — 비우면 발화 직후 글라이드 연속성이 끊겨 전역 burst의

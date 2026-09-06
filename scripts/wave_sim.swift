@@ -27,16 +27,12 @@ struct Sim {
   var brightRefAll = 0.0, brightRefL = 0.0, brightRefM = 0.0, brightRefR = 0.0
   var baseEmaL = -1.0, baseEmaM = -1.0, baseEmaR = -1.0
   var gridHistory: [(t: Double, g: [Double])] = []
-  var gridActivity: [(t: Double, a: Bool)] = []  // 지속 환경 모션(차·이동) 억제용(모듈 미러)
   var lastTriggerMs = -10000.0
   var lastHandSeenMs = -100000.0  // 손-확인 게이트(안드 fe2c279)용 — 밝기 축은 최근 손 관측 있을 때만 발화
-  var lastLateralSweepMs = -100000.0  // 격자 가로-이동 게이트용 — 정면 접근 배제(모듈 미러)
   var events: [String] = []
 
   // 실기기 Vision이 손을 잡은 시점 모사 — 밝기 축(격자/lumapass) 발화의 전제.
   mutating func seeHand(t: Double) { lastHandSeenMs = t }
-  // 손이 실제 가로로 움직인 시각 모사 — 격자 발화의 전제(정면 접근엔 없음).
-  mutating func seeLateralSweep(t: Double) { lastLateralSweepMs = t }
 
   // 크로싱 판정 — processTrack의 해당 블록 미러
   mutating func feedHand(t: Double, x: Double, size: Double) {
@@ -130,7 +126,6 @@ struct Sim {
 }
 
 let gridN = 16
-let gridStandaloneEnabled = true  // 🔴 2026-09-06(2차) 격자 재활성 — 단, 가로이동 게이트 필수(모듈 미러)
 extension Sim {
   mutating func feedGrid(t: Double, g: [Double]) {
     gridHistory.append((t, g))
@@ -146,26 +141,17 @@ extension Sim {
         changed += 1; if d < 0 { darkened += 1 }
       }
     }
-    let fractionAll = Double(changed) / Double(g.count)
-    gridActivity.append((t, fractionAll >= 0.05))   // 매 프레임 큰-변화 여부 기록(모듈 미러)
-    while let f = gridActivity.first, t - f.t > 2500 { gridActivity.removeFirst() }
     guard changed > 0 else { return }
-    let fraction = fractionAll
+    let fraction = Double(changed) / Double(g.count)
     let dr = Double(darkened) / Double(changed)
     let bw = maxX - minX + 1, bh = maxY - minY + 1
     let density = Double(changed) / Double(max(1, bw * bh))
-    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0
-    let notSquare = aspect <= 0.9 || aspect >= 1.111  // iOS: 정사각(얼굴) 근처만 배제, 가로/세로 긴 손 스윕은 통과
+    let aspect = bw > 0 ? Double(bh) / Double(bw) : 0  // iOS 전치: 안드 bw/bh 대응 (모듈 미러)
     let cons = max(dr, 1 - dr)
     let densityTh = changed <= 3 ? 0.9 : 0.15   // 안드 MIN_DENSITY_SMALL/BIG
-    let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
-    // 창 미충족 시 무방비 방지(모듈 3ea77de 미러) — 창이 덜 찼으면 판단불가로 보고 억제.
-    let windowReady = gridActivity.count >= 12
-    let sustained = !windowReady || Double(activeCount) / Double(gridActivity.count) >= 0.45
-    let handSeen = t - lastHandSeenMs <= 3000  // 손-확인 게이트(모듈 미러)
-    let lateralSweep = t - lastLateralSweepMs <= 900  // 가로이동 게이트(정면 접근 배제, 모듈 미러)
+    let handSeen = t - lastHandSeenMs <= 3000  // 손-확인 게이트(모듈 미러) — 차/조명 방어
     guard t - lastTriggerMs > passRefractoryMs else { return }
-    if fraction >= 0.05, fraction <= 0.30, cons >= 0.6, density >= densityTh, notSquare, !sustained, handSeen, gridStandaloneEnabled, lateralSweep {
+    if fraction >= 0.05, fraction <= 0.30, cons >= 0.6, density >= densityTh, aspect <= 0.9, handSeen {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }
@@ -427,7 +413,6 @@ var t28 = 0.0
 for _ in 0..<13 { s28.feedGrid(t: t28, g: flatGrid(150)); t28 += 80 }
 var g28 = flatGrid(150)
 fillRect(&g28, gx0: 3, gx1: 13, gy0: 7, gy1: 8)  // 22칸, bw=11 bh=2, aspect=5.5(가로 스윕)
-s28.seeLateralSweep(t: t28)
 for _ in 0..<3 { s28.feedGrid(t: t28, g: g28); t28 += 80 }
 check("격자 가로 손짓 발화(iOS)", s28.events, fires: 1, expectContains: ["gridpass"])
 
@@ -438,16 +423,14 @@ var t28b = 0.0
 for _ in 0..<13 { s28b.feedGrid(t: t28b, g: flatGrid(150)); t28b += 80 }
 var g28b = flatGrid(150)
 fillRect(&g28b, gx0: 7, gx1: 8, gy0: 2, gy1: 12)  // 22칸, bw=2 bh=11, aspect=0.18
-s28b.seeLateralSweep(t: t28b)
 for _ in 0..<3 { s28b.feedGrid(t: t28b, g: g28b); t28b += 80 }
-check("격자 세로 손짓 발화(iOS)", s28b.events, fires: 1, expectContains: ["gridpass"])
+check("격자 세로 스윕 차단(안드 한방향 aspect)", s28b.events, fires: 0)
 
 // 29. 자동노출 흔들림(전체 256칸) — 상한 0.30 초과로 차단
 var s29 = Sim()
 s29.seeHand(t: 0)
 var t29 = 0.0
 for _ in 0..<13 { s29.feedGrid(t: t29, g: flatGrid(150)); t29 += 80 }
-s29.seeLateralSweep(t: t29)
 for _ in 0..<3 { s29.feedGrid(t: t29, g: flatGrid(100)); t29 += 80 }
 check("격자 AE 전체변화 차단", s29.events, fires: 0)
 
@@ -458,7 +441,6 @@ var t30 = 0.0
 for _ in 0..<13 { s30.feedGrid(t: t30, g: flatGrid(150)); t30 += 80 }
 var g30 = flatGrid(150)
 for i in [0, 60, 130, 255] { g30[i] = 100 }
-s30.seeLateralSweep(t: t30)
 for _ in 0..<3 { s30.feedGrid(t: t30, g: g30); t30 += 80 }
 check("격자 분산 잡음 차단", s30.events, fires: 0)
 
@@ -469,7 +451,6 @@ var t31 = 0.0
 for _ in 0..<13 { s31.feedGrid(t: t31, g: flatGrid(150)); t31 += 80 }
 var g31 = flatGrid(150)
 fillRect(&g31, gx0: 6, gx1: 6, gy0: 2, gy1: 6)  // 5칸 세로(밀도·aspect는 통과, 하한만 미달)
-s31.seeLateralSweep(t: t31)
 for _ in 0..<3 { s31.feedGrid(t: t31, g: g31); t31 += 80 }
 check("격자 5칸 미달 차단(안드 하한)", s31.events, fires: 0)
 
@@ -480,7 +461,6 @@ var t32 = 0.0
 for _ in 0..<13 { s32.feedGrid(t: t32, g: flatGrid(150)); t32 += 80 }
 var g32 = flatGrid(150)
 fillRect(&g32, gx0: 6, gx1: 10, gy0: 5, gy1: 9)  // 25칸, bw=5 bh=5 aspect=1.0
-s32.seeLateralSweep(t: t32)
 for _ in 0..<3 { s32.feedGrid(t: t32, g: g32); t32 += 80 }
 check("격자 얼굴 정사각 차단(aspect)", s32.events, fires: 0)
 
@@ -492,7 +472,6 @@ var t33 = 0.0
 for _ in 0..<13 { s33.feedGrid(t: t33, g: flatGrid(150)); t33 += 80 }
 var g33 = flatGrid(150)
 for i in [244, 245] { g33[i] = 100 }  // 2칸
-s33.seeLateralSweep(t: t33)
 for _ in 0..<3 { s33.feedGrid(t: t33, g: g33); t33 += 80 }
 check("격자 2칸 채증회귀 차단", s33.events, fires: 0)
 
@@ -504,25 +483,9 @@ var t34 = 0.0
 for _ in 0..<13 { s34.feedGrid(t: t34, g: flatGrid(150)); t34 += 80 }
 var g34 = flatGrid(150)
 fillRect(&g34, gx0: 5, gx1: 10, gy0: 4, gy1: 9)  // 36칸, bw=6 bh=6 aspect=1.0
-s34.seeLateralSweep(t: t34)
 for _ in 0..<3 { s34.feedGrid(t: t34, g: g34); t34 += 80 }
 check("격자 폰움직임 정사각 차단(aspect)", s34.events, fires: 0)
 
-// 35. 차/이동 지속 모션(실기기 채증 2026-09-04 23:11~12, 손짓 없이 gridpass 20+회) — 억제해야.
-//     정사각 변화(발화 조건 미달이나 active)로 창을 채워 sustained 성립 → 이후 진짜 밴드도 억제.
-var s35 = Sim()
-s35.seeHand(t: 0)
-var t35 = 0.0
-for k in 0..<16 {
-  var g = flatGrid(150)
-  if k % 2 == 0 { for gy in 6...10 { for gx in 6...10 { g[gy * gridN + gx] = 100 } } } // 5x5 정사각(지속 변화)
-  s35.feedGrid(t: t35, g: g); t35 += 80
-}
-var gb35 = flatGrid(150)
-fillRect(&gb35, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 가로 밴드(평소엔 발화할 손짓 모양)
-s35.seeLateralSweep(t: t35)
-for _ in 0..<3 { s35.feedGrid(t: t35, g: gb35); t35 += 80 }
-check("격자 차-지속모션 억제(채증)", s35.events, fires: 0)
 
 // 36. 조용하다가 단일 손 스윕 1회 — 지속모션 아님 → 발화해야(정상 손짓 보존 확인).
 var s36 = Sim()
@@ -531,7 +494,6 @@ var t36 = 0.0
 for _ in 0..<13 { s36.feedGrid(t: t36, g: flatGrid(150)); t36 += 80 } // 조용(active=false)
 var gb36 = flatGrid(150)
 fillRect(&gb36, gx0: 3, gx1: 13, gy0: 7, gy1: 8)
-s36.seeLateralSweep(t: t36)
 for _ in 0..<3 { s36.feedGrid(t: t36, g: gb36); t36 += 80 }
 check("격자 조용후 단일스윕 발화", s36.events, fires: 1, expectContains: ["gridpass"])
 
@@ -545,16 +507,6 @@ fillRect(&gb37, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 가로 밴드(손짓 모양)
 for _ in 0..<3 { s37.feedGrid(t: t37, g: gb37); t37 += 80 }
 check("격자 손미관측 차단(안드 fe2c279)", s37.events, fires: 0)
 
-// 38. 정면 접근(손 관측 O, 가로 이동 X — 실기기 05:59과 반대: 앞에서만 움직임) — 격자 차단해야.
-//     사장님 "왼→오로 안 움직이고 앞에서만 움직였는데 넘어가" 회귀 방지. seeHand만, seeLateralSweep 없음.
-var s38 = Sim()
-var t38 = 0.0
-s38.seeHand(t: 0)  // 손은 봤지만 가로로 안 움직임(정면 접근)
-for _ in 0..<13 { s38.feedGrid(t: t38, g: flatGrid(150)); t38 += 80 }
-var gb38 = flatGrid(150)
-fillRect(&gb38, gx0: 3, gx1: 13, gy0: 7, gy1: 8) // 밴드 모양이어도 가로 이동 없음
-for _ in 0..<3 { s38.feedGrid(t: t38, g: gb38); t38 += 80 }
-check("격자 정면접근 차단(가로이동 없음)", s38.events, fires: 0)
 
 print("\n결과: PASS \(pass) / FAIL \(fail)")
 exit(fail == 0 ? 0 : 1)

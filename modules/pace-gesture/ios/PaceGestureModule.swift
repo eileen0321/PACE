@@ -982,8 +982,6 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
       }
-      // 🔴 2026-09-06 격자 가로-스윕 확인용 — 손이 실제로 가로로 움직인 시각 기록(격자 발화 게이트).
-      if sweep >= self.gridLateralSweepMin { self.lastLateralSweepMs = nowMs }
       // 왕복 반전 조건(채증 사진 기반 — 턱 괸 손의 한 방향 드리프트 차단, 진짜 "훠이"는 반전 ≥1회)
       var reversals = 0
       if handSize > 0, self.tracks[ti].xHistory.count >= 3 {
@@ -1157,35 +1155,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   iOS는 같은 손짓이 **가로로 긴 띠(aspect 2.4~4.3, cons 0.88~1.00)** 로 잡힌다. 안드 값(≤0.9)을 그대로
   //   쓰면 진짜 손짓이 전부 막힌다. → 안드의 의도(얼굴/정면접근=정사각을 배제)는 유지하되, iOS 좌표계에 맞게
   //   **정사각 근처(0.9~1.111)만 차단**하고 가로·세로 어느 쪽으로든 긴 띠(손 스윕)는 통과시킨다.
-  private let gridAspectSquareLo: Double = 0.9    // 이 값~Hi 사이(정사각 근처)면 얼굴/정면접근 — 차단
-  private let gridAspectSquareHi: Double = 1.111  // = 1/0.9 (안드 세로 게이트의 전치 대칭)
+  private let gridMaxAspect: Double = 0.9         // 안드 GROSS_MOTION_MAX_ASPECT (aspect=bh/bw ≤ 0.9, iOS 전치 반영)
   private var gridHistory: [(t: Double, g: [Double])] = []
-  // 🔴 2026-09-04 실기기 채증(diag 23:11~23:12 차 안, 손짓 없이 gridpass 20+회 연속 발화) — 차가
-  //   움직이며 햇빛/그늘/풍경이 프레임 전체를 균일하게 바꿔 격자가 "손 스윕"으로 오판. 손짓은 짧은 1회
-  //   전환이지만 차/이동은 **매 프레임 지속적**으로 크게 변한다. 최근 창에서 큰 변화 프레임 비율이 높으면
-  //   (=지속 환경 모션) 격자 발화를 억제한다. 한 번의 손 스윕(≈0.4s, 몇 프레임)은 비율이 낮아 통과.
-  private let gridActivityWindowMs: Double = 2500
-  private let gridActivityMinSamples: Int = 12
-  private let gridSustainedRatio: Double = 0.45
-  private var gridActivity: [(t: Double, a: Bool)] = []
   // 🔴 2026-09-06 안드 이식(fe2c279 LUMAPASS_HAND_RECENT_MS) — 밝기 기반 축(lumapass·격자)은 판별
   //   기준이 "밝기 변화 크기" 하나뿐이라 손 없이도(차·조명·얼굴) 발화한다. **실제 손을 최근 3초 내
-  //   본 적 있을 때만** 인정한다(밝기만으로는 발화 안 함). iOS는 Vision 손 관측을 lastHandSeenMs로 추적.
+  //   본 적 있을 때만** 인정한다. 차/조명 방어는 안드처럼 이 게이트가 담당(내 지속모션·가로이동 게이트 제거).
   private let lumapassHandRecentMs: Double = 3000
-  // 🔴 2026-09-06 사장님 지적("왼→오로 안 움직이고 앞에서만 움직였는데 넘어가") — 채증(diag 04:48
-  //   wave_summary maxGrowth=2.44 = 손이 앞으로 다가옴): 격자 축(gross-motion)은 방향 무관이라 손이
-  //   앞에 오기만 해도(접근/정면) 밝기 변화로 발화한다. 손짓(가로 스윕)과 구분 불가. iOS는 방향성 있는
-  //   lumapass(L→M→R 순차 = 가로 스윕만, 정면 동시변화는 순서조건서 탈락)로 감지를 일원화한다.
-  //   → 격자 단독 발화를 끈다(계산·진단은 유지, 복원은 이 플래그 true). 안드는 격자를 켜두지만 iOS는
-  //   사장님 사양("스윕만 넘김")에 맞춘다 — 격자는 정면 접근을 못 걸러 이 사양과 상충.
-  // 🔴 2026-09-06(2차) 사장님 "왜 안 돼" — 채증(diag 05:59 maxSweep=1.35 = 진짜 가로 스윕인데 안 잡힘):
-  //   격자를 통째로 끄니 진짜 스윕도 죽었다. 격자를 다시 켜되 **랜드마크 가로 이동(sweep=x범위/손크기)이
-  //   최근 있을 때만** 발화한다 — 정면 접근(가로 이동 없음, sweep 낮음)은 차단, 가로 스윕(sweep 큼)은 통과.
-  //   단일 스와이프(반전 0회)도 잡으려 sweep 축(반전 필요)이 아니라 raw sweep 값을 쓴다.
-  private let gridStandaloneEnabled = true
-  private let gridLateralSweepMin: Double = 0.4   // 최근 이 이상 가로 이동 있어야 격자 발화(홀딩 지터 ~0.2, 실측 스윕 maxSweep 0.65)
-  private let gridLateralWindowMs: Double = 900
-  private var lastLateralSweepMs: Double = 0
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1201,11 +1176,16 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private var brightRefM: Double = 0
   private var brightRefR: Double = 0
   // 안드 checkGrossMotion 이식(2026-08-27) — 구조·수치 동일. 오탐 방어 = 상한 0.5 + 일관성 0.8 + 밀도 0.55.
+  // 🔴 2026-09-06(3차) 안드 verbatim 복귀 — 사장님 "안드처럼 하라니까". 방향 비대칭(오→왼만 되고 왼→오
+  //   안 됨)은 내가 넣은 가로이동 게이트(랜드마크 sweep이 방향별 추적품질에 의존)가 원인. 안드는 방향
+  //   게이트를 포기(방향 무관=대칭)했다. 내 발명품(지속모션 억제·가로이동 게이트·양방향 notSquare) 전부
+  //   제거하고 안드 checkGrossMotion 로직/값을 그대로 미러한다. iOS 하드웨어 실측 차이 2곳만 보정:
+  //   ① aspect = bh/bw (iOS 전면버퍼가 안드 대비 90° 전치 — 안드 bw/bh≤0.9에 대응), ② 일관성 0.6
+  //   (안드 0.8이나 iOS는 화면빛 받은 손이 밝기 섞임, 실측 0.79 — diag 06:07). 나머지는 안드 그대로.
   private func checkGridMotion(_ grid: [Double], _ nowMs: Double) {
     gridHistory.append((nowMs, grid))
     while let f = gridHistory.first, nowMs - f.t > gridWindowMs { gridHistory.removeFirst() }
-    // ⚠️ 활동 추적은 refractory와 무관하게 **매 프레임** 돌아야 한다(불응 중에도 환경 변화를 봐야 차 감지).
-    //   그래서 refractory 가드를 changed 계산 뒤, 발화 직전으로 옮겼다.
+    guard nowMs - lastTriggerMs > passRefractoryMs else { return }
     guard let ref = gridHistory.last(where: { nowMs - $0.t >= gridLagMs }) else { return }
     var changed = 0, darkened = 0
     var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
@@ -1219,48 +1199,21 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         if d < 0 { darkened += 1 }
       }
     }
-    let fractionAll = Double(changed) / Double(grid.count)
-    // 지속 환경 모션 추적 — 이 프레임이 "큰 변화"였는지 기록(발화 여부와 무관, 매 프레임).
-    gridActivity.append((nowMs, fractionAll >= gridFracMin))
-    while let f = gridActivity.first, nowMs - f.t > gridActivityWindowMs { gridActivity.removeFirst() }
     guard changed > 0 else { return }
-    let fraction = fractionAll
+    let fraction = Double(changed) / Double(grid.count)
     let darkenRatio = Double(darkened) / Double(changed)
     let bw = maxX - minX + 1, bh = maxY - minY + 1
-    let bbox = Double(bw * bh)
-    let density = Double(changed) / max(1, bbox)
-    let aspect = bh > 0 ? Double(bw) / Double(bh) : 0  // bw/bh. iOS는 손 스윕이 가로로 길어 큰 값, 얼굴=정사각(~1.0)
-    let notSquare = aspect <= gridAspectSquareLo || aspect >= gridAspectSquareHi  // 정사각(얼굴) 근처만 배제
+    let density = Double(changed) / max(1, Double(bw * bh))
+    let aspect = bw > 0 ? Double(bh) / Double(bw) : 0  // iOS 전치: 안드 bw/bh에 대응하도록 bh/bw (손 스윕=가로로 길어 <1)
     let consistency = max(darkenRatio, 1 - darkenRatio)
     let densityTh = changed <= gridSmallCells ? gridMinDensitySmall : gridMinDensityBig
-    // 지속 환경 모션 억제 — 최근 창의 큰-변화 프레임 비율이 높으면(차·이동) 발화 금지.
-    let activeCount = gridActivity.reduce(0) { $0 + ($1.a ? 1 : 0) }
-    // 🔴 2026-09-04(윈도우) — 창이 덜 찼을 때가 무방비였다. 합성 시뮬(scripts/wave_sustained_motion.js)로
-    //   재현·측정: 차량형 시나리오(세로 그늘 띠가 훑고 지나감 3종) 191회 발화 중 **14회가 그대로
-    //   새어 나간다.** 전부 창=1/1 — 표본이 gridActivityMinSamples(12)에 못 미치는 약 0.4초 동안
-    //   억제가 발동하지 않기 때문이다. 실사용에서는 "차 타고 출발한 직후 몇 번 넘어감"으로 나타난다.
-    //   → 창이 덜 찼으면 "판단 불가"로 보고 발화하지 않는다. 오탐(안 원하는데 넘어감)이
-    //     미탐(한 번 더 흔들면 됨)보다 훨씬 나쁘다.
-    //   ⚠️ 이 규칙이 안전한 것은 위 gridActivity.append 가 `guard changed > 0` **앞**에 있어
-    //     조용한 프레임도 창에 쌓이기 때문이다. 순서가 바뀌면 조용한 방에서 창이 영영 안 차
-    //     손짓이 통째로 죽는다(안드에서 실제로 그 조합을 만들어 확인했다). 순서를 바꾸지 말 것.
-    //   안드로이드 PaceHandWaveDetector.checkGrossMotion 과 동일한 처방·동일한 값.
-    let windowReady = gridActivity.count >= gridActivityMinSamples
-    let sustained = !windowReady
-      || Double(activeCount) / Double(gridActivity.count) >= gridSustainedRatio
-    // 손-확인 게이트(안드 fe2c279 이식) — 최근 실제 손 관측이 없으면 밝기만으로 발화 금지(차·조명·얼굴).
+    // 손-확인 게이트(안드 fe2c279) — 최근 손 관측 없으면 밝기만으로 발화 금지(차·조명·얼굴). 차 방어는 안드처럼 이것으로.
     let handSeen = lastHandSeenMs > 0 && nowMs - lastHandSeenMs <= lumapassHandRecentMs
-    guard nowMs - lastTriggerMs > passRefractoryMs else { return }
-    let lateralSweep = nowMs - lastLateralSweepMs <= gridLateralWindowMs  // 최근 가로 이동 있었나(정면 접근 배제)
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained, handSeen, gridStandaloneEnabled, lateralSweep {
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect, handSeen {
       gridHistory.removeAll()
       fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
-    } else if handSeen, !lateralSweep, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained {
-      onDiag(String(format: "grid(정면접근 차단·가로이동 없음) cells=%d frac=%.3f asp=%.2f", changed, fraction, aspect))
-    } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
+    } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, aspect <= gridMaxAspect {
       onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
-    } else if sustained, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
-      onDiag(String(format: "gridsuppress(지속모션 %d/%d) cells=%d frac=%.3f asp=%.2f", activeCount, gridActivity.count, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {
       onDiag(String(format: "gridnear frac=%.3f cons=%.2f dens=%.2f asp=%.2f cells=%d", fraction, consistency, density, aspect, changed))
     }

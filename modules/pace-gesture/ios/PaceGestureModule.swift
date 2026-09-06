@@ -1163,6 +1163,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let gridActivityMinSamples: Int = 12
   private let gridSustainedRatio: Double = 0.45
   private var gridActivity: [(t: Double, a: Bool)] = []
+  // 🔴 2026-09-06 안드 이식(fe2c279 LUMAPASS_HAND_RECENT_MS) — 밝기 기반 축(lumapass·격자)은 판별
+  //   기준이 "밝기 변화 크기" 하나뿐이라 손 없이도(차·조명·얼굴) 발화한다. **실제 손을 최근 3초 내
+  //   본 적 있을 때만** 인정한다(밝기만으로는 발화 안 함). iOS는 Vision 손 관측을 lastHandSeenMs로 추적.
+  private let lumapassHandRecentMs: Double = 3000
 
   private let dipWindowMs: Double = 1200
   private var dipHistory: [(t: Double, luma: Double, l: Double, m: Double, r: Double)] = []
@@ -1225,10 +1229,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     let windowReady = gridActivity.count >= gridActivityMinSamples
     let sustained = !windowReady
       || Double(activeCount) / Double(gridActivity.count) >= gridSustainedRatio
+    // 손-확인 게이트(안드 fe2c279 이식) — 최근 실제 손 관측이 없으면 밝기만으로 발화 금지(차·조명·얼굴).
+    let handSeen = lastHandSeenMs > 0 && nowMs - lastHandSeenMs <= lumapassHandRecentMs
     guard nowMs - lastTriggerMs > passRefractoryMs else { return }
-    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained {
+    if fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare, !sustained, handSeen {
       gridHistory.removeAll()
       fireTrigger(String(format: "gridpass cells=%d frac=%.3f cons=%.2f dens=%.2f asp=%.2f", changed, fraction, consistency, density, aspect), nowMs)
+    } else if !handSeen, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
+      onDiag(String(format: "gridblock(손 미관측 %.0fms전) cells=%d frac=%.3f asp=%.2f", lastHandSeenMs > 0 ? nowMs - lastHandSeenMs : -1, changed, fraction, aspect))
     } else if sustained, fraction >= gridFracMin, fraction <= gridFracMax, consistency >= gridDarkenRatio, density >= densityTh, notSquare {
       onDiag(String(format: "gridsuppress(지속모션 %d/%d) cells=%d frac=%.3f asp=%.2f", activeCount, gridActivity.count, changed, fraction, aspect))
     } else if fraction >= gridFracMin * 0.5 {
@@ -1253,7 +1261,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
     // 잡혀 크로싱(2회 포착 필요)이 성립 불가. **lumapass**: 세로 3분할 밝기가 순차로 얕게(15%) 꺼지는
     // 패턴 = 중거리 통과. 손 모양 인식 불요·추적 끊김 무관. 사용자 왼→오 = 이미지 오른쪽→가운데→왼쪽
     // (부호 실측). 전역 조명 변화(영상 밝기·AE)는 세 구간 동시 변동이라 순서 조건에서 걸러진다.
+    // 손-확인 게이트(안드 fe2c279) — lumapass도 밝기만 보는 축이라 최근 손 관측 없으면 발화 금지.
     if nowMs - lastTriggerMs > passRefractoryMs, dipHistory.count >= 6,
+       lastHandSeenMs > 0, nowMs - lastHandSeenMs <= lumapassHandRecentMs,
        let firstD = dipHistory.first, nowMs - firstD.t >= 500 {
       // 🔴 2026-08-27 안드 실측 이식(0984254 — "손은 어두워지지 않는다, 밝아진다"): 어두운 배경(천장)
       // 앞을 화면 불빛 받은 손이 지나가면 밝기가 **올라간다**. 어두워짐만 보던 기존 onset은 그 통과를

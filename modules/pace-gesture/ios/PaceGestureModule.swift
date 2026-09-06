@@ -354,9 +354,9 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
-  private let crossStandalone = false
+  private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프(straight1.0 netdx0.23) → cross 축이 정답(대칭·속도게이트·손필요)
   private let glideStandalone = false
-  private let sweepStandalone = true  // 🔴 2026-09-06 채증 확정 — 사장님 손짓=왕복(sweep 1.3~1.6), sweep 축이 정답
+  private let sweepStandalone = false  // 🔴 2026-09-06 채증 재확인: 손짓이 단방향(반전0)이라 sweep 축(반전≥1 요구)은 부적합 → cross로 전환
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
   private let occlusionStandalone = false  // 안드 OCCLUSION_STANDALONE=false 미러
   private let lumapassStandalone = false  // 🔴 2026-09-06 채증 — luma 축은 사장님 손(0.15~0.17) NEAR게이트에 대부분 막히고 얼굴/몸 리스크. sweep 축으로 일원화.

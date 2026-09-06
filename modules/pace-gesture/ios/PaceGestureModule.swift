@@ -382,7 +382,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // (crossMinDirectness는 "마지막 단조 구간"만 평가하는 방식으로 대체돼 어디서도 쓰이지 않았다.
   //  남겨두면 방향 일관성 게이트가 있는 것처럼 오독된다. 흔들림 방어는 단조 구간 + needRange + segSteps + 속도.)
   // (크로싱 기록/재무장 상태는 HandTrack 안으로 이동 — 맥 6b5c668, 두 트랙 교대가 만들던 유령 스트로크 차단)
-  private let crossRearmReturnX: Double = 0.08  // 발화 지점 기준 **누적** 복귀(아래 재무장 주석)
+  private let crossRearmReturnX: Double = 0.08
+  private let crossRearmOnReturn = false  // 🔴 2026-09-07 손 든 채 재무장 OFF(리턴 이중발화 차단) — 손 소실로만 재무장
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
   private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
   private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
@@ -891,8 +892,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // ⚠️ 여기서 tracks[ti].lastSeenMs를 쓰면 안 된다 — 이 블록 위(709행)에서 이미 nowMs로
         //    갱신돼 공백이 항상 0이다. 크로싱 전용 시각(crossLastT)을 따로 둔다.
         if !self.tracks[ti].crossArmed {
-          // 방향 무관(2026-08-26 부호 뒤집힘 확진) — 발화 지점에서 어느 쪽으로든 누적 이탈이면 복귀로 본다.
-          let returned = abs(c.x - self.tracks[ti].crossFireX) >= self.crossRearmReturnX
+          // 🔴 2026-09-07 "두번씩 넘어감" 수정 — returned(손 든 채 되돌림) 재무장을 끈다. 이게 왕복의
+          //   리턴 스트로크를 재발화시켰다(returndrop은 부호 뒤집힘으로 못 씀). 재무장은 **손 소실(absence)**
+          //   에서만 — 손을 한 번 빼야 다음 손짓 인정 = 한 동작 한 발화(방향 무관). 복원은 crossRearmOnReturn true.
+          let returned = self.crossRearmOnReturn && abs(c.x - self.tracks[ti].crossFireX) >= self.crossRearmReturnX
           let reappeared = nowMs - self.tracks[ti].crossLastT >= self.crossRearmAbsentMs
           if returned || reappeared {
             self.tracks[ti].crossArmed = true

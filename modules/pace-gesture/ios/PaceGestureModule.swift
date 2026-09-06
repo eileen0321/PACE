@@ -385,12 +385,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossRearmReturnX: Double = 0.08
   private let crossRearmOnReturn = false  // 🔴 2026-09-07 손 든 채 재무장 OFF(리턴 이중발화 차단) — 손 소실로만 재무장
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
-  private let crossNeedMin: Double = 0.07       // needRange 하한(먼 손도 이만큼은 지나가야)
-  private let crossNeedMax: Double = 0.10       // needRange 상한 — 근거리가 원리적으로 불가능해지지 않게
+  private let crossNeedMin: Double = 0.15       // 🔴 2026-09-07 과발화(작은 움직임 3번) 수정 — 하한 0.07→0.15
+  private let crossNeedMax: Double = 0.22       // 🔴 2026-09-07 0.10→0.22(근거리 큰 스와이프만)
   private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
   // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해
   // 진짜 스트로크(속도 0.7~1.4 실측)를 죽였다. 큰 이동(crossBigNetX)의 느린 통과는 별도 통과 유지.
-  private let crossMinSegSpeed: Double = 0.40   // 화면폭/초 — 표류·잔움직임 차단
+  private let crossMinSegSpeed: Double = 0.70   // 🔴 2026-09-07 0.40→0.70 — 작은/느린 움직임 차단(딱 빠른 스와이프만)
   private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가

@@ -355,7 +355,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
   private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프 → cross 축
-  private let crossWaveDir: Double = 0  // 🔴 2026-09-06 방향 게이트 OFF — 채증으로 부호 뒤집힘 확인(왼→오가 +에서 -로). 안드처럼 양방향+returndrop.
+  private let crossWaveDir: Double = 0  // 방향 게이트 OFF(부호 뒤집힘)
+  private let crossReturndropEnabled = false  // 🔴 2026-09-06 단방향 스와이프엔 리턴이 없어 returndrop이 왼오를 오인 억제 — OFF
   private let glideStandalone = false
   private let sweepStandalone = false  // 🔴 2026-09-06 채증 재확인: 손짓이 단방향(반전0)이라 sweep 축(반전≥1 요구)은 부적합 → cross로 전환
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
@@ -979,7 +980,11 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
             // **통과는 방향 무관 발화**(사장님 원칙 "지나갔으면 넘어가야") — 오발화 방어(스트로크 단위·
             // 속도 게이트·트랙 분리)는 그대로다.
             let dir: Double = segNet > 0 ? 1 : -1
-            if dir == -self.crossLastFireDir && nowMs - self.lastTriggerMs < 2000 {
+            // 🔴 2026-09-06 returndrop OFF — 실기기 로그(diag 13:28)로 확인: 이게 사장님 왼→오(net 양수)를
+            //   직전 오→왼(net 음수)의 "리턴"으로 오인해 죽였다("왼오 안되고 오왼됨"). 사장님은 단방향
+            //   스와이프를 하나씩 하셔서(straight=1.0) 리턴 스트로크 자체가 없어 returndrop이 해만 된다.
+            //   각 스와이프가 그대로 발화하게 끈다. (왕복 웨이브 사용자면 복원: crossReturndropEnabled true)
+            if self.crossReturndropEnabled, dir == -self.crossLastFireDir && nowMs - self.lastTriggerMs < 2000 {
               // 복귀 스트로크(직전 발화의 반대 방향, 2초 내) — **1회만** 무시하고 기억을 비운다.
               // 🔴 2026-08-26 07:4x 사장님("왼오에서 안 되고 오→왼으로 손 돌릴 때 넘어간다") — 기억을
               //   안 비우면 복귀 방향에 한 번 잘못 물렸을 때 진짜 스트로크가 전부 '복귀'로 오인돼

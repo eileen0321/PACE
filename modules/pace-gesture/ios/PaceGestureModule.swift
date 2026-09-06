@@ -354,7 +354,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
-  private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프(straight1.0 netdx0.23) → cross 축이 정답(대칭·속도게이트·손필요)
+  private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프 → cross 축
+  private let crossWaveDir: Double = 1  // 🔴 2026-09-06 채증 방향: 왼→오=segNet 양수(+)만 발화. -1=반대, 0=양방향.
   private let glideStandalone = false
   private let sweepStandalone = false  // 🔴 2026-09-06 채증 재확인: 손짓이 단방향(반전0)이라 sweep 축(반전≥1 요구)은 부적합 → cross로 전환
   private let nearpassStandalone = false   // 안드에 없는 iOS 전용 dip 축 — 안드 정렬로 발화 차단
@@ -955,6 +956,14 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           let segSpeed = segMs > 0 ? abs(segNet) / (segMs / 1000) : .greatestFiniteMagnitude
           let speedOk = segSpeed >= self.crossMinSegSpeed || abs(segNet) >= self.crossBigNetX
           if rangeOk, speedOk, self.tracks[ti].crossArmed {
+            // 🔴 2026-09-06 채증 방향 확정 — 사장님 왼→오 = segNet 양수(+)(diag 13:07:33 netdx +0.10~+0.23,
+            //   x 증가), 오→왼 = 음수(-)(13:08:01 netdx -0.10~-0.17). "오왼도 넘어감" 수정: 왼→오(양수)만 발화.
+            //   ⚠️ 자세 바뀌면 부호 뒤집힐 수 있음(안드 경고) — 그때 crossWaveDir만 -1로. 0=양방향.
+            if self.crossWaveDir != 0, (segNet > 0 ? 1 : -1) != self.crossWaveDir {
+              self.tracks[ti].crossHistory.removeAll()
+              self.onDiag(String(format: "crossdir skip(오왼) net=%+.2f", segNet))
+              return glideAbs
+            }
             self.tracks[ti].crossHistory.removeAll()
             // 🔴 2026-08-25 23:00 재현("왼오 안 먹고 오왼에 바뀜") — 불응 중 완성된 스트로크가 기록에
             // 남았다가 불응이 풀리는 순간(=손을 되돌리는 타이밍) 뒤늦게 발화해 방향이 뒤집혀 보였다.

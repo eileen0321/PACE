@@ -64,7 +64,8 @@ export function useFeedRemoteControl(callbacks: Callbacks) {
   const diagAggRef = useRef({ handTicks: 0, noHandTicks: 0, maxHand: 0, maxGrowth: 0, maxSweep: 0, camInt: 0, waves: 0, since: Date.now() });
   const noteDiagForEvidence = (text: string) => {
     const a = diagAggRef.current;
-    if (text.startsWith('crossskip')) { diagLog('cross_skip', text); return; } // 방향 한정으로 무시된 크로싱 — 부호 검증용
+    if (text.startsWith('crossskip')) { diagLog('cross_skip', text); return; }
+    if (text.startsWith('crossdir')) { diagLog('cross_dir_skip', text); return; } // 방향 게이트로 무시된 반대방향(오왼) // 방향 한정으로 무시된 크로싱 — 부호 검증용
     if (text.startsWith('nearskip')) { diagLog('nearpass_skip', text); return; } // 근접 dip 오→왼 무시 — 방향 검증용
     if (text.startsWith('lumaskip')) { diagLog('lumapass_skip', text); return; } // 중거리 밝기 통과 오→왼 무시
     if (text.startsWith('crossdrop')) { diagLog('cross_drop_refractory', text); return; } // 불응 중 스트로크 폐기

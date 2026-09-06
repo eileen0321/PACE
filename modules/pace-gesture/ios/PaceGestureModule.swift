@@ -354,7 +354,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
-  private let crossStandalone = true   // 🔴 2026-09-06 채증: 사장님 손짓=단방향 스와이프 → cross 축
+  private let crossStandalone = false  // 🔴 2026-09-06 카메라 손짓 발화 OFF — 모든 축이 iOS서 오발화/미발화 반복(로그 실증). BT 리모컨+자동넘기기로. 복원은 true.
   private let crossWaveDir: Double = 0  // 방향 게이트 OFF(부호 뒤집힘)
   private let crossReturndropEnabled = false  // 🔴 2026-09-06 단방향 스와이프엔 리턴이 없어 returndrop이 왼오를 오인 억제 — OFF
   private let glideStandalone = false

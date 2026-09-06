@@ -165,7 +165,7 @@ extension Sim {
     let handSeen = t - lastHandSeenMs <= 3000  // 손-확인 게이트(모듈 미러)
     let lateralSweep = t - lastLateralSweepMs <= 900  // 가로이동 게이트(정면 접근 배제, 모듈 미러)
     guard t - lastTriggerMs > passRefractoryMs else { return }
-    if fraction >= 0.05, fraction <= 0.30, cons >= 0.8, density >= densityTh, notSquare, !sustained, handSeen, gridStandaloneEnabled, lateralSweep {
+    if fraction >= 0.05, fraction <= 0.30, cons >= 0.6, density >= densityTh, notSquare, !sustained, handSeen, gridStandaloneEnabled, lateralSweep {
       gridHistory.removeAll(); lastTriggerMs = t; events.append("FIRE gridpass")
     }
   }

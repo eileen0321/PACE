@@ -1145,7 +1145,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   가로세로 비슷)로 고쳤다. iOS도 셋을 그대로 이식(안드에 없는 손-부재 게이트·비활성 플래그는 제거).
   private let gridFracMin: Double = 0.05      // 안드 GROSS_MOTION_CELL_FRACTION (256칸 중 13칸)
   private let gridFracMax: Double = 0.30      // 안드 GROSS_MOTION_CELL_FRACTION_MAX
-  private let gridDarkenRatio: Double = 0.8   // 안드 GROSS_MOTION_DARKEN_RATIO
+  // 🔴 2026-09-06 실기기 채증(diag 06:07 사장님 스윕: cons 0.5~0.79 섞인 밝기, 0.8 문턱에 간발 미달로
+  //   손짓 전혀 안 됨) — iOS는 화면 불빛 받은 손이 밝은 배경 앞을 지나 밝아짐/어두워짐이 섞인다(안드 0.8과
+  //   환경 다름). 손확인+가로이동+aspect 게이트가 discrimination을 담당하므로 일관성은 0.6으로 낮춘다.
+  private let gridDarkenRatio: Double = 0.6   // 안드 0.8 → iOS 실측 0.6(섞인 밝기 스윕 통과)
   private let gridSmallCells: Int = 3         // 안드 GROSS_MOTION_SMALL_CELLS
   private let gridMinDensitySmall: Double = 0.9  // 안드 GROSS_MOTION_MIN_DENSITY_SMALL
   private let gridMinDensityBig: Double = 0.15   // 안드 GROSS_MOTION_MIN_DENSITY_BIG
@@ -1180,7 +1183,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   최근 있을 때만** 발화한다 — 정면 접근(가로 이동 없음, sweep 낮음)은 차단, 가로 스윕(sweep 큼)은 통과.
   //   단일 스와이프(반전 0회)도 잡으려 sweep 축(반전 필요)이 아니라 raw sweep 값을 쓴다.
   private let gridStandaloneEnabled = true
-  private let gridLateralSweepMin: Double = 0.6   // 최근 이 이상 가로 이동 있어야 격자 발화(홀딩 지터 ~0.2, 실스윕 1.0+)
+  private let gridLateralSweepMin: Double = 0.4   // 최근 이 이상 가로 이동 있어야 격자 발화(홀딩 지터 ~0.2, 실측 스윕 maxSweep 0.65)
   private let gridLateralWindowMs: Double = 900
   private var lastLateralSweepMs: Double = 0
 

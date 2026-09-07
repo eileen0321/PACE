@@ -391,7 +391,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해
   // 진짜 스트로크(속도 0.7~1.4 실측)를 죽였다. 큰 이동(crossBigNetX)의 느린 통과는 별도 통과 유지.
   private let crossMinSegSpeed: Double = 0.45   // 🔴 2026-09-07(2) 0.70은 과함 — 0.45
-  private let crossBigNetX: Double = 0.30       // 이만큼 지나갔으면 속도 무관 통과
+  private let crossBigNetX: Double = 2.0        // 🔴 2026-09-08 바이패스 사실상 해제 — 로그(spd 0.13·0.18 느린데 net≥0.30로 통과=drift/return 과발화). 속도 필수로.
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가
   // 남았다(01:09 실측). 발화 후에는 **어느 손이든** 움직임이 600ms 이상 완전히 멎어야 다음 손짓.

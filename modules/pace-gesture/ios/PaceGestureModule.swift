@@ -386,12 +386,12 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossRearmReturnX: Double = 0.08
   private let crossRearmOnReturn = false  // 🔴 2026-09-07 손 든 채 재무장 OFF(리턴 이중발화 차단) — 손 소실로만 재무장
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
-  private let crossNeedMin: Double = 0.10       // 🔴 2026-09-07(2) 0.15는 안 잡힘 — 0.10로(Vision 추적될 때 잡게)
-  private let crossNeedMax: Double = 0.15       // 🔴 2026-09-07(2) 0.22→0.15
-  private let crossNeedK: Double = 0.5          // 손폭 대비 비례 계수(제자리 흔들림 차단 근거)
+  private let crossNeedMin: Double = 0.06       // 🔴 2026-09-09 채증: 사장님 스와이프 이동폭 0.05~0.10(작음). 가만히=0.00이라 0.06로 구분.
+  private let crossNeedMax: Double = 0.09       // 🔴 2026-09-09 0.15→0.09(작은 스와이프 통과)
+  private let crossNeedK: Double = 0.3          // 🔴 2026-09-09 0.5→0.3 — 근접 손(size 0.25)에서 needRange가 상한에 붙어 작은 스와이프를 막던 것 완화
   // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해
   // 진짜 스트로크(속도 0.7~1.4 실측)를 죽였다. 큰 이동(crossBigNetX)의 느린 통과는 별도 통과 유지.
-  private let crossMinSegSpeed: Double = 0.35   // 🔴 2026-09-08 0.45→0.35 — 느린 표류(0.13~0.18)는 차단, 조금 느린 스와이프는 잡게(bigNet off와 함께)
+  private let crossMinSegSpeed: Double = 0.25   // 🔴 2026-09-09 채증: 사장님 스와이프 속도 ~0.3(느림), 가만히 ~0.03. 0.25로 구분.
   private let crossBigNetX: Double = 2.0        // 🔴 2026-09-08 바이패스 사실상 해제 — 로그(spd 0.13·0.18 느린데 net≥0.30로 통과=drift/return 과발화). 속도 필수로.
   // 2026-08-21 사장님("손짓 한 번에 3번씩 넘어가는 건 아니잖아") — **전역** burst당 1회 발화.
   // 처음엔 트랙별로 뒀더니 트랙이 잠깐 끊겨 리셋될 때 burst 기억도 지워져 1.5초 간격 재발화가

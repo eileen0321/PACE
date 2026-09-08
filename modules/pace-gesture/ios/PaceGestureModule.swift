@@ -354,6 +354,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
+  private let captureLogging = true  // 🔴 2026-09-09 발화는 유지하고 프레임별 손 수치만 로깅(왜 안 잡히는지 진단)
   private let crossStandalone = true   // 🔴 2026-09-06 재활성 — 사장님 손짓 원함. returndrop off·방향무관(왼오 됐던 상태 복원)
   private let crossWaveDir: Double = 0  // 방향 게이트 OFF(부호 뒤집힘)
   private let crossReturndropEnabled = false  // 🔴 2026-09-06 단방향 스와이프엔 리턴이 없어 returndrop이 왼오를 오인 억제 — OFF
@@ -1013,8 +1014,8 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
       if let mx = self.tracks[ti].xHistory.map({ $0.x }).max(), let mn = self.tracks[ti].xHistory.map({ $0.x }).min(), handSize > 0 {
         sweep = (mx - mn) / handSize
       }
-      // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 손 수치(발화 없음). netDx700 부호가 방향.
-      if self.captureMode {
+      // 🔴 2026-09-06 채증 모드 — 라벨 튜닝용 프레임별 손 수치. captureLogging=발화 유지+로깅(진단), captureMode=발화차단.
+      if self.captureMode || self.captureLogging {
         self.onDiag(String(format: "capH size=%.2f x=%.2f netdx=%+.2f sweep=%.2f straight=%.2f score=%.2f near=%d",
                             handSize, c.x, netDx700, sweep, straight700, handScore, handSize >= self.nearBandHandSize ? 1 : 0))
       }

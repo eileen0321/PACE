@@ -386,6 +386,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossRearmReturnX: Double = 0.08
   private let crossRearmOnReturn = true   // 🔴 2026-09-10 재활성 — 손 든 채 연속 스와이프 재무장(3번 이후 안되던 것). 되돌림으로도 재무장.
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
+  private let crossRearmTimeoutMs: Double = 1500  // 🔴 2026-09-11 발화 후 1.5초(불응 지나고) 지나면 무조건 재무장(래치 고착 방지)
   private let crossNeedMin: Double = 0.05       // 🔴 2026-09-11 0.06→0.05(작은 스와이프도, 가만히=0.00은 여전히 차단)
   private let crossNeedMax: Double = 0.09       // 🔴 2026-09-09 0.15→0.09(작은 스와이프 통과)
   private let crossNeedK: Double = 0.3          // 🔴 2026-09-09 0.5→0.3 — 근접 손(size 0.25)에서 needRange가 상한에 붙어 작은 스와이프를 막던 것 완화
@@ -898,7 +899,10 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
           //   에서만 — 손을 한 번 빼야 다음 손짓 인정 = 한 동작 한 발화(방향 무관). 복원은 crossRearmOnReturn true.
           let returned = self.crossRearmOnReturn && abs(c.x - self.tracks[ti].crossFireX) >= self.crossRearmReturnX
           let reappeared = nowMs - self.tracks[ti].crossLastT >= self.crossRearmAbsentMs
-          if returned || reappeared {
+          // 🔴 2026-09-11 고착 방지 — 사장님 "안되기 시작하면 계속 안됨"(crossArmed 래치가 손이 발화지점
+          //   근처에 머물면 영영 안 풀림). 마지막 발화 후 일정 시간(불응 지나고) 지나면 무조건 재무장한다.
+          let timedRearm = nowMs - self.lastTriggerMs >= self.crossRearmTimeoutMs
+          if returned || reappeared || timedRearm {
             self.tracks[ti].crossArmed = true
             paceGLog("[pace-wave] crossrearm T%d by=%@ x=%.2f fireX=%.2f gap=%.0fms", ti,
                      returned ? "return" : "reappear", c.x, self.tracks[ti].crossFireX,

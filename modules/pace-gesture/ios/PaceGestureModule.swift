@@ -384,7 +384,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //  남겨두면 방향 일관성 게이트가 있는 것처럼 오독된다. 흔들림 방어는 단조 구간 + needRange + segSteps + 속도.)
   // (크로싱 기록/재무장 상태는 HandTrack 안으로 이동 — 맥 6b5c668, 두 트랙 교대가 만들던 유령 스트로크 차단)
   private let crossRearmReturnX: Double = 0.08
-  private let crossRearmOnReturn = false  // 🔴 2026-09-07 손 든 채 재무장 OFF(리턴 이중발화 차단) — 손 소실로만 재무장
+  private let crossRearmOnReturn = true   // 🔴 2026-09-10 재활성 — 손 든 채 연속 스와이프 재무장(3번 이후 안되던 것). 되돌림으로도 재무장.
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
   private let crossNeedMin: Double = 0.06       // 🔴 2026-09-09 채증: 사장님 스와이프 이동폭 0.05~0.10(작음). 가만히=0.00이라 0.06로 구분.
   private let crossNeedMax: Double = 0.09       // 🔴 2026-09-09 0.15→0.09(작은 스와이프 통과)

@@ -354,7 +354,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   //   returndrop 내장), grid OFF. cross는 crossMinHandSize·속도·범위 게이트라 몸턴/조명엔 발화 안 함.
   // 🔴 2026-09-06 채증 모드 — true면 발화(넘김) 전부 차단하고 프레임별 수치만 로깅(라벨 튜닝용). 튜닝 후 false.
   private let captureMode = false
-  private let captureLogging = true  // 🔴 2026-09-09 발화는 유지하고 프레임별 손 수치만 로깅(왜 안 잡히는지 진단)
+  private let captureLogging = false  // 🔴 출시: 진단 로깅 off(프로덕션 스팸 방지)
   private let crossStandalone = true   // 🔴 2026-09-06 재활성 — 사장님 손짓 원함. returndrop off·방향무관(왼오 됐던 상태 복원)
   private let crossWaveDir: Double = 0  // 방향 게이트 OFF(부호 뒤집힘)
   private let crossReturndropEnabled = false  // 🔴 2026-09-06 단방향 스와이프엔 리턴이 없어 returndrop이 왼오를 오인 억제 — OFF

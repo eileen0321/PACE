@@ -386,7 +386,7 @@ private final class WaveDetector: NSObject, AVCaptureVideoDataOutputSampleBuffer
   private let crossRearmReturnX: Double = 0.08
   private let crossRearmOnReturn = true   // 🔴 2026-09-10 재활성 — 손 든 채 연속 스와이프 재무장(3번 이후 안되던 것). 되돌림으로도 재무장.
   private let crossRearmAbsentMs: Double = 600  // 손 소실 — 안 보였으면 그 스트로크는 끝난 것
-  private let crossNeedMin: Double = 0.06       // 🔴 2026-09-09 채증: 사장님 스와이프 이동폭 0.05~0.10(작음). 가만히=0.00이라 0.06로 구분.
+  private let crossNeedMin: Double = 0.05       // 🔴 2026-09-11 0.06→0.05(작은 스와이프도, 가만히=0.00은 여전히 차단)
   private let crossNeedMax: Double = 0.09       // 🔴 2026-09-09 0.15→0.09(작은 스와이프 통과)
   private let crossNeedK: Double = 0.3          // 🔴 2026-09-09 0.5→0.3 — 근접 손(size 0.25)에서 needRange가 상한에 붙어 작은 스와이프를 막던 것 완화
   // 0.20→0.40(2026-08-26 07:28 실측 "5번 중 1번") — 이동 0.08·속도 0.23짜리 잔발화가 불응을 선점해

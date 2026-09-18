@@ -23,6 +23,27 @@ const CONSENT_COOKIE =
 // &sp=EgIYAQ%3D%3D = 검색필터 "Shorts 전용" → 가로 영상 혼입 방지(세로 Shorts만).
 const SHORTS_FILTER = 'EgIYAQ%3D%3D';
 
+/**
+ * 🔴 2026-09-18 사장님 지적("왜 쇼츠가 최신이 아니고 계속 몇일동안 같은걸로 시작하고") — 맞는 지적이었고,
+ * 원인은 캐시가 아니라 **우리가 최신을 요청한 적이 없다는 것**이었다. 위 SHORTS_FILTER 는 "4분 미만"
+ * 조건일 뿐 정렬은 유튜브 기본값인 **관련성**이다. 관련성 정렬은 며칠이 지나도 같은 상위 영상을 준다.
+ *
+ * 실측(2026-09-18, ko/KR, 키워드 5개 × 2회):
+ *   · 같은 검색어 2회 독립 호출의 결과가 25개 중 22개(88%) 동일
+ *   · 현재 필터가 돌려준 목록에 실제로 **"1년 전", "11개월 전"** 영상이 섞여 있었다
+ *
+ * 그렇다고 최신순으로 **바꾸면** 안 된다 — 같은 실측에서 최신순 계열은 10회 중 4~6회가 0건이었다
+ * (키워드에 따라 유튜브가 "검색결과가 없습니다"를 준다). 하나만 쓰면 피드가 통째로 비는 날이 생긴다.
+ * → **최신순을 먼저 시도하고, 부족하면 관련성으로 채운다.** 아래 scrapeFresh 참고.
+ *
+ * 값은 유튜브 검색필터 protobuf 다: field1=정렬(2=업로드날짜), field2={field1=기간(3=이번주), field3=길이(1=4분미만)}.
+ * 현재값 EgIYAQ== 가 field2{field3=1} 로 정확히 재현되는 것을 확인하고 조립했다(추측 아님).
+ */
+const SHORTS_FILTER_FRESH = 'CAISBAgDGAE%3D'; // 최신순 + 이번 주 + 4분 미만
+
+/** 최신 경로가 이 개수 미만이면 관련성 경로로 보충한다(실측 평균 9.5개, 0건도 잦다). */
+const FRESH_MIN_YIELD = 12;
+
 // PACE는 "차분한 대체 피드" — 자극적이지 않은 힐링/창작/공예 위주 카테고리로 로테이션.
 //
 // 2026-08-04 사장님 지적("HOT 리스트가 어제 본 것과 같고 영어다") — gl/hl 파라미터를 붙여도 영어
@@ -121,7 +142,10 @@ const COUNTRY_TO_LANG: Record<string, string> = {
   ID: 'id', TH: 'th', PH: 'en', SA: 'ar', AE: 'ar', RU: 'ru', UA: 'uk',
 };
 
-type Short = { videoId: string; title: string; channelTitle: string; thumbnailUrl: string | null };
+// publishedText: "3시간 전" / "6일 전" 같은 유튜브의 상대 표기. **검색결과의 Shorts lockup에는
+//   이 값이 아예 없고**(채널 정보가 없는 것과 같은 이유), 아래에서 새로 파싱하는 videoRenderer
+//   경로에만 존재한다. 그래서 값이 없을 수 있다 — 없다고 오래된 영상이라는 뜻은 아니다.
+type Short = { videoId: string; title: string; channelTitle: string; thumbnailUrl: string | null; publishedText?: string };
 
 // HTML 안의 JSON 문자열을 그대로 읽어오므로 이스케이프를 직접 되돌려야 한다.
 // 🔴 2026-08-09 전수 스윕에서 발견 — 배포된 프록시가 항목 제목으로 **역슬래시 한 글자(`\`)**를
@@ -165,10 +189,10 @@ const UA_POOL = [
 type ScrapeObs = { q: string; status: number; bytes: number; lockups: number };
 let lastScrapeObs: ScrapeObs[] = [];
 
-async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): Promise<Short[]> {
+async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0, sp: string = SHORTS_FILTER): Promise<Short[]> {
   // 2026-08-04 — gl/hl을 붙여야 유튜브가 해당 지역·언어 결과를 준다. 예전엔 이 둘이 없어 서버(미국
   // Vercel) 기준 영어 결과만 나왔다 — 사장님 지적("HOT 리스트가 왜 영어냐")의 직접 원인.
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${SHORTS_FILTER}&gl=${gl}&hl=${hl}`;
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=${sp}&gl=${gl}&hl=${hl}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   let httpStatus = 0;
@@ -237,15 +261,55 @@ async function scrapeOnce(query: string, gl: string, hl: string, attempt = 0): P
     //   따로 불러야 한다(안드로이드 즐겨찾기에서 쓰는 그 방식) — 별도 작업으로 남긴다.
     out.push({ videoId: id, title, channelTitle: '', thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` });
   }
+
+  // 🔴 2026-09-18 — **최신순으로 정렬하면 유튜브가 렌더러를 바꾼다.** 관련성 정렬은 결과를
+  //   shortsLockupViewModel(위 경로)로 주는데, 최신순은 같은 쇼츠를 videoRenderer 로 준다.
+  //   위 파서는 lockup 만 알아서, 실측에서 **결과 20개가 멀쩡히 있는 응답을 0건으로 버리고 있었다**
+  //   (2026-09-18 '먹방'+최신순: videoRenderer 20개, lockup 0개 → 반환 0개).
+  //
+  //   ⚠️ 2026-08-06 의 교훈을 반복하지 않는다. 그때 "구조가 바뀌면 아무 videoId나 긁는" 폴백이
+  //     CAPTCHA 페이지의 임의 videoId 를 쇼츠라고 반환해 일반 가로영상이 섞였다. 그래서 여기서는
+  //     **없는 것을 근거로 삼지 않는다**(길이 표기가 없다 = 쇼츠일 것이다 ❌ — 애초에 그 전제부터
+  //     틀렸다. 실측해보니 videoRenderer 쪽 쇼츠에는 lengthText 가 "0:13" 처럼 멀쩡히 들어있다).
+  //     쇼츠라는 **적극적 증거**인 reelWatchEndpoint 가 블록 안에 있을 때만 받는다 — 이건 유튜브
+  //     자신이 "이 항목은 쇼츠 플레이어로 재생한다"고 표시한 것이라 우리가 추정할 필요가 없다.
+  //
+  //   실측(2026-09-18, 저장한 검색 페이지 40장):
+  //     · videoRenderer 블록 89개 중 50개 통과 / 39개 차단
+  //     · 통과분 길이: 최소 9초, 중앙값 46초, 최대 191초 (3분 초과 3건 — 쇼츠 상한이 3분으로
+  //       늘어난 뒤의 경계값이다. 세로/가로 문제가 아니므로 길이로 더 자르지 않는다. 길이 문턱을
+  //       덧붙이면 reelWatchEndpoint 라는 확실한 근거를 내 추정으로 덮는 셈이 된다.)
+  const vStarts = [...html.matchAll(/"videoRenderer":\{/g)].map((mm) => mm.index ?? -1).filter((i) => i >= 0);
+  for (let bi = 0; bi < vStarts.length; bi++) {
+    const block = html.slice(vStarts[bi], vStarts[bi + 1] ?? vStarts[bi] + 12000);
+    if (!block.includes('reelWatchEndpoint')) continue; // 쇼츠라는 적극적 증거가 없으면 안 받는다
+    const idM = block.match(/"videoId":"([\w-]{11})"/);
+    if (!idM) continue;
+    const id = idM[1];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    // 이스케이프 쌍을 하나의 토큰으로 인정해 끝까지 읽는다 — 위 lockup 경로와 같은 이유다
+    // (제목에 따옴표가 들어가면 `[^"]+` 로는 캡처가 끊긴다, 2026-08-09 스윕에서 실제 발견).
+    const tm = block.match(/"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    const pm = block.match(/"publishedTimeText":\{"simpleText":"((?:[^"\\]|\\.)*)"/);
+    out.push({
+      videoId: id,
+      title: tm ? unescapeJsonText(tm[1]) : '',
+      channelTitle: '',
+      thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+      // 이 경로에만 게시시각이 있다 — 최신 여부를 밖에서 확인할 수 있는 유일한 신호라 같이 싣는다.
+      ...(pm ? { publishedText: unescapeJsonText(pm[1]) } : {}),
+    });
+  }
   return out;
 }
 
 // 캐시 미스 시에만 실행되므로(대부분 CDN 히트) 재시도 백오프로 순간 레이트리밋/네트워크 흔들림 흡수.
-async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 2): Promise<Short[]> {
+async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 2, sp: string = SHORTS_FILTER): Promise<Short[]> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      const s = await scrapeOnce(query, gl, hl, i);
+      const s = await scrapeOnce(query, gl, hl, i, sp);
       if (s.length) return s;
     } catch (e) {
       last = e;
@@ -254,6 +318,29 @@ async function scrapeWithRetry(query: string, gl: string, hl: string, tries = 2)
   }
   if (last) throw last;
   return [];
+}
+
+/**
+ * 🔴 2026-09-18 — 한 카테고리의 결과를 **최신 우선**으로 구한다(위 SHORTS_FILTER_FRESH 주석).
+ *
+ * 최신순만 쓰면 10회 중 4~6회가 0건이라 피드가 비고, 관련성만 쓰면 1년 된 영상이 나온다.
+ * 둘 다 쓰되 **순서로 해결한다** — 최신 결과를 앞에, 관련성 결과를 뒤에 붙인다. 앱은 목록 앞쪽부터
+ * 쓰므로(시드는 앞 12개) 최신이 잡히는 날엔 최신이 나가고, 유튜브가 최신순을 안 주는 날에도
+ * 예전과 똑같이 동작한다 — **이 변경으로 나빠지는 경우가 없다.**
+ *
+ * 비용: 최신 경로가 충분히 나오면 관련성 호출을 아예 안 한다. 실측 기준 절반쯤에서만 2회가 되므로
+ * 스크래핑은 평균 1.5배. 캐시가 여전히 앞단이라 "사용자 수와 무관"이라는 이 설계의 이점은 그대로다.
+ */
+async function scrapeFresh(query: string, gl: string, hl: string): Promise<Short[]> {
+  // 최신 경로는 실패가 잦은 것이 **정상**이므로(위 실측) 재시도를 1회로 줄여 지연을 아낀다 —
+  // 여기서 오래 붙들면 아래 관련성 보충까지 합쳐 응답이 느려진다.
+  const fresh = await scrapeWithRetry(query, gl, hl, 1, SHORTS_FILTER_FRESH).catch(() => []);
+  if (fresh.length >= FRESH_MIN_YIELD) return fresh;
+  const rest = await scrapeWithRetry(query, gl, hl, 2, SHORTS_FILTER).catch(() => []);
+  if (!fresh.length) return rest;
+  // 최신이 조금이라도 나왔으면 그것을 앞에 세우고 나머지로 채운다(중복은 videoId 로 제거).
+  const seen = new Set(fresh.map((v) => v.videoId));
+  return [...fresh, ...rest.filter((v) => !seen.has(v.videoId))];
 }
 
 // 폴백(Data API) 하루 상한 — 호출부 주석의 근거 참고. 100 units × 40 = 4,000 units로, 무료
@@ -394,7 +481,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     let shorts: Short[] = [];
     try {
-      const results = await Promise.all(categories.map((c) => scrapeWithRetry(c, gl, hl).catch(() => [])));
+      // 2026-09-18 — scrapeWithRetry → scrapeFresh. 최신 우선으로 가져온다(위 주석).
+      const results = await Promise.all(categories.map((c) => scrapeFresh(c, gl, hl).catch(() => [])));
       // 카테고리별 결과를 번갈아 끼워 넣는다(앞쪽에 한 카테고리만 몰리면 첫 화면이 단조로워진다).
       const seen = new Set<string>();
       const maxLen = Math.max(0, ...results.map((r) => r.length));
